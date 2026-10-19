@@ -20,6 +20,7 @@ audience: 所有接手的人
 
 | 文档 | 回答什么 | 先读给谁 |
 |---|---|---|
+| [客户部署路线](customer-rollout.md) | 从 v0.1 到九安上线：从哪里入手、要部署哪三块、分五个阶段怎么走、第一周做什么、要九安提供什么、风险 | 项目负责人、九安团队 |
 | [交付包指南](package-guide.md) | 交付包里有什么、怎么生成和校验、按角色从哪读起、验收清单、签收 | 所有人，第一份 |
 | [Skills 配置指南](skills-guide.md) | 编码工具（Claude Code、Codex、Kiro CLI）里怎么装、怎么连两个 Skill：Nexus 一侧的 nexus-ai-operator，应用一侧的 agent-access；配置顺序、排障、安全底线 | Agent 开发、应用开发 |
 | [交接文档](handover.md) | 有哪些东西、在哪、谁负责、还有什么没做完、接手第一周做什么 | 所有人 |

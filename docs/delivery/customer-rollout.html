@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>客户部署路线：从 v0.1 到九安上线</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
+v0.1</span>客户部署路线：从 v0.1 到九安上线</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
+    <tr><th scope="row">状态</th><td>建议稿（从 v0.1
+到九安上线的路线；待项目负责人确认）<span class="stamp">路线</span></td></tr>
+    <tr><th scope="row">范围</th><td>九安审核平台（客户环境）、Nexus
+上的审核 Agent、我们的测试台</td></tr>
+    <tr><th scope="row">读者</th><td>项目负责人、应用开发、九安团队</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#1-结论从哪里入手" id="toc-1-结论从哪里入手">1.
+结论：从哪里入手</a></li>
+<li><a href="#2-现在在哪v01" id="toc-2-现在在哪v01">2.
+现在在哪（v0.1）</a></li>
+<li><a href="#3-整体部署要部署哪三块" id="toc-3-整体部署要部署哪三块">3.
+「整体部署」要部署哪三块</a></li>
+<li><a href="#4-分阶段怎么走" id="toc-4-分阶段怎么走">4.
+分阶段怎么走</a>
+<ul>
+<li><a href="#阶段-0对接与拍板" id="toc-阶段-0对接与拍板">阶段
+0：对接与拍板</a></li>
+<li><a href="#阶段-1测试台上跑通-mvp第二份计划我们做"
+id="toc-阶段-1测试台上跑通-mvp第二份计划我们做">阶段 1：测试台上跑通
+MVP（第二份计划，我们做）</a></li>
+<li><a href="#阶段-2九安测试环境九安做我们支持"
+id="toc-阶段-2九安测试环境九安做我们支持">阶段
+2：九安测试环境（九安做，我们支持）</a></li>
+<li><a href="#阶段-3试运行" id="toc-阶段-3试运行">阶段
+3：试运行</a></li>
+<li><a href="#阶段-4生产上线" id="toc-阶段-4生产上线">阶段
+4：生产上线</a></li>
+</ul></li>
+<li><a href="#5-第一周做什么" id="toc-5-第一周做什么">5.
+第一周做什么</a></li>
+<li><a href="#6-要九安和客户提供的" id="toc-6-要九安和客户提供的">6.
+要九安和客户提供的</a></li>
+<li><a href="#7-风险" id="toc-7-风险">7. 风险</a></li>
+<li><a href="#8-要你先回答的" id="toc-8-要你先回答的">8.
+要你先回答的</a></li>
+</ul>
+</nav>
+<main id="main">
+<h1 id="1-结论从哪里入手">1. 结论：从哪里入手</h1>
+<p><strong>先做三件事，同时开工：</strong></p>
+<ol type="1">
+<li><strong>约九安开一次对接会，把四项前置定下来</strong>（第 4 节阶段
+0）。这四项不定，补丁定不了稿，Agent 也不知道发布到哪里：
+<ul>
+<li>设计稿 v2 批准；</li>
+<li>九安真实代码线上的相关文件（补丁基线）；</li>
+<li>生产用哪一套 Nexus，以及单据数据能不能发出去；</li>
+<li><a href="agent-framework.html">Agent 接入框架</a>第 10
+节要九安拍板的 8 件事。</li>
+</ul></li>
+<li><strong>你批准设计稿之后，我这边马上开工第二份计划</strong>：在测试台上写补丁
+0001–0006，让初审 MVP 跑通（第 4 节阶段 1）。其中 0001–0003
+是通用层，不依赖九安的决定，可以先写。</li>
+<li><strong>选定生产用的 Nexus 环境</strong>，在上面建审核
+Agent（<code>first_review@1</code>）的发布。</li>
+</ol>
+<p><strong>先说清楚一件事</strong>：客户那边部署的不是我们的 PoC
+服务器，而是<strong>九安自己的系统，打上我们的补丁</strong>，再连到
+Nexus 上的
+Agent。我们的测试台（<code>andon-finance.tinyboat.blog</code>）一直留在我们这边，只用来验收补丁，只放虚构数据。所以
+PoC 测试台自己的那些上生产前事项（源站明文 HTTP、<code>deploy.sh</code>
+的回滚缺口等，<a href="code-review-2026-10-17.html">代码评审</a>第 4
+节第 1、2、10、11
+条）<strong>不挡客户部署</strong>；前提是测试台上永远不放真实单据。</p>
+<figure>
+<a href="../assets/diagrams/rollout-phases.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/rollout-phases.svg" loading="lazy"
+alt="五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环境 → 试运行 → 生产上线；每一步都有进入下一步的门槛" /></a>
+<figcaption>五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环境 →
+试运行 → 生产上线；每一步都有进入下一步的门槛</figcaption>
+</figure>
+<h1 id="2-现在在哪v01">2. 现在在哪（v0.1）</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>部分</th>
+<th>状态</th>
+<th>离客户部署还差什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>测试台（九安开发包副本 + 九安真实运行时 + 本机 MySQL）</td>
+<td>已就绪，端到端测试可以跑</td>
+<td>不用再动；用来验收补丁</td>
+</tr>
+<tr>
+<td>Agent
+接入框架（<code>jiuan.<wbr>agent/<wbr>v1</code>、<code>first_<wbr>review@1</code>、<code>contract/<wbr></code>）</td>
+<td>设计稿 v2，<strong>待批准</strong></td>
+<td>批准</td>
+</tr>
+<tr>
+<td>九安补丁 0001–0006</td>
+<td><strong>没开始</strong></td>
+<td>第二份计划</td>
+</tr>
+<tr>
+<td>审核 Agent 的 <code>first_<wbr>review@1</code></td>
+<td><strong>没开始</strong></td>
+<td>新提示词与发布，和补丁 0005 一起</td>
+</tr>
+<tr>
+<td>现在审批流用的「九安审核AI」</td>
+<td>可用；偶发返回不合法的 JSON（<a href="handover.html">交接文档</a>第
+6 节第 12 条）</td>
+<td>新提示词里一并改掉</td>
+</tr>
+<tr>
+<td>「我的 Nexus」（每个账号连接自己的 Nexus）</td>
+<td>PoC 里可用</td>
+<td>九安第三期再做，不在这次部署里</td>
+</tr>
+<tr>
+<td>两个 Skill（nexus-ai-operator、agent-access）</td>
+<td>可用，见 <a href="skills-guide.html">Skills 配置指南</a></td>
+<td>九安开发者按指南装好就能用</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="3-整体部署要部署哪三块">3. 「整体部署」要部署哪三块</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>块</th>
+<th>部署什么</th>
+<th>谁做</th>
+<th>在哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Nexus 侧</strong></td>
+<td>审核 Agent（提示词、模型）、A2A
+发布（名片里写契约和任务）、调用密钥</td>
+<td>Agent 开发用 nexus-ai-operator；调用密钥由发布者本人在网页签发</td>
+<td>生产用的那套 Nexus（第 4 节阶段 0 定）</td>
+</tr>
+<tr>
+<td><strong>九安侧</strong></td>
+<td>补丁 0001–0006 打进九安真实代码线；「Agent
+接入」里启用发布、粘贴调用密钥；路由表；规则发布；任务开关</td>
+<td>我们出补丁和说明；九安评审、合入、部署、配置</td>
+<td>九安的测试环境 → 生产环境</td>
+</tr>
+<tr>
+<td><strong>运维侧</strong></td>
+<td>九安到 Nexus 的出站网络与
+TLS；调用额度；日志与告警；密钥保管；回退办法</td>
+<td>九安运维 + Nexus 运维；我们给清单</td>
+<td>两边</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="4-分阶段怎么走">4. 分阶段怎么走</h1>
+<h2 id="阶段-0对接与拍板">阶段 0：对接与拍板</h2>
+<p>进入阶段 1 的门槛：下面「前置」四项都有结论。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>要定的事</th>
+<th>为什么挡路</th>
+<th>谁定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>前置 1</td>
+<td>设计稿 v2 批准（<a href="agent-framework.html">框架</a>、<a
+href="agent-interface.html">接口</a>、<a
+href="first-review-contract.html">初审契约</a>）</td>
+<td>补丁按它写</td>
+<td>项目负责人；九安评审</td>
+</tr>
+<tr>
+<td>前置 2</td>
+<td>九安真实代码线上的相关文件：<code>start-<wbr>analysis.<wbr>mjs</code>、<code>analysis-<wbr>server.<wbr>mjs</code>、<code>public/<wbr>analysis.<wbr>js</code>、<code>providers/<wbr>ai-<wbr>model.<wbr>mjs</code>、<code>src/<wbr>platform/<wbr></code>
+下的连接器、调用中间件、流水线</td>
+<td>我们手上的开发包是裁剪过的测试环境副本，补丁要在真实代码线上重新生成一次才能定稿</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>前置 3</td>
+<td>生产用哪一套 Nexus：九安自建，还是用我们这套
+<code>nxs-<wbr>beine1013</code>（旧部署模板，要先加固）</td>
+<td>决定 Agent 发布到哪里、名片地址、网络怎么通</td>
+<td>项目负责人 + 九安</td>
+</tr>
+<tr>
+<td>前置 4</td>
+<td>数据外发：单据事实（金额、公司、费用说明、附件内容）要发到 Nexus
+和它后面的模型；九安的数据治理（<code>ai-<wbr>data-<wbr>governance.<wbr>mjs</code>）和客户的合规要同意</td>
+<td>不同意就不能接真实单据</td>
+<td>九安 + 客户合规</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>同时要九安拍板、但可以在阶段 1 期间定的（<a
+href="agent-framework.html">框架</a>第 10 节）：</p>
+<ul>
+<li><strong>系统身份</strong>
+<code>system:pipeline</code>（安全相关）；</li>
+<li><strong>额度</strong>：<code>ai-model</code> 每天 150 次、并发
+2，每张单据至少一次调用；</li>
+<li><strong>人工复核</strong>只记在九安里，不回写汇联易；</li>
+<li><strong>什么时候打开任务开关</strong>：九安现在有意下线了 AI
+功能；</li>
+<li><strong>调度</strong>；</li>
+<li><strong>连接器密钥</strong>改成来自「Agent 接入」（安全相关）；</li>
+<li><strong>租户级调用</strong>：这次的 MVP 用不到。</li>
+</ul>
+<h2 id="阶段-1测试台上跑通-mvp第二份计划我们做">阶段 1：测试台上跑通
+MVP（第二份计划，我们做）</h2>
+<p>进入阶段 2 的门槛：<a href="agent-framework.html">框架</a>第 11
+节的验收全部通过，端到端测试通过，你确认。</p>
+<ol type="1">
+<li>写实现计划，按顺序交付：
+<ul>
+<li>0001 契约与 A2A 适配层；</li>
+<li>0002 模型接入口与「Agent 接入」；</li>
+<li>0003 Agent 任务服务（MVP
+只做一问一答、按单据存结果、按单据类型路由）；</li>
+<li>0004 规则生效；</li>
+<li>0005 初审与审批流；</li>
+<li>0006 界面。</li>
+</ul></li>
+<li>在 Nexus 上建审核 Agent 的 <code>first_review@1</code>
+提示词与发布。字符串里不用英文双引号，修掉现在的偶发问题。</li>
+<li>补丁放进
+<code>patches/jiuan-v0.5.3/</code>，<code>build-jiuan.sh</code>
+打进副本，<code>deploy.sh</code> 部署到测试台。</li>
+<li>端到端测试覆盖这几种情况：
+<ul>
+<li>来单自动初审；</li>
+<li>失败自动重试一次；</li>
+<li>单据改版开新一轮；</li>
+<li>规则发布后标「规则已更新」；</li>
+<li>两个人同时操作，后到的回 409。</li>
+</ul></li>
+</ol>
+<h2 id="阶段-2九安测试环境九安做我们支持">阶段
+2：九安测试环境（九安做，我们支持）</h2>
+<p>进入阶段 3
+的门槛：九安评审过补丁（两处安全相关的改动单独评审），九安测试环境上的端到端测试通过。</p>
+<ol type="1">
+<li>在九安真实代码线上重新生成补丁、定稿。适配层和契约同时作为独立目录交付，九安以后升级时直接换文件。</li>
+<li>九安按自己的流程合入、部署到测试环境（MySQL 8.0，和
+<code>compose.test.yaml</code> 一致）。</li>
+<li>配置：
+<ul>
+<li>管理员在「Agent 接入」里填发布编号、粘贴调用密钥（发布者本人在 Nexus
+网页签发），九安当场验证名片和密钥；</li>
+<li>填好路由表（单据类型 → 发布）；</li>
+<li>复核人发布规则。</li>
+</ul></li>
+<li>接上汇联易测试租户的真实同步。凭据由九安放进自己的密钥源，我们不经手。</li>
+<li>九安开发者需要时，按 <a href="skills-guide.html">Skills
+配置指南</a>装两个 Skill，自己调试 Agent。</li>
+</ol>
+<h2 id="阶段-3试运行">阶段 3：试运行</h2>
+<p>进入阶段 4 的门槛：试运行指标达标、九安签字。</p>
+<ul>
+<li>九安打开任务开关，先限定一两家公司、一种单据类型；</li>
+<li>盯这几项指标：
+<ul>
+<li>每天的调用量和额度；</li>
+<li>初审失败率（<code>AI_*</code> 错误码）；</li>
+<li>单次时长（测试台上现在是 40–100 秒，带附件的更慢）；</li>
+<li>复核人推翻初审的比例；</li>
+</ul></li>
+<li>调用密钥失效、Nexus 不通要能告警，不能只靠健康检查。</li>
+</ul>
+<h2 id="阶段-4生产上线">阶段 4：生产上线</h2>
+<ul>
+<li>生产 Nexus 加固：TLS、关掉多余的入口、发布固定版本。</li>
+<li>密钥与凭证：生产用的调用密钥单独签发、单独保管；开发测试期间用过的凭证在这一步统一清理（<a
+href="handover.html">交接文档</a>第 2.5 节）。</li>
+<li>回退办法：关掉任务开关就回到纯人工复核，业务不受影响。上线前演练一次。</li>
+<li>上线后：财务类、知识库类任务和网关层（多轮对话、长任务、租户级调用）按<a
+href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
+节排期。</li>
+</ul>
+<h1 id="5-第一周做什么">5. 第一周做什么</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>事</th>
+<th>谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>读<a href="agent-framework-overview.html">Agent
+接入框架总览</a>，批准设计稿 v2，或者提修改</td>
+<td>你</td>
+</tr>
+<tr>
+<td>2</td>
+<td>约九安对接会，带上：一页总览、本文第 4 节阶段 0 的表、第 6
+节的资料清单</td>
+<td>你</td>
+</tr>
+<tr>
+<td>3</td>
+<td>定生产用哪套 Nexus；如果用
+<code>nxs-<wbr>beine1013</code>，我列一份加固清单</td>
+<td>你；我出清单</td>
+</tr>
+<tr>
+<td>4</td>
+<td>设计批准后写第二份计划（实现计划），从 0001 开工</td>
+<td>我</td>
+</tr>
+<tr>
+<td>5</td>
+<td>请九安给补丁基线文件和测试环境的部署方式</td>
+<td>九安</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="6-要九安和客户提供的">6. 要九安和客户提供的</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>东西</th>
+<th>用途</th>
+<th>什么时候要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>真实代码线上的相关文件（第 4 节前置 2）</td>
+<td>补丁定稿</td>
+<td>阶段 1 结束前</td>
+</tr>
+<tr>
+<td>测试环境的部署方式、反向代理配置、出站到 Nexus 的网络</td>
+<td>阶段 2 部署</td>
+<td>阶段 2 开始前</td>
+</tr>
+<tr>
+<td>数据外发与模型使用的书面同意</td>
+<td>接真实单据</td>
+<td>阶段 2 开始前</td>
+</tr>
+<tr>
+<td>汇联易测试租户的凭据（九安自己保管）</td>
+<td>真实同步</td>
+<td>阶段 2</td>
+</tr>
+<tr>
+<td>预计的单据量（每天多少张、高峰多少）</td>
+<td>额度和并发的规划</td>
+<td>阶段 2</td>
+</tr>
+<tr>
+<td>试运行的范围（哪几家公司、哪类单据）和验收人</td>
+<td>阶段 3</td>
+<td>阶段 2 结束前</td>
+</tr>
+<tr>
+<td>客户规则的样例（几条真实规则）</td>
+<td>规则生效和初审效果的验证</td>
+<td>阶段 1 中</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="7-风险">7. 风险</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>后果</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>开发包是裁剪过的，和真实代码线不一致</td>
+<td>补丁打不上，或者打上了运行才出错</td>
+<td>尽早拿基线（前置
+2）；适配层和契约做成独立目录，少依赖九安内部名字</td>
+</tr>
+<tr>
+<td>九安有意下线了 AI 功能</td>
+<td>补丁做好了也不开</td>
+<td>阶段 0 就问清楚开关的时间和条件</td>
+</tr>
+<tr>
+<td>额度：每天 150 次、并发 2</td>
+<td>单据多时排队、超额</td>
+<td>按单据量估算，阶段 2 前改中间件按任务分额度</td>
+</tr>
+<tr>
+<td>数据外发不被批准</td>
+<td>不能接真实单据</td>
+<td>前置 4 先定；必要时用九安自建的 Nexus 和模型</td>
+</tr>
+<tr>
+<td>Agent 输出偶尔不合规</td>
+<td>单次初审失败</td>
+<td>九安校验兜底、自动重试一次、提示词约束；失败率进试运行指标</td>
+</tr>
+<tr>
+<td>Nexus 没有推送，任务只在内存里存 24 小时</td>
+<td>长任务不可靠</td>
+<td>MVP 只做一问一答（单次不超过 5 分钟）；长任务等网关层</td>
+</tr>
+<tr>
+<td>系统身份、连接器密钥是安全相关的改动</td>
+<td>九安安全评审不通过</td>
+<td>改动收窄（只读、只用于登记过的任务、只限配置里的公司），单独评审</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="8-要你先回答的">8. 要你先回答的</h1>
+<ol type="1">
+<li><strong>生产用哪套 Nexus</strong>：九安自建，还是我们这套？</li>
+<li><strong>部署谁来做</strong>：九安按补丁和说明自己合入、部署，还是我们到九安的环境里一起做？</li>
+<li><strong>第一批上线范围和时间窗</strong>：哪几家公司、哪类单据，九安那边有没有固定的发版窗口？</li>
+</ol>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/customer-rollout.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

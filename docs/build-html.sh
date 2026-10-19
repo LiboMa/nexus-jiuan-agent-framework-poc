@@ -18,6 +18,7 @@ DOCS=(
   delivery/README.md
   delivery/package-guide.md
   delivery/skills-guide.md
+  delivery/customer-rollout.md
   delivery/handover.md
   delivery/integration.md
   delivery/deploy-iteration.md
