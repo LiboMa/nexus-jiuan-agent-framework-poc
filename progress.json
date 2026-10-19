@@ -1283,10 +1283,11 @@
             },
             {
               "title": "项目负责人确认后出包",
-              "status": "doing"
+              "status": "done"
             }
           ],
-          "evidence": "2026-10-19：修复部署 SSM Success、健康检查 database ok；端到端 16 个 14 通过 / 1 失败（Agent 偶发不合法 JSON）/ 1 按设计跳过，项目负责人接受并要求提交"
+          "evidence": "2026-10-19：修复部署 SSM Success、健康检查 database ok；端到端 16 个 14 通过 / 1 失败（Agent 偶发不合法 JSON）/ 1 按设计跳过，项目负责人接受并要求提交；交付包 dist/Finance-Audit-Nexus-PoC-v0.1.tar.gz（完整检查通过），私有仓库 LiboMa/nexus-jiuan-agent-framework-poc，标签 v0.1",
+          "status": "done"
         }
       ]
     },
