@@ -71,7 +71,7 @@ echo "没有发现密钥"
 
 say "清单与打包"
 {
-  echo "交付包：$NAME（$VERSION_NAME）"
+  echo "交付包：${NAME}（${VERSION_NAME}）"
   echo "生成时间：$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "检查：$($CHECKS && echo '单元测试、命令行测试、图和 HTML、参考补丁、进度清单都通过' || echo '跳过了测试与文档检查（--skip-checks）')；密钥检查通过"
   echo "校验：shasum -a 256 -c MANIFEST.txt --quiet"

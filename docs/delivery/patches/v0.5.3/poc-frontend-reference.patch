@@ -106,7 +106,7 @@ diff -ruN a/analysis.js b/analysis.js
        })()
            : state.route === 'overview' ? documentsPage(result, { landing: true }) : state.route === 'documents' ? documentsPage(result) : state.route === 'analytics' ? analyticsPage(result) : state.route === 'payments' ? paymentsPage(result) : state.route === 'adminConfig' ? adminConfigPage(state.adminTab === 'sync' ? syncPage(result) : renderPlatformOps(state.adminTab, result, { platformAdmin: state.session.capabilities?.platformAdmin })) : ['rules', 'agents'].includes(state.route) ? ruleWorkspacePage(result) : syncPage(result);
      content.replaceChildren(pageNode);
-+    if (['overview', 'documents'].includes(state.route)) void fillApprovalStatuses(content, result.items, nexusCtx(revision));
++    if (['overview', 'documents'].includes(state.route)) void fillApprovalStatuses(content, result.items, nexusCtx(revision), { route: state.route });
      announce(`${page.title}已更新`);
    } catch (error) {
      if (revision !== state.revision) return;
@@ -539,7 +539,7 @@ diff -ruN a/nexus-invoke.js b/nexus-invoke.js
 diff -ruN a/nexus-poc.css b/nexus-poc.css
 --- a/nexus-poc.css
 +++ b/nexus-poc.css
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,105 @@
 +/* PoC 扩展的样式：沿用九安工作区的变量与组件（.panel、.tag、.button、.field），只补新组件需要的布局。 */
 +
 +/* 口令登录：九安的登录页是深色磨砂卡片 */
@@ -637,10 +637,18 @@ diff -ruN a/nexus-poc.css b/nexus-poc.css
 +
 +/* 九安的 .field 设了 display:flex，会盖过浏览器默认的 [hidden]{display:none}；PoC 用 hidden 切换的表单块要显式隐藏。 */
 +.poc-approval [hidden], .poc-invoke [hidden], .poc-login-form [hidden], .poc-my-agents [hidden] { display: none !important; }
++
++/* 单据池顶上的「模拟来单」 */
++.poc-intake{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 14px}
++.poc-intake > span{flex:1 1 320px;color:var(--ui-text-muted, #4A5463)}
++.poc-intake select{max-width:100%;font:inherit;padding:4px 8px}
++.poc-intake .quiet-note{flex-basis:100%;margin:0}
++.poc-advice-title{margin:0 0 6px;font-size:15px}
++.poc-approval-slot{display:inline-flex;flex-wrap:wrap;gap:4px}
 diff -ruN a/nexus-poc.js b/nexus-poc.js
 --- a/nexus-poc.js
 +++ b/nexus-poc.js
-@@ -0,0 +1,550 @@
+@@ -0,0 +1,590 @@
 +/**
 + * 九安前端副本里的 PoC 扩展（scripts/build-public.mjs 把它放进 app/public/）：
 + *   - 登录卡片里的口令登录；
@@ -658,8 +666,10 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  POC_LOGIN_RATE_LIMIT: '登录尝试过多，请一分钟后再试。',
 +  POC_APPROVAL_TRANSITION: '当前审批状态不允许这项操作，请刷新后查看最新状态。',
 +  POC_APPROVAL_FORBIDDEN: '当前账号不能执行这项审批操作。',
-+  POC_APPROVAL_SAME_PERSON: '复核人不能是做决定的同一人。',
-+  POC_APPROVAL_REASON_REQUIRED: '这项决定与 Agent 的建议不一致，请写明理由。',
++  POC_APPROVAL_REASON_REQUIRED: '这项决定与 AI 初审建议不一致，请写明理由。',
++  POC_INTAKE_TEMPLATE_UNKNOWN: '没有这个来单模板，请从列表里选。',
++  POC_INTAKE_RATE_LIMIT: '模拟来单每分钟最多 5 次，请稍后再试。',
++  POC_DOCUMENT_EXISTS: '这张单据已经在单据池里了。',
 +  POC_APPROVAL_RETURN_NOTE_REQUIRED: '退回时请填写退回说明。',
 +  POC_APPROVAL_SOURCE_CHANGED: '单据版本已变化，原审批已失效，请重新发起。',
 +  POC_NEXUS_API_KEY_INVALID: 'API 密钥无效、已经用过（第一次连接后平台会换新），或者不属于这个 Nexus：在 Nexus「个人设置 › API 密钥」新建一把再连接。',
@@ -683,12 +693,13 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +});
 +
 +const STATUS_TONE = Object.freeze({ not_started: '', prechecking: 'blue', ai_running: 'blue', ai_failed: 'red', pending_review: 'amber',
-+  pending_check_approve: 'amber', pending_check_return: 'amber', approved: 'green', returned: 'red', invalidated: '' });
++  approved: 'green', returned: 'red', invalidated: '' });
 +const STEP_STATE = Object.freeze({ pending: ['未开始', ''], active: ['进行中', 'blue'], done: ['完成', 'green'], failed: ['失败', 'red'], skipped: ['跳过', ''] });
 +const RECOMMENDATION = Object.freeze({ PASS_CANDIDATE: '可考虑通过', ATTENTION: '需关注', RETURN_DRAFT: '建议退回', MANUAL_REVIEW: '需人工审核' });
 +const RISK = Object.freeze({ low: '低', medium: '中', high: '高', unknown: '未知' });
 +const CHECK_STATUS = Object.freeze({ verified: '已核验', clear: '已核验', attention: '需关注', missing: '缺失', not_applicable: '不适用' });
 +const WORKING = new Set(['prechecking', 'ai_running']);
++const RECOMMENDATION_TONE = Object.freeze({ RETURN_DRAFT: 'red', PASS_CANDIDATE: 'green', ATTENTION: 'amber', MANUAL_REVIEW: 'amber' });
 +const LOGIN_ACCOUNTS = Object.freeze([['poc-reviewer', '审核员（虚构）'], ['poc-checker', '复核人（虚构）']]);
 +
 +const shortHash = value => (typeof value === 'string' && value.length > 12 ? value.slice(0, 12) : value || '—');
@@ -758,18 +769,72 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +// ---------------------------------------------------------------------------
 +// 单据卡片上的审批状态
 +// ---------------------------------------------------------------------------
-+export async function fillApprovalStatuses(container, items, ctx) {
++/** 卡片上的几枚标签：审批状态；有 AI 初审建议时带结论和风险；来单自动发起的标一下。 */
++export function approvalChips(entry, ui) {
++  const chips = [ui.tag(`审批：${entry.label}`, approvalTone(entry.status))];
++  if (entry.advice) {
++    chips.push(ui.tag(`AI 初审：${RECOMMENDATION[entry.advice.modelRecommendation] ?? entry.advice.modelRecommendation ?? '—'}`, RECOMMENDATION_TONE[entry.advice.modelRecommendation] ?? ''));
++    if (entry.advice.riskLevel) chips.push(ui.tag(`风险：${RISK[entry.advice.riskLevel] ?? entry.advice.riskLevel}`));
++  }
++  if (entry.auto) chips.push(ui.tag('来单自动发起', 'blue'));
++  return chips;
++}
++/** 还有在预审或 AI 初审中的，就接着刷新卡片，建议一出来就显示，不用点。 */
++export const needsPolling = items => Object.values(items ?? {}).some(entry => WORKING.has(entry?.status));
++
++export async function fillApprovalStatuses(container, items, ctx, { route } = {}) {
++  if (route === 'documents') mountIntakeBar(container, ctx);
 +  const ids = (Array.isArray(items) ? items : []).map(item => item?.id)
 +    .filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id)).slice(0, 50);
 +  if (!ids.length) return;
-+  let result;
-+  try { result = await ctx.api(`/poc/approvals?ids=${ids.join('%2C')}`); } catch { return; }
-+  if (!ctx.isCurrent()) return;
-+  for (const slot of container.querySelectorAll('[data-approval-status]')) {
-+    const id = slot.closest('[data-document-id]')?.getAttribute('data-document-id');
-+    const entry = id ? result?.items?.[id] : null;
-+    if (entry) slot.replaceChildren(ctx.ui.tag(`审批：${entry.label}`, approvalTone(entry.status)));
++  let rounds = 0;
++  async function fill() {
++    if (!container.isConnected || !ctx.isCurrent()) return;
++    let result;
++    try { result = await ctx.api(`/poc/approvals?ids=${ids.join('%2C')}`); } catch { return; }
++    if (!ctx.isCurrent() || !container.isConnected) return;
++    for (const slot of container.querySelectorAll('[data-approval-status]')) {
++      const id = slot.closest('[data-document-id]')?.getAttribute('data-document-id');
++      const entry = id ? result?.items?.[id] : null;
++      if (!entry) continue;
++      slot.replaceChildren(...approvalChips(entry, ctx.ui));
++      if (entry.advice?.summary) slot.setAttribute('title', `AI 初审摘要：${entry.advice.summary}`);
++    }
++    rounds += 1;
++    if (needsPolling(result?.items) && rounds < 150) setTimeout(() => { void fill(); }, 4000);
 +  }
++  await fill();
++}
++
++// 单据池顶上的「模拟来单」：按模板生成一张新的虚构单据，系统自动发起 AI 初审（九安生产上是汇联易同步进来的新单据）
++function mountIntakeBar(container, ctx) {
++  if (container.querySelector('.poc-intake')) return;
++  const { element, button } = ctx.ui;
++  const select = element('select', { id: 'poc-intake-template', 'aria-label': '来单模板' }, element('option', { value: '' }, '正在读取模板…'));
++  const message = element('p', { class: 'quiet-note', 'aria-live': 'polite' });
++  const run = button('模拟来单', () => { void arrive(); }, { primary: true, iconName: 'document' });
++  async function arrive() {
++    if (!select.value) return;
++    run.disabled = true;
++    message.textContent = '正在来单…';
++    try {
++      const result = await ctx.api('/poc/intake', { method: 'POST', body: { template: select.value } });
++      ctx.ui.announce(`已来单 ${result.document.number}，系统已自动发起 AI 初审`);
++      if (ctx.isCurrent()) ctx.reload();
++    } catch (error) {
++      if (error.status === 401) { ctx.onAccessLost?.(error); return; }
++      message.textContent = ctx.ui.errorMessage(error);
++      run.disabled = false;
++    }
++  }
++  const bar = element('section', { class: 'poc-intake note-block', 'aria-label': '模拟来单' },
++    element('strong', {}, '模拟来单'),
++    element('span', {}, '按模板生成一张新的虚构单据放进单据池，系统自动跑九安预审和 AI 初审，建议出来后直接显示在卡片上，再由人工复核。'),
++    element('label', { for: 'poc-intake-template' }, '模板'), select, run, message);
++  container.prepend(bar);
++  void ctx.api('/poc/intake/templates').then(data => {
++    select.replaceChildren(...(data.items ?? []).map(item => element('option', { value: item.number }, `${item.number} · ${item.formName} · ${item.companyName}`)));
++  }).catch(error => { message.textContent = ctx.ui.errorMessage(error); });
 +}
 +
 +// ---------------------------------------------------------------------------
@@ -829,7 +894,7 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  }
 +  function render() {
 +    if (!live()) return;
-+    target.replaceChildren(panel('审批流', 'Agent 只给建议；通过或退回由审核员决定，复核人确认。', element('div', { class: 'poc-approval' },
++    target.replaceChildren(panel('审批流：AI 初审 + 人工复核', 'AI 只给初审建议；通过或退回由人工复核决定。', element('div', { class: 'poc-approval' },
 +      error ? element('div', { class: 'inline-message error', role: 'alert' }, ctx.ui.errorMessage(error)) : null,
 +      view ? approvalContent(view, { ctx, busy, act, draft }) : element('p', { class: 'quiet-note' }, '正在读取审批流…'))));
 +  }
@@ -843,12 +908,13 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  return [
 +    element('div', { class: 'poc-approval-head' },
 +      element('span', { class: 'poc-status', 'data-status': view.status }, tag(view.statusLabel, approvalTone(view.status))),
++      view.auto ? tag('来单自动发起', 'blue') : null,
 +      element('p', {}, nextStepText(view))),
++    adviceBlock(view, ctx),
 +    stepsList(view, ctx),
 +    view.precheck ? precheckLine(view.precheck, ctx) : null,
 +    view.status === 'ai_failed' && view.failure ? element('div', { class: 'note-block amber' },
-+      `${view.failure.stage === 'precheck' ? '九安预审' : 'Agent 建议'}未完成（错误码 ${view.failure.errorCode}）。${view.failure.message ?? ''}`) : null,
-+    adviceBlock(view, ctx),
++      `${view.failure.stage === 'precheck' ? '九安预审' : 'AI 初审'}未完成（错误码 ${view.failure.errorCode}）。${view.failure.message ?? ''}`) : null,
 +    decisionSummary(view, ctx),
 +    actionArea(view, options),
 +    timelineList(view, ctx),
@@ -858,13 +924,12 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +function nextStepText(view) {
 +  const acting = (view.actions ?? []).length > 0;
 +  switch (view.status) {
-+    case 'not_started': return acting ? '发起后先跑九安预审，再交给 Nexus Agent 给建议（通常 30–60 秒）。' : '等待审核员发起审批。';
++    case 'not_started': return acting ? '发起后先跑九安预审，再交给 AI 初审（通常 30–60 秒）。新来的单据会自动发起。' : '还没有发起。';
 +    case 'prechecking': return '九安正在预审：基础检查与规则试跑。';
-+    case 'ai_running': return 'Nexus Agent 正在分析，通常需要 30–60 秒，完成后这里会自动更新。';
-+    case 'ai_failed': return acting ? '可以重试，或转人工（不带 Agent 建议）。' : '等待审核员重试或转人工。';
-+    case 'pending_review': return acting ? '请结合 Agent 建议与单据依据做决定。' : '等待审核员做决定。';
-+    case 'pending_check_approve':
-+    case 'pending_check_return': return acting ? '请确认审核员的决定，或驳回给审核员。' : '等待复核人确认。';
++    case 'ai_running': return 'AI 初审中，通常需要 30–60 秒，完成后这里会自动更新。';
++    case 'ai_failed': return (view.timeline ?? []).some(entry => entry.action === 'auto_retry')
++      ? '系统已经自动重试过一次。可以再重试，或直接人工复核（不带 AI 初审建议）。' : '可以重试，或直接人工复核（不带 AI 初审建议）。系统会先自动重试一次。';
++    case 'pending_review': return acting ? '请结合 AI 初审建议与单据依据做人工复核：通过或退回。' : '等待人工复核。';
 +    case 'approved': return '审批已结束：已通过。';
 +    case 'returned': return '审批已结束：已退回。';
 +    case 'invalidated': return '单据版本已变化，原审批失效，可以重新发起。';
@@ -893,15 +958,16 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  const { element, tag, facts } = ctx.ui;
 +  const ai = view.ai;
 +  if (!ai) return null;
-+  if (ai.skipped) return element('div', { class: 'note-block' }, '已转人工：这次没有 Agent 建议。');
++  if (ai.skipped) return element('div', { class: 'note-block' }, '已转人工复核：这次没有 AI 初审建议。');
 +  const advice = ai.advice;
 +  if (!advice) return null;
 +  const list = (title, items) => (Array.isArray(items) && items.length
 +    ? element('div', {}, element('h4', {}, title), element('ul', {}, items.map(item => element('li', {}, item)))) : null);
 +  const tone = advice.modelRecommendation === 'RETURN_DRAFT' ? 'red' : advice.modelRecommendation === 'PASS_CANDIDATE' ? 'green' : 'amber';
-+  return element('section', { class: 'poc-advice', 'aria-label': 'Agent 建议' },
++  return element('section', { class: 'poc-advice', 'aria-label': 'AI 初审建议' },
++    element('h3', { class: 'poc-advice-title' }, 'AI 初审建议'),
 +    element('div', { class: 'poc-tags' },
-+      tag(`模型建议：${RECOMMENDATION[advice.modelRecommendation] ?? advice.modelRecommendation ?? '—'}`, tone),
++      tag(`AI 初审：${RECOMMENDATION[advice.modelRecommendation] ?? advice.modelRecommendation ?? '—'}`, tone),
 +      tag(`九安有效结论：${advice.effectiveOutcome === 'ATTENTION' ? '需关注' : '需人工审核'}`, 'blue'),
 +      tag(`风险：${RISK[advice.riskLevel] ?? '—'}`), tag(`模型自评把握：${CONFIDENCE[advice.confidence] ?? '—'}`)),
 +    advice.summary ? element('p', { class: 'poc-advice-summary' }, advice.summary) : null,
@@ -916,7 +982,7 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  const decision = view.decision;
 +  if (!decision) return null;
 +  return element('div', { class: 'note-block' },
-+    `${decision.by?.name ?? '审核员'}决定：${decision.decision === 'approve' ? '通过' : '退回'}${decision.disagreesWithAgent ? '（与 Agent 建议不一致）' : ''}。`,
++    `${decision.by?.name ?? '复核人'}人工复核：${decision.decision === 'approve' ? '通过' : '退回'}${decision.disagreesWithAgent ? '（与 AI 初审建议不一致）' : ''}。`,
 +    decision.reason ? element('p', {}, `理由：${decision.reason}`) : null,
 +    decision.returnNote ? element('p', { class: 'poc-pre' }, `退回说明：${decision.returnNote}`) : null);
 +}
@@ -926,11 +992,10 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  const { element, button } = ctx.ui;
 +  const actions = new Set(view.actions ?? []);
 +  if (actions.has('decide')) return decisionForm(view, options);
-+  if (actions.has('confirm') || actions.has('reject')) return checkForm(view, options);
 +  const buttons = [
-+    actions.has('start') ? button(view.status === 'invalidated' ? '重新发起审批' : '发起审批', () => void act('start'), { primary: true, disabled: busy, iconName: 'agent' }) : null,
++    actions.has('start') ? button(view.status === 'invalidated' ? '重新发起 AI 初审' : '发起 AI 初审', () => void act('start'), { primary: true, disabled: busy, iconName: 'agent' }) : null,
 +    actions.has('retry') ? button('重试 AI', () => void act('retry'), { primary: true, disabled: busy, iconName: 'sync' }) : null,
-+    actions.has('manual') ? button('转人工（不带 Agent 建议）', () => void act('manual'), { disabled: busy }) : null,
++    actions.has('manual') ? button('人工复核（不带 AI 初审建议）', () => void act('manual'), { disabled: busy }) : null,
 +  ].filter(Boolean);
 +  return buttons.length ? element('div', { class: 'poc-actions' }, buttons) : null;
 +}
@@ -946,12 +1011,12 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +  const note = element('textarea', { id: 'poc-return-note', rows: '6', maxlength: '2000', disabled: busy, on: { input: () => { draft.returnNote = note.value; } } });
 +  note.value = draft.returnNote ?? defaultReturnNote(advice);
 +  const noteField = element('div', { class: 'field', hidden: draft.decision !== 'return' },
-+    element('label', { for: 'poc-return-note' }, '退回说明（发给提单人；默认带出 Agent 列出的待补事项，可修改）'), note);
++    element('label', { for: 'poc-return-note' }, '退回说明（发给提单人；默认带出 AI 初审列出的待补事项，可修改）'), note);
 +  const hint = element('p', { class: 'quiet-note', 'aria-live': 'polite' });
-+  const submit = element('button', { type: 'submit', class: 'button primary', disabled: true }, busy ? '正在提交…' : '提交决定');
++  const submit = element('button', { type: 'submit', class: 'button primary', disabled: true }, busy ? '正在提交…' : '提交复核结果');
 +  function update() {
 +    noteField.hidden = draft.decision !== 'return';
-+    hint.textContent = draft.decision && requiresReason(draft.decision, advice?.modelRecommendation) ? '这项决定与 Agent 的建议不一致，请写明理由。' : '';
++    hint.textContent = draft.decision && requiresReason(draft.decision, advice?.modelRecommendation) ? '这项决定与 AI 初审建议不一致，请写明理由。' : '';
 +    submit.disabled = busy || !draft.decision;
 +  }
 +  update();
@@ -960,27 +1025,10 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +    if (!draft.decision || busy) return;
 +    void act('decide', { decision: draft.decision, reason: draft.reason.trim() || undefined, returnNote: draft.decision === 'return' ? note.value : undefined });
 +  } } },
-+    element('fieldset', { class: 'poc-choice' }, element('legend', {}, '审核员决定'),
++    element('fieldset', { class: 'poc-choice' }, element('legend', {}, '人工复核'),
 +      element('label', { for: 'poc-decision-approve' }, approve, '通过'), element('label', { for: 'poc-decision-return' }, giveBack, '退回')),
-+    element('div', { class: 'field' }, element('label', { for: 'poc-decision-reason' }, '理由（与 Agent 建议不一致时必填）'), reason),
++    element('div', { class: 'field' }, element('label', { for: 'poc-decision-reason' }, '理由（与 AI 初审建议不一致时必填）'), reason),
 +    noteField, hint, element('div', { class: 'poc-actions' }, submit));
-+}
-+
-+function checkForm(view, { ctx, busy, act, draft }) {
-+  const { element, button } = ctx.ui;
-+  const reason = element('textarea', { id: 'poc-check-reason', rows: '3', maxlength: '1000', disabled: busy, on: { input: () => { draft.checkReason = reason.value; } } });
-+  reason.value = draft.checkReason;
-+  const message = element('p', { class: 'form-error', role: 'alert' });
-+  const outcome = view.status === 'pending_check_approve' ? '已通过' : '已退回';
-+  return element('div', { class: 'poc-decision' },
-+    element('div', { class: 'field' }, element('label', { for: 'poc-check-reason' }, '驳回理由（驳回时必填）'), reason), message,
-+    element('div', { class: 'poc-actions' },
-+      button(`确认（结果为${outcome}）`, () => void act('confirm'), { primary: true, disabled: busy, iconName: 'check' }),
-+      button('驳回给审核员', () => {
-+        const why = draft.checkReason.trim();
-+        if (!why) { message.textContent = '驳回时请写明理由。'; reason.focus(); return; }
-+        void act('reject', { reason: why });
-+      }, { disabled: busy })));
 +}
 +
 +function timelineList(view, ctx) {

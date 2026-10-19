@@ -11,7 +11,7 @@ cd "$HERE"
 command -v pandoc >/dev/null || { echo "需要 pandoc：brew install pandoc" >&2; exit 1; }
 command -v mmdc >/dev/null || { echo "需要 mermaid-cli：npm install -g @mermaid-js/mermaid-cli" >&2; exit 1; }
 CHROME_PATH="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
-[[ -x "$CHROME_PATH" ]] || { echo "找不到 Chrome：$CHROME_PATH（用 CHROME_PATH 指定）" >&2; exit 1; }
+[[ -x "$CHROME_PATH" ]] || { echo "找不到 Chrome：${CHROME_PATH}（用 CHROME_PATH 指定）" >&2; exit 1; }
 
 # 清单：相对 docs/ 的路径。新增交付文档时加在这里。
 DOCS=(

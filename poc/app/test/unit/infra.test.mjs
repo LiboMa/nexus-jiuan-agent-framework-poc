@@ -76,7 +76,9 @@ test('在 macOS 上打包时不带 AppleDouble 与扩展属性（否则实例上
 
 test('shell 脚本里变量名后面不能紧跟中文等非 ASCII 字符（bash 会把它们算进变量名，set -u 下直接报错）；要写成 ${VAR}', async () => {
   for (const file of [infra('deploy.sh'), infra('destroy.sh'), infra('backup.sh'), infra('upgrade-instance.sh'), infra('bench-test.sh'), infra('bench/mysql-install.sh'),
-    infra('bench/bench-reset.sh'), infra('bench/bench-configure.sh'), fileURLToPath(new URL('../e2e/run.sh', import.meta.url))]) {
+    infra('bench/bench-reset.sh'), infra('bench/bench-configure.sh'), fileURLToPath(new URL('../e2e/run.sh', import.meta.url)),
+    fileURLToPath(new URL('../../../../docs/delivery/make-package.sh', import.meta.url)), fileURLToPath(new URL('../../../../docs/build-html.sh', import.meta.url)),
+    fileURLToPath(new URL('../../../../docs/delivery/patches/make-reference-patch.sh', import.meta.url)), fileURLToPath(new URL('../../../bench/build-jiuan.sh', import.meta.url))]) {
     const offenders = (await readFile(file, 'utf8')).split('\n').map((line, index) => [index + 1, line])
       .filter(([, line]) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]/.test(line));
     assert.deepEqual(offenders, [], file);
