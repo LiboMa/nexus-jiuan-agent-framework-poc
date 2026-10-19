@@ -1,0 +1,24 @@
+flowchart TB
+  subgraph web["Nexus 网页（本人登录）"]
+    direction LR
+    k1["① 个人设置 › API 密钥<br/>生成密钥 A（档位 builder）<br/>浏览器同时下载 operator 接入包"]
+    k2["② 个人设置 › API 密钥<br/>再生成密钥 B（只读档位即可）"]
+    k3["③ 互联中心 › 对外发布<br/>给这个发布签调用密钥"]
+  end
+  subgraph tool["编码工具（Claude Code · Codex · Kiro CLI）"]
+    direction LR
+    op["nexus-ai-operator<br/>装进技能目录 → login（密钥 A）<br/>建 Agent · 试用 · 建 A2A 发布"]
+    aa["agent-access<br/>装进技能目录 → login 应用<br/>nexus connect（密钥 B）"]
+    en["agent-access<br/>enable --key-stdin（调用密钥）<br/>invoke --task describe"]
+  end
+  app["九安 PoC<br/>andon-finance.tinyboat.blog"]
+  k1 --> op
+  op --> k3
+  k2 --> aa
+  k3 --> en
+  aa --> en
+  en e1@== 启用 · 调用测试 ==> app
+  e1@{ animate: true }
+  class k1,k2,k3 warn
+  class op,aa,en poc
+  class app jiuan

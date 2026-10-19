@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jiuan:agent:v1:task:first_review:1:input",
+  "title": "first_review v1 输入",
+  "description": "单据初审的输入：单据、对这张单据有效的已发布规则、原件摘录。放在信封的 input 里；单据编号、版本在信封的 context.subject 里。",
+  "type": "object",
+  "required": [
+    "document",
+    "rules",
+    "rulesFingerprint",
+    "evidence"
+  ],
+  "properties": {
+    "document": {
+      "$ref": "#/$defs/document"
+    },
+    "rules": {
+      "type": "array",
+      "maxItems": 60,
+      "description": "对这张单据有效的已发布规则：九安代码已按公司、单据类型、生效期筛过。可以是空表",
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    },
+    "rulesFingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "这批规则的指纹，规则一变就变"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "field": {
+      "type": "object",
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "required": [
+        "number",
+        "type",
+        "fields",
+        "lines"
+      ],
+      "properties": {
+        "companyName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "number": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "单据号"
+        },
+        "type": {
+          "enum": [
+            "employee_reimbursement",
+            "corporate_payment"
+          ],
+          "description": "员工报销 / 对公付款"
+        },
+        "submittedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "amount": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "value",
+            "currency"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]{1,4})?$"
+            },
+            "currency": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$"
+            }
+          }
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000,
+          "description": "事由"
+        },
+        "fields": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/field"
+          },
+          "description": "表头上其余字段，统一成「名称 + 值」。九安加字段时只往这里加，契约不变"
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "明细行，每行是一组「名称 + 值」",
+          "items": {
+            "type": "object",
+            "required": [
+              "fields"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "fields": {
+                "type": "array",
+                "maxItems": 60,
+                "items": {
+                  "$ref": "#/$defs/field"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": [
+        "ruleId",
+        "ruleVersion",
+        "name",
+        "kind",
+        "text",
+        "engine"
+      ],
+      "properties": {
+        "ruleId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,160}$"
+        },
+        "ruleVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "kind": {
+          "enum": [
+            "field_match",
+            "evidence_check",
+            "manual_check"
+          ],
+          "description": "字段核对 / 原件核验 / 人工判断类"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "规则原文：说明、依据、所需资料、比较基准、差异怎么处理，由九安拼好"
+        },
+        "engine": {
+          "description": "规则引擎的结论。只有 field_match 有，其余为 null",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "result",
+                "detail"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "result": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "not_applicable"
+                  ]
+                },
+                "detail": {
+                  "$ref": "#/$defs/text"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "status",
+        "files",
+        "truncated"
+      ],
+      "description": "原件的脱敏文字摘录。票据真伪已在上游验证，摘录只用来核对内容",
+      "properties": {
+        "status": {
+          "enum": [
+            "available",
+            "partial",
+            "not_acquired"
+          ]
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "为了放进一次调用的上限，九安截掉了一部分页文字"
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": [
+              "fileId",
+              "name",
+              "pages"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "fileId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "pages": {
+                "type": "array",
+                "maxItems": 30,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "page",
+                    "text"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "page": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 20000
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

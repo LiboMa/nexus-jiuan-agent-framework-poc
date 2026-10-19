@@ -1,0 +1,13 @@
+flowchart TD
+  ui["客户在规则库录入规则<br/>名称 · 层级 · 适用单据 · 检查方式<br/>依据 · 所需资料 · 比较基准 · 差异处理"]
+  draft["只能存草稿、本地试跑<br/>「尚未发布，不参与正式审批」"]
+  ctx["预审取规则 getContext<br/>rules: []（永远空）"]
+  engine["规则引擎试跑<br/>0 条规则"]
+  ai["AI 初审输入<br/>ruleResults：空<br/>规则原文：不发<br/>personalFocus：[]"]
+  out["输出：没有逐条判断<br/>发现回溯不到规则"]
+  ui --> draft
+  draft -. 断开：没有发布 .-> ctx
+  ctx --> engine --> ai --> out
+  class ui,engine poc
+  class draft,ctx risk
+  class ai,out warn

@@ -1,0 +1,11 @@
+{
+  "envelope": "jiuan.agent/v1",
+  "task": "first_review",
+  "taskVersion": 1,
+  "requestId": "6f1c2b9e-4d3a-4f7e-9a51-2c8d0e7b4a10",
+  "status": "declined",
+  "declined": {
+    "reason": "这是一张员工报销单，但请求里的规则全是对公付款的：路由表可能配错了。"
+  },
+  "agentVersion": "first-review-2026-10-19.1"
+}

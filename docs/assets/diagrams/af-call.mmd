@@ -1,0 +1,33 @@
+sequenceDiagram
+  autonumber
+  participant S as 九安 Agent 任务服务
+  participant G as 九安调用中间件<br/>连接器 ai-model
+  participant A as A2A 适配层<br/>providers/nexus-a2a.mjs
+  participant N as Nexus 网关
+  participant R as 某个 Agent
+  S->>S: 按路由表选发布；任务的组装器拼好 input
+  S->>G: agentTask(请求信封)（记在这个用法的平台卡片上）
+  G->>G: 暂停开关 · 额度 · 并发 · 时限 · 调用日志
+  G->>A: agentTask(请求信封, signal)
+  A->>N: message/stream · Bearer nxa_…<br/>文字 Part + 信封 DataPart（+ 文件 Part）
+  N->>R: 一轮对话
+  N-->>A: task（任务编号）· working
+  R-->>N: 回答
+  N-->>A: answer 分块 … 最后一块是全文
+  N-->>A: completed（final）
+  A->>A: 信封检查 + 任务检查（检查代码来自任务契约）
+  opt 检查不过
+    A->>N: 同一 contextId：列出问题，要求只回修正后的信封
+    N-->>A: 修正后的回答
+  end
+  opt 流在 final 之前断了
+    loop 每 3 秒，直到有结果或到时限
+      A->>N: tasks/get（historyLength 0）
+    end
+  end
+  opt 长任务到了时限
+    A-->>G: pending + 任务编号（稍后再收）
+  end
+  A-->>G: completed / declined + 任务编号、contextId、call_id、agentVersion
+  G-->>S: 结果（或 AI_* 错误码）
+  Note over A,N: 只有适配层知道 A2A；九安其余代码只认信封、任务契约和 AI_* 错误码

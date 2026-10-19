@@ -1,0 +1,27 @@
+flowchart TB
+  subgraph plugin["插件 @andon/nexus-agent-plugin（我们维护）"]
+    direction LR
+    srv["server<br/>审批流 · 我的 Nexus · 调用测试"]
+    prov["server/provider<br/>A2A 模型客户端"]
+    web["web<br/>Agent 页 · 审批卡片 · 调用面板"]
+  end
+  subgraph host["九安 v0.5.3（九安维护）"]
+    direction LR
+    start["scripts/start-analysis.mjs<br/>注册插件（S1，约 6 行）"]
+    provider["providers/ai-model.mjs<br/>模型接入口（S4，3 行）"]
+    front["public/analysis.js · analysis.html<br/>13 处补丁 + 1 处 HTML<br/>（或九安提供扩展钩子）"]
+    server["analysis-server.mjs<br/>platformRoutes：不改<br/>静态白名单（S2，1 行）"]
+    runtime["runtime-services<br/>modelClient 注入：不改"]
+    store["mysql-analysis-store<br/>键值状态：不改"]
+  end
+  srv -- "wrap(platformRoutes)" --> start
+  prov e1@== 委托 ==> provider
+  web -- 扩展钩子 / 补丁 --> front
+  start --> server
+  provider --> runtime
+  srv -. 持久化 .-> store
+  e1@{ animate: true }
+  class srv,prov,web poc
+  class runtime,store,server good
+  class start,provider warn
+  class front risk

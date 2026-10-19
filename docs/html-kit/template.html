@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>$pagetitle$</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1>$if(subtitle)$<span>$subtitle$</span>$endif$$title$</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>$date$</td></tr>
+$if(status)$    <tr><th scope="row">状态</th><td>$status$$if(stamp)$<span class="stamp">$stamp$</span>$endif$</td></tr>
+$endif$$if(scope)$    <tr><th scope="row">范围</th><td>$scope$</td></tr>
+$endif$$if(audience)$    <tr><th scope="row">读者</th><td>$audience$</td></tr>
+$endif$  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+$table-of-contents$
+</nav>
+<main id="main">
+$body$
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>$source$</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

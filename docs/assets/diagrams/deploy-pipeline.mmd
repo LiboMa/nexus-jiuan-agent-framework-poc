@@ -1,0 +1,20 @@
+flowchart TD
+  local["本机检查<br/>单元测试 209 · 命令行 6 · build-html.sh --check"]
+  review["评审：合并请求"]
+  deploy["deploy.sh --code-only<br/>测试 → 前端副本 → 打包上传 → SSM 让实例拉取、重启"]
+  gates["三道关<br/>① SSM 那一行是 Success（脚本不替你检查）<br/>② 健康检查 200<br/>③ 端到端测试全部通过（发布那次「跳过」算失败）"]
+  confirm["项目负责人确认"]
+  tag["推送 · 打标签 poc-YYYYMMDD-N · 写 CHANGELOG"]
+  rollback["回滚<br/>归档包 → releases/current.tgz → 重启"]
+  local e1@==> review e2@==> deploy e3@==> gates
+  gates -- 都过了 --> confirm
+  confirm e4@==> tag
+  gates -- 任何一道没过 --> rollback
+  e1@{ animate: true }
+  e2@{ animate: true }
+  e3@{ animate: true }
+  e4@{ animate: true }
+  class local,review,deploy poc
+  class gates gate
+  class confirm,tag good
+  class rollback risk

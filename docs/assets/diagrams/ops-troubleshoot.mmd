@@ -1,0 +1,11 @@
+flowchart LR
+  s(["审批停在「AI 初审失败」<br/>（系统已自动重试过一次）"]) --> code{"运行记录里<br/>的错误码"}
+  code -- AI_AUTH_INVALID --> k["系统里找不到能用的调用密钥<br/>在 Agent 页启用「九安审核AI」<br/>或「换密钥」→ 重试 AI"]
+  code -- AI_UNAVAILABLE --> u["Nexus 超时、5xx 或预算用完<br/>恢复后点「重试 AI」，或转人工"]
+  code -- AI_RATE_LIMIT --> rl["Nexus 限流：稍后重试"]
+  code -- AI_REQUEST_INVALID --> ri["请求不合规：看 detail<br/>（附件超限、内容残缺）"]
+  code -- 校验失败 --> v["输出没过九安校验<br/>看原始返回 → 改提示词"]
+  class s warn
+  class code gate
+  class k risk
+  class u,rl,ri,v poc

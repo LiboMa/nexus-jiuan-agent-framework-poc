@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Agent 自动发现与注册机制：九安 PoC × Nexus-AI v0.3.28</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --good:#1E7F5C; --good-wash:#E3F2EB; --bad:#A3241C; --bad-wash:#F7E4E2; --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:44em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.84em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;word-break:break-word}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1120px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：沿用上一份报告的公文表头 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:30px 34px 26px}
+.form h1{margin:0;text-align:center;font:700 30px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 16px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:22px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.lede{font-size:19px;line-height:1.75;margin:24px 0 0;max-width:42em}
+.lede b{font-weight:600}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:6px;font-size:14px;line-height:1.7}
+
+/* 小节 */
+.sec{margin-top:76px}
+.sec > h2{font:700 25px/1.4 var(--sans);margin:0 0 8px;display:flex;align-items:baseline;gap:12px}
+.sec > h2 .n{font:600 15px/1 var(--sans);color:var(--ink-3);font-variant-numeric:tabular-nums;border:1px solid var(--line);padding:4px 7px;border-radius:2px;background:var(--sheet)}
+.sec > p,.sec > ul,.sec > ol{max-width:var(--measure)}
+.sub{color:var(--ink-2);margin:0}
+h3{font:600 18px/1.5 var(--sans);margin:30px 0 8px}
+.note{font-size:14px;color:var(--ink-3)}
+
+/* 第 2 节：从来源到页面的流向图 */
+.flow{display:grid;grid-template-columns:minmax(0,1.25fr) 44px minmax(0,1fr) 44px minmax(0,1fr);align-items:stretch;margin-top:24px}
+.col{background:var(--sheet);border:1px solid var(--line);padding:16px 18px}
+.col h4{margin:0 0 10px;font:600 15px/1.4 var(--sans);color:var(--ink-2);letter-spacing:.04em}
+.col ol{margin:0;padding:0;list-style:none;display:grid;gap:10px}
+.col li{border:1px solid var(--hair);border-left:4px solid var(--accent-soft);padding:8px 10px;font-size:14.5px;line-height:1.6;background:#fff}
+.col li b{display:block;font-weight:600}
+.col li.weak{border-left-color:var(--warn)}
+.col li small{color:var(--ink-3);font-size:12.5px}
+.arrow{display:flex;align-items:center;justify-content:center;color:var(--ink-3);font-size:22px}
+.arrow::before{content:"→"}
+.trigger{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;font-size:14px}
+.chip{border:1px solid var(--line);background:var(--sheet);padding:2px 10px;border-radius:999px}
+.chip.no{border-color:var(--bad);color:var(--bad);background:var(--bad-wash)}
+.chip.ok{border-color:var(--good);color:var(--good);background:var(--good-wash)}
+
+/* 表格 */
+.tbl{width:100%;border-collapse:collapse;margin-top:18px;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+.tbl th,.tbl td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+.tbl thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600}
+.tbl tbody th{font-weight:600;white-space:nowrap}
+.tbl td code{white-space:nowrap}
+.tbl .rec{background:var(--accent-wash)}
+.tbl .rec th:first-child::after{content:"推荐";margin-left:8px;font-size:12px;color:var(--seal);border:1px solid var(--seal);padding:0 4px;border-radius:2px}
+.mark-good{color:var(--good);font-weight:600}
+.mark-bad{color:var(--bad);font-weight:600}
+.mark-warn{color:var(--warn);font-weight:600}
+.wrap{overflow-x:auto}
+
+/* 第 3 节：卡点 */
+.gaps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:20px}
+.gap{background:var(--sheet);border:1px solid var(--line);border-top:4px solid var(--seal);padding:14px 16px}
+.gap h4{margin:0 0 6px;font:600 16px/1.5 var(--sans)}
+.gap p{margin:0;font-size:14.5px;line-height:1.7;color:var(--ink-2)}
+
+/* 第 4 节：三条身份线 */
+.lanes{display:grid;gap:12px;margin-top:20px}
+.lane{display:grid;grid-template-columns:9em minmax(0,1fr) 9em;align-items:center;gap:0}
+.lane .end{background:var(--sheet);border:1px solid var(--line);padding:10px 12px;text-align:center;font-weight:600;font-size:15px}
+.lane .wire{position:relative;border-top:2px solid var(--accent);margin:0 -1px;text-align:center}
+.lane .wire span{position:relative;top:-14px;background:var(--paper);padding:0 10px;font-size:14px;color:var(--ink-2)}
+.lane.user .wire{border-top-style:dashed;border-color:var(--good)}
+.principles{margin-top:18px}
+
+/* 第 6 节：注册泳道 */
+.swim th[scope=row]{font-variant-numeric:tabular-nums;color:var(--ink-3);width:2.5em;text-align:center}
+.swim td.act{background:#fff}
+.swim td.idle{background:#F3F5F8}
+.swim td.free::after{content:"不计费";display:inline-block;margin-left:8px;font-size:11.5px;line-height:1.6;color:var(--good);border:1px solid var(--good);padding:0 4px;border-radius:2px;white-space:nowrap}
+
+/* 第 7 节：工作流对比 */
+.compare{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:20px}
+.stage{background:var(--sheet);border:1px solid var(--line);padding:14px 16px}
+.stage h4{margin:0;font:600 16px/1.5 var(--sans)}
+.stage .count{margin:2px 0 10px;font-size:13.5px;color:var(--ink-3)}
+.stage ol{margin:0;padding-left:1.3em;font-size:14px;line-height:1.75}
+.stage li.manual{color:var(--bad)}
+.stage li.manual::after{content:"（手动）";font-size:12.5px}
+.stage li.gone{color:var(--ink-3);text-decoration:line-through}
+.stage li.gone::after{content:"（去掉）";display:inline-block;margin-left:2px;font-size:12.5px;text-decoration:none}
+
+.refs td:first-child{white-space:nowrap}
+.refs code{font-size:.8em}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .flow{grid-template-columns:1fr}
+  .arrow{height:34px}
+  .arrow::before{content:"↓"}
+  .gaps,.compare{grid-template-columns:1fr}
+  .lane{grid-template-columns:6.5em minmax(0,1fr) 6.5em}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+  .refs td:first-child{white-space:normal}
+}
+@media print{
+  body{background:#fff}
+  .page{max-width:none;padding:0}
+  .sec{break-inside:avoid-page}
+  .skip{display:none}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安 PoC × Nexus-AI v0.3.28</span>Agent 自动发现与注册机制</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-17</td><th scope="row">范围</th><td>andon-finance.tinyboat.blog（PoC）与 nxs-beine1013.tinyboat.blog（Nexus）</td></tr>
+    <tr><th scope="row">依据</th><td colspan="3">PoC 源码（<code>audit-nexus/poc/app/</code>）与 Nexus 源码（Nexus-AI 仓库，v0.3.28），逐行核对；附在文末</td></tr>
+    <tr><th scope="row">状态</th><td colspan="3">第 1–2 节写的是改版前的样子；第 3–8 节是设计 v3（按你定的交互方式），已批准，第一期 2026-10-17 已实现<span class="stamp">已实现</span></td></tr>
+  </table>
+  <p class="lede">现在的「自动展示」，靠的是 <b>REST 列表加本机配置的调用密钥</b>。A2A 只在已经知道发布编号以后才派得上用场：读名片和调用。按你定的方式改：<b>每个用户用自己的 API 密钥连接 Nexus，看到自己的发布，自己挑 Agent、填调用密钥来启用</b>。启用时当场验证，启用后立即可用；在 Nexus 上新发布或改了 Agent，刷新就能看到。不改文件，不部署，也不重启。</p>
+</header>
+
+<main id="main">
+
+<section class="sec" id="now">
+  <h2><span class="n">1</span>现在怎么自动展示</h2>
+  <p class="sub">PoC 服务端在两个时机取数：启动时，以及有人点「刷新」时。浏览器打开「Nexus Agent」页时，读的只是服务端的快照。</p>
+  <div class="flow" role="group" aria-label="从来源到页面的流向">
+    <div class="col">
+      <h4>来源</h4>
+      <ol>
+        <li><b>① REST：我的发布</b>operator CLI 加 EC2 的 API 密钥，<code>GET /api/v2/publications</code>，返回本人的发布，加上分享给我的发布<br><small>catalog.mjs:80-104 · publication_service.py:278-298</small></li>
+        <li><b>② 本机调用密钥</b><code>secrets.env</code> 里的 <code>NEXUS_A2A_KEY_&lt;发布编号&gt;</code><br><small>secrets.mjs:51-55 · keys.mjs</small></li>
+        <li><b>③ A2A 名片（公开）</b><code>/a2a/&lt;发布编号&gt;/.well-known/agent-card.json</code>，只对有密钥的发布读取<br><small>catalog.mjs:115-124 · a2a_endpoint.py:383-395</small></li>
+        <li class="weak"><b>④ 能力清单（按需）</b>经 A2A 发 <code>{"task":"describe"}</code>，要在页面上点按钮<br><small>nexus-invoke.js:326-333</small></li>
+      </ol>
+    </div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="col">
+      <h4>PoC 服务端目录</h4>
+      <ol>
+        <li><b>合并</b>先放 REST 读到的；再把有密钥、但 REST 里没有的补进来，标成「未从 Nexus 读取」<br><small>catalog.mjs:106-114</small></li>
+        <li><b>能不能调用</b>(状态是 active 且 A2A 就绪，或者只在本机配置) 且有调用密钥<br><small>catalog.mjs:125-130</small></li>
+        <li><b>A2A 地址必须同源</b>不同源就改用 Nexus 自己的地址，调用密钥不会发到别处<br><small>catalog.mjs:17-21</small></li>
+      </ol>
+    </div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="col">
+      <h4>页面</h4>
+      <ol>
+        <li><b>补丁接入九安前端</b>路由、导航、取数与渲染<br><small>build-public.mjs:59-80</small></li>
+        <li><b>读快照</b><code>GET /poc/nexus/agents</code><br><small>routes.mjs:24-26 · nexus-poc.js:356</small></li>
+        <li><b>发布卡片与调用测试</b>只有能调用的发布，按钮才可以点<br><small>nexus-poc.js:433 · nexus-invoke.js:164-175</small></li>
+      </ol>
+    </div>
+  </div>
+  <div class="trigger" aria-label="触发时机">
+    <span class="chip ok">服务启动 server.mjs:50</span>
+    <span class="chip ok">点「刷新」routes.mjs:29-34</span>
+    <span class="chip no">没有定时刷新</span>
+    <span class="chip no">打开页面不会刷新</span>
+    <span class="chip no">审批流用哪个 Agent 写死在 server.mjs:36</span>
+  </div>
+</section>
+
+<section class="sec" id="gaps">
+  <h2><span class="n">2</span>卡在哪</h2>
+  <div class="gaps">
+    <div class="gap"><h4>A2A 本身没有目录</h4><p>名片要先知道地址才能读，A2A 协议里没有「列出我的 Agent」的标准接口。Nexus 的 MCP 也一样，每个发布一个地址，地址下只有一个 <code>ask</code>。所以「有哪些 Agent」只能问 REST。</p></div>
+    <div class="gap"><h4>程序拿不到调用密钥</h4><p>签发调用密钥只认网页登录的本人，Operator 用的 API 密钥会被拒（access_credential_service.py:283-286）。所以每个新 Agent 都要人工签发、交接、写文件、部署。</p></div>
+    <div class="gap"><h4>身份对不上</h4><p>列表是按 EC2 那把 API 密钥的主人（admin）读的。九安的所有用户看到同一份列表，和他们自己是谁无关。</p></div>
+  </div>
+</section>
+
+<section class="sec" id="identity">
+  <h2><span class="n">3</span>三条身份线</h2>
+  <p class="sub">应用用户和 Nexus 用户的对应关系，就是「这把 API 密钥的主人」。读列表和调用用的是两把不同的密钥，互相独立。</p>
+  <div class="lanes">
+    <div class="lane user"><div class="end">应用用户</div><div class="wire"><span>九安登录（PoC 是口令；生产是钉钉）</span></div><div class="end">应用</div></div>
+    <div class="lane"><div class="end">应用用户</div><div class="wire"><span>自己的 API 密钥 nxc_：读出我的发布，加上分享给我的发布</span></div><div class="end">Nexus</div></div>
+    <div class="lane"><div class="end">应用</div><div class="wire"><span>每个启用的发布一把 A2A 调用密钥 nxa_，由用户填写，加密保存</span></div><div class="end">发布</div></div>
+  </div>
+  <ul class="principles">
+    <li>浏览器只在填写时经手密钥一次；服务端不回显密钥，页面上只显示指纹。</li>
+    <li>每个用户有独立的 CLI 凭证目录和启用清单，看不到、也用不了别人的。</li>
+    <li>断开 Nexus 连接，已经启用的 Agent 照样能用；停用某个 Agent，也不影响列表。</li>
+    <li>Nexus 只认发布者，费用也记在发布者名下；「谁调用的」由应用记在运行记录里。</li>
+  </ul>
+</section>
+
+<section class="sec" id="options">
+  <h2><span class="n">4</span>配置文件、注册，还是用户自己启用</h2>
+  <div class="wrap">
+  <table class="tbl">
+    <thead><tr><th scope="col">方案</th><th scope="col">怎么做</th><th scope="col">谁看得到哪些 Agent</th><th scope="col">闭环</th><th scope="col">密钥在哪</th><th scope="col">要改 Nexus</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">A 配置文件自动同步</th><td>继续改 <code>secrets.env</code>，同步到实例后重新读取</td><td>所有人看同一份</td><td class="mark-bad">不完整：改文件、同步都靠手工</td><td>本机、构件桶、实例</td><td>不用</td></tr>
+      <tr><th scope="row">B1 管理员统一注册（v1 草案）</th><td>EC2 用一把管理员 API 密钥列出 Agent，由管理员逐个注册</td><td>所有人看同一份</td><td class="mark-good">完整</td><td>实例（加密）</td><td>不用</td></tr>
+      <tr class="rec"><th scope="row">B2 用户自己连接并启用（你定的）</th><td>用户填自己的 API 密钥，看到自己的发布；挑 Agent、填调用密钥来启用</td><td class="mark-good">按自己的 Nexus 身份</td><td class="mark-good">完整：只差在网页上签发调用密钥</td><td>实例，按用户分开加密保存</td><td>不用</td></tr>
+      <tr><th scope="row">C Nexus 原生</th><td>Skills 或程序签发调用密钥，或者换取短期令牌</td><td>按身份</td><td class="mark-good">完整，全自动</td><td>不保存长期密钥</td><td class="mark-warn">要</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>启动必需的东西放在配置文件里：账号口令，以及新增的调用密钥加密密钥 <code>REGISTRY_KEY</code>。Agent 的接入，由用户自己在页面上连接、启用。</p>
+</section>
+
+<section class="sec" id="register">
+  <h2><span class="n">5</span>启用怎么闭环</h2>
+  <p class="sub">连接只做一次：填自己的 API 密钥，应用用 CLI 登录，执行 <code>whoami</code>，再读出发布列表。之后每启用一个 Agent，过程如下：</p>
+  <div class="wrap">
+  <table class="tbl swim">
+    <thead><tr><th scope="col">#</th><th scope="col">用户（Agent 开发者）</th><th scope="col">应用服务端</th><th scope="col">Nexus</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">1</th><td class="act">在「我的已发布 Agent」里点「启用」，填入调用密钥</td><td class="idle"></td><td class="idle"></td></tr>
+      <tr><th scope="row">2</th><td class="idle"></td><td class="act">确认这个发布在我的列表里，A2A 地址和 Nexus 同源</td><td class="idle"></td></tr>
+      <tr><th scope="row">3</th><td class="idle"></td><td class="act">读 A2A 名片</td><td class="act free">发布可调用、A2A 打开、所有者和 Agent 都可用时，才返回名片</td></tr>
+      <tr><th scope="row">4</th><td class="idle"></td><td class="act">用这把密钥发 <code>tasks/get</code>，任务编号随机生成</td><td class="act free">先认证、再分发（a2a_endpoint.py:528）：返回「任务不存在」说明密钥有效，返回 401 说明无效</td></tr>
+      <tr><th scope="row">5</th><td class="idle"></td><td class="act">AES-256-GCM 加密，存进这个用户的启用清单，写留痕</td><td class="idle"></td></tr>
+      <tr><th scope="row">6</th><td class="idle"></td><td class="act">读能力清单（默认勾选）</td><td class="act">运行一轮 describe，约 0.03 美元</td></tr>
+      <tr><th scope="row">7</th><td class="act">卡片变成「已启用」，调用测试里立即出现</td><td class="act">刷新这个用户的视图</td><td class="idle"></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li><b>迭代</b>：在 Nexus 上新发布的 Agent，刷新后出现在列表里。改了的 Agent，发布开着「跟随最新版本」就立即生效；版本号变了，卡片上提示「重新读能力清单」。</li>
+    <li><b>换密钥、停用</b>：都由用户自己在卡片上操作。换新密钥要验证通过才会替换，同时提醒去 Nexus 停用旧的。</li>
+    <li><b>系统功能</b>：审批流用哪个 Agent 仍由运维配置，在调用测试里显示成「系统提供」。</li>
+  </ul>
+</section>
+
+<section class="sec" id="workflow">
+  <h2><span class="n">6</span>开发者的步骤怎么变</h2>
+  <div class="compare">
+    <div class="stage"><h4>现在</h4><p class="count">10 步，其中 6 步要手动或半自动，3 步要碰到密钥</p>
+      <ol>
+        <li>建 Agent（Operator）</li><li>平台内试用</li><li>建发布</li>
+        <li class="manual">签发调用密钥（网页）</li><li class="manual">把密钥交给运维</li><li class="manual">写进 secrets.env</li>
+        <li class="manual">deploy.sh，服务重启</li><li>等刷新后被发现</li><li class="manual">手动读能力清单</li><li class="manual">改栈参数再部署，才能接入审批</li>
+      </ol></div>
+    <div class="stage"><h4>B2：用户自己连接并启用</h4><p class="count">只剩签发、连接（一次）、启用三步要手动，都不用部署</p>
+      <ol>
+        <li>建 Agent（Operator）</li><li>用 A2A 试用（try-agent）</li><li>建发布</li>
+        <li class="manual">签发调用密钥（网页）</li><li class="manual">连接 Nexus（只做一次）</li><li class="manual">在列表里启用</li>
+        <li class="gone">写文件</li><li class="gone">部署重启</li>
+        <li>立即可用，能力清单已读好</li><li>改了 Agent，刷新就是新版本</li>
+      </ol></div>
+    <div class="stage"><h4>C：Nexus 补齐之后</h4><p class="count">0 步手动</p>
+      <ol>
+        <li>Skills：构建 → 发布 → 签发 → 启用</li><li>应用按身份列出</li><li>加载、测试、迭代</li>
+      </ol></div>
+  </div>
+</section>
+
+<section class="sec" id="tools">
+  <h2><span class="n">7</span>以后：主入口是编码工具</h2>
+  <p class="sub">Agent 的创建、更新和启用，以后主要在 Claude Code、Codex 或 Kiro CLI 里用自然语言完成，页面留给查看和兜底。所以这一期先把应用接口定成稳定的约定 <code>agent-access-v1</code>，页面、命令行和编码工具共用这一套。</p>
+  <div class="wrap">
+  <table class="tbl">
+    <thead><tr><th scope="col">你在编码工具里说</th><th scope="col">Skill</th><th scope="col">调用的接口</th></tr></thead>
+    <tbody>
+      <tr><td>「在 Nexus 上建一个审批知识 Agent」</td><td>nexus-ai-operator（已有）</td><td>Nexus：建 Agent、写提示词、建发布</td></tr>
+      <tr><td>「给它签一把调用密钥」</td><td>nexus-ai-operator</td><td>要等 Nexus 支持方案 B；今天只能在网页上签</td></tr>
+      <tr><td>「在九安 PoC 里启用它」</td><td>agent-access（新，<a href="specs/2026-10-17-agent-access-skills-design.md">Skills 设计</a>）</td><td>应用：<code>POST /me/agents/:id/enable</code></td></tr>
+      <tr><td>「测一下」「改一下再测」</td><td>两个 Skill 配合</td><td>Nexus：改提示词；应用：重新启用、调用测试</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>这一期先提供命令行 <code>skills/agent-access/scripts/agent_access.py</code>，有 <code>status</code>、<code>connect</code>、<code>enable</code>、<code>disable</code> 四个子命令，密钥只经标准输入传入。编码工具现在就能直接调用它。以后会预留「应用个人令牌」（<code>afp_</code>），用来代替口令登录。</p>
+</section>
+
+<section class="sec" id="open">
+  <h2><span class="n">8</span>我先替你定了的</h2>
+  <p class="sub">不同意的话请指出来。</p>
+  <ol>
+    <li>调用测试里同时列出「系统提供」的审批 Agent，所有人都能测试。</li>
+    <li>调用记录里，每个用户只看到自己的调用，以及审批流的调用。</li>
+    <li>启用时默认读一次能力清单，约 0.03 美元，可以取消勾选。</li>
+    <li>连接和启用都保存在实例的磁盘上，这一期不做备份；只有实例被替换才会丢。</li>
+    <li>断开 Nexus 连接时，不自动停用已经启用的 Agent。</li>
+  </ol>
+</section>
+
+<section class="sec" id="refs">
+  <h2><span class="n">9</span>核对过的代码位置</h2>
+  <div class="wrap">
+  <table class="tbl refs">
+    <thead><tr><th scope="col">位置</th><th scope="col">做什么</th></tr></thead>
+    <tbody>
+      <tr><td>PoC <code>server.mjs:25-26、28-31、36、50</code></td><td>读调用密钥；建目录；审批流用的发布；启动时刷新</td></tr>
+      <tr><td>PoC <code>nexus/cli.mjs:19-27</code></td><td>以子进程调用 operator</td></tr>
+      <tr><td>PoC <code>nexus/catalog.mjs:67-78</code></td><td>连接 Nexus；没连上时用 API 密钥登录一次</td></tr>
+      <tr><td>PoC <code>nexus/catalog.mjs:80-104</code></td><td>REST 列表：我的发布与 Agent</td></tr>
+      <tr><td>PoC <code>nexus/catalog.mjs:106-130</code></td><td>合并本机配置的发布；读名片；算能不能调用</td></tr>
+      <tr><td>PoC <code>nexus/routes.mjs:24-34</code></td><td>列表与刷新接口</td></tr>
+      <tr><td>PoC <code>scripts/build-public.mjs:59-80</code></td><td>接入九安前端的补丁</td></tr>
+      <tr><td>PoC <code>public-src/nexus-poc.js:356-375、390-396、433</code></td><td>取数与渲染；刷新按钮；发布卡片</td></tr>
+      <tr><td>PoC <code>public-src/nexus-invoke.js:164-175、326-333</code></td><td>名片文字与可调用的发布；能力清单</td></tr>
+      <tr><td>Nexus <code>api/v2/services/publication_service.py:278-298</code></td><td>列出本人的发布，加上分享给我的发布</td></tr>
+      <tr><td>Nexus <code>api/v2/services/access_credential_service.py:283-286</code></td><td>只有网页登录的本人能签发调用密钥</td></tr>
+      <tr><td>Nexus <code>nexus_utils/publication_gateway/a2a_endpoint.py:383-395、528</code></td><td>名片的数据源；先认证再分发</td></tr>
+      <tr><td>Nexus <code>nexus_utils/publication_gateway/app.py:150</code></td><td>名片路由（公开）</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+</main>
+<footer>相关文档：<a href="specs/2026-10-17-agent-registry-design.md">Agent 注册与发现：设计</a> · <a href="agent-developer-workflow.md">开发者工作流</a> · <a href="architecture.md">现有架构</a>。全部数据虚构，仅用于 PoC。</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,20 @@
+flowchart TB
+  subgraph pm["项目负责人"]
+    direction LR
+    pm1["交付包指南"] --> pm2["交接文档 §1 · §6"] --> pm3["代码评审 §1 · §4"] --> pm4["验收签收"]
+  end
+  subgraph dev["应用开发"]
+    direction LR
+    d1["交接文档"] --> d1s["Skills 配置指南"] --> d2["架构、模块与工作流"] --> d3["并入九安"] --> d4["部署与迭代规范"] --> d5["跑测试 · 走一遍页面"]
+  end
+  subgraph ops["运维 / 值班"]
+    direction LR
+    o1["交接文档 §2 · §5"] --> o2["运维与后续迭代"] --> o3["回滚 §6"] --> o4["练一次部署和回滚"]
+  end
+  subgraph agent["Agent 开发"]
+    direction LR
+    a1["Skills 配置指南"] --> a1w["开发者工作流"] --> a2["知识 Agent 说明"] --> a3["接入新 Agent"] --> a4["改提示词 · 调用测试"]
+  end
+  pm ~~~ dev ~~~ ops ~~~ agent
+  class pm1,d1,o1,a1 nexus
+  class pm4,d5,o4,a4 good

@@ -1,0 +1,35 @@
+flowchart TB
+  pkg["andon-finance-poc-delivery-日期.tar.gz<br/>+ .sha256 · 包内 MANIFEST.txt · PACKAGE-INFO.txt"]
+  subgraph code["代码与测试"]
+    direction TB
+    app["poc/app/<br/>服务端 · 测试台组合根 · 前端扩展 · 示例附件 · 单元与端到端测试"]
+    bench["poc/bench/<br/>build-jiuan.sh：九安副本 + 补丁 + mysql2"]
+    contract["contract/<br/>Agent 接入框架的契约"]
+    infra["poc/infra/<br/>模板 · deploy.sh · 备份 · 换型 · 测试台脚本（不含 secrets.env）"]
+    skills["skills/agent-access/<br/>命令行 agent_access.py + 测试"]
+    ka["knowledge-agent/<br/>提示词 v2（当前）· v1"]
+    tools["poc/tools/ · poc/README.md"]
+  end
+  subgraph docsg["文档与证据"]
+    direction TB
+    delivery["docs/delivery/<br/>交付文档 md + html · 参考补丁 · 打包脚本"]
+    assets["docs/assets/<br/>图（.mmd 源 + .svg）· 线上截图"]
+    rest["docs/ 其余<br/>架构 · 设计 · 计划 · 历次评估 · build-html.sh"]
+    ev["evidence/<br/>端到端测试截图 · 测试台升级记录"]
+  end
+  subgraph outg["不在包里，另行交接"]
+    direction TB
+    o1["secrets.env（含测试台密钥）：当面交接"]
+    o2["九安开发包：按版本号从九安取"]
+    o3["~/.nexus：接手人用自己的"]
+    o4["实例上的账号数据与 MySQL：留在实例"]
+  end
+  pkg ==> code
+  pkg ==> docsg
+  pkg -.-> outg
+  app ~~~ bench ~~~ contract ~~~ infra ~~~ skills ~~~ ka ~~~ tools
+  delivery ~~~ assets ~~~ rest ~~~ ev
+  o1 ~~~ o2 ~~~ o3 ~~~ o4
+  class pkg nexus
+  class app,bench,contract,infra,skills,ka,tools,delivery,assets,rest,ev poc
+  class o1,o2,o3,o4 risk

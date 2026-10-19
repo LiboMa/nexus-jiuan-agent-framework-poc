@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  andon-finance PoC: Jiuan audit platform (in-memory store, fictitious data) + Nexus agents over A2A.
+  One EC2 instance in the Nexus VPC public subnet, exposed only through CloudFront (andon-finance.tinyboat.blog).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0e6ea1709661ddb1e
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0dda59910e53ee804
+  DomainName:
+    Type: String
+    Default: andon-finance.tinyboat.blog
+  OriginDomainName:
+    Type: String
+    Default: andon-finance-origin.tinyboat.blog
+    Description: Name CloudFront uses to reach the instance (A record to the Elastic IP)
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Default: Z02657523IKMDPFJE34YX
+  CertificateArn:
+    Type: String
+    Default: arn:aws:acm:us-east-1:533267047935:certificate/58547364-f524-4695-a3b8-3e990c6263b1
+  CloudFrontPrefixListId:
+    Type: String
+    Default: pl-3b927c52
+    Description: com.amazonaws.global.cloudfront.origin-facing in us-east-1
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux 2023 x86_64 AMI. deploy.sh resolves the latest one when the stack is created and keeps it afterwards, so stack updates do not replace the instance.
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t3.large]
+  AppPort:
+    Type: Number
+    Default: 4180
+    MinValue: 1024
+    MaxValue: 65535
+  NexusOrigin:
+    Type: String
+    Default: https://nxs-beine1013.tinyboat.blog
+  AdvisoryPublicationId:
+    Type: String
+    Default: pub_5c53e70d8dc7ddea
+    AllowedPattern: '^pub_[A-Za-z0-9_-]{4,80}$'
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-archived-releases
+            Status: Enabled
+            Prefix: releases/archive/
+            ExpirationInDays: 14
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: andon-finance-poc-runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadReleasesAndSecrets
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub '${ArtifactBucket.Arn}/releases/*'
+                  - !Sub '${ArtifactBucket.Arn}/secrets/secrets.env'
+              # AmazonSSMManagedInstanceCore allows ssm:GetParameter(s) on *. The app reads no parameters (keys come from
+              # secrets.env), and this internet-facing host runs customer code, so deny every parameter read.
+              - Sid: DenyParameterReads
+                Effect: Deny
+                Action: [ssm:GetParameter, ssm:GetParameters, ssm:GetParametersByPath, ssm:GetParameterHistory]
+                Resource: '*'
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: andon-finance PoC - app port only from the CloudFront origin-facing prefix list; no SSH
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
+          SourcePrefixListId: !Ref CloudFrontPrefixListId
+          Description: CloudFront origin-facing
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: Nexus, SSM, S3 and package repositories
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          SubnetId: !Ref SubnetId
+          GroupSet: [!Ref AppSecurityGroup]
+          AssociatePublicIpAddress: true
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: { VolumeSize: 16, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+      Tags:
+        - { Key: Name, Value: andon-finance-poc }
+        - { Key: project, Value: andon-finance-poc }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # andon-finance PoC instance setup. cloud-init runs this once, at first boot; editing it later only stops and starts
+          # the instance. deploy.sh rewrites /etc/andon-finance/env from the stack parameters on every deploy.
+          set -euxo pipefail
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if dnf install -y nodejs24 python3 tar gzip; then break; fi
+            sleep 15
+          done
+          /usr/bin/node-24 --version
+          id andon >/dev/null 2>&1 || useradd --system --home-dir /var/lib/andon-finance --create-home --shell /sbin/nologin andon
+          install -d -o root -g root -m 0755 /opt/andon-finance /etc/andon-finance
+          install -d -o andon -g andon -m 0700 /var/lib/andon-finance /var/lib/andon-finance/nexus
+          cat > /etc/andon-finance/env <<'ENV'
+          POC_ORIGIN=https://${DomainName}
+          POC_PORT=${AppPort}
+          POC_BIND=0.0.0.0
+          POC_BUCKET=${ArtifactBucket}
+          AWS_REGION=${AWS::Region}
+          POC_SECRETS_FILE=/etc/andon-finance/secrets.env
+          NEXUS_ORIGIN=${NexusOrigin}
+          NEXUS_ADVISORY_PUBLICATION=${AdvisoryPublicationId}
+          NEXUS_HOME=/var/lib/andon-finance/nexus
+          NEXUS_OPERATOR=/opt/andon-finance/current/operator/scripts/nexus.py
+          JIUAN_CODE_DIR=/opt/andon-finance/current/jiuan
+          POC_PUBLIC_DIR=/opt/andon-finance/current/app/public
+          ENV
+          chmod 0644 /etc/andon-finance/env
+          cat > /usr/local/bin/andon-finance-fetch <<'FETCH'
+          #!/bin/bash
+          # Runs before every service start: install the latest release if it downloads, keep the current one if it does not,
+          # and fail (systemd retries every 10 s) only when no release exists yet.
+          set -euo pipefail
+          . /etc/andon-finance/env
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          if aws s3 cp "s3://$POC_BUCKET/releases/current.tgz" "$work/current.tgz" --region "$AWS_REGION" --only-show-errors; then
+            mkdir "$work/release"
+            tar -xzf "$work/current.tgz" -C "$work/release" --no-same-owner
+            chmod -R a+rX,go-w "$work/release"
+            rm -rf /opt/andon-finance/previous
+            if [ -d /opt/andon-finance/current ]; then mv /opt/andon-finance/current /opt/andon-finance/previous; fi
+            mv "$work/release" /opt/andon-finance/current
+          elif [ -d /opt/andon-finance/current ]; then
+            echo "release download failed; keeping the current release" >&2
+          else
+            echo "no releases/current.tgz in the artifact bucket yet; will retry" >&2
+            exit 1
+          fi
+          # Keys and passwords live in secrets.env, uploaded by deploy.sh next to the release; readable by root and the service group only.
+          if aws s3 cp "s3://$POC_BUCKET/secrets/secrets.env" /etc/andon-finance/secrets.env.new --region "$AWS_REGION" --only-show-errors; then
+            chown root:andon /etc/andon-finance/secrets.env.new
+            chmod 0640 /etc/andon-finance/secrets.env.new
+            mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env
+          fi
+          FETCH
+          chmod 0755 /usr/local/bin/andon-finance-fetch
+          cat > /etc/systemd/system/andon-finance-poc.service <<'UNIT'
+          [Unit]
+          Description=andon-finance PoC (Jiuan audit platform + Nexus agents)
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitIntervalSec=0
+
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/andon-finance/env
+          ExecStartPre=+/usr/local/bin/andon-finance-fetch
+          ExecStart=/usr/bin/node-24 /opt/andon-finance/current/app/server.mjs
+          User=andon
+          Group=andon
+          Restart=always
+          RestartSec=10
+          NoNewPrivileges=true
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths=/var/lib/andon-finance
+          PrivateTmp=true
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable andon-finance-poc.service
+          systemctl start andon-finance-poc.service || true
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Instance
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  OriginRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref OriginDomainName
+      Type: A
+      TTL: '60'
+      ResourceRecords: [!Ref ElasticIp]
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: OriginRecord
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: andon-finance PoC (fictitious data)
+        Aliases: [!Ref DomainName]
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: andon-finance-ec2
+            DomainName: !Ref OriginDomainName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: !Ref AppPort
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+        DefaultCacheBehavior:
+          TargetOriginId: andon-finance-ec2
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # Managed-CachingDisabled; Managed-AllViewer forwards Host, Origin, Cookie and query strings (the Jiuan server checks Host and Origin).
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  SiteRecordA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
+  SiteRecordAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
+Outputs:
+  SiteUrl:
+    Value: !Sub 'https://${DomainName}'
+  InstanceId:
+    Value: !Ref Instance
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+  DistributionId:
+    Value: !Ref Distribution
+  OriginDomain:
+    Value: !Ref OriginDomainName
+  ElasticIp:
+    Value: !Ref ElasticIp

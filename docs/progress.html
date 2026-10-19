@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN" data-mode="snapshot">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>开发进度 · 九安 × Nexus PoC</title>
+<style>/* 开发进度看板。配色和交付文档一致（公文抬头、蓝色强调）；阶段是一条蓝色的有序色阶（浅 → 深），
+   受阻和「声称完成但测试没过」用保留的状态色，并且总带图标和文字，不只靠颜色。 */
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD; --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878; --line:#A9B3C1; --hair:#D9DEE5;
+  --accent:#1F5AA8; --seal:#C8352C;
+  --s-todo:#E9EEF6; --s-doing:#B7CAE8; --s-testing:#6F93CC; --s-done:#1F5AA8; --s-blocked:#C8352C; --s-conflict:#E07B3F;
+  --good:#1E7F5C; --good-wash:#E3F2EB; --bad:#A3241C; --bad-wash:#F7E4E2; --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --unit:54px;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.05em .3em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.page{max-width:1480px;margin:0 auto;padding:28px 28px 64px}
+
+/* 抬头 */
+.head{background:var(--sheet);border:1px solid var(--line);padding:22px 26px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 28px;align-items:start}
+.head h1{margin:0;font:700 26px/1.3 var(--sans);letter-spacing:.02em}
+.head .project{margin:4px 0 0;color:var(--ink-2);font-size:14px}
+.mode{justify-self:start;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);border:1px solid var(--line);padding:3px 10px;border-radius:999px;background:#fff;white-space:nowrap}
+.mode .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3)}
+.mode.live .dot{background:var(--good);box-shadow:0 0 0 0 rgba(30,127,92,.5);animation:live 2s ease-out infinite}
+.mode.stale .dot{background:var(--seal);animation:none}
+@keyframes live{to{box-shadow:0 0 0 7px rgba(30,127,92,0)}}
+.signals{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.signal{display:inline-flex;gap:6px;align-items:center;font-size:13px;border:1px solid var(--hair);background:#fff;padding:3px 10px;border-radius:3px}
+.signal b{font-weight:600}
+.signal .i{font-weight:700}
+.signal.ok{border-color:#B9DCCB}.signal.ok .i{color:var(--good)}
+.signal.bad{border-color:#E8B7B2;background:var(--bad-wash)}.signal.bad .i{color:var(--bad)}
+.signal.warn{border-color:#E6CFA6;background:var(--warn-wash)}.signal.warn .i{color:var(--warn)}
+.signal.none .i{color:var(--ink-3)}
+.problems{margin:12px 0 0;padding:10px 14px;border-left:4px solid var(--seal);background:var(--bad-wash);font-size:14px}
+.problems.warnings{border-color:var(--warn);background:var(--warn-wash)}
+.problems ul{margin:4px 0 0;padding-left:1.2em}
+
+/* 总览：完成度、按阶段的范围、里程碑 */
+.summary{display:grid;grid-template-columns:auto minmax(0,1.4fr) minmax(0,1fr);gap:28px;align-items:center;margin-top:18px;background:var(--sheet);border:1px solid var(--line);padding:20px 26px}
+.hero{display:flex;flex-direction:column}
+.hero .n{font:700 52px/1 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.hero .n small{font-size:24px;font-weight:600;margin-left:2px}
+.hero .l{font-size:13px;color:var(--ink-2);margin-top:6px}
+.stack{display:flex;gap:2px;height:16px;margin:4px 0 10px}
+.stack span{display:block;height:100%;min-width:2px}
+.stack span:first-child{border-radius:4px 0 0 4px}.stack span:last-child{border-radius:0 4px 4px 0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0;padding:0;list-style:none;font-size:13px;color:var(--ink-2)}
+.legend li{display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid rgba(29,36,48,.15)}
+.milestones{display:grid;gap:9px;margin:0;padding:0;list-style:none}
+.milestone{display:grid;grid-template-columns:minmax(0,1fr) 46px;gap:2px 10px;font-size:13px}
+.milestone .bar{grid-column:1 / -1;height:6px;background:var(--hair);border-radius:3px;overflow:hidden}
+.milestone .bar i{display:block;height:100%;background:var(--s-done);border-radius:3px}
+.milestone .pct{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+
+/* 筛选 */
+.filters{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:18px 0 0;font-size:13px}
+.filters label{color:var(--ink-2);display:inline-flex;gap:6px;align-items:center}
+.filters select,.filters input[type=search]{font:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink)}
+.filters input[type=search]{width:12em}
+.chips{display:inline-flex;gap:4px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:#fff;padding:2px 9px;border-radius:999px;cursor:pointer;font-size:13px}
+.chip[aria-pressed=false]{opacity:.45;text-decoration:line-through}
+.views{margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.views button{border:0;background:#fff;padding:4px 12px;cursor:pointer;font-size:13px}
+.views button[aria-pressed=true]{background:var(--ink);color:#fff}
+
+/* 地图与详情 */
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:20px;margin-top:14px;align-items:start}
+/* 分区高矮不一：用多栏排，像砌砖一样紧凑，不留大块空白 */
+.map{columns:2 380px;column-gap:14px}
+.zone{background:var(--sheet);border:1px solid var(--line);padding:14px 14px 12px;break-inside:avoid;margin:0 0 14px;display:inline-block;width:100%}
+.zone-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:baseline}
+.zone-head h2{margin:0;font:600 16px/1.4 var(--sans)}
+.zone-head .pct{font-weight:600;font-variant-numeric:tabular-nums;font-size:14px}
+.zone-head .goal{grid-column:1 / -1;margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+.zone-bar{height:4px;background:var(--hair);border-radius:2px;margin:8px 0 10px;overflow:hidden}
+.zone-bar i{display:block;height:100%;background:var(--s-done)}
+.blocks{display:flex;flex-wrap:wrap;gap:6px}
+.block{position:relative;flex:var(--size) 1 calc(var(--size) * var(--unit) + 56px);min-height:76px;text-align:left;border:1px solid rgba(29,36,48,.18);border-radius:4px;
+  padding:7px 9px 6px;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;gap:4px;transition:opacity .15s,box-shadow .15s}
+.block .name{font-size:13px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.block .meta{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;font-size:11.5px;line-height:1.4}
+.block .badge{display:inline-flex;gap:3px;align-items:center;padding:0 5px;border-radius:2px;background:rgba(255,255,255,.82);color:var(--ink)}
+.block .badge.fail{background:#fff;color:var(--bad);font-weight:600}
+.block .badge.wait{background:rgba(255,255,255,.7);color:var(--ink-2)}
+.s-todo{background-color:var(--s-todo);color:var(--ink);border:1.5px dashed var(--ink-3);
+  background-image:repeating-linear-gradient(135deg,rgba(94,104,120,.13) 0 2px,transparent 2px 7px)}
+.s-doing{background:var(--s-doing);color:var(--ink)}
+.s-testing{background:var(--s-testing);color:var(--ink)}
+.s-done{background:var(--s-done);color:#fff}
+.s-blocked{background:var(--s-blocked);color:#fff}
+.block.conflict{box-shadow:inset 0 0 0 3px var(--s-conflict)}
+.block.conflict::after{content:"!";position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;background:var(--s-conflict);color:var(--ink);font:700 12px/18px var(--sans);text-align:center}
+.block.dim{opacity:.18}
+.block.faded{opacity:.3}
+.block.up{box-shadow:0 0 0 3px var(--ink)}
+.block.down{outline:2px dashed var(--ink);outline-offset:2px}
+.block.selected{box-shadow:0 0 0 3px var(--paper),0 0 0 5px var(--seal)}
+.block.changed{animation:changed 1.4s ease-out 1}
+@keyframes changed{0%{box-shadow:0 0 0 0 rgba(200,53,44,.7)}100%{box-shadow:0 0 0 14px rgba(200,53,44,0)}}
+
+.panel{position:sticky;top:16px;background:var(--sheet);border:1px solid var(--line);padding:18px 18px 16px;max-height:calc(100vh - 32px);overflow:auto}
+.panel .crumb{margin:0;font-size:12.5px;color:var(--ink-3)}
+.panel h3{margin:2px 0 8px;font:600 18px/1.4 var(--sans)}
+.panel .tag{display:inline-flex;gap:5px;align-items:center;font-size:12.5px;padding:1px 8px;border-radius:2px;margin:0 6px 6px 0}
+.panel dl{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:6px 10px;margin:10px 0 0;font-size:13.5px}
+.panel dt{color:var(--ink-3)}
+.panel dd{margin:0}
+.panel h4{margin:16px 0 6px;font:600 13.5px/1.4 var(--sans);color:var(--ink-2)}
+.panel ul{margin:0;padding:0;list-style:none;display:grid;gap:4px;font-size:13.5px}
+.panel li{display:flex;gap:8px;align-items:baseline}
+.panel .note{margin:10px 0 0;padding:8px 10px;font-size:13px;border-left:3px solid var(--line);background:#fff}
+.panel .note.blocked{border-color:var(--s-blocked);background:var(--bad-wash)}
+.panel .note.conflict{border-color:var(--s-conflict);background:var(--warn-wash)}
+.panel .empty{color:var(--ink-3);font-size:14px;margin:0}
+.link{border:0;background:none;padding:0;color:var(--accent);cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-align:left}
+.icon{width:1.1em;text-align:center;flex:none}
+.progress{height:6px;background:var(--hair);border-radius:3px;overflow:hidden;margin-top:8px}
+.progress i{display:block;height:100%;background:var(--s-done)}
+
+/* 表格视图 */
+.table-wrap{background:var(--sheet);border:1px solid var(--line);overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border-bottom:1px solid var(--hair);padding:7px 10px;text-align:left;vertical-align:top}
+thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;position:sticky;top:0}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:#F0F4FA}
+tbody tr.dim{display:none}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+
+.tooltip{position:fixed;z-index:30;pointer-events:none;max-width:320px;background:var(--ink);color:#fff;font-size:12.5px;line-height:1.5;padding:8px 10px;border-radius:3px;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+.tooltip[hidden]{display:none}
+footer{margin-top:40px;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+
+@media (max-width:1100px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .panel{position:static;max-height:none}
+  .summary{grid-template-columns:auto minmax(0,1fr)}
+  .summary .milestones{grid-column:1 / -1}
+}
+@media (max-width:640px){
+  .page{padding:16px 12px 48px}
+  .head{grid-template-columns:minmax(0,1fr);padding:16px}
+  .summary{grid-template-columns:minmax(0,1fr);padding:16px}
+  .map{columns:1}
+  .views{margin-left:0}
+  :root{--unit:40px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media print{.filters,.tooltip,.views{display:none}.layout{grid-template-columns:1fr}.panel{position:static}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div>
+      <h1>开发进度</h1>
+      <p class="project" id="project"></p>
+    </div>
+    <span class="mode" id="mode" role="status"><span class="dot"></span>正在读取</span>
+    <ul class="signals" id="signals" aria-label="自动信号"></ul>
+  </header>
+  <div id="problems"></div>
+  <section class="summary" aria-label="总览">
+    <div class="hero" id="hero"></div>
+    <div>
+      <div class="stack" id="stack" role="img" aria-label="各阶段占的范围"></div>
+      <ul class="legend" id="legend" aria-label="图例"></ul>
+    </div>
+    <ul class="milestones" id="milestones" aria-label="里程碑"></ul>
+  </section>
+  <div class="filters" role="group" aria-label="筛选">
+    <label>里程碑 <select id="f-milestone"></select></label>
+    <span class="chips" id="f-status" aria-label="阶段"></span>
+    <label>负责人 <select id="f-owner"></select></label>
+    <label>搜索 <input type="search" id="f-query" placeholder="模块名、编号"></label>
+    <span class="views" role="group" aria-label="视图">
+      <button type="button" data-view="map" aria-pressed="true">色块地图</button>
+      <button type="button" data-view="table" aria-pressed="false">表格</button>
+    </span>
+  </div>
+  <div class="layout">
+    <main>
+      <div class="map" id="map"></div>
+      <div id="table" hidden></div>
+    </main>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </div>
+  <footer>数据来源：<code>progress.json</code>（清单，人或编码工具维护）+ 自动信号（单元测试、端到端、文档、线上健康）。实时看：<code>node tools/progress/serve.mjs</code>；快照：<code>node tools/progress/snapshot.mjs</code>。</footer>
+</div>
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+<script id="progress-state" type="application/json">{"project":"九安审核平台 × Nexus AI · PoC","description":"开发进度的唯一来源。完成一项就改这里的状态和证据；看板（tools/progress）会自动叠加测试、端到端、文档和线上健康这些能验证的信号。","milestones":[{"id":"phase1","name":"第一期：PoC 上线","due":"2026-10-17","modules":29,"percent":100},{"id":"delivery","name":"交付与维护","due":"2026-10-18","modules":9,"percent":98},{"id":"production","name":"上生产前（代码评审第 4 节）","modules":17,"percent":5},{"id":"integration","name":"并入九安（三期）","modules":9,"percent":0},{"id":"rules","name":"客户规则进 AI 初审（方案待定）","modules":5,"percent":0},{"id":"first-review","name":"Agent 接入框架与第一个任务（设计稿待批准）","modules":11,"percent":15}],"capabilities":[{"id":"approval","name":"审批流","goal":"来单 → 九安预审 → AI 初审（失败自动重试一次）→ 一步人工复核；卡片上直接显示建议；只记建议和决定，不回写","modules":[{"id":"approval.workflow","name":"审批状态机","size":3,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/approval/workflow.mjs"],"tests":{"pass":17,"fail":0,"files":1,"missing":0},"capability":"approval","progress":1,"tasks":[],"dependsOn":[],"dependents":["approval.routes"],"testFiles":["poc/app/test/unit/workflow.test.mjs"],"waitingOn":[],"conflict":false},{"id":"approval.runner","name":"后台执行：预审 → 建议","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/approval/runner.mjs"],"tests":{"pass":8,"fail":0,"files":1,"missing":0},"dependsOn":["jiuan.runtime"],"capability":"approval","progress":1,"tasks":[],"dependents":["approval.routes"],"testFiles":["poc/app/test/unit/runner.test.mjs"],"waitingOn":[],"conflict":false},{"id":"approval.routes","name":"审批流接口","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/approval/routes.mjs"],"tests":{"pass":11,"fail":0,"files":1,"missing":0},"dependsOn":["approval.workflow","approval.runner"],"capability":"approval","progress":1,"tasks":[],"dependents":["approval.ui","approval.auto-review"],"testFiles":["poc/app/test/unit/approval-flow.test.mjs"],"waitingOn":[],"conflict":false},{"id":"approval.ui","name":"审批流卡片（单据详情）","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/public-src/nexus-poc.js"],"tests":{"pass":10,"fail":0,"files":1,"missing":0},"dependsOn":["approval.routes","frontend.patches"],"capability":"approval","progress":1,"tasks":[],"dependents":[],"testFiles":["poc/app/test/unit/nexus-poc.test.mjs"],"waitingOn":[],"conflict":false},{"id":"approval.system-key","name":"从系统里读调用密钥","size":2,"status":"done","milestone":"delivery","owner":"应用开发","paths":["poc/app/nexus/system-key.mjs"],"tests":{"pass":10,"fail":0,"files":2,"missing":0},"dependsOn":["access.me"],"evidence":"2026-10-18 线上端到端：secrets.env 里那把已不认，审批流用页面上启用的那把照样走通","capability":"approval","progress":1,"tasks":[],"dependents":["approval.auto-review"],"testFiles":["poc/app/test/unit/system-key.test.mjs","poc/app/test/unit/server.test.mjs"],"waitingOn":[],"conflict":false},{"id":"approval.auto-review","name":"来单自动 AI 初审 + 一步人工复核","size":3,"milestone":"delivery","owner":"应用开发","paths":["poc/app/approval/workflow.mjs","poc/app/approval/runner.mjs","poc/app/approval/routes.mjs","poc/app/seed.mjs","poc/app/public-src/nexus-poc.js"],"tests":{"pass":54,"fail":0,"files":5,"missing":0},"dependsOn":["approval.routes","approval.system-key"],"evidence":"2026-10-18 线上端到端 5/5：模拟来单后卡片上不用点就出现「AI 初审：需人工审核 · 风险：高」，复核人退回、审核员通过","tasks":[{"title":"模拟来单（按模板生成虚构单据）","status":"done"},{"title":"系统自动发起","status":"done"},{"title":"AI 初审失败自动重试一次","status":"done"},{"title":"卡片上显示初审建议、进行中自动刷新","status":"done"},{"title":"一步人工复核（去掉确认这一步）","status":"done"}],"capability":"approval","status":"done","progress":1,"dependents":["rules.per-rule"],"testFiles":["poc/app/test/unit/workflow.test.mjs","poc/app/test/unit/runner.test.mjs","poc/app/test/unit/approval-flow.test.mjs","poc/app/test/unit/seed.test.mjs","poc/app/test/unit/nexus-poc.test.mjs"],"waitingOn":[],"conflict":false},{"id":"approval.persist","name":"审批记录持久化（九安键值状态）","size":3,"status":"todo","milestone":"production","owner":"应用开发","notes":"代码评审第 4 节第 3 条：内存 Map → compareAndWriteState，每张单据一个键，带公司","capability":"approval","progress":0,"tasks":[],"dependsOn":[],"dependents":["int.approval"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"approval.assert-active","name":"审批流操作人带 assertActive","size":1,"status":"todo","milestone":"production","owner":"应用开发","notes":"并入九安第 8 节第 7 条：退出登录后已在跑的任务不再继续","capability":"approval","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0.7777777777777778},{"id":"agent-framework","name":"Agent 接入框架（各类 Agent ⇄ 九安，A2A）","goal":"一套通用层（信封、发现、调用、状态、Agent 接入、路由、Agent 任务服务）让业务流程、财务、知识库各类 Agent 都经 A2A 接进九安；第一个任务是审批流里的单据初审","modules":[{"id":"fr.contract","name":"框架契约 jiuan.agent/v1：信封、名片要求、错误码、任务目录、first_review 与 describe、新任务模板、审批流 OpenAPI","size":2,"status":"doing","milestone":"first-review","owner":"应用开发","dependsOn":[],"paths":["contract/","docs/delivery/agent-interface.md","docs/delivery/agent-framework.md","docs/delivery/first-review-contract.md","docs/specs/2026-10-19-agent-framework-design.md","docs/delivery/agent-framework-overview.html"],"notes":"设计稿，待项目负责人批准","evidence":"2026-10-19 信封与任务 schema 自检通过；first_review 三对例子过信封检查和任务检查；describe 例子过信封检查","capability":"agent-framework","progress":0.5,"tasks":[],"dependents":["fr.adapter","fr.agent","rules.per-rule"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"fr.adapter","name":"A2A 适配层 providers/nexus-a2a.mjs：通用，按任务挂检查（补丁 0001）","size":3,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.contract"],"capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.provider","fr.enablement"],"testFiles":[],"tests":null,"waitingOn":["fr.contract"],"conflict":false},{"id":"fr.provider","name":"模型接入口通用方法 agentTask + 连接器操作（补丁 0002）","size":1,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.adapter","fr.enablement"],"capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.service"],"testFiles":[],"tests":null,"waitingOn":["fr.adapter","fr.enablement"],"conflict":false},{"id":"fr.enablement","name":"Agent 接入：平台级启用记录，读名片里的任务列表（补丁 0002 / 0006）","size":2,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.adapter"],"notes":"2026-10-19 定：密钥从启用记录读；页面九安自己写或复用 PoC 的「我的 Agent」","capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.provider"],"testFiles":[],"tests":null,"waitingOn":["fr.adapter"],"conflict":false},{"id":"fr.service","name":"Agent 任务服务：路由、AI 步骤状态、存结果、长任务收结果（补丁 0003）","size":3,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.provider"],"capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.workflow"],"testFiles":[],"tests":null,"waitingOn":["fr.provider"],"conflict":false},{"id":"fr.workflow","name":"单据初审组装器与展示 + 审批流（补丁 0005）","size":3,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.service","rules.publish"],"capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.pipeline","fr.ui"],"testFiles":[],"tests":null,"waitingOn":["fr.service","rules.publish"],"conflict":false},{"id":"fr.pipeline","name":"流水线一站 audit.first-review + 系统身份授权（补丁 0005）","size":2,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.workflow"],"notes":"系统身份要九安拍板（初审对接第 9 节第 1 条）","capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.bench"],"testFiles":[],"tests":null,"waitingOn":["fr.workflow"],"conflict":false},{"id":"fr.ui","name":"审批流接口与界面、Agent 接入页（可选）（补丁 0006）","size":3,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.workflow"],"capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.bench"],"testFiles":[],"tests":null,"waitingOn":["fr.workflow"],"conflict":false},{"id":"fr.agent","name":"审核 Agent 按 first_review@1 的新提示词与发布（描述写契约和任务、固定版本）","size":2,"status":"todo","milestone":"first-review","owner":"Agent 开发","dependsOn":["fr.contract"],"capability":"agent-framework","progress":0,"tasks":[],"dependents":["fr.bench"],"testFiles":[],"tests":null,"waitingOn":["fr.contract"],"conflict":false},{"id":"fr.bench","name":"PoC 改成「九安开发包 + 六个补丁」的测试台，端到端验收","size":3,"status":"todo","milestone":"first-review","owner":"应用开发","dependsOn":["fr.agent","fr.pipeline","fr.ui","ops.bench"],"notes":"测试台地基已完成（ops.bench）：t3.large + 本机 MySQL 8.0 + 九安真实运行时；补丁 0001–0006 在第二份计划里","capability":"agent-framework","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["fr.agent","fr.pipeline","fr.ui"],"conflict":false}],"progress":0.041666666666666664},{"id":"rules","name":"客户规则与 AI 初审","goal":"客户在规则库录入的规则生效后，AI 初审先逐条判断，再综合分析；规则一改，建议自动重跑","modules":[{"id":"rules.publish","name":"规则能生效：PoC 预置模拟规则 + 复核人发布（作者 ≠ 发布人）","size":2,"status":"todo","milestone":"rules","owner":"应用开发","notes":"九安规则库现在只能存草稿，预审取到的规则是空表（analysis-rule-workspace.mjs:222-226）","capability":"rules","progress":0,"tasks":[],"dependsOn":[],"dependents":["fr.workflow","rules.invalidate","rules.per-rule","rules.suggest"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"rules.invalidate","name":"规则更新 → 未结束的审批标「规则已更新」，由人决定重跑","size":1,"status":"todo","milestone":"rules","owner":"应用开发","dependsOn":["rules.publish"],"notes":"2026-10-18 确认：不自动重跑；每次初审读最新的已发布规则","capability":"rules","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["rules.publish"],"conflict":false},{"id":"rules.per-rule","name":"逐条初判：通过 / 不通过 + 备注（任务 first_review@1）","size":5,"status":"todo","milestone":"rules","owner":"应用开发","dependsOn":["approval.auto-review","fr.contract","rules.publish"],"notes":"方案 A1：一次调用，输出多一段逐条判断，复核页显示逐条表格","capability":"rules","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["fr.contract","rules.publish"],"conflict":false},{"id":"rules.suggest","name":"知识 Agent 推荐规则草稿 → 规则库","size":3,"status":"todo","milestone":"rules","owner":"Agent 开发","dependsOn":["rules.publish"],"capability":"rules","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["rules.publish"],"conflict":false},{"id":"rules.decisions","name":"业务方拍板：谁发布、AI 能否初判人工核验类规则","size":1,"status":"blocked","milestone":"rules","owner":"项目负责人","blockedReason":"等决定：正式线谁来发布；AI 能不能给「其他审核要素」类规则初判","capability":"rules","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0},{"id":"jiuan","name":"九安底座（只读接入）","goal":"九安 v0.5.3 原服务端与原前端只读接入，只经 jiuan.mjs 导入，不改九安任何文件","modules":[{"id":"jiuan.runtime","name":"九安服务端与运行时","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/jiuan.mjs","poc/app/poc-app.mjs"],"tests":{"pass":12,"fail":0,"files":3,"missing":0},"capability":"jiuan","progress":1,"tasks":[],"dependsOn":[],"dependents":["approval.runner","nexus.model-client"],"testFiles":["poc/app/test/unit/jiuan.test.mjs","poc/app/test/unit/jiuan-wiring.test.mjs","poc/app/test/unit/poc-app.test.mjs"],"waitingOn":[],"conflict":false},{"id":"jiuan.store","name":"内存存储与虚构单据","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/memory-store.mjs","poc/app/seed.mjs"],"tests":{"pass":18,"fail":0,"files":2,"missing":0},"capability":"jiuan","progress":1,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":["poc/app/test/unit/memory-store.test.mjs","poc/app/test/unit/seed.test.mjs"],"waitingOn":[],"conflict":false},{"id":"jiuan.login","name":"口令登录（PoC 专用）","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/login.mjs"],"tests":{"pass":2,"fail":0,"files":1,"missing":0},"capability":"jiuan","progress":1,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":["poc/app/test/unit/login.test.mjs"],"waitingOn":[],"conflict":false},{"id":"jiuan.config","name":"配置与密钥文件","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/config.mjs","poc/app/secrets.mjs","poc/app/server.mjs"],"tests":{"pass":10,"fail":0,"files":2,"missing":0},"capability":"jiuan","progress":1,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":["poc/app/test/unit/secrets.test.mjs","poc/app/test/unit/http.test.mjs"],"waitingOn":[],"conflict":false}],"progress":1},{"id":"access","name":"我的 Nexus（agent-access-v1）","goal":"每个账号用自己的 API 密钥连接 Nexus，列出自己的发布，粘贴调用密钥启用，当场验证，加密保存","modules":[{"id":"access.crypto","name":"加密与指纹","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/access/crypto.mjs"],"tests":{"pass":3,"fail":0,"files":1,"missing":0},"capability":"access","progress":1,"tasks":[],"dependsOn":[],"dependents":["access.me"],"testFiles":["poc/app/test/unit/access-crypto.test.mjs"],"waitingOn":[],"conflict":false},{"id":"access.store","name":"每个账号的目录","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/access/store.mjs"],"tests":{"pass":7,"fail":0,"files":1,"missing":0},"capability":"access","progress":1,"tasks":[],"dependsOn":[],"dependents":["access.me"],"testFiles":["poc/app/test/unit/access-store.test.mjs"],"waitingOn":[],"conflict":false},{"id":"access.verify","name":"验证调用密钥（tasks/get）","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/access/verify.mjs"],"tests":{"pass":3,"fail":0,"files":1,"missing":0},"capability":"access","progress":1,"tasks":[],"dependsOn":[],"dependents":["access.me"],"testFiles":["poc/app/test/unit/access-verify.test.mjs"],"waitingOn":[],"conflict":false},{"id":"access.me","name":"连接 · 列出 · 启用 · 停用","size":3,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/access/me.mjs"],"tests":{"pass":19,"fail":0,"files":1,"missing":0},"dependsOn":["access.store","access.crypto","access.verify","nexus.cli","nexus.catalog"],"capability":"access","progress":1,"tasks":[],"dependents":["approval.system-key","access.routes","access.readonly","access.db","nexus.invoke"],"testFiles":["poc/app/test/unit/access-me.test.mjs"],"waitingOn":[],"conflict":false},{"id":"access.routes","name":"接口 /poc/nexus/me*","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/access/routes.mjs"],"tests":{"pass":4,"fail":0,"files":1,"missing":0},"dependsOn":["access.me"],"capability":"access","progress":1,"tasks":[],"dependents":["frontend.agents-page","cli.agent-access"],"testFiles":["poc/app/test/unit/access-routes.test.mjs"],"waitingOn":[],"conflict":false},{"id":"access.readonly","name":"连接时强制只读档位","size":1,"status":"todo","milestone":"production","owner":"应用开发","dependsOn":["access.me"],"notes":"代码评审 I4；审核员现在连的是 builder 档位，开发测试阶段可以","capability":"access","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"access.db","name":"连接与启用存进数据库（信封加密）","size":3,"status":"todo","milestone":"production","owner":"应用开发","dependsOn":["access.me"],"notes":"代码评审第 4 节第 4 条；文件 + CLI → 数据库 + REST","capability":"access","progress":0,"tasks":[],"dependents":["int.my-nexus"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0.6666666666666666},{"id":"invoke","name":"调用测试与 A2A","goal":"经 A2A 0.3 调用 Nexus 上的发布，带附件，按任务调用，记运行记录","modules":[{"id":"nexus.a2a","name":"A2A 0.3 流式客户端","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/a2a-client.mjs"],"tests":{"pass":12,"fail":0,"files":1,"missing":0},"capability":"invoke","progress":1,"tasks":[],"dependsOn":[],"dependents":["nexus.model-client","nexus.invoke"],"testFiles":["poc/app/test/unit/a2a-client.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.model-client","name":"模型客户端（九安合同）","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/model-client.mjs","poc/app/nexus/advisory-input.mjs"],"tests":{"pass":11,"fail":0,"files":2,"missing":0},"dependsOn":["nexus.a2a","jiuan.runtime"],"capability":"invoke","progress":1,"tasks":[],"dependents":[],"testFiles":["poc/app/test/unit/model-client.test.mjs","poc/app/test/unit/advisory-input.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.invoke","name":"调用测试接口","size":3,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/invoke.mjs","poc/app/nexus/routes.mjs"],"tests":{"pass":16,"fail":0,"files":1,"missing":0},"dependsOn":["nexus.a2a","access.me","nexus.attachments","nexus.runs"],"capability":"invoke","progress":1,"tasks":[],"dependents":["nexus.advisory-allowlist","frontend.invoke-panel"],"testFiles":["poc/app/test/unit/nexus-routes.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.attachments","name":"附件检查与示例附件","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/attachments.mjs","poc/app/nexus/samples.mjs"],"tests":{"pass":13,"fail":0,"files":2,"missing":0},"capability":"invoke","progress":1,"tasks":[],"dependsOn":[],"dependents":["nexus.invoke"],"testFiles":["poc/app/test/unit/attachments.test.mjs","poc/app/test/unit/samples.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.runs","name":"运行记录","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/runs.mjs"],"tests":{"pass":2,"fail":0,"files":1,"missing":0},"capability":"invoke","progress":1,"tasks":[],"dependsOn":[],"dependents":["nexus.invoke","nexus.runs-persist"],"testFiles":["poc/app/test/unit/runs.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.catalog","name":"发布与 A2A 名片","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/catalog.mjs","poc/app/nexus/keys.mjs"],"tests":{"pass":5,"fail":0,"files":2,"missing":0},"capability":"invoke","progress":1,"tasks":[],"dependsOn":[],"dependents":["access.me"],"testFiles":["poc/app/test/unit/catalog.test.mjs","poc/app/test/unit/keys.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.cli","name":"operator CLI 调用","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/nexus/cli.mjs"],"tests":{"pass":3,"fail":0,"files":1,"missing":0},"capability":"invoke","progress":1,"tasks":[],"dependsOn":[],"dependents":["access.me"],"testFiles":["poc/app/test/unit/cli.test.mjs"],"waitingOn":[],"conflict":false},{"id":"nexus.advisory-allowlist","name":"审批建议模式的发布白名单","size":1,"status":"todo","milestone":"production","owner":"应用开发","dependsOn":["nexus.invoke"],"notes":"代码评审 I5：单据事实只能发给管理员认可的发布","capability":"invoke","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"nexus.runs-persist","name":"运行记录持久化、按公司过滤","size":2,"status":"todo","milestone":"production","owner":"应用开发","dependsOn":["nexus.runs"],"notes":"并入九安第 8 节第 6 条：上生产前必须修的跨公司可见","capability":"invoke","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0.8},{"id":"frontend","name":"前端（九安页面上的锚点补丁）","goal":"九安原前端 + 锚点补丁 + 独立的扩展文件；锚点对不上时构建直接报错","modules":[{"id":"frontend.patches","name":"锚点补丁与前端副本","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/scripts/build-public.mjs"],"tests":{"pass":4,"fail":0,"files":1,"missing":0},"capability":"frontend","progress":1,"tasks":[],"dependsOn":[],"dependents":["approval.ui","frontend.agents-page","frontend.invoke-panel","frontend.name-check"],"testFiles":["poc/app/test/unit/build-public.test.mjs"],"waitingOn":[],"conflict":false},{"id":"frontend.agents-page","name":"Agent 页：连接与我的 Agent","size":3,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/public-src/nexus-poc.js","poc/app/public-src/nexus-poc.css"],"tests":{"pass":8,"fail":0,"files":1,"missing":0},"dependsOn":["access.routes","frontend.patches"],"capability":"frontend","progress":1,"tasks":[],"dependents":[],"testFiles":["poc/app/test/unit/nexus-page.test.mjs"],"waitingOn":[],"conflict":false},{"id":"frontend.invoke-panel","name":"调用测试面板（附件、按任务）","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/public-src/nexus-invoke.js"],"tests":{"pass":8,"fail":0,"files":1,"missing":0},"dependsOn":["nexus.invoke","frontend.patches"],"capability":"frontend","progress":1,"tasks":[],"dependents":[],"testFiles":["poc/app/test/unit/nexus-invoke.test.mjs"],"waitingOn":[],"conflict":false},{"id":"frontend.name-check","name":"补丁里引用的名字自动检查","size":1,"status":"todo","milestone":"production","owner":"应用开发","dependsOn":["frontend.patches"],"notes":"代码评审 I7：九安改了内部名字，构建不报错、运行才出错","capability":"frontend","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0.875},{"id":"agents","name":"Nexus 上的 Agent","goal":"AI 能力和知识都在 Nexus 上，前端只做调用","modules":[{"id":"agent.advisory","name":"九安审核AI（审批建议、草稿核验）","size":2,"status":"done","milestone":"phase1","owner":"Agent 开发","evidence":"2026-10-18 端到端：审批建议带 PDF 附件，过九安校验","capability":"agents","progress":1,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"agent.knowledge","name":"九安知识Agent（提示词 v2）","size":3,"status":"done","milestone":"phase1","owner":"Agent 开发","paths":["knowledge-agent/prompt.yaml"],"evidence":"2026-10-18 端到端：select 读出发票图片 580 元；answer 引用 KA-C01","capability":"agents","progress":1,"tasks":[],"dependsOn":[],"dependents":["agent.knowledge-store"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"agent.knowledge-store","name":"知识写入与资料入库（ingest）","size":3,"status":"blocked","milestone":"integration","owner":"Agent 开发","dependsOn":["agent.knowledge"],"blockedReason":"等 Nexus 提供存储（发布调用拿不到密钥和连接器凭据）","capability":"agents","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0.625},{"id":"cli","name":"命令行与 Skills","goal":"Claude Code、Codex、Kiro CLI 经命令行登录、连接、启用、调用、停用","modules":[{"id":"cli.agent-access","name":"agent_access.py","size":3,"status":"done","milestone":"phase1","owner":"应用开发","paths":["skills/agent-access/scripts/agent_access.py"],"tests":{"pass":7,"fail":0,"files":2,"missing":0},"dependsOn":["access.routes"],"capability":"cli","progress":1,"tasks":[],"dependents":["cli.skill-package"],"testFiles":["skills/agent-access/tests/test_agent_access.py","poc/app/test/unit/agent-access-cli.test.mjs"],"waitingOn":[],"conflict":false},{"id":"cli.try-agent","name":"try-agent.mjs","size":1,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/scripts/try-agent.mjs","poc/app/scripts/poc-client.mjs"],"tests":{"pass":4,"fail":0,"files":1,"missing":0},"capability":"cli","progress":1,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":["poc/app/test/unit/try-agent.test.mjs"],"waitingOn":[],"conflict":false},{"id":"cli.skill-package","name":"SKILL.md 打包与安装","size":2,"status":"done","milestone":"delivery","owner":"应用开发","dependsOn":["cli.agent-access"],"paths":["skills/agent-access/SKILL.md","skills/agent-access/README.md","skills/agent-access/references/","docs/delivery/skills-guide.md"],"tests":{"pass":7,"fail":0,"files":1,"missing":0},"evidence":"2026-10-19：SKILL.md、README.md、references/ 打包；test_skill_package.py 先失败（缺文件）再通过，Skill 与命令行测试 13/13","notes":"应用个人令牌（页面「我的令牌」）仍在第二期","capability":"cli","progress":1,"tasks":[],"dependents":["docs.release"],"testFiles":["skills/agent-access/tests/test_skill_package.py"],"waitingOn":[],"conflict":false}],"progress":1},{"id":"ops","name":"部署与运维","goal":"一条发布路径（deploy.sh）；先测再发，确认再推","modules":[{"id":"ops.deploy","name":"deploy.sh 与 CloudFormation","size":3,"status":"done","milestone":"phase1","owner":"运维","paths":["poc/infra/deploy.sh","poc/infra/andon-finance-poc.yaml"],"tests":{"pass":30,"fail":0,"files":1,"missing":0},"capability":"ops","progress":1,"tasks":[],"dependsOn":[],"dependents":["ops.bench"],"testFiles":["poc/app/test/unit/infra.test.mjs"],"waitingOn":[],"conflict":false},{"id":"ops.e2e","name":"线上端到端测试","size":2,"status":"done","milestone":"phase1","owner":"应用开发","paths":["poc/app/test/e2e/run.sh","poc/app/test/e2e/poc.e2e.mjs","poc/app/test/e2e/attachments.e2e.mjs","poc/app/test/e2e/access.e2e.mjs","evidence/e2e/last-run.jsonl"],"evidence":"2026-10-18：14 通过、0 失败、1 按设计跳过","capability":"ops","progress":1,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.git","name":"代码进 Git、版本号","size":2,"status":"doing","milestone":"production","owner":"运维","notes":"代码评审 C1；仓库 github.com/LiboMa/nexus-jiuan-agent-framework-poc（私有）","tasks":[{"title":"私有仓库、.gitignore、初始提交与标签 v0.1","status":"done"},{"title":"构件包名和健康检查带提交号","status":"todo"}],"capability":"ops","progress":0.5,"dependsOn":[],"dependents":["ops.verify-deploy","ops.staging"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.origin-tls","name":"源站 HTTPS + 源站校验头","size":3,"status":"todo","milestone":"production","owner":"运维","notes":"代码评审 C2","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.verify-deploy","name":"部署可验证（SSM 状态、版本号）","size":1,"status":"doing","milestone":"production","owner":"运维","dependsOn":["ops.git"],"notes":"代码评审 I1；SSM 那一半 2026-10-19 已做（infra.test.mjs），版本号要等代码进 Git","tasks":[{"title":"SSM 不是 Success 就报失败","status":"done"},{"title":"健康检查带版本号，版本不对就失败","status":"todo"}],"capability":"ops","progress":0.5,"dependents":[],"testFiles":[],"tests":null,"waitingOn":["ops.git"],"conflict":false},{"id":"ops.no-refetch","name":"崩溃重启不重新拉包","size":1,"status":"todo","milestone":"production","owner":"运维","notes":"代码评审 I2","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.secrets-allowlist","name":"服务端密钥文件按白名单生成","size":1,"status":"todo","milestone":"production","owner":"运维","notes":"代码评审 I3","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.observability","name":"结构化日志、告警、密钥探测","size":3,"status":"todo","milestone":"production","owner":"运维","notes":"代码评审 I6","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.operator-pin","name":"operator CLI 钉版本 + 合同测试","size":1,"status":"todo","milestone":"production","owner":"应用开发","notes":"代码评审 I8","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.runtime-gate","name":"Node 24 / Python 3.9 测试关卡","size":1,"status":"todo","milestone":"production","owner":"运维","notes":"代码评审 I9","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.staging","name":"预发环境","size":3,"status":"todo","milestone":"production","owner":"运维","dependsOn":["ops.git"],"notes":"代码评审 I10","capability":"ops","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["ops.git"],"conflict":false},{"id":"ops.patching","name":"主机打补丁","size":1,"status":"todo","milestone":"production","owner":"运维","notes":"代码评审 I11","capability":"ops","progress":0,"tasks":[],"dependsOn":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"ops.bench","name":"测试台：t3.large + 本机 MySQL 8.0 + 九安真实运行时","size":3,"milestone":"first-review","owner":"应用开发","dependsOn":["ops.deploy"],"paths":["poc/bench/","poc/app/bench/","poc/infra/bench/","docs/plans/2026-10-19-bench-upgrade.md"],"tests":{"pass":52,"fail":0,"files":7,"missing":0},"tasks":[{"title":"九安副本与锁定的 mysql2","status":"done"},{"title":"九安 MySQL 存储、原文写入与种子","status":"done"},{"title":"九安的平台部分","status":"done"},{"title":"组合根的 mysql 模式","status":"done"},{"title":"实例上的脚本：MySQL、重置、systemd","status":"done"},{"title":"模板、部署、备份与换型","status":"done"},{"title":"端到端测试改用重置脚本","status":"done"},{"title":"线上升级（每步先问项目负责人）","status":"done"},{"title":"文档与进度","status":"done"},{"title":"最终评审的 3 个 Important：测试台密钥只认原值、健康检查查库、内存模式不碰 MySQL（代码已改，下次部署生效）","status":"done"}],"evidence":"2026-10-19 线上：t3.large、MySQL 8.0（jiuan-mysql）、POC_STORE=mysql；测试台上 MySQL 测试 11/11、4 次改坏代码都被抓住；端到端 15 通过 / 0 失败 / 1 按设计跳过（evidence/bench/2026-10-19-upgrade.md）；最终评审 3 个 Important 先写失败的测试再修，单元测试 266 个（255 通过 / 11 个要 MySQL 的跳过 / 0 失败），测试台上 11/11（evidence/bench/bench-test-final-fixes.log）","status":"done","capability":"ops","progress":1,"dependents":["fr.bench","docs.release"],"testFiles":["poc/app/test/unit/bench-build.test.mjs","poc/app/test/unit/bench-platform.test.mjs","poc/app/test/unit/bench-server.test.mjs","poc/app/test/unit/bench-store.test.mjs","poc/app/test/unit/infra.test.mjs","poc/app/test/unit/poc-app.test.mjs","poc/app/test/unit/server.test.mjs"],"waitingOn":[],"conflict":false}],"progress":0.38},{"id":"docs","name":"文档与交付","goal":"Markdown 是唯一的源；HTML、图由脚本生成；交付包自检、不含密钥","modules":[{"id":"docs.delivery","name":"交付文档（md + html）","size":3,"status":"done","milestone":"delivery","owner":"应用开发","paths":["docs/delivery/handover.md","docs/delivery/integration.md","docs/delivery/deploy-iteration.md","docs/delivery/operations.md","docs/delivery/code-review-2026-10-17.md","docs/delivery/call-chains.md","docs/architecture.md","docs/delivery/package-guide.md","docs/delivery/README.md","docs/delivery/agent-framework.md","docs/delivery/rules-binding.md","docs/delivery/skills-guide.md"],"notes":"2026-10-18 加了「前端到 A2A Agent：调用链、解耦与处理流程」；2026-10-19 按测试台与框架设计稿的现状全部更新一次","capability":"docs","progress":1,"tasks":[],"dependsOn":[],"dependents":["docs.package"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"docs.diagrams","name":"图（diagrams as code）与截图","size":2,"status":"done","milestone":"delivery","owner":"应用开发","paths":["docs/build-html.sh","docs/assets/diagrams/arch-overview.svg","poc/app/test/e2e/capture-screens.mjs"],"capability":"docs","progress":1,"tasks":[],"dependsOn":[],"dependents":["docs.package"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"docs.package","name":"交付包与密钥检查","size":2,"status":"done","milestone":"delivery","owner":"应用开发","paths":["docs/delivery/make-package.sh","docs/delivery/package-guide.md"],"dependsOn":["docs.delivery","docs.diagrams"],"capability":"docs","progress":1,"tasks":[],"dependents":["docs.release"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"docs.progress","name":"开发进度看板","size":3,"milestone":"delivery","owner":"应用开发","paths":["progress.json","tools/progress/lib.mjs","tools/progress/signals.mjs","tools/progress/render.mjs","tools/progress/serve.mjs","tools/progress/snapshot.mjs","tools/progress/page.js"],"tests":{"pass":14,"fail":0,"files":4,"missing":0},"tasks":[{"title":"清单 progress.json","status":"done"},{"title":"校验与进度计算","status":"done"},{"title":"自动信号：测试、端到端、文档、健康","status":"done"},{"title":"色块地图页面","status":"done"},{"title":"本机实时服务（推送）","status":"done"},{"title":"静态快照进 docs 和交付包","status":"done"},{"title":"规则：完成一项就更新清单（写进部署与迭代规范）","status":"done"}],"evidence":"2026-10-18：14 个测试；实时页面改清单 1.5 秒内更新；桌面与手机宽度无溢出","capability":"docs","status":"done","progress":1,"dependsOn":[],"dependents":[],"testFiles":["tools/progress/test/lib.test.mjs","tools/progress/test/signals.test.mjs","tools/progress/test/render.test.mjs","tools/progress/test/serve.test.mjs"],"waitingOn":[],"conflict":false},{"id":"docs.release","name":"封板 Finance-Audit-Nexus-PoC v0.1","size":2,"milestone":"delivery","owner":"应用开发","dependsOn":["docs.package","cli.skill-package","ops.bench"],"paths":["VERSION","CHANGELOG.md","README.md","archive/README.md","docs/delivery/make-package.sh"],"tasks":[{"title":"最终评审的 3 个修复部署到测试台","status":"done"},{"title":"完整端到端测试","status":"done"},{"title":"Skills 配置指南与应用 Skill 打包","status":"done"},{"title":"旧证据与旧包移进 archive/","status":"done"},{"title":"VERSION、CHANGELOG、包入口说明；打包按版本命名","status":"done"},{"title":"项目负责人确认后出包","status":"doing"}],"evidence":"2026-10-19：修复部署 SSM Success、健康检查 database ok；端到端 16 个 14 通过 / 1 失败（Agent 偶发不合法 JSON）/ 1 按设计跳过，项目负责人接受并要求提交","capability":"docs","status":"doing","progress":0.8333333333333334,"dependents":[],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false}],"progress":0.9722222222222222},{"id":"integration","name":"并入九安","goal":"插件模块 + 由九安维护的薄注册补丁，分三期：provider → 审批流与 Agent 页 → 我的 Nexus","modules":[{"id":"int.reference-patch","name":"参考补丁（PoC 现状）","size":1,"status":"done","milestone":"delivery","owner":"应用开发","paths":["docs/delivery/patches/make-reference-patch.sh","docs/delivery/patches/v0.5.3/poc-frontend-reference.patch"],"capability":"integration","progress":1,"tasks":[],"dependsOn":[],"dependents":["int.patch-generator"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"int.decisions","name":"业务方与九安拍板","size":2,"status":"blocked","milestone":"integration","owner":"项目负责人","blockedReason":"等决定：连接器原则、生产实例上的 AI 建议、审批流定位（并入九安第 8 节）","capability":"integration","progress":0,"tasks":[],"dependsOn":[],"dependents":["int.provider","int.my-nexus"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"int.baseline","name":"拿到九安真实代码线","size":1,"status":"blocked","milestone":"integration","owner":"九安","blockedReason":"开发包是裁剪过的测试副本，补丁要对真实代码定稿","capability":"integration","progress":0,"tasks":[],"dependsOn":[],"dependents":["int.patch-generator","int.extension-hooks"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"int.patch-generator","name":"交付用补丁生成器","size":2,"status":"todo","milestone":"integration","owner":"应用开发","dependsOn":["int.reference-patch","int.baseline"],"capability":"integration","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["int.baseline"],"conflict":false},{"id":"int.plugin","name":"插件拆分 @andon/nexus-agent-plugin","size":5,"status":"todo","milestone":"integration","owner":"应用开发","capability":"integration","progress":0,"tasks":[],"dependsOn":[],"dependents":["int.provider","int.extension-hooks"],"testFiles":[],"tests":null,"waitingOn":[],"conflict":false},{"id":"int.provider","name":"第一期：模型 provider","size":2,"status":"todo","milestone":"integration","owner":"应用开发","dependsOn":["int.plugin","int.decisions"],"capability":"integration","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["int.plugin","int.decisions"],"conflict":false},{"id":"int.extension-hooks","name":"第二期：前端扩展钩子","size":3,"status":"todo","milestone":"integration","owner":"九安","dependsOn":["int.plugin","int.baseline"],"capability":"integration","progress":0,"tasks":[],"dependents":["int.approval","int.my-nexus"],"testFiles":[],"tests":null,"waitingOn":["int.plugin","int.baseline"],"conflict":false},{"id":"int.approval","name":"第二期：审批流 + Agent 页","size":3,"status":"todo","milestone":"integration","owner":"应用开发","dependsOn":["int.extension-hooks","approval.persist"],"capability":"integration","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["int.extension-hooks","approval.persist"],"conflict":false},{"id":"int.my-nexus","name":"第三期：我的 Nexus（连接器）","size":3,"status":"todo","milestone":"integration","owner":"应用开发","dependsOn":["int.extension-hooks","access.db","int.decisions"],"capability":"integration","progress":0,"tasks":[],"dependents":[],"testFiles":[],"tests":null,"waitingOn":["int.extension-hooks","access.db","int.decisions"],"conflict":false}],"progress":0.045454545454545456}],"totals":{"modules":80,"size":168,"percent":48,"sizeByStatus":{"todo":77,"doing":7,"testing":0,"done":77,"blocked":7},"conflicts":0,"blocked":4},"signals":{"unit":{"pass":269,"fail":0,"skip":11,"at":"2026-10-19T09:59:36.440Z"},"python":{"pass":13,"fail":0,"skip":0,"at":"2026-10-19T09:59:36.640Z"},"e2e":{"pass":14,"fail":1,"skip":1,"failures":["poc.e2e.mjs：5. Nexus Agent 页：系统提供的审批 Agent 在调用测试里，调用成功并通过九安校验"],"at":"2026-10-19T09:52:14.995Z"},"health":{"ok":true,"status":200,"at":"2026-10-19T09:59:36.644Z","url":"https://andon-finance.tinyboat.blog/api/health"},"docs":{"checked":19,"stale":[]},"collectedAt":"2026-10-19T09:59:30.523Z"},"problems":{"errors":[],"warnings":[]},"generatedAt":"2026-10-19T09:59:37.222Z"}</script>
+<script>
+// 开发进度看板的页面脚本。同一份脚本给两种页面用：
+//   实时（serve.mjs）：先读 /api/state，再订阅 /api/events，清单或测试一变就重画；
+//   快照（snapshot.mjs）：读页面里嵌好的状态。
+// 页面上的文字一律用 textContent 写入，不拼 HTML。
+(() => {
+  const LABEL = { todo: '未开始', doing: '进行中', testing: '测试中', done: '已完成', blocked: '受阻' };
+  const ICON = { todo: '○', doing: '◐', testing: '◑', done: '✓', blocked: '✗' };
+  const STACK_ORDER = ['done', 'testing', 'doing', 'todo', 'blocked'];
+  const COLOR = { todo: 'var(--s-todo)', doing: 'var(--s-doing)', testing: 'var(--s-testing)', done: 'var(--s-done)', blocked: 'var(--s-blocked)' };
+  const mode = document.documentElement.dataset.mode;
+  const $ = id => document.getElementById(id);
+  const ui = { state: null, selected: null, view: 'map', hover: null, statuses: new Set(Object.keys(LABEL)), milestone: 'all', owner: 'all', query: '', last: new Map() };
+
+  function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value === null || value === undefined || value === false) continue;
+      if (key === 'class') node.className = value;
+      else if (key === 'text') node.textContent = value;
+      else if (key === 'style') for (const [name, v] of Object.entries(value)) node.style.setProperty(name, v);
+      else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+      else node.setAttribute(key, value === true ? '' : String(value));
+    }
+    for (const child of children.flat(Infinity)) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return node;
+  }
+  // replaceChildren 会把 null 变成文字「null」、把数组变成字符串：先摊平、去掉空的
+  const put = (node, ...children) => node.replaceChildren(...children.flat(Infinity).filter(child => child !== null && child !== undefined && child !== false));
+  const time = iso => (iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—');
+  const pct = value => `${Math.round(value * 100)}%`;
+  const modules = () => (ui.state?.capabilities ?? []).flatMap(capability => capability.modules.map(module => ({ ...module, capabilityName: capability.name })));
+  const byId = () => new Map(modules().map(module => [module.id, module]));
+  const milestoneName = id => ui.state?.milestones.find(item => item.id === id)?.name ?? id ?? '—';
+  const matches = module => ui.statuses.has(module.status) && (ui.milestone === 'all' || module.milestone === ui.milestone)
+    && (ui.owner === 'all' || module.owner === ui.owner)
+    && (!ui.query || `${module.id} ${module.name} ${module.notes ?? ''} ${module.capabilityName ?? ''}`.toLowerCase().includes(ui.query));
+  const testsText = tests => (!tests ? null : tests.files === 0 ? '测试没跑到' : `${tests.fail ? '✗' : '✓'} 测试 ${tests.pass}/${tests.pass + tests.fail}`);
+
+  // ---------- 抬头与信号
+  function renderHead() {
+    const s = ui.state;
+    $('project').textContent = s.project ?? '';
+    const signals = s.signals ?? {};
+    const items = [];
+    const suite = (label, result) => {
+      if (!result) return items.push(['none', '·', label, '没有数据']);
+      if (result.error) return items.push(['bad', '✗', label, '运行出错']);
+      const total = result.pass + result.fail;
+      items.push([result.fail ? 'bad' : 'ok', result.fail ? '✗' : '✓', label, `${result.pass}/${total}${result.skip ? `，跳过 ${result.skip}` : ''}`]);
+    };
+    suite('单元测试', signals.unit);
+    suite('命令行测试', signals.python);
+    const e2e = signals.e2e;
+    if (!e2e || e2e.error) items.push(['none', '·', '端到端', e2e?.error ? '读不到结果' : '还没有记录']);
+    else items.push([e2e.fail ? 'bad' : 'ok', e2e.fail ? '✗' : '✓', '端到端', `${e2e.pass} 通过 · ${e2e.fail} 失败 · ${e2e.skip} 跳过（${time(e2e.at)}）`]);
+    const docs = signals.docs;
+    if (!docs || docs.error) items.push(['none', '·', '文档', '没有数据']);
+    else items.push([docs.stale.length ? 'warn' : 'ok', docs.stale.length ? '!' : '✓', '文档', docs.stale.length ? `${docs.stale.length} 份 HTML 过期` : `${docs.checked} 份都是最新的`]);
+    const health = signals.health;
+    if (!health || health.error) items.push(['none', '·', '线上', '没有检查']);
+    else items.push([health.ok ? 'ok' : 'bad', health.ok ? '✓' : '✗', '线上', health.ok ? `正常（${time(health.at)}）` : `异常：${health.reason}`]);
+    if (s.totals?.conflicts) items.push(['warn', '!', '冲突', `${s.totals.conflicts} 个模块声称完成但测试没过`]);
+    put($('signals'), ...items.map(([tone, icon, label, value]) => el('li', { class: `signal ${tone}` }, el('span', { class: 'i', text: icon }), el('b', { text: label }), value)));
+    const problems = [];
+    if (s.problems?.errors?.length) problems.push(el('div', { class: 'problems', role: 'alert' }, el('b', { text: 'progress.json 有错误，看板停在上一次的正确版本：' }), el('ul', {}, s.problems.errors.map(text => el('li', { text })))));
+    if (s.problems?.warnings?.length) problems.push(el('div', { class: 'problems warnings' }, el('b', { text: '提醒：' }), el('ul', {}, s.problems.warnings.map(text => el('li', { text })))));
+    put($('problems'), ...problems);
+    const generated = s.signals?.collectedAt ?? s.generatedAt;
+    const modeNode = $('mode');
+    if (mode === 'snapshot') { modeNode.className = 'mode'; put(modeNode, el('span', { class: 'dot' }), `快照 · ${time(s.generatedAt)}`); }
+    else put(modeNode, el('span', { class: 'dot' }), modeNode.classList.contains('stale') ? '实时连接断开，正在重连' : `实时 · ${time(generated)}`);
+  }
+
+  // ---------- 总览
+  function renderSummary() {
+    const totals = ui.state.totals ?? {};
+    const sizes = totals.sizeByStatus ?? {};
+    const total = Object.values(sizes).reduce((a, b) => a + b, 0) || 1;
+    const count = status => modules().filter(module => module.status === status).length;
+    put($('hero'), el('span', { class: 'n' }, String(totals.percent ?? 0), el('small', { text: '%' })),
+      el('span', { class: 'l', text: `按范围加权的完成度 · ${totals.modules ?? 0} 个模块 · 范围合计 ${totals.size ?? 0}` }));
+    put($('stack'), ...STACK_ORDER.filter(status => sizes[status]).map(status => el('span', {
+      style: { width: `${(sizes[status] / total) * 100}%`, background: COLOR[status] }, title: `${LABEL[status]}：范围 ${sizes[status]}，${count(status)} 个模块` })));
+    put($('legend'), ...STACK_ORDER.map(status => el('li', {},
+      el('span', { class: `sw s-${status}` }), `${ICON[status]} ${LABEL[status]} ${count(status)}`)),
+      el('li', {}, el('span', { class: 'sw', style: { background: 'var(--s-conflict)' } }), '! 声称完成但测试没过'));
+    put($('milestones'), ...(ui.state.milestones ?? []).map(item => el('li', { class: 'milestone' },
+      el('span', {}, item.name, item.due ? el('span', { style: { color: 'var(--ink-3)' } }, ` · ${item.due}`) : null, el('span', { style: { color: 'var(--ink-3)' } }, ` · ${item.modules} 个`)),
+      el('span', { class: 'pct', text: `${item.percent}%` }),
+      el('span', { class: 'bar' }, el('i', { style: { width: `${item.percent}%` } })))));
+  }
+
+  // ---------- 筛选
+  function renderFilters() {
+    const milestone = $('f-milestone');
+    milestone.replaceChildren(el('option', { value: 'all', text: '全部里程碑' }), ...(ui.state.milestones ?? []).map(item => el('option', { value: item.id, text: item.name })));
+    milestone.value = ui.milestone;
+    const owners = [...new Set(modules().map(module => module.owner).filter(Boolean))];
+    const owner = $('f-owner');
+    owner.replaceChildren(el('option', { value: 'all', text: '全部负责人' }), ...owners.map(name => el('option', { value: name, text: name })));
+    owner.value = owners.includes(ui.owner) ? ui.owner : 'all';
+    put($('f-status'), ...Object.keys(LABEL).map(status => el('button', { class: 'chip', type: 'button', 'aria-pressed': String(ui.statuses.has(status)),
+      onclick: () => { ui.statuses.has(status) ? ui.statuses.delete(status) : ui.statuses.add(status); renderAll(); } },
+      el('span', { class: `sw s-${status}` }), LABEL[status])));
+    for (const button of document.querySelectorAll('.views button')) button.setAttribute('aria-pressed', String(button.dataset.view === ui.view));
+  }
+
+  // ---------- 色块地图
+  function blockTitle(module) {
+    const parts = [`${module.name}（${module.id}）`, `${ICON[module.status]} ${LABEL[module.status]} · 范围 ${module.size} · ${pct(module.progress)}`];
+    if (module.tests) parts.push(testsText(module.tests));
+    if (module.waitingOn.length) parts.push(`还在等：${module.waitingOn.join('、')}`);
+    if (module.blockedReason) parts.push(`受阻：${module.blockedReason}`);
+    if (module.conflict) parts.push('声称完成，但测试没过');
+    return parts.join('\n');
+  }
+  function renderMap() {
+    const changed = new Set();
+    for (const module of modules()) {
+      const before = ui.last.get(module.id);
+      if (before && before !== `${module.status}|${module.conflict}`) changed.add(module.id);
+      ui.last.set(module.id, `${module.status}|${module.conflict}`);
+    }
+    put($('map'), ...ui.state.capabilities.map(capability => el('section', { class: 'zone', 'aria-label': capability.name },
+      el('div', { class: 'zone-head' }, el('h2', { text: capability.name }), el('span', { class: 'pct', text: pct(capability.progress) }),
+        capability.goal ? el('p', { class: 'goal', text: capability.goal }) : null),
+      el('div', { class: 'zone-bar' }, el('i', { style: { width: pct(capability.progress) } })),
+      el('div', { class: 'blocks' }, capability.modules.map(module => {
+        const shown = matches({ ...module, capabilityName: capability.name });
+        const classes = ['block', `s-${module.status}`, module.conflict ? 'conflict' : '', shown ? '' : 'dim', ui.selected === module.id ? 'selected' : '', changed.has(module.id) ? 'changed' : ''];
+        return el('button', { type: 'button', class: classes.filter(Boolean).join(' '), style: { '--size': String(module.size) }, 'data-id': module.id,
+          'aria-label': blockTitle(module).replace(/\n/g, '；'), tabindex: shown ? null : '-1',
+          onclick: () => select(module.id), onmouseenter: event => hover(module.id, event), onmousemove: moveTip, onmouseleave: () => hover(null), onfocus: () => hover(module.id), onblur: () => hover(null) },
+          el('span', { class: 'name', text: module.name }),
+          el('span', { class: 'meta' },
+            el('span', { text: `${ICON[module.status]} ${LABEL[module.status]}` }),
+            module.tests && module.tests.files ? el('span', { class: `badge${module.tests.fail ? ' fail' : ''}`, text: testsText(module.tests) }) : null,
+            module.waitingOn.length ? el('span', { class: 'badge wait', text: `等 ${module.waitingOn.length}` }) : null));
+      })))));
+    applyHover();
+  }
+
+  function hover(id, event) {
+    ui.hover = id;
+    const tip = $('tooltip');
+    if (!id) { tip.hidden = true; applyHover(); return; }
+    const module = byId().get(id);
+    tip.textContent = blockTitle(module);
+    tip.style.whiteSpace = 'pre-line';
+    tip.hidden = false;
+    if (event) moveTip(event);
+    else { const box = document.querySelector(`.block[data-id="${CSS.escape(id)}"]`)?.getBoundingClientRect(); if (box) place(box.left, box.bottom + 8); }
+    applyHover();
+  }
+  function moveTip(event) { place(event.clientX + 14, event.clientY + 16); }
+  function place(x, y) {
+    const tip = $('tooltip');
+    const width = tip.offsetWidth || 280, height = tip.offsetHeight || 80;
+    tip.style.left = `${Math.min(x, window.innerWidth - width - 8)}px`;
+    tip.style.top = `${Math.min(y, window.innerHeight - height - 8)}px`;
+  }
+  // 悬停：它依赖的（上游）实线框，依赖它的（下游）虚线框，其余变淡
+  function applyHover() {
+    const focus = ui.hover ? byId().get(ui.hover) : null;
+    const up = new Set(focus?.dependsOn ?? []), down = new Set(focus?.dependents ?? []);
+    for (const node of document.querySelectorAll('.block')) {
+      const id = node.dataset.id;
+      node.classList.toggle('up', up.has(id));
+      node.classList.toggle('down', down.has(id));
+      node.classList.toggle('faded', Boolean(focus) && id !== focus.id && !up.has(id) && !down.has(id) && !node.classList.contains('dim'));
+    }
+  }
+
+  // ---------- 表格视图
+  function renderTable() {
+    const rows = modules().map(module => el('tr', { class: matches(module) ? '' : 'dim', onclick: () => select(module.id) },
+      el('td', { text: module.capabilityName }), el('td', {}, el('b', { text: module.name }), el('br'), el('code', { text: module.id })),
+      el('td', { text: `${ICON[module.status]} ${LABEL[module.status]}${module.conflict ? '（测试没过）' : ''}` }),
+      el('td', { class: 'num', text: String(module.size) }), el('td', { class: 'num', text: pct(module.progress) }),
+      el('td', { text: module.tests ? testsText(module.tests) : '—' }),
+      el('td', { text: module.dependsOn.join('、') || '—' }), el('td', { text: milestoneName(module.milestone) }), el('td', { text: module.owner ?? '—' })));
+    put($('table'), el('div', { class: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, ['能力', '模块', '状态', '范围', '进度', '测试', '依赖', '里程碑', '负责人'].map(text => el('th', { text })))),
+      el('tbody', {}, rows))));
+  }
+
+  // ---------- 详情
+  function select(id) {
+    ui.selected = id;
+    renderMap();
+    renderPanel();
+    if (ui.view === 'table') renderTable();
+  }
+  function moduleLinks(ids) {
+    const index = byId();
+    if (!ids.length) return el('p', { class: 'empty', text: '无' });
+    return el('ul', {}, ids.map(id => {
+      const module = index.get(id);
+      return el('li', {}, el('span', { class: 'icon', text: module ? ICON[module.status] : '?' }),
+        module ? el('button', { class: 'link', type: 'button', text: module.name, onclick: () => select(id) }) : el('span', { text: id }),
+        module ? el('span', { style: { color: 'var(--ink-3)' } }, ` ${LABEL[module.status]}`) : null);
+    }));
+  }
+  function renderPanel() {
+    const module = ui.selected ? byId().get(ui.selected) : null;
+    const panel = $('panel');
+    if (!module) {
+      put(panel, el('p', { class: 'crumb', text: '详情' }), el('h3', { text: '点一个色块看详情' }),
+        el('p', { class: 'empty', text: '每个色块是一个模块：面积是范围大小，颜色是阶段。悬停看依赖：实线框是它依赖的，虚线框是依赖它的。' }));
+      return;
+    }
+    const tone = module.status === 'done' || module.status === 'blocked' ? '#fff' : 'var(--ink)';
+    put(panel, 
+      el('p', { class: 'crumb', text: module.capabilityName }),
+      el('h3', { text: module.name }),
+      el('span', { class: `tag s-${module.status}`, style: { color: tone } }, `${ICON[module.status]} ${LABEL[module.status]}`),
+      module.conflict ? el('span', { class: 'tag', style: { background: 'var(--s-conflict)' } }, '! 测试没过') : null,
+      el('div', { class: 'progress' }, el('i', { style: { width: pct(module.progress) } })),
+      el('dl', {},
+        el('dt', { text: '编号' }), el('dd', {}, el('code', { text: module.id })),
+        el('dt', { text: '进度' }), el('dd', { text: `${pct(module.progress)}${module.tasks.length ? `（${module.tasks.filter(task => task.status === 'done').length}/${module.tasks.length} 项）` : ''}` }),
+        el('dt', { text: '范围' }), el('dd', { text: String(module.size) }),
+        el('dt', { text: '里程碑' }), el('dd', { text: milestoneName(module.milestone) }),
+        el('dt', { text: '负责人' }), el('dd', { text: module.owner ?? '—' }),
+        el('dt', { text: '测试' }), el('dd', { text: module.tests ? `${testsText(module.tests)}${module.tests.missing ? `，${module.tests.missing} 个文件没跑到` : ''}` : module.testFiles.length ? '还没收集' : '没有声明测试' })),
+      module.blockedReason ? el('p', { class: 'note blocked' }, el('b', { text: '受阻：' }), module.blockedReason) : null,
+      module.conflict ? el('p', { class: 'note conflict', text: '清单里写的是完成，但这个模块的测试没有全部通过：先修测试，或把状态改回「进行中」。' }) : null,
+      module.notes ? el('p', { class: 'note', text: module.notes }) : null,
+      module.evidence ? el('p', { class: 'note' }, el('b', { text: '证据：' }), module.evidence) : null,
+      module.tasks.length ? [el('h4', { text: '细项' }), el('ul', {}, module.tasks.map(task => el('li', {}, el('span', { class: 'icon', text: ICON[task.status] }), el('span', { text: task.title }), el('span', { style: { color: 'var(--ink-3)' } }, ` ${LABEL[task.status]}`))))] : null,
+      el('h4', { text: '它依赖的' }), moduleLinks(module.dependsOn),
+      el('h4', { text: '依赖它的' }), moduleLinks(module.dependents),
+      module.waitingOn.length ? [el('h4', { text: '还在等（依赖没完成）' }), moduleLinks(module.waitingOn)] : null,
+      module.testFiles.length ? [el('h4', { text: '测试文件' }), el('ul', {}, module.testFiles.map(file => el('li', {}, el('code', { text: file }))))] : null,
+      (module.paths ?? []).length ? [el('h4', { text: '代码' }), el('ul', {}, module.paths.map(file => el('li', {}, el('code', { text: file }))))] : null);
+  }
+
+  function renderAll() {
+    renderHead();
+    renderSummary();
+    renderFilters();
+    $('map').hidden = ui.view !== 'map';
+    $('table').hidden = ui.view !== 'table';
+    if (ui.view === 'map') renderMap(); else renderTable();
+    renderPanel();
+  }
+
+  // ---------- 事件
+  $('f-milestone').addEventListener('change', event => { ui.milestone = event.target.value; renderAll(); });
+  $('f-owner').addEventListener('change', event => { ui.owner = event.target.value; renderAll(); });
+  $('f-query').addEventListener('input', event => { ui.query = event.target.value.trim().toLowerCase(); renderAll(); });
+  for (const button of document.querySelectorAll('.views button')) button.addEventListener('click', () => { ui.view = button.dataset.view; renderAll(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && ui.selected) select(null); });
+
+  function load(state) {
+    ui.state = state;
+    if (ui.selected && !byId().has(ui.selected)) ui.selected = null;
+    renderAll();
+  }
+  if (mode === 'snapshot') {
+    load(JSON.parse($('progress-state').textContent));
+  } else {
+    const modeNode = $('mode');
+    fetch('/api/state').then(res => res.json()).then(load).catch(() => {});
+    const source = new EventSource('/api/events');
+    source.addEventListener('state', event => { modeNode.className = 'mode live'; load(JSON.parse(event.data)); });
+    source.addEventListener('open', () => { modeNode.className = 'mode live'; if (ui.state) renderHead(); });
+    source.addEventListener('error', () => { modeNode.className = 'mode stale'; if (ui.state) renderHead(); });
+  }
+})();
+
+</script>
+</body>
+</html>

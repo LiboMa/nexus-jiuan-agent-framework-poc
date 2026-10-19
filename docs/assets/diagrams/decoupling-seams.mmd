@@ -1,0 +1,29 @@
+flowchart TB
+  subgraph J["九安（宿主，开发包只读不改）"]
+    jfe["原前端<br/>analysis.js"]
+    jsrv["服务端 createAnalysisApp<br/>会话 · CSRF · 单据 · 预审"]
+    jadv["AI 建议服务<br/>草稿原件核验"]
+    jlib["九安库函数<br/>规范化 · 合同常量 · 校验"]
+  end
+  subgraph P["PoC Agent 模块（插件）"]
+    pfe["前端扩展<br/>nexus-poc.js · nexus-invoke.js"]
+    proutes["插件接口 /poc/*<br/>审批流 · 我的 Nexus · 调用测试"]
+    pmc["模型客户端<br/>model-client.mjs"]
+    pj["jiuan.mjs<br/>唯一的导入口"]
+    pa2a["A2A 客户端<br/>a2a-client.mjs"]
+  end
+  subgraph N["Nexus（两个发布，互不知道）"]
+    n1["九安审核AI<br/>pub_5c53…"]
+    n2["九安知识Agent<br/>pub_2cc2…"]
+  end
+  jfe ---|"⑤ 锚点补丁"| pfe
+  jsrv ---|"① platformRoutes 钩子"| proutes
+  jadv ---|"② modelClient 注入"| pmc
+  jlib ---|"⑥ 按路径导入"| pj
+  proutes --> pa2a
+  pmc --> pa2a
+  pa2a -->|"③ A2A 0.3 · ④ 数据约定"| n1
+  pa2a -->|"③ 调用测试"| n2
+  class jfe,jsrv,jadv,jlib jiuan
+  class pfe,proutes,pmc,pa2a,pj poc
+  class n1,n2 nexus

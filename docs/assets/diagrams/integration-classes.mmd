@@ -1,0 +1,18 @@
+flowchart TB
+  subgraph A["A · 原样交付"]
+    a["a2a-client · attachments · catalog · access/crypto · verify · routes<br/>model-client · nexus-poc.css · advisory-input（有漂移风险）"]
+  end
+  subgraph D["D · 交付，但要为生产改造"]
+    d["approval/*：内存 Map → 九安键值状态，带公司<br/>access/me · store · nexus/cli：文件 + CLI → 数据库 + REST，信封加密<br/>invoke · runs · routes · keys · governance：持久化 · 按公司过滤 · 主机的密钥与治理范围<br/>nexus-poc.js · nexus-invoke.js：去掉口令登录与 PoC 文案"]
+  end
+  subgraph B["B · 九安那边要改的地方（不是 PoC 的文件）"]
+    b["start-analysis.mjs 注册插件 · analysis-server.mjs 静态白名单<br/>providers/ai-model.mjs · Dockerfile · compose"]
+  end
+  subgraph C["C · PoC 专用，不交付"]
+    c["server · poc-app · memory-store · seed · accounts · login · secrets<br/>samples · poc-client · try-agent · infra"]
+  end
+  A ~~~ D ~~~ B ~~~ C
+  class a good
+  class d warn
+  class b jiuan
+  class c pocOnly

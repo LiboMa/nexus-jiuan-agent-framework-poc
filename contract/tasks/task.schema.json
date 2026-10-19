@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jiuan:agent:v1:task-manifest",
+  "title": "任务清单 task.json",
+  "description": "每个任务一份。九安的通用层只读这份清单来决定怎么发起、怎么存结果、怎么选发布、什么变了作废，不按家族写分支。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope",
+    "task",
+    "version",
+    "title",
+    "family",
+    "mode",
+    "subjectKinds",
+    "scopes",
+    "trigger",
+    "result",
+    "routingFacts",
+    "files",
+    "deferred",
+    "description",
+    "input",
+    "output",
+    "checks",
+    "outcome",
+    "staleWhen",
+    "flagWhen",
+    "limits",
+    "data",
+    "sideEffects",
+    "doc"
+  ],
+  "properties": {
+    "envelope": {
+      "const": "jiuan.agent/v1"
+    },
+    "task": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,40}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "family": {
+      "enum": [
+        "process",
+        "finance",
+        "knowledge",
+        "common"
+      ],
+      "description": "只用于说明和分组；通用层不按它写分支"
+    },
+    "mode": {
+      "enum": [
+        "oneshot",
+        "conversation"
+      ]
+    },
+    "subjectKinds": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "document",
+          "rule",
+          "rule_set",
+          "company",
+          "period",
+          "batch"
+        ]
+      },
+      "description": "空表表示没有对象"
+    },
+    "scopes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": [
+          "company",
+          "tenant"
+        ]
+      },
+      "description": "允许的 context.scope"
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "human"
+      ],
+      "properties": {
+        "system": {
+          "type": "boolean",
+          "description": "能不能由流水线、工作流以 system:pipeline 发起"
+        },
+        "human": {
+          "type": "boolean",
+          "description": "能不能由人在页面上发起（身份是这个人）"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "admin",
+              "analyst"
+            ]
+          },
+          "description": "人发起时要求的九安角色"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "store"
+      ],
+      "properties": {
+        "store": {
+          "enum": [
+            "per_subject",
+            "per_subject_input",
+            "none"
+          ],
+          "description": "结果按对象存（一个对象一份）、按对象 + 输入指纹存（同一对象不同输入各一份），或不存（问答）"
+        },
+        "partitioned": {
+          "type": "boolean",
+          "description": "同一个对象能不能拆成几份分别调用（例如一张单据按费用类型分组），分区编号由任务层给"
+        }
+      }
+    },
+    "routingFacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9]{0,40}$"
+      },
+      "description": "组装器要交给路由的事实名，路由表的 when 只能用这些名字"
+    },
+    "files": {
+      "type": "boolean"
+    },
+    "deferred": {
+      "type": "boolean"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "input": {
+      "const": "input.schema.json"
+    },
+    "output": {
+      "const": "output.schema.json"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "field",
+            "labels",
+            "next"
+          ],
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "labels": {
+              "type": "object"
+            },
+            "next": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "staleWhen": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "flagWhen": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxRequestChars",
+        "maxAnswerChars",
+        "timeoutMs"
+      ],
+      "properties": {
+        "maxRequestChars": {
+          "type": "integer",
+          "maximum": 95000
+        },
+        "maxAnswerChars": {
+          "type": "integer"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "maximum": 180000
+        },
+        "perUserPerMinute": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxTurns": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sideEffects": {
+      "enum": [
+        "none",
+        "proposes"
+      ]
+    },
+    "doc": {
+      "type": "string"
+    }
+  }
+}

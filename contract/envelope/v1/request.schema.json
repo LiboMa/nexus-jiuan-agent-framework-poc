@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jiuan:agent:v1:request",
+  "title": "jiuan.agent/v1 请求信封",
+  "description": "九安发给任何 Agent 的请求都套这个信封，放在 A2A 消息的 DataPart 里。input 的格式由任务契约规定（contract/tasks/<任务>/v<版本>/input.schema.json）。Agent 必须忽略它不认识的字段。",
+  "type": "object",
+  "required": [
+    "envelope",
+    "task",
+    "taskVersion",
+    "requestId",
+    "context",
+    "input"
+  ],
+  "properties": {
+    "envelope": {
+      "const": "jiuan.agent/v1"
+    },
+    "task": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,40}$",
+      "description": "任务名，例如 first_review"
+    },
+    "taskVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "任务契约的主版本"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "九安生成，Agent 原样带回"
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "tenantId",
+        "scope",
+        "companyId",
+        "subject"
+      ],
+      "properties": {
+        "tenantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "scope": {
+          "enum": [
+            "company",
+            "tenant"
+          ],
+          "description": "company：针对一家公司（companyId 必填）；tenant：整个租户、集团层面，或不属于哪家公司（companyId 为 null），例如平台级的能力清单、集团层面的制度问答和费用分析"
+        },
+        "companyId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "subject": {
+          "description": "这次针对的对象；纯问答这类没有对象的任务为 null",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "id",
+                "version"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "document",
+                    "rule",
+                    "rule_set",
+                    "company",
+                    "period",
+                    "batch"
+                  ],
+                  "description": "单据、规则、规则集、公司、期间、一批单据"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200,
+                  "description": "对象的版本；对象一变，基于旧版本的结果就作废"
+                }
+              }
+            }
+          ]
+        },
+        "conversation": {
+          "description": "只有多轮对话类任务才有：九安的会话编号和第几轮",
+          "type": "object",
+          "required": [
+            "id",
+            "turn"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "turn": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "locale": {
+          "const": "zh-CN"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "company"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "companyId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "tenant"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "companyId": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "input": {
+      "type": "object",
+      "description": "任务自己的输入，按任务契约的 input.schema.json"
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "跟在这条 A2A 消息后面的文件 Part 的清单（只有任务允许带文件时才有）",
+      "items": {
+        "type": "object",
+        "required": [
+          "part",
+          "name",
+          "mimeType",
+          "sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "part": {
+            "type": "integer",
+            "minimum": 2,
+            "description": "第几个 Part（从 0 数，0 是文字，1 是信封）"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

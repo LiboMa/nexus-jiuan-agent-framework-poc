@@ -1,0 +1,47 @@
+flowchart TB
+  subgraph JF["九安前端（九安维护）"]
+    ui1["审批流面板 · 单据池卡片"]
+    ui2["财务报告页（以后）"]
+    ui3["知识问答面板（以后）"]
+    ui4["Agent 接入页（可选）"]
+  end
+  subgraph JB["九安服务端：业务流程与任务层（九安维护）"]
+    stage["流水线一站<br/>audit.first-review"]
+    wf["审批流<br/>预审 → AI 步骤 → 人工复核"]
+    asm["各任务的组装器与展示<br/>first_review · 以后的任务"]
+  end
+  subgraph JG["九安服务端：通用层（九安维护，我们给参考实现）"]
+    route["路由配置"]
+    svc["Agent 任务服务<br/>选发布 · 存结果 · AI 步骤状态"]
+    en["Agent 接入<br/>启用记录 · 密钥"]
+    gw["调用中间件<br/>连接器 ai-model · agentTask"]
+  end
+  subgraph OURS["我们交付、我们维护"]
+    adapter["A2A 适配层<br/>providers/nexus-a2a.mjs"]
+    contract[("契约 contract/<br/>信封 · 任务目录 · 检查代码")]
+  end
+  subgraph NX["Nexus（Agent 开发维护；名片里声明各自的任务）"]
+    a1["审核 Agent<br/>first_review@1"]
+    a2["知识 Agent<br/>knowledge_answer@1 …"]
+    a3["财务 Agent（以后）"]
+  end
+  ui1 --> wf
+  ui2 --> svc
+  ui3 --> svc
+  ui4 --> en
+  stage --> wf
+  wf --> svc
+  asm -. "登记" .-> svc
+  route -.-> svc
+  svc --> gw
+  en -. "密钥" .-> gw
+  gw --> adapter
+  contract -.- adapter
+  adapter -- "A2A" --> a1
+  adapter -- "A2A" --> a2
+  adapter -- "A2A" --> a3
+  class ui1,ui2,ui3,ui4,stage,wf,asm,route,svc,en,gw jiuan
+  class adapter poc
+  class contract gate
+  class a1,a2 nexus
+  class a3 pocOnly

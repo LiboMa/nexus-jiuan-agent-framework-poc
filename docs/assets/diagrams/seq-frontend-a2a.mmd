@@ -1,0 +1,26 @@
+sequenceDiagram
+  autonumber
+  participant B as 浏览器<br/>九安原前端 analysis.js
+  participant S as 九安服务端<br/>analysis-server.mjs
+  participant A as 九安 AI 建议服务<br/>analysis-ai-advice.mjs
+  participant M as PoC 模型客户端<br/>nexus/model-client.mjs
+  participant K as 系统取密钥<br/>nexus/system-key.mjs
+  participant N as Nexus<br/>九安审核AI
+  B->>S: POST /api/analysis/v1/documents/:id/advice<br/>{ sourceVersion }
+  S->>S: 会话 · 公司范围 · 版本一致 · 限流
+  S->>A: adviceService.enqueue
+  S-->>B: 202，任务已排队
+  A->>A: 组装单据事实 + 规则试跑结果
+  A->>M: modelClient.advisory（facts, ruleResults, …）
+  M->>K: getKey（按单据找发起人）
+  K-->>M: 发起人启用的 → 别人启用的 → secrets.env
+  M->>N: A2A message/stream · Bearer nxa_…<br/>九安的任务说明 + 输出格式 + 输入
+  N-->>M: 流式返回 JSON
+  M->>M: 九安自己的 parseAdvisoryResult 校验
+  M-->>A: 建议
+  A->>A: 存结果，带有效期
+  loop 每 2 秒，最多 15 次
+    B->>S: GET …/documents/:id/advice
+    S-->>B: 状态与建议（readOnly · canApprove: false）
+  end
+  Note over B,N: 浏览器只连本站（CSP connect-src 'self'）；到 Nexus 的每一跳都在服务端

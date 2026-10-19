@@ -1,0 +1,24 @@
+flowchart TB
+  subgraph author["规则怎么来（客户 + 知识 Agent）"]
+    direction LR
+    policy["制度原文、案例<br/>（在 Nexus 知识 Agent 上）"] -- suggest_rules --> suggest["推荐的规则草稿"]
+    suggest --> edit["客户在规则库确认、修改"]
+    manual["客户直接录入"] --> edit
+    edit --> publish["两人发布<br/>一人写、另一人确认"]
+  end
+  ruleset[("生效规则集（九安键值状态）<br/>编号 · 版本 · 定义哈希 · 原文")]
+  publish --> ruleset
+  subgraph flow["每张单据（来单自动）"]
+    direction LR
+    arrive(["来单"]) --> pre["九安预审<br/>字段类规则由引擎判定（硬门禁）"]
+    pre --> first["AI 初审<br/>① 逐条初判：引用原文和证据<br/>② 综合分析：给初审建议"]
+    first --> review["人工复核<br/>看逐条表格，通过或退回"]
+  end
+  ruleset -- 按单据类型、费用类型筛选 --> pre
+  ruleset -- 规则原文 + 引擎结果 --> first
+  ruleset -. 规则版本变了：建议失效、自动重跑 .-> first
+  class policy,suggest nexus
+  class edit,manual,publish poc
+  class ruleset jiuan
+  class arrive,pre,first poc
+  class review good

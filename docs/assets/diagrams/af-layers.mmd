@@ -1,0 +1,25 @@
+flowchart TB
+  subgraph T["任务层：每类 Agent 一份任务契约（contract/tasks/）"]
+    direction LR
+    t1["first_review@1<br/>单据初审 · 业务流程"]
+    t2["describe@1<br/>能力清单 · 通用"]
+    t3["以后：分拣、按费用类型审核<br/>业务流程"]
+    t4["以后：费用分析、预算对比<br/>财务"]
+    t5["以后：制度问答、推荐规则<br/>知识库"]
+  end
+  subgraph G["通用层：所有 Agent 共用，不认识任何具体任务（contract/envelope/v1/）"]
+    direction LR
+    g1["信封<br/>任务名 · 版本 · 上下文 · 输入 / 输出"]
+    g2["发现<br/>名片里的契约和任务列表"]
+    g3["调用<br/>流式 · 断线查询 · 长任务 · 修正一次"]
+    g4["状态与错误码<br/>AI 步骤 · 自动重试 · 作废"]
+    g5["Agent 接入与路由<br/>启用发布 · 保管密钥 · 选发布"]
+  end
+  A2A["A2A 0.3 · Nexus 上的各个 Agent"]
+  t1 ~~~ t2 ~~~ t3 ~~~ t4 ~~~ t5
+  g1 ~~~ g2 ~~~ g3 ~~~ g4 ~~~ g5
+  T --> G --> A2A
+  class t1,t2 poc
+  class t3,t4,t5 pocOnly
+  class g1,g2,g3,g4,g5 gate
+  class A2A nexus

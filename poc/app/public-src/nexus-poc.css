@@ -1,0 +1,105 @@
+/* PoC 扩展的样式：沿用九安工作区的变量与组件（.panel、.tag、.button、.field），只补新组件需要的布局。 */
+
+/* 口令登录：九安的登录页是深色磨砂卡片 */
+.poc-login-form { display: grid; gap: 14px; margin: 18px 0 14px; }
+.poc-login-form .field label { color: #e7dced; font-size: var(--ui-text-sm); line-height: var(--ui-leading-sm); }
+.poc-login-form .field input, .poc-login-form .field select { height: 44px; padding: 0 12px; border: 1px solid #ffffff23; border-radius: 9px; background: #ffffff12; color: #fff; font-size: var(--ui-text-sm); }
+.poc-login-form .field select option { color: var(--ui-ink); }
+.poc-login-form .button.primary { width: 100%; justify-content: center; }
+.poc-login-form .inline-message { margin: 0; }
+.poc-login-message:empty { display: none; }
+
+/* 审批流卡片：五步进度是这张卡片的主角，其余保持安静 */
+.poc-approval { display: grid; gap: 16px; }
+.poc-approval-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.poc-approval-head p { margin: 0; color: var(--ui-muted); }
+.poc-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; counter-reset: poc-step; }
+.poc-step { position: relative; counter-increment: poc-step; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 58px; padding: 10px 12px 10px 40px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); }
+.poc-step::before { content: counter(poc-step); position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #f3f4f6; color: var(--ui-muted); font-size: 11px; font-weight: var(--ui-weight-semibold); }
+.poc-step-label { font-size: var(--ui-text-sm); font-weight: var(--ui-weight-medium); }
+.poc-step .tag { align-self: flex-start; }
+.poc-step-active { border-color: #c4b5fd; background: var(--ui-soft); }
+.poc-step-active::before { background: var(--ui-accent); color: #fff; }
+.poc-step-done::before { content: "✓"; background: #dcfce7; color: #15803d; }
+.poc-step-failed { border-color: #fecaca; }
+.poc-step-failed::before { content: "!"; background: #fee2e2; color: #b91c1c; }
+.poc-step-working::before { animation: poc-pulse 1.6s ease-in-out infinite; }
+@keyframes poc-pulse { 50% { box-shadow: 0 0 0 6px #7c3aed26; } }
+.poc-advice { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--ui-line); border-radius: 12px; background: #fcfbff; }
+.poc-advice h4, .poc-timeline-section h4 { margin: 0 0 6px; font-size: var(--ui-text-sm); }
+.poc-advice ul { margin: 0; padding-left: 20px; line-height: 1.8; }
+.poc-advice-summary { margin: 0; line-height: 1.8; }
+.poc-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.poc-decision { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--ui-line); }
+.poc-choice { display: flex; flex-wrap: wrap; gap: 18px; margin: 0; padding: 0; border: 0; }
+.poc-choice legend { margin-bottom: 8px; font-weight: var(--ui-weight-medium); }
+.poc-choice label { display: inline-flex; align-items: center; gap: 6px; }
+.poc-approval textarea, .poc-invoke textarea { width: 100%; min-height: 84px; resize: vertical; padding: 10px 12px; border: 1px solid var(--ui-line); border-radius: 8px; font: inherit; line-height: 1.7; }
+.poc-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.poc-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.poc-timeline li { padding: 2px 0 2px 12px; border-left: 3px solid #ddd6fe; }
+.poc-timeline li p { margin: 4px 0 0; }
+.poc-timeline-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.poc-timeline-head span, .poc-timeline-head time, .poc-trace { color: var(--ui-muted); font-size: var(--ui-text-xs); }
+.poc-pre { white-space: pre-wrap; }
+.poc-approval-slot:empty { display: none; }
+
+/* Nexus Agent 页 */
+.poc-agents-page { display: grid; gap: 20px; }
+.poc-agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.poc-agent-card { display: grid; align-content: start; gap: 12px; padding: 18px; border: 1px solid var(--ui-line); border-radius: 14px; background: var(--ui-surface); }
+.poc-agent-card.poc-in-use { border-color: #c4b5fd; box-shadow: 0 0 0 3px #ede9fe; }
+.poc-agent-card h3 { margin: 0; font-size: var(--ui-text-md); }
+.poc-agent-description { margin: 0; color: var(--ui-muted); line-height: 1.7; }
+.poc-connection, .poc-invoke, .poc-result { display: grid; gap: 12px; }
+.poc-invoke select { height: 40px; max-width: 100%; }
+.poc-raw { max-height: 360px; overflow: auto; margin: 0; padding: 12px; border-radius: 8px; background: var(--ui-ink); color: #e5e7eb; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.poc-table-wrap { overflow-x: auto; }
+.poc-runs { width: 100%; border-collapse: collapse; font-size: var(--ui-text-xs); }
+.poc-runs th, .poc-runs td { padding: 8px 10px; border-bottom: 1px solid var(--ui-line); text-align: left; vertical-align: top; white-space: nowrap; }
+
+/* 我的 Agent：三组卡片、启用表单、未发布列表 */
+.poc-my-agents { display: grid; gap: 18px; }
+.poc-agent-group { display: grid; gap: 10px; }
+.poc-agent-group h4 { margin: 0; font-size: var(--ui-text-sm); color: var(--ui-muted); }
+.poc-enable-form { display: grid; gap: 10px; padding: 12px; border: 1px dashed #c4b5fd; border-radius: 10px; background: #fcfbff; }
+.poc-enable-form input[type="password"], .poc-connection input[type="password"] { height: 40px; padding: 0 12px; border: 1px solid var(--ui-line); border-radius: 8px; font: inherit; }
+.poc-check { display: inline-flex; align-items: center; gap: 6px; }
+.poc-unpublished summary { cursor: pointer; color: var(--ui-muted); }
+.poc-unpublished ul { margin: 8px 0 0; padding-left: 20px; line-height: 1.8; }
+
+/* 调用测试：附件与按任务的输入 */
+.poc-task-field textarea { min-height: 200px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.poc-attach { display: grid; gap: 8px; }
+.poc-attach > .quiet-note { margin: 0; }
+.poc-dropzone { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 16px; border: 1px dashed #c4b5fd; border-radius: 10px; background: #fcfbff; color: var(--ui-muted); }
+.poc-dropzone-over { border-style: solid; border-color: var(--ui-accent); background: var(--ui-soft); }
+.poc-samples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.poc-samples:empty, .poc-attachments:empty { display: none; }
+.poc-attachments { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.poc-attachments li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--ui-line); border-radius: 8px; background: var(--ui-surface); }
+.poc-attachment-name { font-weight: var(--ui-weight-medium); overflow-wrap: anywhere; }
+.poc-thumb { width: 56px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid var(--ui-line); }
+.poc-result-block { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--ui-line); border-radius: 12px; background: #fcfbff; }
+.poc-result-block h4 { margin: 0 0 4px; font-size: var(--ui-text-sm); }
+.poc-result-block ul { margin: 0; padding-left: 20px; line-height: 1.8; }
+.poc-raw-details summary { cursor: pointer; color: var(--ui-muted); }
+.poc-raw-details[open] summary { margin-bottom: 8px; }
+
+@media (max-width: 900px) {
+  .poc-steps { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poc-step-working::before { animation: none; }
+}
+
+/* 九安的 .field 设了 display:flex，会盖过浏览器默认的 [hidden]{display:none}；PoC 用 hidden 切换的表单块要显式隐藏。 */
+.poc-approval [hidden], .poc-invoke [hidden], .poc-login-form [hidden], .poc-my-agents [hidden] { display: none !important; }
+
+/* 单据池顶上的「模拟来单」 */
+.poc-intake{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 14px}
+.poc-intake > span{flex:1 1 320px;color:var(--ui-text-muted, #4A5463)}
+.poc-intake select{max-width:100%;font:inherit;padding:4px 8px}
+.poc-intake .quiet-note{flex-basis:100%;margin:0}
+.poc-advice-title{margin:0 0 6px;font-size:15px}
+.poc-approval-slot{display:inline-flex;flex-wrap:wrap;gap:4px}

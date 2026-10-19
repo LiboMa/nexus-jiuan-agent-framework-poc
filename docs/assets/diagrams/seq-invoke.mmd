@@ -1,0 +1,24 @@
+sequenceDiagram
+  autonumber
+  participant P as 页面（调用测试）
+  participant I as nexus/invoke
+  participant M as access/me
+  participant N as Nexus 发布
+  P->>I: POST /poc/nexus/invoke（文字 + 附件）
+  I->>I: 检查附件：类型 · 文件头 · 大小
+  I->>M: credentialFor（用户，发布）
+  M-->>I: 我启用的 → 系统提供的<br/>都没有就 409
+  I-->>P: 202，立即返回 runId
+  par 后台调用
+    I->>N: A2A message/stream<br/>Bearer nxa_… · 文字 Part + 文件 Part
+    N-->>I: 流式返回
+    opt 返回 401
+      I->>M: markInvalid<br/>只有 401 才标记失效
+    end
+    I->>I: 写运行记录<br/>内存 50 条 · 按发起人过滤
+  and 页面轮询
+    loop 每 3 秒，直到结束
+      P->>I: GET /poc/nexus/runs/runId
+    end
+  end
+  Note over P,N: Agent 一轮常超过 CloudFront 60 秒的回源时限：先返回 runId，再轮询

@@ -1,0 +1,48 @@
+{
+  "note": "虚构样例，仅供 PoC 测试，不是真实票据。",
+  "document": "FYBX-POC-001",
+  "invoices": [
+    {
+      "type": "电子发票（普通发票）",
+      "number": "26110000000000001234（虚构）",
+      "issueDate": "2026-10-11",
+      "buyer": "示例子公司甲（虚构）",
+      "seller": "示例酒店管理有限公司北京分公司（虚构）",
+      "item": "住宿费",
+      "city": "北京",
+      "nights": 1,
+      "checkIn": "2026-10-10",
+      "checkOut": "2026-10-11",
+      "amountExcludingTax": 547.17,
+      "taxRate": 0.06,
+      "tax": 32.83,
+      "total": 580.0,
+      "currency": "CNY"
+    },
+    {
+      "type": "铁路电子客票",
+      "number": "E20261011000000（虚构）",
+      "issueDate": "2026-10-10",
+      "passenger": "张晓明（虚构）",
+      "train": "G112",
+      "from": "济南西",
+      "to": "北京南",
+      "seat": "二等座",
+      "total": 350.0,
+      "currency": "CNY"
+    },
+    {
+      "type": "铁路电子客票",
+      "number": "E20261012000000（虚构）",
+      "issueDate": "2026-10-11",
+      "passenger": "张晓明（虚构）",
+      "train": "G117",
+      "from": "北京南",
+      "to": "济南西",
+      "seat": "二等座",
+      "total": 350.0,
+      "currency": "CNY"
+    }
+  ],
+  "sum": 1280.0
+}

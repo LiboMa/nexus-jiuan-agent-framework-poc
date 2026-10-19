@@ -1,0 +1,12 @@
+{
+  "name": "andon-finance-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "九安自助审核平台 PoC：九安原服务端与前端（内存存储）+ Nexus Agent（A2A）+ 审批流",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --test \"test/unit/**/*.test.mjs\"",
+    "build:public": "node scripts/build-public.mjs"
+  }
+}

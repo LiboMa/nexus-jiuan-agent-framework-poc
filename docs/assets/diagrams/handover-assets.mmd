@@ -1,0 +1,38 @@
+flowchart TB
+  subgraph laptop["本机（维护人的电脑）"]
+    direction LR
+    repo["audit-nexus/<br/>代码 · 文档 · 测试 · 契约"]
+    secrets["poc/infra/secrets.env（0600）<br/>口令 · REGISTRY_KEY · 测试台密钥 · 兜底调用密钥（可选）"]
+    operator["nexus-ai-operator<br/>~/.nexus 凭证（不读不复制）"]
+    source["source/ 九安开发包 v0.5.3<br/>只读，不执行"]
+    build[".build/jiuan<br/>副本 + 补丁 + mysql2"]
+  end
+  subgraph aws["AWS 533267047935 · us-east-1 · 栈 andon-finance-poc"]
+    direction LR
+    s3["S3 构件桶<br/>releases/current.tgz · archive/（14 天）<br/>secrets/secrets.env"]
+    ec2["EC2 i-01d753d48056fd423 · t3.large<br/>/opt/andon-finance/current<br/>/etc/andon-finance/secrets.env · bench/<br/>/var/lib/andon-finance/users/"]
+    db["MySQL 8.0 容器 jiuan-mysql<br/>127.0.0.1:3306 · 库 jiuan_analysis<br/>/var/lib/jiuan-mysql"]
+    cf["CloudFront E92MPQ217VIPX<br/>andon-finance.tinyboat.blog"]
+  end
+  subgraph nx["Nexus nxs-beine1013 · v0.3.28"]
+    direction LR
+    adv["九安审核AI<br/>pub_5c53e70d8dc7ddea（系统提供）"]
+    kn["九安知识Agent<br/>pub_2cc24c29d2e5b2c9"]
+    keys["调用密钥：本人在网页签发<br/>API 密钥：个人设置"]
+  end
+  source -. 只复制 .-> build
+  build -- deploy.sh --> s3
+  repo -- deploy.sh --> s3
+  ec2 --- db
+  secrets -. 加密上传 .-> s3
+  s3 -- "SSM 拉取 · 重启" --> ec2
+  cf e1@== "HTTP :4180" ==> ec2
+  ec2 e2@== A2A ==> adv
+  ec2 e3@== A2A ==> kn
+  e1@{ animate: true }
+  e2@{ animate: true }
+  e3@{ animate: true }
+  class repo,operator,s3,ec2,cf,build poc
+  class secrets risk
+  class source,db jiuan
+  class adv,kn,keys nexus

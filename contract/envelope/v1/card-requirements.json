@@ -1,0 +1,38 @@
+{
+  "envelope": "jiuan.agent/v1",
+  "cardUrl": "{nexusOrigin}/a2a/{publishId}/.well-known/agent-card.json",
+  "description": "九安在「Agent 接入」启用时、连接器探测时和每次启动时读一次名片（公开，不带密钥）。Nexus 的名片只能改名称和描述，技能固定是一个 ask，所以契约和任务列表写在描述里，每项单独一行。",
+  "checks": [
+    {
+      "path": "description",
+      "check": "hasLine",
+      "value": "契约：jiuan.agent/v1"
+    },
+    {
+      "path": "description",
+      "check": "hasLineMatching",
+      "value": "^任务：[a-z][a-z0-9_]{1,40}@[0-9]+(、[a-z][a-z0-9_]{1,40}@[0-9]+)*$",
+      "note": "这个 Agent 支持的任务和版本，例如「任务：first_review@1」或「任务：knowledge_answer@1、suggest_rules@1」"
+    },
+    {
+      "path": "capabilities.streaming",
+      "check": "equals",
+      "value": true
+    },
+    {
+      "path": "defaultInputModes",
+      "check": "includes",
+      "value": "application/json"
+    },
+    {
+      "path": "securitySchemes",
+      "check": "hasKey",
+      "value": "bearer"
+    }
+  ],
+  "doNotRelyOn": [
+    "skills（固定一个 ask，不能自定义）",
+    "version（是发布的修订号，不是 Agent 版本；Agent 版本看结果里的 agentVersion）",
+    "capabilities.pushNotifications（固定 false）"
+  ]
+}

@@ -1,0 +1,33 @@
+stateDiagram-v2
+  direction TB
+  state "未发起（原有单据）" as not_started
+  state "预审中" as prechecking
+  state "AI 初审中" as ai_running
+  state "AI 初审失败" as ai_failed
+  state "待人工复核" as pending_review
+  state "已通过" as approved
+  state "已退回" as returned
+  state "已失效" as invalidated
+  [*] --> prechecking: 来单，系统自动发起
+  [*] --> not_started
+  not_started --> prechecking: 有人点「发起 AI 初审」
+  invalidated --> prechecking: 重新发起
+  prechecking --> ai_running: 九安预审完成
+  prechecking --> ai_failed: 预审未完成
+  ai_running --> pending_review: AI 初审建议返回
+  ai_running --> ai_failed: 初审未完成
+  ai_failed --> ai_running: 系统自动重试一次 / 人点重试
+  ai_failed --> pending_review: 人工复核（不带 AI 建议）
+  pending_review --> approved: 人工复核：通过
+  pending_review --> returned: 人工复核：退回
+  pending_review --> invalidated: 单据版本变化
+  approved --> [*]
+  returned --> [*]
+  note right of pending_review
+    AI 只给初审建议，结论由人做；
+    与建议相反时必须写理由
+  end note
+  class approved good
+  class returned risk
+  class ai_failed warn
+  class invalidated pocOnly

@@ -1,0 +1,26 @@
+flowchart TB
+  subgraph root["组合根（PoC 专用；并入九安时由 start-analysis.mjs 取代）"]
+    direction LR
+    server["server.mjs<br/>读配置与密钥 · 建好各模块 · 监听"] --> pocapp["poc-app.mjs<br/>九安 createAnalysisApp + 内存存储 + 种子单据 + 口令登录"]
+  end
+  subgraph plugins["PoC 插件：挂在九安的 platformRoutes 钩子上，彼此不导入，只用组合根注入的函数"]
+    direction LR
+    approval["approval/ · 审批流<br/>workflow · runner · routes"]
+    access["access/ · 我的 Nexus<br/>me · store · crypto · verify · routes"]
+    nexus["nexus/ · 调用测试与 A2A<br/>invoke · routes · model-client · runs"]
+  end
+  subgraph base["底层与外部"]
+    direction LR
+    jiuan["jiuan.mjs → 九安 v0.5.3（只读）<br/>createAnalysisApp · RuntimeServices · providers/ai-model 合同"]
+    a2a["nexus/a2a-client.mjs<br/>A2A 0.3 流式客户端"]
+    hub["Nexus nxs-beine1013<br/>两个发布 · A2A · REST"]
+  end
+  root ==> plugins
+  plugins --> jiuan
+  plugins --> a2a
+  a2a e1@==> hub
+  e1@{ animate: true }
+  class server,pocapp pocOnly
+  class approval,access,nexus,a2a poc
+  class jiuan jiuan
+  class hub nexus

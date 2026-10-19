@@ -1,0 +1,22 @@
+flowchart LR
+  q{"出了什么问题？"}
+  code["应用代码回滚<br/>归档包（只留 14 天）→ releases/current.tgz<br/>→ SSM 重启 → 健康检查 → 记 CHANGELOG"]
+  key["密钥失效或填错<br/>改 secrets.env → deploy.sh --code-only<br/>（代码回滚不动密钥）"]
+  param["栈参数改错<br/>改回原值 → deploy.sh --code-only"]
+  tpl{"模板更新<br/>失败了？"}
+  auto["CloudFormation 自动回滚<br/>什么都不用做"]
+  tpl2["更新成功但有问题<br/>用上一版模板跑 deploy.sh"]
+  prompt["Agent 回答变差<br/>上一版提示词经 Operator 再更新<br/>（发布跟随最新，立即生效）"]
+  warnnode["不要只换实例上的 current 或 previous：<br/>下次重启会重新拉 current.tgz；<br/>崩溃循环时 previous 也会被坏版本覆盖"]
+  q -- 新版本代码有问题 --> code
+  q -- 密钥 --> key
+  q -- 栈参数 --> param
+  q -- 基础设施模板 --> tpl
+  q -- Agent 提示词 --> prompt
+  tpl -- 是 --> auto
+  tpl -- 否 --> tpl2
+  code -.- warnnode
+  class q,tpl gate
+  class code,key,param,tpl2,prompt poc
+  class auto good
+  class warnnode warn

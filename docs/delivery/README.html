@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>交付文档索引</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
+v0.1</span>交付文档索引</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
+    <tr><th scope="row">状态</th><td>封板 Finance-Audit-Nexus-PoC
+v0.1</td></tr>
+    <tr><th scope="row">范围</th><td>audit-nexus/ 全部交付文档</td></tr>
+    <tr><th scope="row">读者</th><td>所有接手的人</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#更新文档" id="toc-更新文档">更新文档</a></li>
+</ul>
+</nav>
+<main id="main">
+<figure>
+<a href="../assets/diagrams/arch-overview.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/arch-overview.svg" loading="lazy"
+alt="系统总览" /></a>
+<figcaption>系统总览</figcaption>
+</figure>
+<p><strong>Finance-Audit-Nexus-PoC v0.1</strong>（2026-10-19
+封板）。现在的状态：</p>
+<ul>
+<li><strong>PoC 第一期</strong>已上线：审批流、「我的
+Nexus」、调用测试、命令行。</li>
+<li><strong>测试台</strong>已升级：t3.large；本机 MySQL
+8.0；服务端跑的是九安开发包的副本和九安自己的运行时。端到端测试 15
+通过、0 失败、1 按设计跳过。</li>
+<li><strong>Agent
+接入框架</strong>（<code>jiuan.agent/v1</code>）是设计稿
+v2，待批准；契约文件已写好。九安补丁 0001–0006 是下一份计划。</li>
+<li><strong>应用自己的 Skill</strong> <code>agent-access</code> 可以装进
+Claude Code、Codex、Kiro CLI 了；和 nexus-ai-operator 怎么一起配，见 <a
+href="skills-guide.html">Skills 配置指南</a>。</li>
+</ul>
+<p><strong>先读<a
+href="package-guide.html">交付包指南</a></strong>：包里有什么、怎么校验、谁先读什么、怎么验收。这里是交付用的全部文档；每份都有
+Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打开。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th>回答什么</th>
+<th>先读给谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="package-guide.html">交付包指南</a></td>
+<td>交付包里有什么、怎么生成和校验、按角色从哪读起、验收清单、签收</td>
+<td>所有人，第一份</td>
+</tr>
+<tr>
+<td><a href="skills-guide.html">Skills 配置指南</a></td>
+<td>编码工具（Claude Code、Codex、Kiro CLI）里怎么装、怎么连两个
+Skill：Nexus 一侧的 nexus-ai-operator，应用一侧的
+agent-access；配置顺序、排障、安全底线</td>
+<td>Agent 开发、应用开发</td>
+</tr>
+<tr>
+<td><a href="handover.html">交接文档</a></td>
+<td>有哪些东西、在哪、谁负责、还有什么没做完、接手第一周做什么</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><a href="../architecture.html">架构、模块与工作流</a></td>
+<td>线上跑着的样子、每个模块做什么、几条调用链</td>
+<td>应用开发、Agent 开发</td>
+</tr>
+<tr>
+<td><a href="integration.html">以补丁和独立模块的形式并入九安</a></td>
+<td>怎么把 PoC
+的能力交付进九安原应用：补丁、独立模块，以及推荐的组合</td>
+<td>应用开发、九安团队</td>
+</tr>
+<tr>
+<td><a href="deploy-iteration.html">部署与迭代规范</a></td>
+<td>每类变更怎么改、怎么测、怎么发布、怎么回滚</td>
+<td>应用开发、运维</td>
+</tr>
+<tr>
+<td><a href="operations.html">运维与后续迭代</a></td>
+<td>日常操作手册、故障排查、迭代的最佳方式</td>
+<td>运维、值班</td>
+</tr>
+<tr>
+<td><a href="../progress.html">开发进度看板</a></td>
+<td>每个能力、模块、任务的进度、依赖和测试证据，色块表示（快照）；实时版：<code>node tools/<wbr>progress/<wbr>serve.<wbr>mjs</code></td>
+<td>所有开发者</td>
+</tr>
+<tr>
+<td><a href="agent-framework-overview.html">Agent
+接入框架总览（HTML）</a></td>
+<td>一页看全：各类 Agent 走同一套接口的动画、两层、三类
+Agent、分界、对接流程、信封、第一个任务、可点的状态图、交付接口、维护分工</td>
+<td>所有人，先看这一页</td>
+</tr>
+<tr>
+<td><a href="agent-framework.html">Agent
+接入框架：架构、工作流与交付接口</a></td>
+<td><strong>九安平台上各类 Agent（业务流程、财务、知识库）怎么经 A2A
+接进来</strong>：架构、三类 Agent 怎么接、AI
+步骤与审批流、七个交付接口、补丁分层、谁维护什么（设计稿，待批准）</td>
+<td>九安开发者、应用开发、项目负责人</td>
+</tr>
+<tr>
+<td><a href="agent-interface.html">Agent 接口：jiuan.agent/v1</a></td>
+<td>所有 Agent
+共用的接口：信封、发现、调用、状态、错误码、限制、版本、怎么写新任务；机器可读文件在
+<code>contract/<wbr></code></td>
+<td>九安开发者、Agent 开发</td>
+</tr>
+<tr>
+<td><a href="first-review-contract.html">任务契约：单据初审
+first_review@1</a></td>
+<td>第一个任务：输入、输出（通过 / 不通过 +
+备注）、检查、在审批流里怎么用</td>
+<td>九安开发者、Agent 开发</td>
+</tr>
+<tr>
+<td><a href="call-chains.html">前端到 A2A
+Agent：调用链、解耦与处理流程</a></td>
+<td>九安原前端经哪些接口调到我们的 A2A Agent；九安和 Agent 模块之间的 6
+个接缝、哪边变了坏在哪；从汇联易到人工复核的处理流程；汇联易测试环境里有什么</td>
+<td>应用开发、Agent 开发、九安团队</td>
+</tr>
+<tr>
+<td><a href="rules-binding.html">客户规则与 AI 初审</a></td>
+<td>客户在规则库录入的规则怎么进入 AI 初审：现状、缺口、方案与分期</td>
+<td>项目负责人、应用开发、九安团队</td>
+</tr>
+<tr>
+<td><a href="code-review-2026-10-17.html">交付前代码评审</a></td>
+<td>评审结论、上生产前必须改的、维护热点</td>
+<td>应用开发、项目负责人</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>设计依据：<a
+href="../specs/2026-10-19-agent-framework-design.html">Agent
+接入框架设计</a>、<a
+href="../plans/2026-10-19-bench-upgrade.md">测试台升级计划</a>（执行记录在
+<code>evidence/bench/2026-10-19-upgrade.md</code>）、<a
+href="../specs/2026-10-17-agent-registry-design.html">Agent
+注册与发现设计</a>、<a
+href="../specs/2026-10-17-agent-access-skills-design.html">Agent 接入
+Skills 设计</a>、<a
+href="../agent-developer-workflow.html">开发者工作流</a>、<a
+href="../agent-discovery-registration.html">机制讲解</a>。</p>
+<h1 id="更新文档">更新文档</h1>
+<ol type="1">
+<li>改 Markdown（<code>docs/**/*.md</code>）。</li>
+<li>运行 <code>docs/build-html.sh</code>，生成同名的 HTML。</li>
+<li>推送前运行 <code>docs/build-html.sh --check</code>，确认 HTML
+都是最新的。</li>
+</ol>
+<p>新增交付文档时，把它加进 <code>docs/build-html.sh</code>
+里的清单。文档之间的链接写成 <code>.md</code>，生成 HTML 时会自动换成
+<code>.html</code>。</p>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/README.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

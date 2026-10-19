@@ -1,0 +1,27 @@
+# 密钥：只在本机，当面交接（docs/delivery/package-guide.md 第 5 节）
+poc/infra/secrets.env
+poc/infra/secrets.env.*
+
+# 九安开发包：第三方代码，按版本号另行存放
+source/
+
+# 生成物与依赖
+.build/
+node_modules/
+poc/app/public/
+dist/
+__pycache__/
+*.pyc
+*.tmp
+.gallery.html
+.DS_Store
+
+# 证据另存，只随交付包走（docs/delivery/deploy-iteration.md 第 2 节）；不再使用的旧文件
+evidence/
+archive/
+.superpowers/
+
+# 和这个 PoC 无关或已过时（docs/delivery/package-guide.md 第 4 节）
+get_passwd.sh
+poc/a2a-entry/
+poc/infra/design-jiuan-nexus-integrate.md

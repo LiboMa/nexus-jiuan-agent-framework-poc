@@ -1,0 +1,33 @@
+flowchart TD
+  start(["粘贴调用密钥，点「启用」<br/>或 agent_access.py enable --key-stdin"])
+  conn{"已连接 Nexus？"}
+  mine{"发布在我的列表里？"}
+  card{"同源，名片读得到？"}
+  probe{"tasks/get 验证<br/>（不花钱）"}
+  describe["读能力清单 describe<br/>（默认，约 0.03 美元）"]
+  seal["AES-256-GCM 加密<br/>REGISTRY_KEY"]
+  put{"putIf：期间没被停用？"}
+  done(["已启用 · 记留痕"])
+  eConn["502 暂时连不上 → 点「刷新」<br/>409 没连接 → 先连接"]
+  eMine["404 POC_PUBLICATION_NOT_MINE"]
+  eCard["409 POC_CARD_UNAVAILABLE"]
+  eKey["400 POC_CALL_KEY_INVALID"]
+  eGone["409 POC_AGENT_NOT_ENABLED<br/>停用赢了，不写回"]
+  start s1@==> conn
+  conn -- 是 --> mine
+  conn -- 否 --> eConn
+  mine -- 是 --> card
+  mine -- 否 --> eMine
+  card -- 是 --> probe
+  card -- 否 --> eCard
+  probe -- 200 --> describe
+  probe -- "401/403/404" --> eKey
+  describe --> seal --> put
+  put -- 是 --> done
+  put -- 否 --> eGone
+  s1@{ animate: true }
+  class start,describe,seal poc
+  class conn,mine,card,probe,put gate
+  class eConn warn
+  class eMine,eCard,eKey,eGone risk
+  class done good

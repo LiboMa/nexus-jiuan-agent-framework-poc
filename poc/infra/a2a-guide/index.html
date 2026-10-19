@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A2A 协议开发者指南 · 规范 v1.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDF0F3;
+  --paper-2:#E1E6EC;
+  --ink:#16203A;
+  --ink-2:#4A5470;
+  --rule:#C5CCD7;
+  --signal:#E09A00;      /* 客户端发出的请求 */
+  --signal-ink:#8A5C00;
+  --reply:#0F7B78;       /* 远程智能体的回应 */
+  --alarm:#C2412F;
+  --code-bg:#16203A;
+  --code-fg:#DCE3EE;
+  --sans:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 16px/1.75 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--reply);text-underline-offset:3px}
+:focus-visible{outline:3px solid var(--signal);outline-offset:2px;border-radius:2px}
+code,pre{font-family:var(--mono)}
+p code,li code,td code,dd code{font-size:.86em;background:var(--paper-2);padding:.08em .35em;border-radius:3px;white-space:nowrap}
+
+/* ---------- 版式骨架 ---------- */
+.shell{display:grid;grid-template-columns:200px minmax(0,1fr);gap:56px;max-width:1240px;margin:0 auto;padding:0 32px}
+nav.toc{position:sticky;top:0;align-self:start;height:100vh;padding:40px 0;overflow:auto}
+nav.toc .brand{font-weight:900;font-size:22px;letter-spacing:-.02em;margin-bottom:28px;display:block;color:var(--ink);text-decoration:none}
+nav.toc .brand small{display:block;font-weight:500;font-size:12px;color:var(--ink-2);letter-spacing:0}
+nav.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--rule)}
+nav.toc a{display:block;padding:5px 0 5px 14px;margin-left:-2px;border-left:2px solid transparent;color:var(--ink-2);text-decoration:none;font-size:14px;line-height:1.5}
+nav.toc a:hover{color:var(--ink)}
+nav.toc a.on{color:var(--ink);border-left-color:var(--ink);font-weight:700}
+main{min-width:0;padding-bottom:120px}
+section{padding-top:72px}
+.prose{max-width:46em}
+h1,h2,h3{line-height:1.25;margin:0}
+h2{font-size:34px;font-weight:900;letter-spacing:-.02em;margin-bottom:20px}
+h3{font-size:19px;font-weight:700;margin:36px 0 10px}
+p{margin:0 0 14px}
+.lede{font-size:18px;color:var(--ink-2)}
+
+/* ---------- 首屏 ---------- */
+header.hero{padding:56px 0 8px}
+.hero h1{font-size:clamp(88px,14vw,176px);font-weight:900;letter-spacing:-.03em;line-height:.9;display:flex;align-items:center}
+.hero h1 .wire{display:inline-block;position:relative;width:1.5em;height:.1em;margin:0 .1em;background:linear-gradient(90deg,var(--signal) 0 50%,var(--reply) 50% 100%);border-radius:1em}
+.hero h1 .wire::after{content:"";position:absolute;top:50%;left:0;width:.2em;height:.2em;margin-top:-.1em;border-radius:50%;background:var(--signal);box-shadow:0 0 0 .05em var(--paper);opacity:0;animation:pulse 2.6s cubic-bezier(.5,0,.3,1) .4s 2}
+@keyframes pulse{0%{left:0;opacity:1;background:var(--signal)}45%{left:calc(100% - .2em);background:var(--signal)}55%{left:calc(100% - .2em);background:var(--reply)}100%{left:0;opacity:1;background:var(--reply)}}
+@media (prefers-reduced-motion:reduce){.hero h1 .wire::after{animation:none}}
+.hero .name{font-size:20px;font-weight:700;margin:14px 0 0;color:var(--ink-2)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hero .tagline{font-size:22px;font-weight:500;margin:22px 0 8px;max-width:36em}
+.hero .facts{color:var(--ink-2);font-size:14px;margin:0 0 30px}
+.hero .facts span+span::before{content:"／";margin:0 .5em;color:var(--rule)}
+
+/* ---------- 时序播放器 ---------- */
+.player{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);background:#fff;border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.player .stage{padding:18px 14px 8px;border-right:1px solid var(--rule)}
+.player svg{width:100%;height:auto;display:block}
+.player .wirelog{display:flex;flex-direction:column;background:var(--code-bg);color:var(--code-fg);min-height:100%}
+.wirelog .cap{padding:16px 20px 12px;border-bottom:1px solid #2A3654;font-size:14.5px;line-height:1.65;color:#fff;min-height:76px}
+.wirelog .cap b{color:var(--signal);font-weight:700}
+.wirelog .cap b.r{color:#5CD1CB}
+.wirelog pre{margin:0;padding:16px 20px;font-size:12.5px;line-height:1.6;white-space:pre-wrap;word-break:break-all;flex:1;overflow:auto;max-height:380px}
+.controls{display:flex;align-items:center;gap:8px;padding:10px 14px 14px;border-top:1px solid var(--paper-2)}
+.controls button{font:500 13px var(--sans);color:var(--ink);background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:6px 12px;cursor:pointer}
+.controls button:hover{background:var(--paper-2)}
+.controls button[disabled]{opacity:.4;cursor:default}
+.controls .count{margin-left:auto;font:400 12px var(--mono);color:var(--ink-2)}
+.lane-head rect{fill:var(--paper);stroke:var(--ink);stroke-width:1.5}
+.lane-head text{font:700 13px var(--sans);fill:var(--ink)}
+.lane-head .sub{font:400 10.5px var(--sans);fill:var(--ink-2)}
+.lifeline{stroke:var(--rule);stroke-width:1.5;stroke-dasharray:4 5}
+.step{opacity:0;transition:opacity .25s}
+.step.shown{opacity:1}
+.step.past{opacity:.55}
+.step line{stroke-width:2}
+.step.req line{stroke:var(--signal)}
+.step.res line{stroke:var(--reply)}
+.step.res line.dashed{stroke-dasharray:6 4}
+.step text{font:500 12.5px var(--mono);fill:var(--ink)}
+.step .note rect{fill:var(--paper-2);stroke:var(--rule)}
+.step .note text{font:400 12.5px var(--sans);fill:var(--ink-2)}
+.packet{transition:none}
+
+/* ---------- 通用组件 ---------- */
+pre.code{background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:18px 20px;font-size:13px;line-height:1.65;overflow:auto;margin:14px 0 20px}
+.tok-k{color:#8FB8FF}.tok-s{color:#9FE3B0}.tok-n{color:#FFC86B}.tok-c{color:#7D8AA8;font-style:italic}.tok-b{color:#F29C8E}
+.tabs{display:flex;gap:4px;border-bottom:2px solid var(--rule);margin:20px 0 0;flex-wrap:wrap}
+.tabs button{font:500 14px var(--sans);background:none;border:0;border-bottom:3px solid transparent;margin-bottom:-2px;padding:9px 14px;color:var(--ink-2);cursor:pointer}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);font-weight:700}
+.tabpanel[hidden]{display:none}
+.tabpanel{padding-top:18px}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:14px 0 22px}
+th{text-align:left;font-weight:700;padding:9px 10px;border-bottom:2px solid var(--ink);vertical-align:bottom}
+td{padding:9px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+td:first-child{white-space:nowrap}
+td code{white-space:nowrap}
+.tablewrap{overflow-x:auto}
+.callout{border-left:4px solid var(--signal);background:#fff;padding:14px 18px;margin:18px 0;border-radius:0 6px 6px 0;max-width:46em}
+.callout.teal{border-left-color:var(--reply)}
+dl.defs{display:grid;grid-template-columns:9em 1fr;gap:10px 22px;margin:18px 0;max-width:52em}
+dl.defs dt{font-weight:700}
+dl.defs dd{margin:0;color:var(--ink-2)}
+dl.defs dd b{color:var(--ink)}
+
+/* MCP vs A2A */
+.versus{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:32px;align-items:center;margin:24px 0}
+.versus svg{width:100%;height:auto;background:#fff;border:1px solid var(--rule);border-radius:10px}
+.versus text{font-family:var(--sans)}
+
+/* 对象模型 */
+.model{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:28px;margin:24px 0;align-items:start}
+.box{border:1.5px solid var(--ink);border-radius:8px;padding:12px 14px 14px;background:#fff;font-size:14px}
+.box>.t{font-weight:700;display:flex;justify-content:space-between;gap:10px;margin-bottom:8px}
+.box>.t code{background:none;padding:0;font-weight:400;color:var(--ink-2);font-size:12px}
+.box .box{background:var(--paper)}
+.box .box .box{background:#fff}
+.box.ctx{border-style:dashed;background:transparent}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.box.msg{border-color:var(--signal)}
+.box.art{border-color:var(--reply)}
+.parts{display:flex;flex-wrap:wrap;gap:6px}
+.parts span{font:400 12px var(--mono);border:1px solid var(--rule);border-radius:4px;padding:2px 7px;background:#fff}
+
+/* 生命周期 */
+.lifecycle{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:24px;background:#fff;border:1px solid var(--rule);border-radius:10px;padding:18px;margin:22px 0}
+.lifecycle svg{width:100%;height:auto}
+.lc-node rect{fill:var(--paper);stroke:var(--ink);stroke-width:1.5;transition:fill .25s,stroke .25s}
+.lc-node.terminal rect{stroke-width:3}
+.lc-node.interrupt rect{stroke-dasharray:5 3}
+.lc-node text{font:700 12px var(--mono);fill:var(--ink);pointer-events:none}
+.lc-node text.zh{font:400 11.5px var(--sans);fill:var(--ink-2)}
+.lc-node{cursor:pointer}
+.lc-node:hover rect,.lc-node:focus rect{fill:var(--paper-2)}
+.lc-node.lit rect{fill:var(--ink)}
+.lc-node.lit text{fill:#fff}
+.lc-node.lit.bad rect{fill:var(--alarm);stroke:var(--alarm)}
+.lc-node.lit.good rect{fill:var(--reply);stroke:var(--reply)}
+.lc-node.lit.wait rect{fill:var(--signal);stroke:var(--signal)}
+.lc-edge{fill:none;stroke:var(--rule);stroke-width:2;transition:stroke .25s}
+.lc-edge.lit{stroke:var(--ink)}
+.lc-side h4{margin:0 0 6px;font-size:16px}
+.lc-side .scen{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.lc-side .scen button{font:500 13px var(--sans);border:1px solid var(--rule);background:var(--paper);border-radius:999px;padding:5px 12px;cursor:pointer;color:var(--ink)}
+.lc-side .scen button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.lc-side .log{font-size:14px;color:var(--ink-2);min-height:200px}
+.lc-side .log p{margin:0 0 8px}
+.lc-side .log code{white-space:normal}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);margin-top:6px}
+.legend i{display:inline-block;width:22px;height:12px;border:1.5px solid var(--ink);border-radius:3px;vertical-align:-1px;margin-right:6px;background:var(--paper)}
+.legend i.t{border-width:3px}.legend i.d{border-style:dashed}
+
+footer{border-top:1px solid var(--rule);margin-top:80px;padding-top:24px;color:var(--ink-2);font-size:14px}
+
+@media (max-width:1000px){
+  .shell{grid-template-columns:1fr;gap:0;padding:0 18px}
+  nav.toc{display:none}
+  .player,.versus,.model,.lifecycle{grid-template-columns:1fr}
+  .player .stage{border-right:0;border-bottom:1px solid var(--rule)}
+  dl.defs{grid-template-columns:1fr;gap:2px}
+  dl.defs dd{margin-bottom:12px}
+  p code,li code,dd code{white-space:normal;overflow-wrap:anywhere}
+  h2{font-size:28px}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="目录">
+  <a class="brand" href="#top">A2A<small>开发者指南 · 规范 v1.0</small></a>
+  <ol>
+    <li><a href="#why">为什么需要 A2A</a></li>
+    <li><a href="#model">核心对象</a></li>
+    <li><a href="#card">发现：Agent Card</a></li>
+    <li><a href="#api">接口规范</a></li>
+    <li><a href="#lifecycle">任务生命周期</a></li>
+    <li><a href="#modes">交互方式</a></li>
+    <li><a href="#security">安全、扩展与版本</a></li>
+    <li><a href="#errors">错误码</a></li>
+    <li><a href="#build">动手实现</a></li>
+    <li><a href="#migrate">从 0.3 迁移到 1.0</a></li>
+    <li><a href="#refs">参考资料</a></li>
+  </ol>
+</nav>
+
+<main id="top">
+<header class="hero">
+  <h1><span aria-hidden="true">A</span><span class="wire" aria-hidden="true"></span><span aria-hidden="true">A</span><span class="sr">A2A 协议</span></h1>
+  <p class="name">Agent2Agent 协议开发者指南</p>
+  <p class="tagline">一个开放协议，让不同框架、不同厂商的智能体互相发现、委派任务、交付结果，而不必暴露各自的内部实现。</p>
+  <p class="facts"><span>规范 v1.0.0</span><span>由 Google 发起，现由 Linux 基金会托管</span><span>JSON-RPC、gRPC、HTTP+JSON 三种绑定</span></p>
+
+  <div class="player" id="hero-player" data-autoplay>
+    <div class="stage">
+      <svg role="img" aria-label="A2A 流式调用时序图"></svg>
+      <div class="controls">
+        <button data-act="replay">重播</button>
+        <button data-act="prev" aria-label="上一步">上一步</button>
+        <button data-act="next" aria-label="下一步">下一步</button>
+        <span class="count" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="wirelog" aria-live="polite">
+      <div class="cap"></div>
+      <pre></pre>
+    </div>
+  </div>
+  <p style="font-size:14px;color:var(--ink-2);margin-top:10px">上图是一次完整的 A2A 流式调用：先读取对方的名片，再发消息，最后通过 SSE 一边接收进度一边接收产出。右侧是每一步真实的线上报文。</p>
+</header>
+
+<!-- ====================================================== -->
+<section id="why">
+  <h2>为什么需要 A2A</h2>
+  <div class="prose">
+    <p>企业里的智能体越来越多：有的用 Strands 写，有的用 LangGraph、ADK、CrewAI，有的是供应商提供的 SaaS。每对智能体之间都写一套私有对接，N 个智能体就要维护 N² 条集成。A2A 把这件事标准化：任何智能体只要暴露一张 <b>Agent Card</b>，再实现一组固定的方法，就能被其他智能体发现和调用。</p>
+    <p>A2A 的关键设计是<b>不透明执行</b>：调用方只看到对方声明的技能、任务状态和产出，看不到对方的提示词、工具、记忆和推理过程。这让跨团队、跨公司的协作成为可能。</p>
+  </div>
+
+  <div class="versus">
+    <svg viewBox="0 0 520 330" role="img" aria-label="MCP 与 A2A 的关系图">
+      <defs>
+        <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#4A5470"/></marker>
+        <marker id="ah-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0F7B78"/></marker>
+      </defs>
+      <!-- A2A 水平 -->
+      <line x1="178" y1="120" x2="342" y2="120" stroke="#0F7B78" stroke-width="3" marker-start="url(#ah-teal)" marker-end="url(#ah-teal)"/>
+      <text x="260" y="108" text-anchor="middle" font-size="14" font-weight="700" fill="#0F7B78">A2A</text>
+      <text x="260" y="142" text-anchor="middle" font-size="11" fill="#4A5470">委派任务、交付产出</text>
+      <rect x="28" y="88" width="150" height="64" rx="8" fill="#16203A"/>
+      <text x="103" y="116" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">你的智能体</text>
+      <text x="103" y="136" text-anchor="middle" font-size="11" fill="#C5CCD7">Strands</text>
+      <rect x="342" y="88" width="150" height="64" rx="8" fill="#fff" stroke="#16203A" stroke-width="1.5"/>
+      <text x="417" y="116" text-anchor="middle" font-size="14" font-weight="700" fill="#16203A">远程智能体</text>
+      <text x="417" y="136" text-anchor="middle" font-size="11" fill="#4A5470">LangGraph / ADK / SaaS</text>
+      <text x="417" y="172" text-anchor="middle" font-size="11" fill="#4A5470">内部对你不可见</text>
+      <!-- MCP 垂直 -->
+      <g stroke="#4A5470" stroke-width="1.5" stroke-dasharray="5 4" fill="none">
+        <path d="M70 152 V230" marker-end="url(#ah-ink)"/>
+        <path d="M103 152 V230" marker-end="url(#ah-ink)"/>
+        <path d="M136 152 V230" marker-end="url(#ah-ink)"/>
+      </g>
+      <text x="150" y="196" font-size="13" font-weight="700" fill="#4A5470">MCP</text>
+      <g font-size="11" fill="#16203A" text-anchor="middle">
+        <rect x="20" y="234" width="62" height="34" rx="5" fill="#EDF0F3" stroke="#C5CCD7"/><text x="51" y="255">数据库</text>
+        <rect x="88" y="234" width="62" height="34" rx="5" fill="#EDF0F3" stroke="#C5CCD7"/><text x="119" y="255">内部 API</text>
+        <rect x="156" y="234" width="62" height="34" rx="5" fill="#EDF0F3" stroke="#C5CCD7"/><text x="187" y="255">文件</text>
+      </g>
+      <text x="119" y="296" text-anchor="middle" font-size="11" fill="#4A5470">工具与数据：参数明确、无自主性</text>
+      <g stroke="#4A5470" stroke-width="1.5" stroke-dasharray="5 4" fill="none"><path d="M417 182 V230" marker-end="url(#ah-ink)"/></g>
+      <rect x="386" y="234" width="62" height="34" rx="5" fill="#EDF0F3" stroke="#C5CCD7"/><text x="417" y="255" font-size="11" text-anchor="middle" fill="#16203A">它的工具</text>
+    </svg>
+    <div>
+      <p><b>MCP 与 A2A 不是二选一。</b>MCP（Model Context Protocol）解决“智能体如何使用工具和数据”，A2A 解决“智能体如何与另一个有自主性的智能体协作”。一个典型系统里，智能体对下用 MCP 接工具，对外用 A2A 接其他智能体。</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th></th><th>MCP</th><th>A2A</th></tr></thead>
+        <tbody>
+          <tr><td>对端是什么</td><td>工具、资源、提示词</td><td>另一个智能体</td></tr>
+          <tr><td>交互粒度</td><td>一次函数调用</td><td>一个可能持续数天的任务</td></tr>
+          <tr><td>状态</td><td>基本无状态</td><td>Task 有完整生命周期</td></tr>
+          <tr><td>对端可见性</td><td>输入输出 schema 完全公开</td><td>只公开技能描述，内部不透明</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================== -->
+<section id="model">
+  <h2>核心对象</h2>
+  <p class="prose lede">A2A 的数据模型只有六个概念。理解它们之间的包含关系，就理解了整个协议。</p>
+  <div class="model">
+    <div class="box ctx">
+      <div class="t">Context 上下文 <code>contextId</code></div>
+      <p style="font-size:13px;color:var(--ink-2);margin:0 0 10px">一段会话。同一 contextId 下的多个任务共享背景，由服务端生成。</p>
+      <div class="box">
+        <div class="t">Task 任务 <code>id · status · history · artifacts</code></div>
+        <div class="row">
+          <div class="box">
+            <div class="t">TaskStatus</div>
+            <div style="font-size:13px;color:var(--ink-2)"><code>state</code>、<code>timestamp</code>，可附带一条 Message（例如追问用户）</div>
+          </div>
+          <div class="box msg">
+            <div class="t">Message 消息</div>
+            <div style="font-size:13px;color:var(--ink-2);margin-bottom:6px"><code>role</code>：ROLE_USER 或 ROLE_AGENT，一轮沟通</div>
+            <div class="parts"><span>Part</span><span>Part</span></div>
+          </div>
+          <div class="box art">
+            <div class="t">Artifact 产出物</div>
+            <div style="font-size:13px;color:var(--ink-2);margin-bottom:6px">任务的交付结果，可分块流式生成</div>
+            <div class="parts"><span>Part</span><span>Part</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="box">
+        <div class="t">Part 内容片段</div>
+        <p style="font-size:13px;margin:0 0 8px">每个 Part <b>恰好包含以下之一</b>，另可带 <code>mediaType</code>、<code>filename</code>、<code>metadata</code>：</p>
+        <div class="parts"><span>text</span><span>raw（base64 字节）</span><span>url（文件链接）</span><span>data（任意 JSON）</span></div>
+      </div>
+      <dl class="defs" style="grid-template-columns:6.5em 1fr;font-size:14px">
+        <dt>Agent Card</dt><dd>智能体的公开名片，描述身份、技能、接口地址与认证方式。</dd>
+        <dt>Task</dt><dd>工作单元，有唯一 id 和状态机。客户端发消息，服务端决定是否创建任务。</dd>
+        <dt>Message</dt><dd>用于沟通：提问、补充说明、进度说明。不是交付物。</dd>
+        <dt>Artifact</dt><dd>用于交付：报告、文件、结构化数据。</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="callout teal">Message 和 Artifact 的区分很重要：<b>沟通走 Message，结果走 Artifact</b>。客户端据此可以把“智能体在说什么”和“智能体做出了什么”分开渲染、分开存储。</div>
+</section>
+
+<!-- ====================================================== -->
+<section id="card">
+  <h2>发现：Agent Card</h2>
+  <div class="prose">
+    <p>每个 A2A 服务端在固定路径公开一份 JSON 名片：</p>
+  </div>
+  <pre class="code" data-lang="http">GET https://{域名}/.well-known/agent-card.json</pre>
+  <div class="prose"><p>客户端读取名片后就知道：这个智能体能做什么（skills）、去哪里调用（supportedInterfaces）、用什么协议绑定、要什么凭证（securitySchemes）、支不支持流式和推送（capabilities）。除了 well-known 路径，也可以通过注册中心或直接配置获取名片。</p></div>
+  <pre class="code" data-lang="json">{
+  "name": "差旅规划智能体",
+  "description": "根据日程与预算规划行程并给出报价",
+  "version": "2.1.0",
+  "provider": { "organization": "Example Travel", "url": "https://example.com" },
+  "supportedInterfaces": [
+    { "url": "https://travel.example.com/a2a/v1", "protocolBinding": "JSONRPC",   "protocolVersion": "1.0" },
+    { "url": "https://travel.example.com/rest",   "protocolBinding": "HTTP+JSON", "protocolVersion": "1.0" },
+    { "url": "travel.example.com:443",            "protocolBinding": "GRPC",      "protocolVersion": "1.0" }
+  ],
+  "capabilities": { "streaming": true, "pushNotifications": true, "extendedAgentCard": true },
+  "securitySchemes": {
+    "corp-oidc": { "openIdConnectSecurityScheme": {
+      "openIdConnectUrl": "https://login.example.com/.well-known/openid-configuration" } }
+  },
+  "securityRequirements": [ { "schemes": { "corp-oidc": { "list": ["openid", "profile"] } } } ],
+  "defaultInputModes":  ["text/plain"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [{
+    "id": "plan-trip",
+    "name": "行程规划",
+    "description": "输入出发地、目的地、日期与预算，返回交通和酒店方案",
+    "tags": ["travel", "booking"],
+    "examples": ["下周二去上海出差两天，预算 3000 元"],
+    "outputModes": ["application/json"]
+  }]
+}</pre>
+  <div class="tablewrap"><table>
+    <thead><tr><th>字段</th><th>必填</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code> <code>description</code> <code>version</code></td><td>是</td><td>身份信息。description 会被调用方的 LLM 用来判断“该不该把任务交给它”，要写清楚。</td></tr>
+      <tr><td><code>supportedInterfaces</code></td><td>是</td><td>有序列表，排在前面的是首选。每项含 <code>url</code>、<code>protocolBinding</code>（JSONRPC／GRPC／HTTP+JSON）、<code>protocolVersion</code>，可选 <code>tenant</code>。</td></tr>
+      <tr><td><code>capabilities</code></td><td>是</td><td><code>streaming</code>、<code>pushNotifications</code>、<code>extendedAgentCard</code>、<code>extensions</code>。客户端调用前应先检查。</td></tr>
+      <tr><td><code>defaultInputModes</code> <code>defaultOutputModes</code></td><td>是</td><td>接受与产出的媒体类型（MIME）。技能可以单独覆盖。</td></tr>
+      <tr><td><code>skills</code></td><td>是</td><td>技能清单：<code>id</code>、<code>name</code>、<code>description</code>、<code>tags</code> 必填，<code>examples</code> 强烈建议填写。</td></tr>
+      <tr><td><code>securitySchemes</code> <code>securityRequirements</code></td><td>否</td><td>认证方式声明，结构沿用 OpenAPI 的安全方案。</td></tr>
+      <tr><td><code>signatures</code></td><td>否</td><td>对名片的 JWS 签名，用于防篡改和验证发布者身份。</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ====================================================== -->
+<section id="api">
+  <h2>接口规范</h2>
+  <div class="prose">
+    <p>v1.0 先用协议无关的方式定义了 11 个操作，再规定它们在三种绑定上的写法。服务端可以只实现一种绑定，也可以同时实现多种，在 Agent Card 的 <code>supportedInterfaces</code> 中声明。三种绑定在功能上必须等价。</p>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>操作（JSON-RPC method ＝ gRPC rpc）</th><th>HTTP+JSON</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>SendMessage</code></td><td><code>POST /message:send</code></td><td>发送消息，开始或继续一个任务。返回 Task 或 Message。</td></tr>
+      <tr><td><code>SendStreamingMessage</code></td><td><code>POST /message:stream</code></td><td>同上，但用 SSE（gRPC 为 server stream）持续推送事件。需 <code>capabilities.streaming</code>。</td></tr>
+      <tr><td><code>GetTask</code></td><td><code>GET /tasks/{id}</code></td><td>查询任务状态与产出，可用 <code>historyLength</code> 控制返回的历史条数。</td></tr>
+      <tr><td><code>ListTasks</code></td><td><code>GET /tasks</code></td><td>按 contextId、状态等条件分页列出任务。</td></tr>
+      <tr><td><code>CancelTask</code></td><td><code>POST /tasks/{id}:cancel</code></td><td>请求取消。已结束的任务返回 TaskNotCancelableError。</td></tr>
+      <tr><td><code>SubscribeToTask</code></td><td><code>POST /tasks/{id}:subscribe</code>¹</td><td>重新订阅进行中任务的事件流，用于断线重连。</td></tr>
+      <tr><td><code>CreateTaskPushNotificationConfig</code></td><td><code>POST /tasks/{id}/pushNotificationConfigs</code></td><td>为任务注册 webhook。需 <code>capabilities.pushNotifications</code>。</td></tr>
+      <tr><td><code>GetTaskPushNotificationConfig</code></td><td><code>GET /tasks/{id}/pushNotificationConfigs/{configId}</code></td><td>查询某个 webhook 配置。</td></tr>
+      <tr><td><code>ListTaskPushNotificationConfigs</code></td><td><code>GET /tasks/{id}/pushNotificationConfigs</code></td><td>列出任务的全部 webhook 配置。</td></tr>
+      <tr><td><code>DeleteTaskPushNotificationConfig</code></td><td><code>DELETE /tasks/{id}/pushNotificationConfigs/{configId}</code></td><td>删除 webhook 配置。</td></tr>
+      <tr><td><code>GetExtendedAgentCard</code></td><td><code>GET /extendedAgentCard</code></td><td>认证后获取更完整的名片（例如只对内部用户开放的技能）。</td></tr>
+    </tbody>
+  </table></div>
+  <p style="font-size:13px;color:var(--ink-2)">¹ 规范正文表格写作 POST，<code>a2a.proto</code> 的 HTTP 注解写作 GET，实现时以所用 SDK 为准。所有 HTTP 路径都可以加 <code>/{tenant}</code> 前缀，用于多租户路由。</p>
+
+  <h3>同一次调用，三种写法</h3>
+  <p class="prose">下面是同一个 <code>SendMessage</code> 请求在三种绑定上的样子。注意 JSON 字段统一用 camelCase，枚举值统一用 <code>TASK_STATE_*</code>、<code>ROLE_*</code> 这样的大写形式。</p>
+  <div class="tabs" role="tablist" data-tabs="bind">
+    <button role="tab" aria-selected="true" aria-controls="bind-jsonrpc" id="t-bind-jsonrpc">JSON-RPC 2.0</button>
+    <button role="tab" aria-selected="false" aria-controls="bind-rest" id="t-bind-rest" tabindex="-1">HTTP+JSON</button>
+    <button role="tab" aria-selected="false" aria-controls="bind-grpc" id="t-bind-grpc" tabindex="-1">gRPC</button>
+  </div>
+  <div class="tabpanel" role="tabpanel" id="bind-jsonrpc" aria-labelledby="t-bind-jsonrpc">
+<pre class="code" data-lang="json">POST /a2a/v1 HTTP/1.1
+Host: travel.example.com
+Content-Type: application/json
+A2A-Version: 1.0
+Authorization: Bearer eyJhbGciOi...
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "9b1f6c1e-0d4e-4f35-9c0a-1f0e2a7b3c55",
+      "role": "ROLE_USER",
+      "parts": [{ "text": "下周二去上海出差两天，预算 3000 元" }]
+    },
+    "configuration": { "acceptedOutputModes": ["application/json", "text/plain"] }
+  }
+}
+
+// 响应：result 中恰好包含 task 或 message 之一
+{ "jsonrpc": "2.0", "id": 1,
+  "result": { "task": { "id": "t-9f2", "contextId": "c-41a",
+              "status": { "state": "TASK_STATE_COMPLETED" }, "artifacts": [ ... ] } } }</pre>
+    <p class="prose">所有方法都发到 Agent Card 中声明的同一个 URL，用 <code>method</code> 区分。错误放在标准的 JSON-RPC <code>error</code> 对象里。</p>
+  </div>
+  <div class="tabpanel" role="tabpanel" id="bind-rest" aria-labelledby="t-bind-rest" hidden>
+<pre class="code" data-lang="json">POST /rest/message:send HTTP/1.1
+Host: travel.example.com
+Content-Type: application/a2a+json
+A2A-Version: 1.0
+Authorization: Bearer eyJhbGciOi...
+
+{
+  "message": {
+    "messageId": "9b1f6c1e-0d4e-4f35-9c0a-1f0e2a7b3c55",
+    "role": "ROLE_USER",
+    "parts": [{ "text": "下周二去上海出差两天，预算 3000 元" }]
+  },
+  "configuration": { "acceptedOutputModes": ["application/json", "text/plain"] }
+}
+
+// 响应 200 OK，Content-Type: application/a2a+json
+{ "task": { "id": "t-9f2", "contextId": "c-41a",
+            "status": { "state": "TASK_STATE_COMPLETED" }, "artifacts": [ ... ] } }</pre>
+    <p class="prose">资源化路径加 Google AIP 风格的自定义动词（<code>:send</code>、<code>:cancel</code>）。错误用 HTTP 状态码表达，例如任务不存在返回 404。</p>
+  </div>
+  <div class="tabpanel" role="tabpanel" id="bind-grpc" aria-labelledby="t-bind-grpc" hidden>
+<pre class="code" data-lang="proto"><span class="tok-c">// 服务定义：package lf.a2a.v1</span>
+service A2AService {
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc SendStreamingMessage(SendMessageRequest) returns (stream StreamResponse);
+  rpc GetTask(GetTaskRequest) returns (Task);
+  <span class="tok-c">// ... 其余 8 个 rpc</span>
+}
+
+<span class="tok-c"># 用 grpcurl 调用，版本号放在 metadata 里</span>
+grpcurl -H 'a2a-version: 1.0' -H 'authorization: Bearer eyJhbGciOi...' \
+  -d '{"message":{"messageId":"9b1f...","role":"ROLE_USER",
+       "parts":[{"text":"下周二去上海出差两天，预算 3000 元"}]}}' \
+  travel.example.com:443 lf.a2a.v1.A2AService/SendMessage</pre>
+    <p class="prose">适合内部高吞吐场景。<code>a2a.proto</code> 是 v1.0 的权威数据定义，JSON 结构就是它按 proto3 JSON 规则映射出来的。错误映射到 gRPC 状态码并附带 <code>google.rpc.ErrorInfo</code>。</p>
+  </div>
+
+  <h3>每次请求都要带的头</h3>
+  <dl class="defs">
+    <dt><code>A2A-Version</code></dt><dd>客户端<b>必须</b>发送，值为 <code>主版本.次版本</code>，例如 <code>1.0</code>。服务端按该版本的语义处理，不支持则返回 VersionNotSupportedError。头为空时按 0.3 处理，以兼容旧客户端。也可以作为查询参数传递。</dd>
+    <dt><code>A2A-Extensions</code></dt><dd>可选，逗号分隔的扩展 URI 列表，表示客户端希望启用的扩展。</dd>
+    <dt><code>Authorization</code></dt><dd>按 Agent Card 中声明的安全方案携带凭证。身份信息走 HTTP 层，不放进 A2A 消息体。</dd>
+  </dl>
+</section>
+
+<!-- ====================================================== -->
+<section id="lifecycle">
+  <h2>任务生命周期</h2>
+  <p class="prose lede">每个 Task 都有一个状态。点击右侧场景，看任务如何在状态之间流转；点击任一状态查看含义。</p>
+  <div class="lifecycle">
+    <svg viewBox="0 0 880 400" id="lc-svg" role="img" aria-label="任务状态机">
+      <defs>
+        <marker id="lc-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9AA3B4"/></marker>
+      </defs>
+      <g id="lc-edges"></g>
+      <g id="lc-nodes"></g>
+      <circle id="lc-token" r="9" fill="#16203A" stroke="#fff" stroke-width="3" opacity="0"/>
+    </svg>
+    <div class="lc-side">
+      <h4>选一个场景</h4>
+      <div class="scen" id="lc-scen"></div>
+      <div class="log" id="lc-log" aria-live="polite"><p>任务有三类状态：进行中（SUBMITTED、WORKING）、中断等待（INPUT_REQUIRED、AUTH_REQUIRED）、终态（COMPLETED、FAILED、CANCELED、REJECTED）。进入终态后任务不可再变化，后续沟通要创建新任务。</p></div>
+    </div>
+  </div>
+  <div class="legend"><span><i></i>进行中</span><span><i class="d"></i>中断：等待客户端</span><span><i class="t"></i>终态：不可再变化</span></div>
+  <div class="callout" style="margin-top:20px"><code>SendMessage</code> 默认会一直等到任务进入终态或中断状态才返回。把 <code>configuration.returnImmediately</code> 设为 <code>true</code>，则创建任务后立即返回，之后用轮询、订阅或推送拿结果。</div>
+</section>
+
+<!-- ====================================================== -->
+<section id="modes">
+  <h2>交互方式</h2>
+  <p class="prose lede">同一套对象，四种拿结果的方式。按任务时长和客户端的网络条件选择。</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>方式</th><th>用到的操作</th><th>适合</th></tr></thead>
+    <tbody>
+      <tr><td>同步等待</td><td><code>SendMessage</code>（必要时轮询 <code>GetTask</code>）</td><td>秒级完成的任务；客户端在防火墙后、无法接 webhook</td></tr>
+      <tr><td>流式 SSE</td><td><code>SendStreamingMessage</code>、<code>SubscribeToTask</code></td><td>需要实时展示进度和逐字产出的交互式场景</td></tr>
+      <tr><td>异步推送</td><td><code>returnImmediately</code> ＋ webhook、<code>GetTask</code></td><td>分钟到天级的长任务；移动端、Serverless 客户端</td></tr>
+      <tr><td>多轮对话</td><td>带 <code>taskId</code>／<code>contextId</code> 再次 <code>SendMessage</code></td><td>智能体缺信息、需要人确认或需要额外授权</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tabs" role="tablist" data-tabs="mode">
+    <button role="tab" aria-selected="true" aria-controls="mode-sync" id="t-mode-sync">同步等待</button>
+    <button role="tab" aria-selected="false" aria-controls="mode-stream" id="t-mode-stream" tabindex="-1">流式 SSE</button>
+    <button role="tab" aria-selected="false" aria-controls="mode-push" id="t-mode-push" tabindex="-1">异步推送</button>
+    <button role="tab" aria-selected="false" aria-controls="mode-multi" id="t-mode-multi" tabindex="-1">多轮对话</button>
+  </div>
+  <div class="tabpanel" role="tabpanel" id="mode-sync" aria-labelledby="t-mode-sync"><div class="player" data-flow="sync"></div></div>
+  <div class="tabpanel" role="tabpanel" id="mode-stream" aria-labelledby="t-mode-stream" hidden><div class="player" data-flow="stream"></div></div>
+  <div class="tabpanel" role="tabpanel" id="mode-push" aria-labelledby="t-mode-push" hidden><div class="player" data-flow="push"></div></div>
+  <div class="tabpanel" role="tabpanel" id="mode-multi" aria-labelledby="t-mode-multi" hidden><div class="player" data-flow="multi"></div></div>
+</section>
+
+<!-- ====================================================== -->
+<section id="security">
+  <h2>安全、扩展与版本</h2>
+  <div class="prose">
+    <p>A2A 把智能体当成普通的企业 Web 服务对待，安全全部复用现有标准，不发明新机制。生产环境必须使用 HTTPS／TLS，推荐 TLS 1.3。</p>
+  </div>
+  <h3>认证方式</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>securitySchemes 中的类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>apiKeySecurityScheme</code></td><td>API Key，放在 header、query 或 cookie 中</td></tr>
+      <tr><td><code>httpAuthSecurityScheme</code></td><td>HTTP 认证，如 Bearer（JWT）、Basic</td></tr>
+      <tr><td><code>oauth2SecurityScheme</code></td><td>OAuth 2.0：授权码、客户端凭证、设备码等流程</td></tr>
+      <tr><td><code>openIdConnectSecurityScheme</code></td><td>OIDC，提供 discovery 地址</td></tr>
+      <tr><td><code>mtlsSecurityScheme</code></td><td>双向 TLS，适合服务间调用</td></tr>
+    </tbody>
+  </table></div>
+  <dl class="defs">
+    <dt>凭证获取</dt><dd>客户端在<b>协议之外</b>拿到凭证（OAuth 流程、密钥管理系统等），再放进 HTTP 头。任务执行中如需额外授权，任务进入 <code>TASK_STATE_AUTH_REQUIRED</code>。</dd>
+    <dt>扩展名片</dt><dd>公开名片只放可公开的信息；设置 <code>capabilities.extendedAgentCard: true</code> 后，已认证的客户端可通过 <code>GetExtendedAgentCard</code> 拿到完整技能列表。</dd>
+    <dt>名片签名</dt><dd><code>signatures</code> 字段携带 JWS 签名，客户端验证后可确认名片未被篡改、确由声明的发布者签发。</dd>
+    <dt>推送安全</dt><dd>webhook 请求按 <code>TaskPushNotificationConfig.authentication</code> 携带凭证；客户端须校验 taskId 和 token，且要按幂等方式处理，因为可能重复投递。服务端应防范 SSRF，校验 webhook 地址。</dd>
+    <dt>扩展机制</dt><dd>名片在 <code>capabilities.extensions</code> 中用 URI 声明扩展（可标记 <code>required</code>），客户端通过 <code>A2A-Extensions</code> 头启用。必需扩展未启用时返回 ExtensionSupportRequiredError。</dd>
+    <dt>版本协商</dt><dd>服务端可以为同一绑定暴露多个版本的接口，在 <code>supportedInterfaces</code> 中分别声明 <code>protocolVersion</code>。补丁版本号不参与协商。</dd>
+  </dl>
+</section>
+
+<!-- ====================================================== -->
+<section id="errors">
+  <h2>错误码</h2>
+  <p class="prose">除 JSON-RPC 标准错误（-32700 解析错误、-32600 无效请求、-32601 方法不存在、-32602 参数无效、-32603 内部错误）外，A2A 定义了以下业务错误，在三种绑定上有固定映射：</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>错误</th><th>JSON-RPC</th><th>gRPC</th><th>HTTP</th><th>何时出现</th></tr></thead>
+    <tbody>
+      <tr><td>TaskNotFoundError</td><td><code>-32001</code></td><td>NOT_FOUND</td><td>404</td><td>任务 id 不存在或已过期</td></tr>
+      <tr><td>TaskNotCancelableError</td><td><code>-32002</code></td><td>FAILED_PRECONDITION</td><td>400</td><td>任务已处于终态</td></tr>
+      <tr><td>PushNotificationNotSupportedError</td><td><code>-32003</code></td><td>FAILED_PRECONDITION</td><td>400</td><td>服务端未开启推送</td></tr>
+      <tr><td>UnsupportedOperationError</td><td><code>-32004</code></td><td>FAILED_PRECONDITION</td><td>400</td><td>调用了未实现的操作，如未开启流式却调用流式接口</td></tr>
+      <tr><td>ContentTypeNotSupportedError</td><td><code>-32005</code></td><td>INVALID_ARGUMENT</td><td>400</td><td>Part 的媒体类型不被接受</td></tr>
+      <tr><td>InvalidAgentResponseError</td><td><code>-32006</code></td><td>INTERNAL</td><td>500</td><td>智能体产生了不符合规范的响应</td></tr>
+      <tr><td>ExtendedAgentCardNotConfiguredError</td><td><code>-32007</code></td><td>FAILED_PRECONDITION</td><td>400</td><td>请求扩展名片但服务端未配置</td></tr>
+      <tr><td>ExtensionSupportRequiredError</td><td><code>-32008</code></td><td>FAILED_PRECONDITION</td><td>400</td><td>客户端未启用必需的扩展</td></tr>
+      <tr><td>VersionNotSupportedError</td><td><code>-32009</code></td><td>FAILED_PRECONDITION</td><td>400</td><td>A2A-Version 指定的版本不受支持</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ====================================================== -->
+<section id="build">
+  <h2>动手实现</h2>
+  <div class="prose">
+    <p>官方 SDK 覆盖 Python（<code>a2a-sdk</code>）、JavaScript／TypeScript、Java、Go、.NET。如果你已经在用 Strands Agents，它内置了 A2A 服务端和客户端，几行代码就能接入。以下示例基于 <code>strands-agents</code> 1.54。</p>
+  </div>
+  <h3>把 Strands 智能体发布为 A2A 服务</h3>
+<pre class="code" data-lang="python"><span class="tok-c"># pip install 'strands-agents[a2a]'</span>
+<span class="tok-k">from</span> strands <span class="tok-k">import</span> Agent
+<span class="tok-k">from</span> strands.multiagent.a2a <span class="tok-k">import</span> A2AServer
+
+travel = Agent(
+    name=<span class="tok-s">"差旅规划智能体"</span>,
+    description=<span class="tok-s">"根据日程与预算规划行程并给出报价"</span>,  <span class="tok-c"># 会写进 Agent Card</span>
+    tools=[search_trains, search_hotels],
+)
+
+server = A2AServer(
+    agent=travel,
+    host=<span class="tok-s">"0.0.0.0"</span>,
+    port=<span class="tok-n">9000</span>,                                   <span class="tok-c"># 默认 9000</span>
+    http_url=<span class="tok-s">"https://travel.example.com/"</span>,       <span class="tok-c"># 对外地址，经负载均衡时填写</span>
+    version=<span class="tok-s">"2.1.0"</span>,
+)
+server.serve()   <span class="tok-c"># 或 server.to_fastapi_app() 挂到已有应用中</span></pre>
+  <p class="prose">需要按会话隔离状态时，传 <code>agent_factory=lambda context_id: Agent(...)</code> 代替 <code>agent</code>，每个 contextId 会获得独立的智能体实例。</p>
+
+  <h3>调用远程 A2A 智能体</h3>
+<pre class="code" data-lang="python"><span class="tok-k">from</span> strands <span class="tok-k">import</span> Agent
+<span class="tok-k">from</span> strands.agent <span class="tok-k">import</span> A2AAgent
+
+travel = A2AAgent(endpoint=<span class="tok-s">"https://travel.example.com/"</span>)   <span class="tok-c"># 自动读取 Agent Card</span>
+result = travel(<span class="tok-s">"下周二去上海出差两天，预算 3000 元"</span>)
+
+<span class="tok-c"># 也可以作为编排者的工具，由 LLM 决定何时委派</span>
+assistant = Agent(tools=[travel])</pre>
+
+  <h3>不用 SDK，直接用 curl 验证</h3>
+<pre class="code" data-lang="bash"><span class="tok-c"># 1. 读取名片</span>
+curl -s https://travel.example.com/.well-known/agent-card.json | jq .
+
+<span class="tok-c"># 2. 流式发送消息（JSON-RPC 绑定）</span>
+curl -N https://travel.example.com/a2a/v1 \
+  -H <span class="tok-s">'Content-Type: application/json'</span> -H <span class="tok-s">'A2A-Version: 1.0'</span> \
+  -d <span class="tok-s">'{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage",
+       "params":{"message":{"messageId":"m-1","role":"ROLE_USER",
+       "parts":[{"text":"下周二去上海出差两天"}]}}}'</span></pre>
+
+  <h3>服务端实现清单</h3>
+  <ul class="prose">
+    <li>名片里的 <code>description</code> 和 <code>skills[].examples</code> 决定了调用方 LLM 能否正确路由，像写 API 文档一样认真写。</li>
+    <li>每条消息都有 <code>messageId</code>，服务端应据此去重，客户端重试才安全。</li>
+    <li>长任务务必支持 <code>returnImmediately</code> 或推送，否则调用方的 HTTP 连接会超时。</li>
+    <li>Task 存储要持久化（SDK 默认的内存存储重启即丢），否则 <code>GetTask</code> 和断线重连都会失效。</li>
+    <li>记录 <code>A2A-Version</code>，并在名片中如实声明 <code>protocolVersion</code>。部分 SDK 的线上格式仍是 0.3，混用时要确认版本协商结果。</li>
+    <li>部署到 Amazon Bedrock AgentCore Runtime 时可选择 A2A 协议，平台负责托管、伸缩和认证。</li>
+  </ul>
+</section>
+
+<!-- ====================================================== -->
+<section id="migrate">
+  <h2>从 0.3 迁移到 1.0</h2>
+  <p class="prose">网上很多教程和早期 SDK 用的是 0.2／0.3 的写法。对照下表识别：</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>项目</th><th>0.3 及更早</th><th>1.0</th></tr></thead>
+    <tbody>
+      <tr><td>JSON-RPC 方法名</td><td><code>message/send</code>、<code>message/stream</code>、<code>tasks/get</code>、<code>tasks/resubscribe</code></td><td><code>SendMessage</code>、<code>SendStreamingMessage</code>、<code>GetTask</code>、<code>SubscribeToTask</code></td></tr>
+      <tr><td>枚举值</td><td><code>"completed"</code>、<code>"input-required"</code>、<code>"user"</code></td><td><code>TASK_STATE_COMPLETED</code>、<code>TASK_STATE_INPUT_REQUIRED</code>、<code>ROLE_USER</code></td></tr>
+      <tr><td>Part 结构</td><td>用 <code>"kind": "text" | "file" | "data"</code> 区分</td><td>不再有 kind，<code>text</code>／<code>raw</code>／<code>url</code>／<code>data</code> 四选一</td></tr>
+      <tr><td>接口声明</td><td><code>url</code> ＋ <code>preferredTransport</code> ＋ <code>additionalInterfaces</code></td><td>统一为有序的 <code>supportedInterfaces</code></td></tr>
+      <tr><td>同步与异步</td><td><code>configuration.blocking</code></td><td><code>configuration.returnImmediately</code>（语义相反，默认等待）</td></tr>
+      <tr><td>新增能力</td><td></td><td><code>ListTasks</code>、多租户 <code>tenant</code>、<code>A2A-Version</code> 版本协商、统一错误映射</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="refs">
+  <h2>参考资料</h2>
+  <ul class="prose">
+    <li><a href="https://a2a-protocol.org/latest/specification/">A2A 规范 v1.0（官方）</a></li>
+    <li><a href="https://github.com/a2aproject/A2A/blob/main/specification/a2a.proto">a2a.proto：权威数据定义</a></li>
+    <li><a href="https://github.com/a2aproject">a2aproject：各语言 SDK 与示例</a></li>
+    <li><a href="https://strandsagents.com/">Strands Agents 文档：多智能体与 A2A</a></li>
+  </ul>
+  <h3>本页动图</h3>
+  <ul class="prose">
+    <li><a href="gif/a2a-hero.gif">一次完整的流式调用（a2a-hero.gif）</a></li>
+    <li><a href="gif/a2a-lifecycle.gif">任务状态流转（a2a-lifecycle.gif）</a></li>
+    <li><a href="gif/a2a-push.gif">异步推送通知（a2a-push.gif）</a></li>
+  </ul>
+</section>
+
+<footer>依据 A2A 规范 v1.0.0 与 a2a.proto 整理，2026 年 10 月。示例中的域名与数据均为虚构。</footer>
+</main>
+</div>
+
+<script>
+/* ---------------- 轻量语法高亮（JSON / HTTP） ---------------- */
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function hl(src){
+  return esc(src)
+    .replace(/(\/\/[^\n]*)/g,'<span class="tok-c">$1</span>')
+    .replace(/("(?:[^"\\\n]|\\.)*")(\s*:)?/g,(m,s,c)=>c?`<span class="tok-k">${s}</span>${c}`:`<span class="tok-s">${s}</span>`)
+    .replace(/\b(true|false|null)\b/g,'<span class="tok-b">$1</span>')
+    .replace(/^(GET|POST|DELETE|HTTP\/1\.1|data:)(?=\s)/gm,'<span class="tok-b">$1</span>')
+    .replace(/(:\s*)(-?\d+)(?=[,\s}\]])/g,'$1<span class="tok-n">$2</span>');
+}
+document.querySelectorAll('pre.code[data-lang="json"],pre.code[data-lang="http"]').forEach(p=>{p.innerHTML=hl(p.textContent)});
+
+/* ---------------- 交互流程数据 ---------------- */
+const C='客户端智能体', S='远程智能体';
+const FLOWS={
+  hero:{lanes:[{label:C,sub:'A2A Client'},{label:S,sub:'A2A Server'}],steps:[
+    {f:0,t:1,k:'req',label:'GET /.well-known/agent-card.json',cap:'<b>发现。</b>客户端先读取远程智能体的名片，了解它能做什么、在哪里调用、要什么凭证。',
+     code:`GET /.well-known/agent-card.json HTTP/1.1
+Host: travel.example.com`},
+    {f:1,t:0,k:'res',label:'200 Agent Card',cap:'<b class="r">名片返回。</b>capabilities.streaming 为 true，说明可以用流式接口。',
+     code:`{
+  "name": "差旅规划智能体",
+  "supportedInterfaces": [{
+    "url": "https://travel.example.com/a2a/v1",
+    "protocolBinding": "JSONRPC",
+    "protocolVersion": "1.0" }],
+  "capabilities": { "streaming": true },
+  "skills": [{ "id": "plan-trip", "name": "行程规划",
+               "tags": ["travel"] }]
+}`},
+    {f:0,t:1,k:'req',label:'SendStreamingMessage',cap:'<b>发送任务。</b>客户端把用户需求作为一条 ROLE_USER 消息发出，并要求以 SSE 流式返回。',
+     code:`POST /a2a/v1 HTTP/1.1
+A2A-Version: 1.0
+Authorization: Bearer eyJhbGciOi...
+
+{ "jsonrpc": "2.0", "id": 7,
+  "method": "SendStreamingMessage",
+  "params": { "message": {
+    "messageId": "m-01", "role": "ROLE_USER",
+    "parts": [{ "text": "下周二去上海出差两天，预算 3000 元" }] } } }`},
+    {f:1,t:0,k:'res',dashed:1,label:'SSE · task WORKING',cap:'<b class="r">任务创建。</b>服务端返回 Task，分配 id 和 contextId，状态为 WORKING。连接保持打开。',
+     code:`HTTP/1.1 200 OK
+Content-Type: text/event-stream
+
+data: {"jsonrpc":"2.0","id":7,"result":{"task":{
+  "id":"t-9f2","contextId":"c-41a",
+  "status":{"state":"TASK_STATE_WORKING"}}}}`},
+    {note:1,lane:1,label:'调用自己的工具与模型',cap:'<b class="r">不透明执行。</b>远程智能体内部查车次、比价，这些细节客户端看不到，它只关心状态和产出。',
+     code:`// 这部分发生在远程智能体内部，
+// 不出现在 A2A 报文中`},
+    {f:1,t:0,k:'res',dashed:1,label:'SSE · artifactUpdate',cap:'<b class="r">分块产出。</b>结果以 Artifact 分块推送，append 和 lastChunk 告诉客户端如何拼接。',
+     code:`data: {"jsonrpc":"2.0","id":7,"result":{"artifactUpdate":{
+  "taskId":"t-9f2","contextId":"c-41a",
+  "artifact":{"artifactId":"a-1","name":"itinerary",
+    "parts":[{"text":"周二 07:00 北京南 G1 → 11:28 上海虹桥"}]},
+  "append":false,"lastChunk":false}}}`},
+    {f:1,t:0,k:'res',dashed:1,label:'SSE · artifactUpdate (last)',cap:'<b class="r">最后一块。</b>可以混合不同类型的 Part，这里追加一个结构化的 data 报价。',
+     code:`data: {"jsonrpc":"2.0","id":7,"result":{"artifactUpdate":{
+  "taskId":"t-9f2","contextId":"c-41a",
+  "artifact":{"artifactId":"a-1",
+    "parts":[{"data":{"total":2860,"currency":"CNY"},
+              "mediaType":"application/json"}]},
+  "append":true,"lastChunk":true}}}`},
+    {f:1,t:0,k:'res',dashed:1,label:'SSE · statusUpdate COMPLETED',cap:'<b class="r">任务完成。</b>状态进入终态 COMPLETED，服务端关闭事件流。',
+     code:`data: {"jsonrpc":"2.0","id":7,"result":{"statusUpdate":{
+  "taskId":"t-9f2","contextId":"c-41a",
+  "status":{"state":"TASK_STATE_COMPLETED",
+            "timestamp":"2026-10-16T09:12:44Z"}}}}`}
+  ]},
+  sync:{lanes:[{label:C,sub:'A2A Client'},{label:S,sub:'A2A Server'}],steps:[
+    {f:0,t:1,k:'req',label:'SendMessage',cap:'<b>发送并等待。</b>默认 returnImmediately 为 false，连接会一直等到任务结束或中断。',
+     code:`{ "jsonrpc":"2.0", "id":1, "method":"SendMessage",
+  "params": { "message": {
+    "messageId":"m-11", "role":"ROLE_USER",
+    "parts":[{ "text":"把这段会议纪要翻译成英文：……" }] } } }`},
+    {note:1,lane:1,label:'处理中（秒级）',cap:'<b class="r">处理。</b>适合几秒内能完成的任务。超过网关超时时间的任务应改用推送或流式。',code:`// 服务端执行任务`},
+    {f:1,t:0,k:'res',label:'result.task COMPLETED',cap:'<b class="r">一次拿到结果。</b>响应里是完整的 Task，产出在 artifacts 中。',
+     code:`{ "jsonrpc":"2.0", "id":1, "result": { "task": {
+  "id":"t-301", "contextId":"c-88",
+  "status": { "state":"TASK_STATE_COMPLETED" },
+  "artifacts": [{ "artifactId":"a-1", "name":"translation",
+    "parts":[{ "text":"Meeting minutes: ..." }] }] } } }`},
+    {f:0,t:1,k:'req',label:'SendMessage（简单问答）',cap:'<b>不一定有 Task。</b>对于无需跟踪的简单问答，服务端可以直接回一条 Message。',
+     code:`{ "jsonrpc":"2.0", "id":2, "method":"SendMessage",
+  "params": { "message": { "messageId":"m-12", "role":"ROLE_USER",
+    "parts":[{ "text":"你支持哪些语言？" }] } } }`},
+    {f:1,t:0,k:'res',label:'result.message',cap:'<b class="r">直接回复。</b>result 中是 message 而不是 task，客户端两种情况都要处理。',
+     code:`{ "jsonrpc":"2.0", "id":2, "result": { "message": {
+  "messageId":"m-13", "role":"ROLE_AGENT",
+  "parts":[{ "text":"支持中、英、日、德、法五种语言。" }] } } }`}
+  ]},
+  push:{lanes:[{label:C,sub:'A2A Client'},{label:S,sub:'A2A Server'},{label:'客户端 Webhook',sub:'回调服务'}],steps:[
+    {f:0,t:1,k:'req',label:'SendMessage + webhook',cap:'<b>注册回调。</b>returnImmediately 为 true，并在 taskPushNotificationConfig 中给出 webhook 地址和校验 token。',
+     code:`{ "jsonrpc":"2.0", "id":1, "method":"SendMessage",
+  "params": {
+    "message": { "messageId":"m-21", "role":"ROLE_USER",
+      "parts":[{ "text":"审计 2026 Q3 全部报销单" }] },
+    "configuration": {
+      "returnImmediately": true,
+      "taskPushNotificationConfig": {
+        "url": "https://client.example.com/a2a/webhook",
+        "token": "c0ffee-session-7",
+        "authentication": { "scheme": "Bearer",
+          "credentials": "<回调时服务端携带的凭证>" } } } } }`},
+    {f:1,t:0,k:'res',label:'task SUBMITTED',cap:'<b class="r">立即返回。</b>客户端拿到任务 id 后可以断开连接，去做别的事。',
+     code:`{ "jsonrpc":"2.0", "id":1, "result": { "task": {
+  "id":"t-77", "contextId":"c-90",
+  "status": { "state":"TASK_STATE_SUBMITTED" } } } }`},
+    {note:1,lane:1,label:'长时间运行（分钟到天）',cap:'<b class="r">后台执行。</b>任务可能运行很久，期间不需要保持任何连接。',code:`// 服务端异步执行`},
+    {f:1,t:2,k:'res',label:'POST webhook · statusUpdate',cap:'<b class="r">推送通知。</b>状态变化时服务端 POST 到 webhook，载荷与流式事件格式相同（StreamResponse）。',
+     code:`POST /a2a/webhook HTTP/1.1
+Host: client.example.com
+Authorization: Bearer <按 authentication 约定的凭证>
+Content-Type: application/a2a+json
+
+{ "statusUpdate": { "taskId":"t-77", "contextId":"c-90",
+  "status": { "state":"TASK_STATE_COMPLETED" } } }`},
+    {f:2,t:1,k:'req',label:'200 OK',cap:'<b>确认收到。</b>webhook 必须返回 2xx。可能重复投递，要按幂等方式处理，并校验 taskId 与 token。',code:`HTTP/1.1 200 OK`},
+    {f:0,t:1,k:'req',label:'GetTask',cap:'<b>取回结果。</b>收到完成通知后，客户端用 GetTask 拉取完整的任务和产出。',
+     code:`{ "jsonrpc":"2.0", "id":2, "method":"GetTask",
+  "params": { "id":"t-77", "historyLength": 0 } }`},
+    {f:1,t:0,k:'res',label:'Task + artifacts',cap:'<b class="r">完成。</b>轮询、订阅、推送三种机制可以组合使用。',
+     code:`{ "jsonrpc":"2.0", "id":2, "result": {
+  "id":"t-77", "contextId":"c-90",
+  "status": { "state":"TASK_STATE_COMPLETED" },
+  "artifacts": [{ "artifactId":"a-report", "name":"audit-report.pdf",
+    "parts":[{ "url":"https://files.example.com/r/77.pdf",
+               "mediaType":"application/pdf" }] }] } }`}
+  ]},
+  multi:{lanes:[{label:C,sub:'A2A Client'},{label:S,sub:'A2A Server'}],steps:[
+    {f:0,t:1,k:'req',label:'SendMessage',cap:'<b>信息不全的请求。</b>用户只说了“订机票”。',
+     code:`{ "jsonrpc":"2.0", "id":1, "method":"SendMessage",
+  "params": { "message": { "messageId":"m-31", "role":"ROLE_USER",
+    "parts":[{ "text":"帮我订一张机票" }] } } }`},
+    {f:1,t:0,k:'res',label:'task INPUT_REQUIRED',cap:'<b class="r">追问。</b>任务进入中断状态 INPUT_REQUIRED，问题放在 status.message 里。',
+     code:`{ "jsonrpc":"2.0", "id":1, "result": { "task": {
+  "id":"t-5", "contextId":"c-12",
+  "status": { "state":"TASK_STATE_INPUT_REQUIRED",
+    "message": { "messageId":"m-32", "role":"ROLE_AGENT",
+      "parts":[{ "text":"请问从哪里出发、去哪里、哪天？" }] } } } } }`},
+    {f:0,t:1,k:'req',label:'SendMessage (taskId, contextId)',cap:'<b>补充信息。</b>带上同一个 taskId 和 contextId，服务端就知道这是在继续同一个任务。',
+     code:`{ "jsonrpc":"2.0", "id":2, "method":"SendMessage",
+  "params": { "message": { "messageId":"m-33", "role":"ROLE_USER",
+    "taskId":"t-5", "contextId":"c-12",
+    "parts":[{ "text":"北京到上海，10 月 20 日上午" }] } } }`},
+    {f:1,t:0,k:'res',label:'task COMPLETED',cap:'<b class="r">完成。</b>任务从 INPUT_REQUIRED 回到 WORKING，最终 COMPLETED。之后的新需求用同一 contextId 发起新任务，并可用 referenceTaskIds 引用本任务。',
+     code:`{ "jsonrpc":"2.0", "id":2, "result": { "task": {
+  "id":"t-5", "contextId":"c-12",
+  "status": { "state":"TASK_STATE_COMPLETED" },
+  "artifacts": [{ "artifactId":"a-1", "name":"booking",
+    "parts":[{ "data": { "flight":"CA1501", "seat":"32A" } }] }] } } }`}
+  ]}
+};
+FLOWS.stream={lanes:FLOWS.hero.lanes,steps:FLOWS.hero.steps.slice(2).concat([
+  {f:0,t:1,k:'req',label:'SubscribeToTask（断线重连）',cap:'<b>断线重连。</b>如果 SSE 连接中途断开，用 SubscribeToTask 重新订阅仍在进行的任务。任务已结束时会返回错误，此时改用 GetTask。',
+   code:`{ "jsonrpc":"2.0", "id":8, "method":"SubscribeToTask",
+  "params": { "id":"t-9f2" } }`}
+])};
+
+/* ---------------- 时序播放器 ---------------- */
+const NS='http://www.w3.org/2000/svg';
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,attrs,parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);parent&&parent.appendChild(e);return e}
+
+function buildPlayerShell(root){
+  if(root.querySelector('svg'))return;
+  root.innerHTML=`<div class="stage"><svg role="img" aria-label="时序图"></svg>
+    <div class="controls"><button data-act="replay">重播</button><button data-act="prev">上一步</button><button data-act="next">下一步</button><span class="count" aria-live="polite"></span></div></div>
+    <div class="wirelog" aria-live="polite"><div class="cap"></div><pre></pre></div>`;
+}
+
+class SeqPlayer{
+  constructor(root,flow){
+    buildPlayerShell(root);
+    this.root=root;this.flow=flow;this.i=-1;this.timer=null;this.anim=null;
+    this.svg=root.querySelector('svg');this.cap=root.querySelector('.cap');this.pre=root.querySelector('.wirelog pre');this.count=root.querySelector('.count');
+    this.draw();
+    root.querySelector('[data-act=replay]').onclick=()=>this.play();
+    root.querySelector('[data-act=prev]').onclick=()=>{this.stop();this.go(Math.max(0,this.i-1),false)};
+    root.querySelector('[data-act=next]').onclick=()=>{this.stop();this.go(Math.min(this.flow.steps.length-1,this.i+1),true)};
+  }
+  draw(){
+    const {lanes,steps}=this.flow,W=500,top=70,gap=44;
+    const H=top+steps.length*gap+16;
+    this.svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    this.svg.innerHTML='';
+    const defs=el('defs',{},this.svg);
+    [['req','#E09A00'],['res','#0F7B78']].forEach(([k,c])=>{
+      const m=el('marker',{id:`ah-${k}-${uid}`,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},defs);
+      el('path',{d:'M0 0L10 5L0 10z',fill:c},m);
+    });
+    const pad=lanes.length===3?78:96;
+    this.x=lanes.map((_,j)=>lanes.length===1?W/2:pad+j*(W-2*pad)/(lanes.length-1));
+    lanes.forEach((l,j)=>{
+      el('line',{class:'lifeline',x1:this.x[j],y1:52,x2:this.x[j],y2:H-6},this.svg);
+      const g=el('g',{class:'lane-head'},this.svg);
+      el('rect',{x:this.x[j]-74,y:6,width:148,height:44,rx:6},g);
+      el('text',{x:this.x[j],y:25,'text-anchor':'middle'},g).textContent=l.label;
+      el('text',{x:this.x[j],y:41,'text-anchor':'middle',class:'sub'},g).textContent=l.sub;
+    });
+    this.groups=steps.map((s,n)=>{
+      const y=top+n*gap+20,g=el('g',{class:'step '+(s.k||'')},this.svg);
+      if(s.note){
+        const nx=this.x[s.lane],w=Math.max(150,s.label.length*12.5+24);
+        const ng=el('g',{class:'note'},g);
+        el('rect',{x:nx-w/2,y:y-15,width:w,height:28,rx:4},ng);
+        el('text',{x:nx,y:y+4,'text-anchor':'middle'},ng).textContent=s.label;
+      }else{
+        const x1=this.x[s.f],x2=this.x[s.t],dir=Math.sign(x2-x1);
+        el('line',{x1:x1+dir*4,y1:y,x2:x2-dir*6,y2:y,'marker-end':`url(#ah-${s.k}-${uid})`,class:s.dashed?'dashed':''},g);
+        el('text',{x:(x1+x2)/2,y:y-8,'text-anchor':'middle'},g).textContent=s.label;
+        g.dataset.x1=x1;g.dataset.x2=x2;g.dataset.y=y;
+      }
+      return g;
+    });
+    uid++;
+    this.packet=el('circle',{r:6,class:'packet',opacity:0},this.svg);
+  }
+  go(n,animate){
+    this.i=n;const s=this.flow.steps[n];
+    this.groups.forEach((g,j)=>{g.classList.toggle('shown',j<=n);g.classList.toggle('past',j<n)});
+    this.cap.innerHTML=s.cap;
+    this.pre.innerHTML=hl(s.code);
+    this.count.textContent=`${n+1} / ${this.flow.steps.length}`;
+    this.root.querySelector('[data-act=prev]').disabled=n<=0;
+    this.root.querySelector('[data-act=next]').disabled=n>=this.flow.steps.length-1;
+    if(this.anim)this.anim.cancel();
+    const g=this.groups[n];
+    if(animate&&!reduce&&!s.note){
+      const x1=+g.dataset.x1,x2=+g.dataset.x2,y=+g.dataset.y;
+      this.packet.setAttribute('fill',s.k==='req'?'#E09A00':'#0F7B78');
+      this.packet.setAttribute('cy',y);this.packet.setAttribute('cx',0);
+      this.packet.setAttribute('opacity',1);
+      const line=g.querySelector('line'),len=Math.abs(x2-x1);
+      line.style.strokeDasharray=s.dashed?'':`${len}`;
+      this.anim=this.packet.animate([{transform:`translateX(${x1}px)`},{transform:`translateX(${x2}px)`}],{duration:650,easing:'cubic-bezier(.5,0,.3,1)',fill:'forwards'});
+      if(!s.dashed){line.animate([{strokeDashoffset:len},{strokeDashoffset:0}],{duration:650,easing:'cubic-bezier(.5,0,.3,1)'})}
+      this.anim.onfinish=()=>this.packet.setAttribute('opacity',0);
+    }else this.packet.setAttribute('opacity',0);
+  }
+  play(){
+    this.stop();
+    if(reduce){this.go(this.flow.steps.length-1,false);return}
+    let n=0;const tick=()=>{this.go(n,true);n++;if(n<this.flow.steps.length)this.timer=setTimeout(tick,this.flow.delay||2600)};
+    this.groups.forEach(g=>g.classList.remove('shown','past'));
+    this.timer=setTimeout(tick,250);
+  }
+  stop(){clearTimeout(this.timer);this.timer=null}
+}
+let uid=0;
+const players={};
+const hero=new SeqPlayer(document.getElementById('hero-player'),FLOWS.hero);
+hero.go(0,false);
+document.querySelectorAll('.player[data-flow]').forEach(p=>{players[p.dataset.flow]=new SeqPlayer(p,FLOWS[p.dataset.flow]);players[p.dataset.flow].go(0,false)});
+/* 首屏：页面加载后自动播放一次 */
+if(new URLSearchParams(location.search).has('static')){hero.go(FLOWS.hero.steps.length-1,false)}
+else hero.play();
+
+/* ---------------- 标签页 ---------------- */
+document.querySelectorAll('[data-tabs]').forEach(list=>{
+  const tabs=[...list.querySelectorAll('[role=tab]')];
+  const select=(t,focus)=>{
+    tabs.forEach(x=>{const on=x===t;x.setAttribute('aria-selected',on);x.tabIndex=on?0:-1;document.getElementById(x.getAttribute('aria-controls')).hidden=!on});
+    if(focus)t.focus();
+    const p=document.getElementById(t.getAttribute('aria-controls')).querySelector('.player[data-flow]');
+    if(p)players[p.dataset.flow].play();
+  };
+  tabs.forEach((t,i)=>{
+    t.onclick=()=>select(t);
+    t.onkeydown=e=>{if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();select(tabs[(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length],true)}};
+  });
+});
+/* 交互方式区块进入视野时播放当前标签 */
+const modesIO=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){players.sync.play();modesIO.disconnect()}})},{threshold:.35});
+modesIO.observe(document.getElementById('mode-sync'));
+
+/* ---------------- 任务状态机 ---------------- */
+const LC={
+  SUBMITTED:{x:110,y:200,zh:'已提交',cls:'',d:'服务端已接收并创建任务，尚未开始处理。'},
+  WORKING:{x:390,y:200,zh:'处理中',cls:'',d:'智能体正在处理。流式模式下会持续收到 statusUpdate 和 artifactUpdate。'},
+  INPUT_REQUIRED:{x:390,y:56,zh:'等待输入',cls:'interrupt',lit:'wait',d:'中断状态。智能体需要更多信息，问题在 status.message 中。客户端带同一 taskId 再次 SendMessage 即可继续。'},
+  AUTH_REQUIRED:{x:390,y:344,zh:'等待授权',cls:'interrupt',lit:'wait',d:'中断状态。智能体需要额外凭证（例如代表用户访问某个系统）。客户端在协议外完成授权后继续。'},
+  COMPLETED:{x:750,y:80,zh:'已完成',cls:'terminal',lit:'good',d:'终态。任务成功，产出在 artifacts 中。'},
+  FAILED:{x:750,y:200,zh:'失败',cls:'terminal',lit:'bad',d:'终态。执行出错，原因通常在 status.message 中。'},
+  CANCELED:{x:750,y:320,zh:'已取消',cls:'terminal',lit:'bad',d:'终态。客户端调用 CancelTask 后进入。'},
+  REJECTED:{x:110,y:344,zh:'已拒绝',cls:'terminal',lit:'bad',d:'终态。智能体决定不接这个任务，例如超出能力或违反策略。'}
+};
+const EDGES=[['SUBMITTED','WORKING'],['SUBMITTED','REJECTED'],['WORKING','COMPLETED'],['WORKING','FAILED'],['WORKING','CANCELED'],['WORKING','INPUT_REQUIRED',-14],['INPUT_REQUIRED','WORKING',-14],['WORKING','AUTH_REQUIRED',14],['AUTH_REQUIRED','WORKING',14],['INPUT_REQUIRED','CANCELED']];
+const NW=164,NH=50;
+function clip(a,b){ // 从节点 a 中心指向 b 中心的线段，裁到两个矩形边缘
+  const dx=b.x-a.x,dy=b.y-a.y;
+  const f=(p)=>{const tx=dx?(NW/2+4)/Math.abs(dx):Infinity,ty=dy?(NH/2+4)/Math.abs(dy):Infinity;return Math.min(tx,ty)};
+  const t=f();return [a.x+dx*t,a.y+dy*t,b.x-dx*t,b.y-dy*t];
+}
+const eg=document.getElementById('lc-edges'),ng=document.getElementById('lc-nodes');
+const edgeEls={};
+EDGES.forEach(([a,b,off=0])=>{
+  const A=LC[a],B=LC[b];let [x1,y1,x2,y2]=clip(A,B);
+  if(off){x1+=off;x2+=off}
+  edgeEls[a+'>'+b]=el('line',{class:'lc-edge',x1,y1,x2,y2,'marker-end':'url(#lc-ah)'},eg);
+});
+const nodeEls={};
+Object.entries(LC).forEach(([k,n])=>{
+  const g=el('g',{class:'lc-node '+n.cls,tabindex:0,role:'button','aria-label':`${k} ${n.zh}`},ng);
+  el('rect',{x:n.x-NW/2,y:n.y-NH/2,width:NW,height:NH,rx:8},g);
+  el('text',{x:n.x,y:n.y-3,'text-anchor':'middle'},g).textContent=k;
+  el('text',{x:n.x,y:n.y+15,'text-anchor':'middle',class:'zh'},g).textContent=n.zh;
+  const show=()=>{stopLC();clearLC();lit(k);lcLog.innerHTML=`<p><code>TASK_STATE_${k}</code>：${n.d}</p>`};
+  g.onclick=show;g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show()}};
+  nodeEls[k]=g;
+});
+const SCEN=[
+  {n:'一次完成',p:['SUBMITTED','WORKING','COMPLETED'],t:['SendMessage 创建任务','开始处理，持续产出 artifact','成功交付']},
+  {n:'需要补充输入',p:['SUBMITTED','WORKING','INPUT_REQUIRED','WORKING','COMPLETED'],t:['SendMessage 创建任务','开始处理','缺少出发城市，向用户追问','客户端带 taskId 再次 SendMessage','成功交付']},
+  {n:'需要授权',p:['SUBMITTED','WORKING','AUTH_REQUIRED','WORKING','COMPLETED'],t:['SendMessage 创建任务','开始处理','需要访问用户日历，请求授权','客户端完成 OAuth 后继续','成功交付']},
+  {n:'客户端取消',p:['SUBMITTED','WORKING','CANCELED'],t:['SendMessage 创建任务','开始处理','客户端调用 CancelTask']},
+  {n:'执行失败',p:['SUBMITTED','WORKING','FAILED'],t:['SendMessage 创建任务','开始处理','下游系统不可用，任务失败']},
+  {n:'拒绝执行',p:['SUBMITTED','REJECTED'],t:['SendMessage 提交请求','请求超出技能范围，智能体拒绝']}
+];
+const lcLog=document.getElementById('lc-log'),token=document.getElementById('lc-token'),scenBox=document.getElementById('lc-scen');
+let lcTimers=[],lcBtn=null;
+function clearLC(){Object.values(nodeEls).forEach(g=>g.classList.remove('lit','good','bad','wait'));Object.values(edgeEls).forEach(e=>e.classList.remove('lit'));token.setAttribute('opacity',0)}
+function stopLC(){lcTimers.forEach(clearTimeout);lcTimers=[];if(lcBtn)lcBtn.setAttribute('aria-pressed','false')}
+function lit(k){Object.values(nodeEls).forEach(g=>g.classList.remove('lit','good','bad','wait'));const n=LC[k];nodeEls[k].classList.add('lit');if(n.lit)nodeEls[k].classList.add(n.lit)}
+SCEN.forEach(s=>{
+  const b=document.createElement('button');b.textContent=s.n;b.setAttribute('aria-pressed','false');scenBox.appendChild(b);
+  b.onclick=()=>{
+    stopLC();clearLC();lcBtn=b;b.setAttribute('aria-pressed','true');lcLog.innerHTML='';
+    const step=(i)=>{
+      const k=s.p[i];lit(k);
+      if(i>0){const e=edgeEls[s.p[i-1]+'>'+k];e&&e.classList.add('lit');
+        if(!reduce){const A=LC[s.p[i-1]],B=LC[k];token.setAttribute('opacity',1);token.animate([{transform:`translate(${A.x}px,${A.y}px)`,opacity:1},{transform:`translate(${B.x}px,${B.y}px)`,opacity:1,offset:.85},{transform:`translate(${B.x}px,${B.y}px)`,opacity:0}],{duration:700,easing:'ease-in-out',fill:'forwards'})}}
+      const p=document.createElement('p');p.innerHTML=`<code>${k}</code>　${s.t[i]}`;lcLog.appendChild(p);
+      if(i<s.p.length-1)lcTimers.push(setTimeout(()=>step(i+1),reduce?0:1300));
+      else lcTimers.push(setTimeout(()=>{token.setAttribute('opacity',0);b.setAttribute('aria-pressed','false')},700));
+    };
+    step(0);
+  };
+});
+
+/* ---------------- 目录高亮 ---------------- */
+const links=[...document.querySelectorAll('nav.toc ol a')];
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){links.forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+e.target.id))}})},{rootMargin:'-30% 0px -60% 0px'});
+document.querySelectorAll('main section').forEach(s=>io.observe(s));
+</script>
+</body>
+</html>

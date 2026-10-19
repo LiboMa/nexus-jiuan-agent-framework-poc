@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>交付包指南（Delivery Package Guide）</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
+v0.1</span>交付包指南（Delivery Package Guide）</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
+    <tr><th scope="row">状态</th><td>封板 Finance-Audit-Nexus-PoC
+v0.1（交付包由 make-package.sh
+生成）<span class="stamp">交付</span></td></tr>
+    <tr><th scope="row">范围</th><td>audit-nexus/
+下的代码、文档、测试与证据；不含密钥和九安开发包</td></tr>
+    <tr><th scope="row">读者</th><td>项目负责人、接手的应用开发、运维、Agent
+开发</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#1-一句话" id="toc-1-一句话">1. 一句话</a></li>
+<li><a href="#2-生成与校验" id="toc-2-生成与校验">2. 生成与校验</a></li>
+<li><a href="#3-按角色从哪读起" id="toc-3-按角色从哪读起">3.
+按角色从哪读起</a></li>
+<li><a href="#4-包里有什么" id="toc-4-包里有什么">4. 包里有什么</a></li>
+<li><a href="#5-不在包里另行交接的" id="toc-5-不在包里另行交接的">5.
+不在包里、另行交接的</a></li>
+<li><a href="#6-验收清单" id="toc-6-验收清单">6. 验收清单</a></li>
+<li><a href="#7-封板时的状态v012026-10-19"
+id="toc-7-封板时的状态v012026-10-19">7.
+封板时的状态（v0.1，2026-10-19）</a></li>
+<li><a href="#8-签收" id="toc-8-签收">8. 签收</a></li>
+<li><a href="#9-以后怎么更新这个包" id="toc-9-以后怎么更新这个包">9.
+以后怎么更新这个包</a></li>
+</ul>
+</nav>
+<main id="main">
+<h1 id="1-一句话">1. 一句话</h1>
+<p>交付包是一个压缩包，加一个校验文件：<strong>Finance-Audit-Nexus-PoC
+v0.1</strong>，九安 × Nexus PoC 的全部代码（含测试台）、测试、应用自己的
+Skill、Agent 接入框架的契约、文档（Markdown 和
+HTML）、图、截图和参考补丁。密钥和九安开发包不在包里，另行交接（第 5
+节）。拿到之后按第 6 节验收，按第 8 节签收。</p>
+<figure>
+<a href="../assets/diagrams/package-contents.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/package-contents.svg" loading="lazy"
+alt="交付包里有什么：docs、poc/app、poc/bench、contract、poc/infra、skills、knowledge-agent、poc/tools、evidence；不在包里的另行交接" /></a>
+<figcaption>交付包里有什么：docs、poc/app、poc/bench、contract、poc/infra、skills、knowledge-agent、poc/tools、evidence；不在包里的另行交接</figcaption>
+</figure>
+<h1 id="2-生成与校验">2. 生成与校验</h1>
+<p><strong>生成</strong>（在维护人的电脑上，<code>audit-nexus/</code>
+目录下）：</p>
+<pre class="bash"><code>docs/delivery/make-package.sh</code></pre>
+<p>脚本按顺序做这些事，任何一步失败就停下来，不出包：</p>
+<ol type="1">
+<li>跑单元测试（266 个；本机没有 MySQL，其中 11
+个会跳过，它们在测试台上用 <code>poc/infra/bench-test.sh</code> 跑）和
+Skill 与命令行测试（13 个）；</li>
+<li><code>docs/build-html.sh --check</code>：图和 HTML 都是最新的；</li>
+<li>重新生成参考补丁，并在干净的九安副本上
+<code>patch --dry-run --fuzz=0</code>；校验进度清单
+<code>progress.json</code>，重出进度看板快照
+<code>docs/progress.html</code>；</li>
+<li>按白名单把文件拷到暂存目录（第 4
+节），排除生成物、依赖、杂物和密钥；</li>
+<li><strong>密钥检查</strong>：暂存目录里不能有
+<code>secrets.env</code>，不能有像 <code>nxa_</code> / <code>nxc_</code>
+/ <code>nxp_</code> / <code>afp_</code> 密钥、AWS
+访问密钥或私钥的字符串，也不能出现本机 <code>secrets.env</code>
+里任何一个真实的值（只报文件名，不打印值）；</li>
+<li>写 <code>MANIFEST.txt</code>（每个文件的 sha256）；</li>
+<li>打包成 <code>dist/&lt;版本&gt;.tar.gz</code>（版本取自根目录的
+<code>VERSION</code>，空格换成
+<code>-</code>：<code>dist/Finance-Audit-Nexus-PoC-v0.1.tar.gz</code>），并写同名的
+<code>.sha256</code>。</li>
+</ol>
+<p><strong>校验</strong>（拿到包的人）：</p>
+<pre class="bash"><code>shasum -a 256 -c Finance-Audit-Nexus-PoC-v0.1.tar.gz.sha256        # 包没被改过
+tar -xzf Finance-Audit-Nexus-PoC-v0.1.tar.gz
+cd Finance-Audit-Nexus-PoC-v0.1 &amp;&amp; shasum -a 256 -c MANIFEST.txt --quiet   # 每个文件都对得上
+open docs/delivery/README.html                                          # 从文档索引开始</code></pre>
+<h1 id="3-按角色从哪读起">3. 按角色从哪读起</h1>
+<figure>
+<a href="../assets/diagrams/package-roles.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/package-roles.svg" loading="lazy"
+alt="四种角色的阅读路线：项目负责人、应用开发、运维 / 值班、Agent 开发；每条路线最后一步是动手验证" /></a>
+<figcaption>四种角色的阅读路线：项目负责人、应用开发、运维 / 值班、Agent
+开发；每条路线最后一步是动手验证</figcaption>
+</figure>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>先读</th>
+<th>然后动手</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>项目负责人</td>
+<td>本文 → <a href="handover.html">交接文档</a>第 1、6 节 → <a
+href="code-review-2026-10-17.html">代码评审</a>第 1、4 节</td>
+<td>按第 6 节验收，第 8 节签收</td>
+</tr>
+<tr>
+<td>应用开发</td>
+<td><a href="handover.html">交接文档</a> → <a
+href="skills-guide.html">Skills 配置指南</a> → <a
+href="../architecture.html">架构、模块与工作流</a> → <a
+href="agent-framework.html">Agent 接入框架</a> → <a
+href="agent-interface.html">Agent 接口</a> → <a
+href="first-review-contract.html">单据初审</a> → <a
+href="integration.html">并入九安</a> → <a
+href="deploy-iteration.html">部署与迭代规范</a></td>
+<td>跑单元测试；装好两个 Skill；在页面上走一遍连接、启用、调用测试</td>
+</tr>
+<tr>
+<td>运维 / 值班</td>
+<td><a href="handover.html">交接文档</a>第 2、5 节 → <a
+href="operations.html">运维与后续迭代</a> → <a
+href="deploy-iteration.html">部署与迭代规范</a>第 6 节</td>
+<td>练一次 <code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>
+和一次回滚</td>
+</tr>
+<tr>
+<td>Agent 开发</td>
+<td><a href="skills-guide.html">Skills 配置指南</a> → <a
+href="../agent-developer-workflow.html">开发者工作流</a> → <a
+href="../../knowledge-agent/README.md">知识 Agent 说明</a> → <a
+href="operations.html">运维</a>第 2.1 节</td>
+<td>改一版提示词，用调用测试面板验证</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="4-包里有什么">4. 包里有什么</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>目录</th>
+<th>内容</th>
+<th>看哪份文档</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docs/<wbr>delivery/<wbr></code></td>
+<td>交付文档（本文、交接、并入九安、部署与迭代、运维、代码评审、Agent
+接入框架、Agent 接口、单据初审契约、调用链、客户规则与 AI 初审），每份有
+<code>.<wbr>md</code> 和 <code>.<wbr>html</code>；一页总览
+<code>agent-<wbr>framework-<wbr>overview.<wbr>html</code>（手写）；<code>patches/<wbr></code>
+参考补丁与生成脚本；<code>make-<wbr>package.<wbr>sh</code></td>
+<td><a href="README.html">交付文档索引</a></td>
+</tr>
+<tr>
+<td><code>docs/<wbr>assets/<wbr></code></td>
+<td><code>diagrams/<wbr></code>：图（<code>.<wbr>mmd</code>
+是源，<code>.<wbr>svg</code> 由 <code>build-<wbr>html.<wbr>sh</code>
+生成；<code>arch-<wbr>overview.<wbr>svg</code>
+是手工画的）；<code>screens/<wbr></code>：线上截图</td>
+<td>第 7 节</td>
+</tr>
+<tr>
+<td><code>docs/<wbr></code>（其余）</td>
+<td>架构文档、开发者工作流、设计（<code>specs/<wbr></code>）、实现计划（<code>plans/<wbr></code>）、历次评估、<code>build-<wbr>html.<wbr>sh</code>
+与 <code>html-<wbr>kit/<wbr></code></td>
+<td><a href="../architecture.html">架构</a></td>
+</tr>
+<tr>
+<td><code>poc/<wbr>app/<wbr></code></td>
+<td>PoC
+服务端、测试台组合根（<code>bench/<wbr></code>、<code>jiuan-<wbr>mysql.<wbr>mjs</code>）、前端扩展（<code>public-<wbr>src/<wbr></code>）、示例附件、单元测试与端到端测试、截图脚本</td>
+<td><a href="../architecture.html">架构</a>第 8、11 节</td>
+</tr>
+<tr>
+<td><code>poc/<wbr>bench/<wbr></code></td>
+<td><code>build-<wbr>jiuan.<wbr>sh</code>（九安副本 + 补丁 +
+依赖）与锁定的依赖清单（<code>mysql2</code> 3.14.3；不带
+<code>node_<wbr>modules</code>，构建时
+<code>npm ci -<wbr>-<wbr>ignore-<wbr>scripts</code>）</td>
+<td><a href="handover.html">交接文档</a>第 2.1 节</td>
+</tr>
+<tr>
+<td><code>poc/<wbr>infra/<wbr></code></td>
+<td>CloudFormation
+模板、<code>deploy.<wbr>sh</code>、<code>destroy.<wbr>sh</code>、<code>backup.<wbr>sh</code>、<code>upgrade-<wbr>instance.<wbr>sh</code>、<code>bench-<wbr>test.<wbr>sh</code>、<code>bench/<wbr></code>（实例上的
+MySQL 脚本与 systemd 片段）、部署说明（<strong>不含
+<code>secrets.<wbr>env</code></strong>）</td>
+<td><a href="deploy-iteration.html">部署与迭代规范</a>、<a
+href="operations.html">运维</a>第 2.7 节</td>
+</tr>
+<tr>
+<td><code>poc/<wbr>tools/<wbr></code>、<code>poc/<wbr>README.<wbr>md</code></td>
+<td>示例附件生成脚本；PoC 使用说明</td>
+<td><a href="../../poc/README.md">PoC 说明</a></td>
+</tr>
+<tr>
+<td><code>skills/<wbr>agent-<wbr>access/<wbr></code></td>
+<td>应用自己的
+Skill：<code>SKILL.<wbr>md</code>、<code>README.<wbr>md</code>、<code>scripts/<wbr>agent_<wbr>access.<wbr>py</code>、<code>references/<wbr></code>、测试</td>
+<td><a href="skills-guide.html">Skills 配置指南</a></td>
+</tr>
+<tr>
+<td><code>README.<wbr>md</code>、<code>VERSION</code>、<code>CHANGELOG.<wbr>md</code>（根目录）</td>
+<td>包的入口说明、版本号、这个版本改了什么</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>contract/<wbr></code></td>
+<td>Agent
+接入框架的契约：<code>envelope/<wbr>v1/<wbr></code>（信封、名片要求、错误码、例子）、<code>tasks/<wbr></code>（任务目录、<code>first_<wbr>review</code>、<code>describe</code>、新任务模板）、<code>workflows/<wbr></code>（审批流接口）</td>
+<td><a href="agent-interface.html">Agent 接口</a>、<a
+href="agent-framework.html">Agent 接入框架</a></td>
+</tr>
+<tr>
+<td><code>knowledge-<wbr>agent/<wbr></code></td>
+<td>知识 Agent 的提示词（<code>prompt.<wbr>yaml</code>
+v2，<code>prompt-<wbr>v1.<wbr>yaml</code>）与说明</td>
+<td><a href="../../knowledge-agent/README.md">知识 Agent 说明</a></td>
+</tr>
+<tr>
+<td><code>progress.<wbr>json</code>、<code>tools/<wbr>progress/<wbr></code></td>
+<td>开发进度清单（唯一来源）与看板：实时服务、快照、校验、测试</td>
+<td><a href="../progress.html">开发进度看板</a>；<a
+href="deploy-iteration.html">部署与迭代规范</a>第 1 节第 7 条</td>
+</tr>
+<tr>
+<td><code>evidence/<wbr></code></td>
+<td>各轮的测试证据与截图；<code>evidence/<wbr>e2e/<wbr>last-<wbr>run.<wbr>jsonl</code>
+是最近一次端到端测试的结果；<code>evidence/<wbr>bench/<wbr></code>
+是测试台升级的记录与日志</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>MANIFEST.<wbr>txt</code>、<code>PACKAGE-<wbr>INFO.<wbr>txt</code></td>
+<td>每个文件的 sha256；生成时间与检查结果</td>
+<td>第 2 节</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>特意不放进包的</strong>：<code>node_modules/</code>、生成的
+<code>poc/app/public/</code> 和
+<code>.build/</code>（九安副本，<code>deploy.sh</code>
+每次重建）、<code>dist/</code>、<code>archive/</code>（旧证据、旧包，说明见
+<code>archive/README.md</code>）、<code>__pycache__/</code>、<code>.DS_Store</code>；和这个
+PoC 无关或已过时的
+<code>get_passwd.sh</code>、<code>poc/a2a-entry/</code>（第四轮的旧验证，不再部署）、<code>poc/infra/design-jiuan-nexus-integrate.md</code>（原始笔记）。这些都还留在维护人的电脑上。</p>
+<h1 id="5-不在包里另行交接的">5. 不在包里、另行交接的</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>东西</th>
+<th>为什么不在包里</th>
+<th>怎么交接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code></td>
+<td>有口令、<code>REGISTRY_<wbr>KEY</code>、测试台的三项密钥（<code>BENCH_<wbr>*</code>）和真实的调用密钥。<strong><code>BENCH_<wbr>DATA_<wbr>KEY</code>
+丢了，测试台的库就打不开</strong></td>
+<td><strong>当面交接</strong>（不经聊天工具、邮件、网盘）；接手后放回
+<code>poc/<wbr>infra/<wbr></code>，权限 0600</td>
+</tr>
+<tr>
+<td>九安开发包
+<code>source/<wbr>审核平台-<wbr>测试环境开发包-<wbr>v0.<wbr>5.<wbr>3/<wbr></code></td>
+<td>第三方代码，按版本号引用</td>
+<td>从九安按版本号取，解压到包根目录下的同名路径（或用
+<code>JIUAN_<wbr>CODE_<wbr>DIR</code> 指向它的
+<code>code/<wbr></code>）；单元测试、<code>build-<wbr>jiuan.<wbr>sh</code>、<code>deploy.<wbr>sh</code>、参考补丁都要用到它</td>
+</tr>
+<tr>
+<td><code>~/<wbr>.<wbr>nexus/<wbr></code>（operator 凭证）</td>
+<td>个人凭证</td>
+<td>不交接；接手的人用自己的 Nexus 账号和 API 密钥</td>
+</tr>
+<tr>
+<td>nexus-ai-operator 接入包</td>
+<td>每份接入包里带着生成它的那个人的 API 密钥，不能转交</td>
+<td>接手的人在 Nexus 网页「个人设置 › API 密钥」自己生成、下载（<a
+href="skills-guide.html">Skills 配置指南</a>第 3.1
+节）；<code>deploy.<wbr>sh</code> 要用其中的
+<code>scripts/<wbr>nexus.<wbr>py</code></td>
+</tr>
+<tr>
+<td>实例上的各账号数据（<code>/<wbr>var/<wbr>lib/<wbr>andon-<wbr>finance/<wbr>users/<wbr></code>）</td>
+<td>在线上，里面有加密的调用密钥和 CLI 凭证</td>
+<td>留在实例上；实例替换前的备份方法见<a
+href="operations.html">运维</a>第 2.6 节</td>
+</tr>
+<tr>
+<td>测试台的 MySQL
+数据（<code>/<wbr>var/<wbr>lib/<wbr>jiuan-<wbr>mysql</code>）</td>
+<td>在线上；虚构单据，端到端测试每次都会重建</td>
+<td>留在实例上；<code>backup.<wbr>sh</code> 的根卷快照里有一份</td>
+</tr>
+<tr>
+<td>AWS 与 Nexus 的访问权限</td>
+<td>账号权限</td>
+<td>由项目负责人另行授予（<a href="handover.html">交接文档</a>第 5
+节）</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="6-验收清单">6. 验收清单</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>验收项</th>
+<th>怎么做</th>
+<th>通过的样子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>包完整</td>
+<td>第 2 节的两条 <code>shasum</code></td>
+<td>两条都 OK</td>
+</tr>
+<tr>
+<td>2</td>
+<td>文档能打开</td>
+<td>浏览器打开
+<code>docs/<wbr>delivery/<wbr>README.<wbr>html</code>，点进每一份</td>
+<td>每份都有图、表、目录；图能点开看原尺寸</td>
+</tr>
+<tr>
+<td>3</td>
+<td>单元测试</td>
+<td>先放好九安开发包（第 5 节），再
+<code>cd poc/<wbr>app &amp;&amp; node -<wbr>-<wbr>test "test/<wbr>unit/<wbr>**/<wbr>*.<wbr>test.<wbr>mjs"</code></td>
+<td>266 个：255 通过、11 个要 MySQL 的跳过、0
+失败（没有九安开发包时有一部分会失败，因为它们要导入九安的代码）</td>
+</tr>
+<tr>
+<td>3a</td>
+<td>要 MySQL 的单元测试</td>
+<td><code>poc/<wbr>infra/<wbr>bench-<wbr>test.<wbr>sh</code>（在测试台上跑，只用
+<code>jiuan_<wbr>bench_<wbr>test</code> 库）</td>
+<td>11 个全部通过</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Skill 与命令行测试</td>
+<td><code>python3 -<wbr>m unittest discover -<wbr>s skills/<wbr>agent-<wbr>access/<wbr>tests</code></td>
+<td>13 个全部通过</td>
+</tr>
+<tr>
+<td>4a</td>
+<td>两个 Skill 能装上</td>
+<td>按 <a href="skills-guide.html">Skills 配置指南</a>第 3、4
+节装进自己的编码工具，各用一把 API 密钥连接</td>
+<td><code>nexus.<wbr>py whoami</code>
+是自己；<code>agent_<wbr>access.<wbr>py status</code> 显示 Nexus
+已连接</td>
+</tr>
+<tr>
+<td>5</td>
+<td>文档是最新的</td>
+<td><code>docs/<wbr>build-<wbr>html.<wbr>sh -<wbr>-<wbr>check</code>（需要
+pandoc、mmdc、Chrome）</td>
+<td>「图和 HTML 都是最新的」</td>
+</tr>
+<tr>
+<td>6</td>
+<td>参考补丁</td>
+<td><code>docs/<wbr>delivery/<wbr>patches/<wbr>make-<wbr>reference-<wbr>patch.<wbr>sh</code>（需要九安开发包）</td>
+<td>「--dry-run --fuzz=0 通过」</td>
+</tr>
+<tr>
+<td>7</td>
+<td>线上可用</td>
+<td><code>curl -<wbr>fsS https:/<wbr>/<wbr>andon-<wbr>finance.<wbr>tinyboat.<wbr>blog/<wbr>api/<wbr>health</code></td>
+<td>HTTP 200；<code>database</code> 是
+<code>ok</code>，<code>source</code> 是 <code>poc-<wbr>bench</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td>页面走一遍</td>
+<td>审核员登录 → Agent 页 → 调用测试（知识
+Agent，<code>answer</code>）</td>
+<td>返回带引用的回答</td>
+</tr>
+<tr>
+<td>9</td>
+<td>完整端到端测试</td>
+<td><code>poc/<wbr>app/<wbr>test/<wbr>e2e/<wbr>run.<wbr>sh</code>（第一次会自动
+<code>npm install</code> Playwright；开始前会重建测试台的库，约 0.36
+美元；需要 <code>secrets.<wbr>env</code>
+里的两个口令；调用密钥用审核员在页面上启用的）</td>
+<td>0 失败；跳过的只有按设计跳过的那一个（不停用本人启用的知识
+Agent）；截图交项目负责人</td>
+</tr>
+<tr>
+<td>10</td>
+<td>未完成事项知情</td>
+<td>读<a href="handover.html">交接文档</a>第 6 节</td>
+<td>每一条都有负责人和时间</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="7-封板时的状态v012026-10-19">7.
+封板时的状态（v0.1，2026-10-19）</h1>
+<p><strong>已完成</strong></p>
+<ul>
+<li>PoC 第一期上线：审批流、「我的
+Nexus」（连接、启用、换密钥、停用）、调用测试（带附件）、命令行
+<code>agent_access.py</code>；审批流的调用密钥从系统里读（页面上的启用记录）。</li>
+<li><strong>测试台</strong>（2026-10-19）：实例换到 t3.large，本机 MySQL
+8.0；服务端跑九安开发包的副本和九安自己的运行时（MySQL
+存储、平台存储、连接器、调用中间件、流水线运行器），汇联易和钉钉不接。升级前做了根卷快照和账号目录打包；各账号的连接与启用都没变。</li>
+<li><strong>Agent 接入框架设计稿 v2</strong>：通用信封
+<code>jiuan.agent/v1</code>、任务目录、第一个任务单据初审
+<code>first_review@1</code>；契约文件在
+<code>contract/</code>，已校验。</li>
+<li>测试：单元测试 266 个（本机 255 通过、11 个要 MySQL 的跳过；测试台上
+11/11）；Skill 与命令行测试 13 个；完整端到端测试：测试台升级后 15
+通过、0 失败、1 按设计跳过；封板前 14 通过、1 失败、1
+按设计跳过（失败原因见<a href="handover.html">交接文档</a>第 6 节第 12
+条，项目负责人接受这个结果封板）。</li>
+<li>测试台的最终评审：3 个 Important
+已修好（实例上的测试台密钥只认原值；健康检查真的去查库；回到内存存储不依赖
+MySQL），每个都先有失败的测试；2026-10-19 已部署。</li>
+<li>应用自己的 Skill 打包成可以安装的形式；<a
+href="skills-guide.html">Skills 配置指南</a>写了它和 nexus-ai-operator
+怎么装、怎么连。</li>
+<li>旧证据、旧包、建 Agent 时的调用记录移进
+<code>archive/</code>（不进包）。</li>
+<li>交付文档 11 份加索引、一页总览、架构文档，Markdown 和 HTML
+两个版本；由源码生成的图、1 张手工图（系统总览）、线上截图。</li>
+<li>参考补丁可重复生成、可在干净副本上验证。</li>
+</ul>
+<p><strong>还没完成</strong>（详见<a href="handover.html">交接文档</a>第
+6 节）</p>
+<ol type="1">
+<li>构件和健康检查还不带提交号（评审 C1 的后一半；代码已进私有仓库，标签
+<code>v0.1</code>）；源站还是明文 HTTP（评审 C2）。</li>
+<li>部署脚本还剩一个缺口（评审 I2）；值班看不到 Nexus 调用的问题（评审
+I6）。</li>
+<li>初审 MVP：设计稿待批准，九安补丁 0001–0006
+是下一份计划；审批记录还在内存里。</li>
+<li>上生产前的密钥事项：审核员连接 Nexus
+的档位改只读（I4）、清理不再用的凭证。开发测试阶段不用动。</li>
+<li>评审其余的 Important 与 Minor：见<a
+href="code-review-2026-10-17.html">代码评审</a>第 3、4 节；测试台评审的
+12 个 Minor 见<a href="handover.html">交接文档</a>第 6 节。</li>
+</ol>
+<h1 id="8-签收">8. 签收</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>交出</th>
+<th>接收</th>
+<th>日期</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>交付包（文件名与 sha256）</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>测试台（MySQL、三项测试台密钥、升级前快照）</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>secrets.<wbr>env</code>（当面）</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>AWS 与 Nexus 权限</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>验收清单第 1–8 项（含 3a、4a）</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>验收清单第 9 项（完整端到端测试）</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>未完成事项（第 7 节）的负责人与时间</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="9-以后怎么更新这个包">9. 以后怎么更新这个包</h1>
+<ol type="1">
+<li>改代码按<a
+href="deploy-iteration.html">部署与迭代规范</a>走完；</li>
+<li>改文档改 <code>.md</code>、改图改
+<code>assets/diagrams/*.mmd</code>，再运行
+<code>docs/build-html.sh</code>；截图过期了运行
+<code>poc/app/test/e2e/capture-screens.mjs</code>（只看不改，不花钱）；</li>
+<li>改根目录的 <code>VERSION</code>（比如
+<code>Finance-Audit-Nexus-PoC v0.2</code>），在
+<code>CHANGELOG.md</code> 加一节；</li>
+<li>运行 <code>docs/delivery/make-package.sh</code>
+出新包，文件名就是版本；旧包和它的 <code>.sha256</code> 一起移进
+<code>archive/dist/</code>。</li>
+</ol>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/package-guide.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>运维与后续迭代</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
+v0.1</span>运维与后续迭代</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
+    <tr><th scope="row">状态</th><td>交付版
+v2（实例已是测试台：t3.large、本机 MySQL 8.0、九安运行时）</td></tr>
+    <tr><th scope="row">范围</th><td>线上 PoC（栈 andon-finance-poc）与
+Nexus nxs-beine1013</td></tr>
+    <tr><th scope="row">读者</th><td>运维、值班、应用开发、Agent
+开发</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#1-日常运维" id="toc-1-日常运维">1. 日常运维</a>
+<ul>
+<li><a href="#11-每天看什么" id="toc-11-每天看什么">1.1
+每天看什么</a></li>
+<li><a href="#12-看日志" id="toc-12-看日志">1.2 看日志</a></li>
+<li><a href="#13-重启与健康检查" id="toc-13-重启与健康检查">1.3
+重启与健康检查</a></li>
+</ul></li>
+<li><a href="#2-操作手册" id="toc-2-操作手册">2. 操作手册</a>
+<ul>
+<li><a href="#21-接入一个新-agent固定的四步使用逻辑"
+id="toc-21-接入一个新-agent固定的四步使用逻辑">2.1 接入一个新
+Agent（固定的四步使用逻辑）</a></li>
+<li><a href="#22-审批流用哪把调用密钥"
+id="toc-22-审批流用哪把调用密钥">2.2 审批流用哪把调用密钥</a></li>
+<li><a href="#23-换口令或-registry_key"
+id="toc-23-换口令或-registry_key">2.3 换口令或
+<code>REGISTRY_KEY</code></a></li>
+<li><a href="#24-某个账号连不上或启用失败"
+id="toc-24-某个账号连不上或启用失败">2.4
+某个账号连不上或启用失败</a></li>
+<li><a href="#25-审批流出不来建议" id="toc-25-审批流出不来建议">2.5
+审批流出不来建议</a></li>
+<li><a href="#26-实例被替换之后" id="toc-26-实例被替换之后">2.6
+实例被替换之后</a></li>
+<li><a href="#27-测试台mysql-的检查重置备份"
+id="toc-27-测试台mysql-的检查重置备份">2.7 测试台：MySQL
+的检查、重置、备份</a></li>
+<li><a href="#28-销毁" id="toc-28-销毁">2.8 销毁</a></li>
+</ul></li>
+<li><a href="#3-后续迭代的最佳方式" id="toc-3-后续迭代的最佳方式">3.
+后续迭代的最佳方式</a>
+<ul>
+<li><a href="#31-固定的四步使用逻辑" id="toc-31-固定的四步使用逻辑">3.1
+固定的四步使用逻辑</a></li>
+<li><a href="#32-一次迭代怎么走" id="toc-32-一次迭代怎么走">3.2
+一次迭代怎么走</a></li>
+<li><a href="#33-改-agent-时" id="toc-33-改-agent-时">3.3 改 Agent
+时</a></li>
+<li><a href="#34-改应用时" id="toc-34-改应用时">3.4 改应用时</a></li>
+</ul></li>
+<li><a href="#4-下一步要建的运维能力" id="toc-4-下一步要建的运维能力">4.
+下一步要建的运维能力</a></li>
+</ul>
+</nav>
+<main id="main">
+<h1 id="1-日常运维">1. 日常运维</h1>
+<h2 id="11-每天看什么">1.1 每天看什么</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>看什么</th>
+<th>怎么看</th>
+<th>正常的样子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>站点是否在线</td>
+<td><code>curl -<wbr>fsS https:/<wbr>/<wbr>andon-<wbr>finance.<wbr>tinyboat.<wbr>blog/<wbr>api/<wbr>health</code></td>
+<td>HTTP 200，<code>status</code> 为 <code>ok</code>（刚重启的几秒是
+<code>starting</code>）</td>
+</tr>
+<tr>
+<td>MySQL 容器</td>
+<td>经 SSM：<code>docker ps</code>（<code>jiuan-<wbr>mysql</code> 是
+Up）；健康检查 <code>/<wbr>api/<wbr>health</code>
+每次都问一次库（<code>SELECT 1</code>，3 秒超时），<code>database</code>
+是 <code>ok</code>、<code>source</code> 是
+<code>poc-<wbr>bench</code></td>
+<td>容器 Up；<code>database: ok</code>。库断了健康检查回
+503，<code>database</code> 是 <code>unavailable</code></td>
+</tr>
+<tr>
+<td>服务日志</td>
+<td>第 1.2 节</td>
+<td>有
+<code>andon-<wbr>finance-<wbr>poc listening on …</code>；没有成串的
+<code>APP_<wbr>ERROR</code> / <code>APPROVAL_<wbr>ERROR</code></td>
+</tr>
+<tr>
+<td>审批流能不能出建议</td>
+<td>单据池顶上点一次「模拟来单」，看新卡片上出现「AI
+初审：…」和「待人工复核」</td>
+<td>健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（<a
+href="code-review-2026-10-17.html">代码评审</a> I6）</td>
+</tr>
+<tr>
+<td>Nexus 费用</td>
+<td>Nexus 网页上发布者名下的用量</td>
+<td>每次 Agent 调用约 0.05 美元；读能力清单约 0.03
+美元；验证调用密钥不花钱</td>
+</tr>
+<tr>
+<td>AWS 费用</td>
+<td>账单</td>
+<td>t3.large 约 61 美元 / 月（2026-10-19 前是 t3.small，约 15 美元），16
+GB gp3 根卷约 1.3 美元 / 月，公网 IPv4 约 3.6 美元 /
+月；升级前的快照不到 1 美元 / 月</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="12-看日志">1.2 看日志</h2>
+<p>实例不开 22 端口，只走 SSM：</p>
+<pre class="bash"><code>aws ssm start-session --region us-east-1 --target i-01d753d48056fd423
+sudo journalctl -u andon-finance-poc -n 200 --no-pager      # 服务日志
+sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志</code></pre>
+<p>日志里只有错误码，没有口令、密钥和单据内容。主要几种：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>日志</th>
+<th>意思</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>andon-<wbr>finance-<wbr>poc listening on 0.<wbr>0.<wbr>0.<wbr>0:4180</code></td>
+<td>服务起来了</td>
+</tr>
+<tr>
+<td><code>APP_<wbr>ERROR &lt;错误码&gt;</code></td>
+<td>九安服务端或 PoC 插件里的错误（含预热失败
+<code>POC_<wbr>WARMUP_<wbr>FAILED</code>）</td>
+</tr>
+<tr>
+<td><code>APPROVAL_<wbr>ERROR &lt;错误码&gt;</code></td>
+<td>审批流后台执行出错（预审或审批建议）</td>
+</tr>
+<tr>
+<td><code>SAMPLES_<wbr>ERROR &lt;错误码&gt;</code></td>
+<td>示例附件不合规（代码问题；调用测试照常可用，只是没有示例附件）</td>
+</tr>
+<tr>
+<td><code>release download failed; keeping the current release</code></td>
+<td>启动时从构件桶拉包失败，继续用当前版本</td>
+</tr>
+<tr>
+<td><code>andon-<wbr>finance-<wbr>poc starting on … (waiting for MySQL)</code></td>
+<td>测试台：服务起来了，在等 MySQL；这期间健康检查回 503 starting</td>
+</tr>
+<tr>
+<td><code>BENCH_<wbr>DB_<wbr>WAIT &lt;错误码&gt;</code></td>
+<td>还连不上 MySQL（第一次和之后每 15
+次记一行）；服务不会退出，一直等</td>
+</tr>
+<tr>
+<td><code>PLATFORM_<wbr>&lt;错误码&gt;</code></td>
+<td>九安流水线运行器的错误</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="13-重启与健康检查">1.3 重启与健康检查</h2>
+<pre class="bash"><code>aws ssm send-command --region us-east-1 --instance-ids i-01d753d48056fd423 --document-name AWS-RunShellScript \
+  --parameters &#39;commands=[&quot;systemctl restart andon-finance-poc.service&quot;,&quot;sleep 5&quot;,&quot;systemctl is-active andon-finance-poc.service&quot;]&#39;
+curl -fsS https://andon-finance.tinyboat.blog/api/health</code></pre>
+<p>重启会：</p>
+<ul>
+<li>先从构件桶重新拉 <code>releases/current.tgz</code> 和
+<code>secrets/secrets.env</code>；</li>
+<li>测试台：先回 503 starting，等 MySQL
+连上（一直等，不退出），迁移、写种子（写两遍等于写一遍），再正常服务；</li>
+<li>单据和模拟来单在 MySQL
+里，重启不丢；清空内存里的审批记录、登录状态和运行记录；</li>
+<li>各账号的连接与启用都在磁盘上，不受影响。</li>
+</ul>
+<h1 id="2-操作手册">2. 操作手册</h1>
+<h2 id="21-接入一个新-agent固定的四步使用逻辑">2.1 接入一个新
+Agent（固定的四步使用逻辑）</h2>
+<figure>
+<a href="../assets/diagrams/ops-onboard-agent.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/ops-onboard-agent.svg" loading="lazy"
+alt="接入一个新 Agent 的时序：建好、发布 → 本人签发调用密钥 → 使用者在 Agent 页启用 → 调用测试" /></a>
+<figcaption>接入一个新 Agent 的时序：建好、发布 → 本人签发调用密钥 →
+使用者在 Agent 页启用 → 调用测试</figcaption>
+</figure>
+<p>两个 Skill 怎么装、怎么连见 <a href="skills-guide.html">Skills
+配置指南</a>。</p>
+<ol type="1">
+<li><p><strong>构建与发布</strong>（Agent 开发，用 Claude Code / Codex /
+Kiro CLI + nexus-ai-operator Skill）：建
+Agent、写提示词、在平台内试用、建发布并打开 A2A。</p></li>
+<li><p><strong>签发调用密钥</strong>（发布者本人，Nexus 网页「互联中心 ›
+对外发布」）。Operator 和 API 密钥都签不了，这是平台的限制。</p></li>
+<li><p><strong>启用</strong>（使用者自己）：</p>
+<ul>
+<li>页面：Agent 页 › 我的 Agent › 待启用 › 启用，粘贴调用密钥；</li>
+<li>命令行：<code>python3 skills/agent-access/scripts/agent_access.py enable &lt;发布编号&gt; --key-stdin --yes</code>（密钥从标准输入读）。</li>
+</ul>
+<p>应用当场验证（读名片 +
+<code>tasks/get</code>，不花钱），默认顺便读一次能力清单。</p></li>
+<li><p><strong>调用测试、再迭代</strong>：在调用测试里按任务调用；改提示词后在
+Nexus 上更新
+Agent（发布跟随最新版本），回到页面点「重新读能力清单」。</p></li>
+</ol>
+<p>不需要改 <code>secrets.env</code>，不需要部署，不需要重启。</p>
+<figure class="screen">
+<a href="../assets/screens/invoke-panel.png" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/screens/invoke-panel.png" loading="lazy"
+alt="调用测试面板：选一个已启用或系统提供的发布，看它的 A2A 名片，加示例附件或本机文件，再发送" /></a>
+<figcaption>调用测试面板：选一个已启用或系统提供的发布，看它的 A2A
+名片，加示例附件或本机文件，再发送</figcaption>
+</figure>
+<h2 id="22-审批流用哪把调用密钥">2.2 审批流用哪把调用密钥</h2>
+<p>审批流的调用密钥<strong>从系统里读</strong>，不用另外配：</p>
+<ol type="1">
+<li>先用发起（或重试）这张单据审批的人，在 Agent
+页启用的「九安审核AI」那把；</li>
+<li>他没启用，就用别的账号启用的、最近验证过的那把；</li>
+<li>系统里一把都没有，才用 <code>secrets.env</code> 里
+<code>NEXUS_A2A_KEY_pub_5c53e70d8dc7ddea</code>
+那一行兜底（可选，可以删）。</li>
+</ol>
+<p>Nexus 回 401
+时，只把用到的那一把标记为「密钥失效」，下一次自动换下一把。要换密钥：在
+Agent 页那张卡片上点「换密钥」，粘贴新的；不用改文件，不用部署。</p>
+<p>开发测试阶段，给出的密钥一直用到过期，不主动吊销、不轮换。</p>
+<h2 id="23-换口令或-registry_key">2.3 换口令或
+<code>REGISTRY_KEY</code></h2>
+<ul>
+<li><strong>口令</strong>：改 <code>secrets.env</code> 里的
+<code>REVIEWER_PASSWORD</code> / <code>CHECKER_PASSWORD</code>，再
+<code>deploy.sh --code-only</code>。</li>
+<li><strong><code>REGISTRY_KEY</code></strong>：只在怀疑泄露时换。换了以后，所有账号已保存的调用密钥都解不开，页面上会显示「密钥失效」，每个人都要重新粘贴启用。步骤：
+<ol type="1">
+<li>先通知所有在用的人；</li>
+<li>删掉 <code>secrets.env</code> 里这一行；</li>
+<li>运行 <code>deploy.sh --code-only</code>，脚本会生成新的一把；</li>
+<li>通知大家重新启用。</li>
+</ol></li>
+</ul>
+<h2 id="24-某个账号连不上或启用失败">2.4 某个账号连不上或启用失败</h2>
+<p>先看页面上的提示或命令行的退出码：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>退出码 / 错误码</th>
+<th>原因</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3 / <code>POC_<wbr>NEXUS_<wbr>NOT_<wbr>CONNECTED</code></td>
+<td>这个账号还没连接 Nexus，或连接在 Nexus 上被停用了</td>
+<td>用自己的 API 密钥重新连接</td>
+</tr>
+<tr>
+<td>4 / <code>POC_<wbr>NEXUS_<wbr>API_<wbr>KEY_<wbr>INVALID</code></td>
+<td>API 密钥无效或已经用过（第一次连接后平台会换新）</td>
+<td>在 Nexus「个人设置 › API 密钥」新建一把再连接</td>
+</tr>
+<tr>
+<td>4 / <code>POC_<wbr>CALL_<wbr>KEY_<wbr>INVALID</code></td>
+<td>调用密钥无效、被吊销，或不属于这个发布</td>
+<td>签一把新的，「换密钥」</td>
+</tr>
+<tr>
+<td>5 / <code>POC_<wbr>PUBLICATION_<wbr>NOT_<wbr>MINE</code></td>
+<td>这个发布不在这个人的 Nexus 列表里</td>
+<td>确认用的是发布者本人或被分享者的 API 密钥</td>
+</tr>
+<tr>
+<td>6 / <code>POC_<wbr>CARD_<wbr>UNAVAILABLE</code></td>
+<td>发布暂停了，或 A2A 没打开</td>
+<td>在 Nexus 上恢复发布、打开 A2A</td>
+</tr>
+<tr>
+<td>6 / <code>POC_<wbr>AGENT_<wbr>NOT_<wbr>ENABLED</code></td>
+<td>还没启用，或刚被停用</td>
+<td>先启用</td>
+</tr>
+<tr>
+<td>7 / <code>POC_<wbr>ME_<wbr>RATE_<wbr>LIMIT</code></td>
+<td>每个账号连接与启用每分钟最多 5 次</td>
+<td>等一分钟</td>
+</tr>
+<tr>
+<td>8 / <code>POC_<wbr>NEXUS_<wbr>UNREACHABLE</code></td>
+<td>暂时连不上 Nexus</td>
+<td>点「刷新」重试；<strong>不要</strong>因此去换新的 API
+密钥，连接还在</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="25-审批流出不来建议">2.5 审批流出不来建议</h2>
+<figure>
+<a href="../assets/diagrams/ops-troubleshoot.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/ops-troubleshoot.svg" loading="lazy"
+alt="审批停在「AI 失败」时，按运行记录里的错误码处理" /></a>
+<figcaption>审批停在「AI 失败」时，按运行记录里的错误码处理</figcaption>
+</figure>
+<figure class="screen">
+<a href="../assets/screens/document-approval.png" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/screens/document-approval.png" loading="lazy"
+alt="单据详情里的审批流卡片：五步进度，从「发起审批」开始" /></a>
+<figcaption>单据详情里的审批流卡片：五步进度，从「发起审批」开始</figcaption>
+</figure>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>状态停在「AI 初审失败」（系统已自动重试过一次），错误码
+<code>AI_<wbr>AUTH_<wbr>INVALID</code></td>
+<td>系统里找不到能用的调用密钥：没有人启用「九安审核AI」，或启用的那把过期了</td>
+<td>在 Agent 页启用或「换密钥」（第 2.2 节），再「重试 AI」</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>UNAVAILABLE</code></td>
+<td>Nexus 超时（单次最长 5 分钟）、5xx，或预算用完</td>
+<td>看 Nexus 状态和预算；稍后点「重试 AI」，或「转人工」（不带 Agent
+建议）</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>RATE_<wbr>LIMIT</code></td>
+<td>Nexus 限流</td>
+<td>稍后重试</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>REQUEST_<wbr>INVALID</code></td>
+<td>请求不合规（附件超限、内容残缺）</td>
+<td>看运行记录里的 <code>detail</code></td>
+</tr>
+<tr>
+<td>校验失败</td>
+<td>Agent 的输出没通过九安自己的校验</td>
+<td>看运行记录里的原始返回；多半要改审批 Agent 的提示词</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>运行记录（Agent 页最下面）最多保留 50
+条、重启清空，每条带错误码、用时和原始返回。</p>
+<h2 id="26-实例被替换之后">2.6 实例被替换之后</h2>
+<p>实例被替换（重建栈、换 AMI、实例故障）后：</p>
+<ul>
+<li>代码和密钥会在第一次启动时自动从构件桶装上；</li>
+<li>各账号的数据（<code>/var/lib/andon-finance/users/</code>）会丢：每个人要重新连接、重新启用；</li>
+<li>旧的共享 CLI 连接目录 <code>/var/lib/andon-finance/nexus/</code>
+也会重新建（空的）；</li>
+<li>测试台的 MySQL
+数据（<code>/var/lib/jiuan-mysql</code>）也会丢；新实例上还没有
+<code>bench.env</code>，服务先按内存存储起来。再跑一次
+<code>deploy.sh --code-only</code>，它会装好
+MySQL、写测试台密钥文件、切回
+MySQL，启动时重新迁移、写种子。<code>secrets.env</code> 里的
+<code>BENCH_DATA_KEY</code> 不变就行。</li>
+</ul>
+<p>替换前先跑 <code>poc/infra/backup.sh</code>：根卷快照 +
+在实例上打包账号目录（里面的调用密钥是加密的，<code>REGISTRY_KEY</code>
+不变就能解开）。要放回账号目录时，属主 <code>andon:andon</code>，目录
+0700、文件 0600；要整盘恢复，用快照建卷。换实例类型用
+<code>upgrade-instance.sh</code>，它只允许停机再开，不替换实例。</p>
+<h2 id="27-测试台mysql-的检查重置备份">2.7 测试台：MySQL
+的检查、重置、备份</h2>
+<ul>
+<li><strong>检查</strong>：经 SSM 运行 <code>docker ps</code> 和
+<code>docker exec jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysqladmin ping -uroot'</code>。</li>
+<li><strong>重置</strong>（端到端测试会自动做）：<code>/opt/andon-finance/current/bench/bench-reset.sh</code>：停服务，删掉并重建
+<code>jiuan_analysis</code>，再开服务（启动时迁移、写种子）。不碰各账号的数据。</li>
+<li><strong>跑要 MySQL 的单元测试</strong>：本机运行
+<code>poc/infra/bench-test.sh</code>，测试在实例上跑，只用
+<code>jiuan_bench_test</code> 这个库。</li>
+<li><strong>升级前备份</strong>：<code>poc/infra/backup.sh</code>（根卷快照
++ 实例上打包账号目录）。</li>
+<li><strong>换实例类型</strong>：<code>poc/infra/upgrade-instance.sh &lt;类型&gt;</code>：只允许停机再开；变更集里实例会被替换就不执行。</li>
+<li><strong>回到内存存储</strong>：<code>POC_STORE=memory poc/infra/deploy.sh --code-only</code>。内存模式不碰
+MySQL，所以 MySQL 坏了也能用它退回来。</li>
+<li><strong>测试台密钥只认原值</strong>：实例上已有的三项测试台密钥（<code>/etc/andon-finance/bench/</code>）和
+<code>secrets.env</code>
+里的不一样时，部署在重启之前就失败，服务照旧跑。多半是
+<code>secrets.env</code>
+被重新生成了：找回交接的那份。真要换值，先有意重建测试台（删容器和
+<code>/var/lib/jiuan-mysql</code>、删
+<code>/etc/andon-finance/bench/</code>
+下的文件，再部署）；库里的数据会全部重建。</li>
+</ul>
+<h2 id="28-销毁">2.8 销毁</h2>
+<pre class="bash"><code>audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认</code></pre>
+<p>销毁前确认：构件桶里没有要留的东西；Nexus 上的调用密钥、API
+密钥已停用。</p>
+<h1 id="3-后续迭代的最佳方式">3. 后续迭代的最佳方式</h1>
+<h2 id="31-固定的四步使用逻辑">3.1 固定的四步使用逻辑</h2>
+<p>一切设计都按这条走，这条不会变：</p>
+<ol type="1">
+<li><strong>构建</strong>：开发者用 Claude Code / Codex / Kiro CLI +
+Operator Skill 在 Nexus 上建 Agent、发布、拿调用密钥。</li>
+<li><strong>发现与加载</strong>：前端经 A2A
+自动发现（名片、能力清单），在 Agent 页上启用、调用测试。</li>
+<li><strong>按业务迭代</strong>：用 vibe coding
+优化前端的调用方式和界面。</li>
+<li><strong>测试、上线</strong>：单元测试 + 端到端测试 +
+项目负责人确认。</li>
+</ol>
+<p>知识和 Agent 在一起（在 Nexus
+上）；前端只做调用，不在应用里另建知识库。</p>
+<h2 id="32-一次迭代怎么走">3.2 一次迭代怎么走</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>做什么</th>
+<th>产出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 需求</td>
+<td>写清楚要什么、给谁用、怎么算做成</td>
+<td>一段需求说明</td>
+</tr>
+<tr>
+<td>2 设计</td>
+<td>改接口、改数据、改流程的，写设计文档并评审；小改动在合并请求里写清楚</td>
+<td><code>docs/<wbr>specs/<wbr>&lt;日期&gt;-<wbr>&lt;主题&gt;-<wbr>design.<wbr>md</code></td>
+</tr>
+<tr>
+<td>3 计划</td>
+<td>拆成小任务，每个任务带测试</td>
+<td><code>docs/<wbr>plans/<wbr>&lt;日期&gt;-<wbr>&lt;主题&gt;.<wbr>md</code></td>
+</tr>
+<tr>
+<td>4 实现</td>
+<td>先写会失败的测试，再写实现</td>
+<td>代码 + 测试</td>
+</tr>
+<tr>
+<td>5 评审</td>
+<td>整体评审一次，Critical / Important 当场修</td>
+<td>评审记录</td>
+</tr>
+<tr>
+<td>6 部署与验证</td>
+<td>按<a href="deploy-iteration.html">部署与迭代规范</a>第 5 节</td>
+<td>端到端测试结果、截图</td>
+</tr>
+<tr>
+<td>7 确认与记录</td>
+<td>项目负责人确认；写 <code>CHANGELOG.<wbr>md</code>；更新文档并生成
+HTML</td>
+<td>标签 <code>poc-<wbr>YYYYMMDD-<wbr>N</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>用编码工具（Claude Code、Codex、Kiro CLI）的时候，把这份文档和<a
+href="../agent-developer-workflow.html">开发者工作流</a>交给它；写操作一律要人确认后才加
+<code>--yes</code>，密钥只经标准输入。</p>
+<h2 id="33-改-agent-时">3.3 改 Agent 时</h2>
+<ul>
+<li>提示词放在仓库里（<code>knowledge-agent/prompt.yaml</code>），每次改都把返回里的
+<code>version</code>
+加一，能力清单（<code>describe</code>）同步更新；旧版本另存一份（如
+<code>prompt-v1.yaml</code>）。</li>
+<li>先在 Nexus
+上试用，再用调用测试面板按任务调一次，最后跑相关的端到端测试。</li>
+<li>任务约定只增不改：新任务可以加，已有任务的输入输出不改含义；要改就加新任务名。</li>
+</ul>
+<h2 id="34-改应用时">3.4 改应用时</h2>
+<ul>
+<li>新接口加在 PoC
+插件里（<code>/api/analysis/v1/poc/*</code>），不改九安原接口。</li>
+<li>九安页面上的改动只加锚点补丁；能放进独立文件（<code>nexus-poc.js</code>
+这类）的就不放进补丁。</li>
+<li>涉及密钥的代码：返回里只出现指纹；日志只记错误码；测试里检查输出没有密钥。</li>
+<li>每个账号的数据只经 <code>access/store.mjs</code>
+读写；跨账号的东西（名片缓存）不能带任何账号的信息。</li>
+</ul>
+<h1 id="4-下一步要建的运维能力">4. 下一步要建的运维能力</h1>
+<p>按优先级：</p>
+<ol type="1">
+<li><strong>代码进 Git</strong>，构件包名和健康检查带上提交号（评审
+C1；<a href="deploy-iteration.html">部署与迭代规范</a>第 2 节）。</li>
+<li><strong>源站走 HTTPS</strong> 并加源站校验头（评审 C2）。</li>
+<li><strong>可观测性</strong>：每个请求、每次 Nexus 调用一行 JSON
+日志（不含密钥），送 CloudWatch；定时用
+<code>tasks/get</code>（不花钱）探测审批流会用到的那把调用密钥，结果放进健康检查；健康、5xx
+比例、<code>AI_AUTH_INVALID</code> 比例设告警（评审 I6）。</li>
+<li><strong>回滚可靠</strong>（评审 I2）。部署能看出安装失败（I1）已在
+2026-10-19 修好。</li>
+<li><strong>主机打补丁</strong>：SSM Patch Manager 或定时
+<code>dnf upgrade</code>（评审 I11）。</li>
+<li><strong>各账号数据的定时备份</strong>：<code>backup.sh</code>
+现在要手动跑；改成定时，并把打包文件放到构件桶。</li>
+<li><strong>预发环境</strong>：同一模板另建一个栈，并入九安之前先在那里验证（评审
+I10）。</li>
+<li><strong>调用量与费用看板</strong>：按账号、按发布统计调用次数（运行记录现在只在内存里）。</li>
+</ol>
+<p>这些在<a
+href="code-review-2026-10-17.html">交付前代码评审</a>里也有对应的条目。</p>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/operations.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

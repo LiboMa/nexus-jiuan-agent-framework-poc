@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>Agent 接入框架：架构、工作流与交付接口</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Agent 接入框架</span>Agent
+接入框架：架构、工作流与交付接口</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
+    <tr><th scope="row">状态</th><td>设计稿 v2（待批准后实施）</td></tr>
+    <tr><th scope="row">范围</th><td>九安审核平台 v0.5.3 上所有类型的
+Agent（业务流程、财务、知识库）经 A2A
+接入；第一个任务是审批流里的单据初审</td></tr>
+    <tr><th scope="row">读者</th><td>九安开发者（含他们的编码工具）、应用开发、Agent
+开发、项目负责人</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#1-结论" id="toc-1-结论">1. 结论</a></li>
+<li><a href="#2-解耦的规则" id="toc-2-解耦的规则">2. 解耦的规则</a></li>
+<li><a href="#3-架构" id="toc-3-架构">3. 架构</a></li>
+<li><a href="#4-三类-agent-在九安里怎么接"
+id="toc-4-三类-agent-在九安里怎么接">4. 三类 Agent
+在九安里怎么接</a></li>
+<li><a href="#5-ai-步骤与审批流" id="toc-5-ai-步骤与审批流">5. AI
+步骤与审批流</a>
+<ul>
+<li><a href="#51-ai-步骤" id="toc-51-ai-步骤">5.1 AI 步骤</a></li>
+<li><a href="#52-分区与串联" id="toc-52-分区与串联">5.2
+分区与串联</a></li>
+<li><a href="#53-审批流第一个业务流程"
+id="toc-53-审批流第一个业务流程">5.3 审批流（第一个业务流程）</a></li>
+<li><a href="#54-存储" id="toc-54-存储">5.4 存储</a></li>
+</ul></li>
+<li><a href="#6-交付接口" id="toc-6-交付接口">6. 交付接口</a></li>
+<li><a href="#7-补丁怎么交付" id="toc-7-补丁怎么交付">7.
+补丁怎么交付</a>
+<ul>
+<li><a href="#71-分层" id="toc-71-分层">7.1 分层</a></li>
+<li><a href="#72-交付形态" id="toc-72-交付形态">7.2 交付形态</a></li>
+</ul></li>
+<li><a href="#8-以后谁维护什么" id="toc-8-以后谁维护什么">8.
+以后谁维护什么</a></li>
+<li><a href="#9-和之前方案的关系" id="toc-9-和之前方案的关系">9.
+和之前方案的关系</a></li>
+<li><a href="#10-要九安拍板的" id="toc-10-要九安拍板的">10.
+要九安拍板的</a></li>
+<li><a href="#11-验收" id="toc-11-验收">11. 验收</a></li>
+</ul>
+</nav>
+<main id="main">
+<p>九安平台以后会接很多类型的
+Agent：业务流程类、财务类、知识库类。本文写这套框架：架构、选型理由、三类
+Agent 怎么接、AI
+步骤与审批流、交付的接口、补丁怎么分层、谁维护什么。</p>
+<blockquote>
+<p><strong>2026-10-19 决定</strong>：网关层以后再做，本期先完成 PoC /
+MVP
+和测试台。本期只实现初审跑通需要的部分：一问一答、按对象存结果、按单据类型路由。多轮对话、长任务、分区与串联、租户级调用随网关层做。范围见<a
+href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7
+节。</p>
+</blockquote>
+<p><strong>现在做到哪了</strong>（2026-10-19）：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>部分</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>设计（本文、<a href="agent-interface.html">接口</a>、<a
+href="first-review-contract.html">初审契约</a>、<a
+href="agent-framework-overview.html">总览</a>）</td>
+<td>设计稿 v2，待项目负责人批准</td>
+</tr>
+<tr>
+<td>契约文件 <code>contract/<wbr></code></td>
+<td>已写好；schema 自检、例子过信封检查和任务检查都通过</td>
+</tr>
+<tr>
+<td>测试台（用来验收补丁）</td>
+<td>已完成：t3.large、本机 MySQL 8.0、九安运行时在跑；九安副本由
+<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>
+构建，<code>patches/<wbr>jiuan-<wbr>v0.<wbr>5.<wbr>3/<wbr></code>
+里的补丁按文件名顺序打进副本（记录：<code>evidence/<wbr>bench/<wbr>2026-<wbr>10-<wbr>19-<wbr>upgrade.<wbr>md</code>）</td>
+</tr>
+<tr>
+<td>九安补丁 0001–0006</td>
+<td>没开始，是下一份计划；设计批准后写</td>
+</tr>
+<tr>
+<td>审核 Agent 的 <code>first_<wbr>review@1</code></td>
+<td>没开始，和补丁 0005 一起做；在这之前审批流仍由 PoC
+插件调用「九安审核AI」</td>
+</tr>
+<tr>
+<td>网关层（多轮对话、长任务、分区与串联、租户级调用、按用法分额度）</td>
+<td>以后再做</td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li>一页总览：<a href="agent-framework-overview.html">Agent
+接入框架总览（HTML）</a></li>
+<li>接口：<a href="agent-interface.html">Agent
+接口：jiuan.agent/v1</a></li>
+<li>第一个任务：<a href="first-review-contract.html">单据初审
+first_review@1</a></li>
+</ul>
+<p>下文 <code>J/</code> 指九安开发包的 <code>code/</code>
+目录，<code>P/</code> 指
+<code>audit-nexus/poc/app/</code>，<code>C/</code> 指
+<code>audit-nexus/contract/</code>。所有引用都在源码上核对过，九安开发包只读，没有执行其中任何东西。</p>
+<h1 id="1-结论">1. 结论</h1>
+<p><strong>一套通用层，所有 Agent 共用；每类 Agent
+只加一份任务契约。</strong></p>
+<ul>
+<li><strong>Agent 怎么接进九安</strong>：经九安留给接入方的模型接入口
+<code>J/providers/ai-model.mjs</code>。文件头写明「由接手方实现」，九安把它登记为连接器
+<code>ai-model</code>。
+<ul>
+<li>每次调用自动经过九安的统一调用中间件，暂停开关、额度、并发、时限、调用日志都现成（<code>J/src/platform/call-middleware.mjs:940-972</code>）。</li>
+<li>接入口只加<strong>一个通用方法
+<code>agentTask</code></strong>，不按任务各加一个。</li>
+<li>下面放一个<strong>只有我们维护</strong>的 A2A 适配层
+<code>providers/nexus-a2a.mjs</code>，九安里只有这一个文件知道
+A2A。</li>
+</ul></li>
+<li><strong>九安里的通用层</strong>：
+<ul>
+<li><strong>Agent
+接入</strong>：管理员启用发布、保管密钥，从名片读出它支持的任务；</li>
+<li><strong>路由</strong>：哪个任务、什么条件，发给哪个已启用的发布；</li>
+<li><strong>Agent
+任务服务</strong>：组装、调用、检查、存结果、步骤状态、长任务收结果，对所有任务都一样。</li>
+</ul></li>
+<li><strong>任务层</strong>：每个任务一份契约（<code>C/tasks/&lt;任务&gt;/v&lt;版本&gt;/</code>），加上九安里这个任务的组装器和展示。第一个任务是单据初审
+<code>first_review@1</code>。</li>
+<li><strong>业务流程归九安</strong>：审批流是第一个用到框架的业务流程，状态、留痕、人工复核都在九安里。Agent
+不存任何状态。</li>
+</ul>
+<p>没选的做法：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>做法</th>
+<th>为什么不选</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每类 Agent 各写一套调用代码</td>
+<td>发现、调用、断线、重试、错误码、密钥都要重写；Nexus
+一升级就要改好几处</td>
+</tr>
+<tr>
+<td>只给初审设计一份契约，以后的 Agent 再说</td>
+<td>下一类 Agent
+进来时，要么硬塞进初审的格式，要么另起一套，两边都难维护</td>
+</tr>
+<tr>
+<td>照搬 PoC：插件挂在 <code>platformRoutes</code> +
+直接注入模型客户端</td>
+<td>注入的客户端绕过九安的调用中间件（<code>J/<wbr>src/<wbr>analysis-<wbr>runtime-<wbr>services.<wbr>mjs:60</code>），没有额度、日志、暂停开关</td>
+</tr>
+<tr>
+<td>另起一个中转服务</td>
+<td>多一个要部署、值守的服务；也违背「应用经 A2A 直接对接 Agent」</td>
+</tr>
+<tr>
+<td>给 Nexus 新登记一个连接器</td>
+<td>要改大约 20 处写死的
+<code>'ai-<wbr>model'</code>；没必要：<code>ai-<wbr>model</code>
+本来就是「由接入方选择」的连接器（<code>J/<wbr>src/<wbr>platform/<wbr>connectors.<wbr>mjs:42</code>）</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="2-解耦的规则">2. 解耦的规则</h1>
+<ol type="1">
+<li><strong>每一方只依赖契约</strong>：九安不知道 Agent
+的提示词、模型、版本；Agent
+不知道九安的数据库、规则表结构、汇联易。</li>
+<li><strong>通用层不认识任何具体任务</strong>：适配层、Agent
+接入、路由、Agent
+任务服务里不出现任何一个任务的字段；任务的差别只在任务契约和任务层的代码里。</li>
+<li><strong>翻译集中在一处</strong>：九安的数据翻译成契约格式，只在这个任务的组装器里做；A2A
+协议的细节只在适配层里。</li>
+<li><strong>硬条件用代码，判断用
+Agent</strong>：能确定的事（哪家公司、哪类单据、在不在生效期）由九安代码定；要理解的事由
+Agent 判断。</li>
+<li><strong>发给哪个 Agent
+靠配置</strong>：路由表决定，以后按费用类型拆成几个
+Agent，或新旧两版任务并存，都只改配置。</li>
+<li><strong>三层版本</strong>：信封、任务、Agent 各管各的（<a
+href="agent-interface.html">接口</a>第 11 节）。</li>
+<li><strong>新代码放新文件</strong>：九安原文件只改注册和挂载的几行。</li>
+</ol>
+<h1 id="3-架构">3. 架构</h1>
+<figure>
+<a href="../assets/diagrams/af-architecture.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/af-architecture.svg" loading="lazy"
+alt="框架的模块和归属：九安里的通用层（Agent 接入、路由、Agent 任务服务、模型接入口与调用中间件）和任务层（每个任务的组装器与展示、业务流程）；我们维护契约和 A2A 适配层；Nexus 上有多个 Agent，各自在名片里声明支持的任务" /></a>
+<figcaption>框架的模块和归属：九安里的通用层（Agent 接入、路由、Agent
+任务服务、模型接入口与调用中间件）和任务层（每个任务的组装器与展示、业务流程）；我们维护契约和
+A2A 适配层；Nexus 上有多个
+Agent，各自在名片里声明支持的任务</figcaption>
+</figure>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>层</th>
+<th>做什么</th>
+<th>新增 / 改动</th>
+<th>谁维护</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>契约 <code>contract/<wbr></code></td>
+<td>通用 + 任务</td>
+<td>信封、名片要求、错误码；任务目录、每个任务的契约和检查代码</td>
+<td>新增</td>
+<td>我们；改动由九安一起评审</td>
+</tr>
+<tr>
+<td>A2A 适配层 <code>providers/<wbr>nexus-<wbr>a2a.<wbr>mjs</code></td>
+<td>通用</td>
+<td>读名片、发信封、收流、断线查询、长任务收结果、信封检查 +
+任务检查、修正一次、错误码转换</td>
+<td>新增；不导入九安任何文件</td>
+<td>我们</td>
+</tr>
+<tr>
+<td>模型接入口 <code>providers/<wbr>ai-<wbr>model.<wbr>mjs</code></td>
+<td>通用</td>
+<td>加一个方法 <code>agentTask</code>，交给适配层；打开开关</td>
+<td>改几行</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>连接器登记
+<code>src/<wbr>platform/<wbr>connectors.<wbr>mjs</code></td>
+<td>通用</td>
+<td><code>ai-<wbr>model</code> 的操作里加
+<code>agentTask</code>；密钥来自「Agent 接入」时，不再要求单独绑定
+<code>ai-<wbr>model-<wbr>api-<wbr>key</code>（现在没绑定连接器就起不来，<code>:112-<wbr>124、195-<wbr>203</code>）</td>
+<td>改几行（安全相关，第 10 节）</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>Agent 接入 <code>src/<wbr>agent-<wbr>enablement.<wbr>mjs</code></td>
+<td>通用</td>
+<td>平台级启用：填发布编号、粘贴调用密钥，当场核对名片（契约和任务列表）+
+<code>tasks/<wbr>get</code> 验证，加密存九安存储；一个发布一把；401
+标失效（<a href="handover.html">交接文档</a>第 2.6 节）</td>
+<td>新增；参考 <code>P/<wbr>access/<wbr></code> 的启用部分</td>
+<td>九安（我们给参考实现）</td>
+</tr>
+<tr>
+<td>路由配置</td>
+<td>通用</td>
+<td>任务 + 条件 → 发布；每个任务一个开关</td>
+<td>配置文件加一段</td>
+<td>九安运维</td>
+</tr>
+<tr>
+<td>Agent 任务服务
+<code>src/<wbr>agent-<wbr>task-<wbr>service.<wbr>mjs</code></td>
+<td>通用</td>
+<td>选发布、调组装器、经中间件调用、存结果、AI
+步骤状态、自动重试、作废与标记、长任务收结果</td>
+<td>新增</td>
+<td>九安（我们给参考实现）</td>
+</tr>
+<tr>
+<td>AI 步骤的展示组件</td>
+<td>通用</td>
+<td>页面上统一显示「进行中 / 完成 / 失败 / 拒绝 /
+依据已更新」，结果交给任务自己的展示</td>
+<td>新增</td>
+<td>九安（我们给参考实现）</td>
+</tr>
+<tr>
+<td>任务的组装器与展示
+<code>src/<wbr>agent-<wbr>tasks/<wbr>&lt;任务&gt;.<wbr>mjs</code></td>
+<td>任务</td>
+<td>九安数据 → <code>input</code>；<code>output</code> →
+页面；登记这个任务用哪张平台卡片</td>
+<td>每个任务新增一个</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>平台卡片</td>
+<td>任务</td>
+<td>每种用法一张卡片，例如
+<code>audit.<wbr>first-<wbr>review</code>：暂停开关和调用日志按卡片分开；额度现在是整个
+<code>ai-<wbr>model</code> 连接器共用一个每日上限（第 10 节第 2
+条）</td>
+<td>每个任务新增</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>审批流
+<code>src/<wbr>analysis-<wbr>review-<wbr>workflow.<wbr>mjs</code></td>
+<td>业务流程</td>
+<td>九安预审 → AI 步骤（first_review）→ 人工复核</td>
+<td>新增</td>
+<td>九安（我们给参考实现）</td>
+</tr>
+<tr>
+<td>流水线一站 <code>audit.<wbr>first-<wbr>review</code></td>
+<td>业务流程</td>
+<td>接在列表同步 <code>hly.<wbr>list-<wbr>sync</code>
+之后，找出当前版本还没有轮次的单据逐张发起审批流</td>
+<td>新增卡片；<code>scheduler.<wbr>mjs</code> 的接力加一支</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>规则库
+<code>src/<wbr>analysis-<wbr>rule-<wbr>workspace.<wbr>mjs</code></td>
+<td>业务流程</td>
+<td>发布沿用九安已有的「提交复核 → 独立复核 →
+发布」（<code>J/<wbr>src/<wbr>stage-<wbr>policies.<wbr>mjs:497-<wbr>560</code>）；预审拿已发布的规则，不再是空表（<code>:198、222-<wbr>226</code>）</td>
+<td>改动</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>系统身份授权</td>
+<td>通用</td>
+<td>让 <code>system:pipeline</code> 能为指定公司读单据、跑预审和 AI
+步骤</td>
+<td>改动（安全相关，第 10 节）</td>
+<td>九安</td>
+</tr>
+<tr>
+<td>界面</td>
+<td>任务 + 业务流程</td>
+<td>审批流面板、单据池卡片、规则发布按钮；「Agent
+接入」页（可选：九安自己写，或复用 PoC「我的 Agent」卡片的逻辑）</td>
+<td>新增独立文件 + 挂载几行</td>
+<td>九安（我们给参考实现）</td>
+</tr>
+<tr>
+<td>各个 Agent</td>
+<td>—</td>
+<td>按任务契约干活；名片描述里写契约和任务</td>
+<td>Nexus 上新建或改提示词</td>
+<td>Agent 开发</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="4-三类-agent-在九安里怎么接">4. 三类 Agent 在九安里怎么接</h1>
+<figure>
+<a href="../assets/diagrams/af-families.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/af-families.svg" loading="lazy"
+alt="三类 Agent 走同一条路：业务流程类由流水线或工作流发起、针对一张单据、结果推进流程；财务类由人或定时发起、针对一段期间或一批单据、可以是长任务、结果是报告；知识库类由人在页面上发起、可以多轮对话、推荐的东西要人确认。三类都经 Agent 任务服务、调用中间件、适配层和契约" /></a>
+<figcaption>三类 Agent
+走同一条路：业务流程类由流水线或工作流发起、针对一张单据、结果推进流程；财务类由人或定时发起、针对一段期间或一批单据、可以是长任务、结果是报告；知识库类由人在页面上发起、可以多轮对话、推荐的东西要人确认。三类都经
+Agent 任务服务、调用中间件、适配层和契约</figcaption>
+</figure>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th></th>
+<th>业务流程类</th>
+<th>财务类</th>
+<th>知识库类</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>谁发起</td>
+<td>流水线或工作流，身份 <code>system:pipeline</code></td>
+<td>人在平台页面上「运行一次」，或定时（九安的调度现在只排列表同步，<code>J/<wbr>src/<wbr>platform/<wbr>scheduler.<wbr>mjs:142</code>，要扩一支）</td>
+<td>人在页面上（问答面板、规则库里的「从知识推荐」），身份是这个人</td>
+</tr>
+<tr>
+<td>对象</td>
+<td>单据</td>
+<td>期间、一批单据、公司</td>
+<td>无，或规则、规则集</td>
+</tr>
+<tr>
+<td>结果存哪</td>
+<td>跟着对象：键是任务 + 对象，结果带对象版本</td>
+<td>跟着对象和输入指纹</td>
+<td>问答不存结果，只存会话编号（每个人自己的）；推荐的东西存成草稿</td>
+</tr>
+<tr>
+<td>结果去哪</td>
+<td>推进流程，例如进入人工复核</td>
+<td>报告页</td>
+<td>问答面板；规则草稿进规则库，照常复核、发布</td>
+</tr>
+<tr>
+<td>作废</td>
+<td>对象版本变了就作废，业务流程按新版本重跑</td>
+<td>期间或输入变了就作废</td>
+<td>—</td>
+</tr>
+<tr>
+<td>额度</td>
+<td>每张单据至少一次调用</td>
+<td>一次分析可能调用多次（长任务收结果也算）</td>
+<td>按人限流</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="5-ai-步骤与审批流">5. AI 步骤与审批流</h1>
+<h2 id="51-ai-步骤">5.1 AI 步骤</h2>
+<p>九安里每次调用 Agent 都是一个 AI 步骤，状态对所有任务一样（<a
+href="agent-interface.html">接口</a>第 6 节）：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>什么时候</th>
+<th>接下来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>进行中</td>
+<td>已经发出；或者长任务还没收到结果</td>
+<td>收到结果后变成完成、拒绝或失败</td>
+</tr>
+<tr>
+<td>完成</td>
+<td>结果过了信封检查和任务检查</td>
+<td>业务流程按任务的 <code>outcome</code> 往下走</td>
+</tr>
+<tr>
+<td>失败</td>
+<td>调用失败，或结果修正一次后仍不合格</td>
+<td>可以重试的错误隔 5
+秒自动重试一次（每轮一次）；再失败由人重试，或者转人工</td>
+</tr>
+<tr>
+<td>拒绝</td>
+<td>Agent 回了 <code>declined</code></td>
+<td>不重试，转人工；理由记进留痕</td>
+</tr>
+<tr>
+<td>作废</td>
+<td>对象变了（<code>staleWhen</code>）</td>
+<td>业务流程决定要不要按新版本重跑</td>
+</tr>
+<tr>
+<td>依据已更新</td>
+<td>规则、原件等变了（<code>flagWhen</code>）</td>
+<td>由人决定要不要重跑</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>系统步骤的回调都带着轮次和第几次调用；轮次变了，旧回调一律作废，所以晚到的结果不会写进新的一轮。重启时还停在「进行中」、而且超过租约时间的（长任务除外），改成失败，错误码
+<code>AGENT_STEP_INTERRUPTED</code>（可以自动重试）。</p>
+<h2 id="52-分区与串联">5.2 分区与串联</h2>
+<ul>
+<li><strong>分区</strong>：任务的 <code>result.partitioned</code>
+为真时，同一个对象可以拆成几份分别调用，比如一张单据的明细按费用类型分组，各发给对应的审核
+Agent。分区编号由任务层的组装器给，AI
+步骤的键里带上它；几份结果怎么合并，由业务流程决定。</li>
+<li><strong>路由事实</strong>：组装器在拼输入的同时交出路由事实（<code>task.json</code>
+的 <code>routingFacts</code>，例如
+<code>documentType</code>、<code>expenseType</code>），路由表的
+<code>when</code>
+只按这些名字比对。通用层不知道这些名字是什么意思。</li>
+<li><strong>串联</strong>：一个 AI
+步骤的输出可以成为下一个步骤的路由事实。比如分拣任务回答「这张单据属于差旅」，业务流程把它作为
+<code>expenseType</code>
+交给初审的路由。串联由业务流程编排，通用层只负责一步一步执行。</li>
+</ul>
+<h2 id="53-审批流第一个业务流程">5.3 审批流（第一个业务流程）</h2>
+<figure>
+<a href="../assets/diagrams/fr-states.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/fr-states.svg" loading="lazy"
+alt="审批状态机：来单时流水线以系统身份自动发起；预审、AI 初审，失败自动重试一次；待人工复核后由人通过或退回；单据有新版本就失效并自动开新一轮；规则或原件更新后由人决定是否重跑" /></a>
+<figcaption>审批状态机：来单时流水线以系统身份自动发起；预审、AI
+初审，失败自动重试一次；待人工复核后由人通过或退回；单据有新版本就失效并自动开新一轮；规则或原件更新后由人决定是否重跑</figcaption>
+</figure>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>意思</th>
+<th>谁能做什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>未发起</td>
+<td>平台上线前已有的单据</td>
+<td>人：发起</td>
+</tr>
+<tr>
+<td>预审中</td>
+<td>先读原件（取不到也继续），再跑九安的基础检查和规则引擎试跑</td>
+<td>—</td>
+</tr>
+<tr>
+<td>AI 初审中</td>
+<td>AI 步骤 <code>first_<wbr>review@1</code> 进行中</td>
+<td>—</td>
+</tr>
+<tr>
+<td>AI 初审失败</td>
+<td>AI 步骤失败或被拒绝</td>
+<td>系统：可以重试的自动重试一次；人：重试、转人工</td>
+</tr>
+<tr>
+<td>待人工复核</td>
+<td>有了 AI 初审结果，或人选了转人工</td>
+<td>人：通过、退回；「规则已更新」「原件已更新」时还可以重跑</td>
+</tr>
+<tr>
+<td>已通过 / 已退回</td>
+<td>这一轮结束；决定只记在九安，不回写汇联易</td>
+<td>—</td>
+</tr>
+<tr>
+<td>已失效</td>
+<td>单据有了新版本，这一轮作废</td>
+<td>系统：按新版本自动开新一轮</td>
+</tr>
+</tbody>
+</table>
+</div>
+<figure>
+<a href="../assets/diagrams/fr-sequence.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/fr-sequence.svg" loading="lazy"
+alt="来单到人工复核：列表同步写入新单据之后，流水线一站以系统身份发起审批流；先读原件、跑九安预审，再由 Agent 任务服务经适配层调审核 Agent；结果通过检查后进入待人工复核；复核人在九安前端决定通过或退回" /></a>
+<figcaption>来单到人工复核：列表同步写入新单据之后，流水线一站以系统身份发起审批流；先读原件、跑九安预审，再由
+Agent 任务服务经适配层调审核
+Agent；结果通过检查后进入待人工复核；复核人在九安前端决定通过或退回</figcaption>
+</figure>
+<ol type="1">
+<li><strong>来单</strong>：<code>hly.list-sync</code>
+跑完之后，平台按接力启动
+<code>audit.first-review</code>。它找出当前版本还没有轮次的单据（新单或改版），逐张发起审批流。
+<ul>
+<li>不接在明细整理 <code>hly.detail-projection</code>
+后面：那一站只处理差旅报销单（<code>J/src/report-detail-projection.mjs:9-13</code>），对公付款不经过它。</li>
+<li>九安可以关掉接力（<code>schedulerChain:false</code>，<code>J/scripts/start-analysis.mjs:73-75</code>），这时由「运行一次」或定时触发。</li>
+</ul></li>
+<li><strong>预审</strong>：先用九安原有的读原件服务取原件文字，取不到也继续；再跑基础检查和规则引擎试跑。</li>
+<li><strong>AI 初审</strong>：Agent
+任务服务按路由表选发布，<code>first_review</code>
+的组装器拼好输入（挑有效规则用
+<code>resolvePublishedPolicies</code>），经调用中间件调
+<code>agentTask</code>。</li>
+<li><strong>待人工复核</strong>：卡片显示「AI 初审：通过 /
+不通过」，详情页显示综合备注和逐条结果。</li>
+<li><strong>人工复核</strong>：一位复核人通过或退回。复核人是九安的
+admin 或 analyst，并且能看这家公司。和 AI
+结论相反要写理由，退回要写退回说明。</li>
+</ol>
+<h2 id="54-存储">5.4 存储</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>存什么</th>
+<th>键</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AI 步骤的结果</td>
+<td><code>formal-<wbr>agent-<wbr>result:sha256([tenantId,<wbr> companyId,<wbr> task,<wbr> subject.<wbr>kind,<wbr> subject.<wbr>id,<wbr> 分区])</code>；<code>result.<wbr>store</code>
+是 <code>per_<wbr>subject_<wbr>input</code>
+的再加输入指纹；<code>none</code> 的不存</td>
+<td>带对象版本、输入指纹、发布编号、<code>agentVersion</code>、Nexus
+任务编号和 <code>call_<wbr>id</code></td>
+</tr>
+<tr>
+<td>审批流的状态</td>
+<td><code>formal-<wbr>first-<wbr>review:sha256([tenantId,<wbr> companyId,<wbr> documentId])</code></td>
+<td>不绑单据版本，改版前后的轮次连在一起</td>
+</tr>
+<tr>
+<td>多轮对话的会话编号</td>
+<td>按人、按任务存</td>
+<td>不存问答内容；同一会话上一轮没结束时，下一轮等它结束（Nexus
+同时只跑一轮）</td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li>都存在九安的键值存储里，用 <code>compareAndWriteState</code>
+带版本号写（<code>J/src/mysql-analysis-store.mjs:476-494</code>）：两个人同时操作，后到的回
+409，重读再试。</li>
+<li>值由存储层用 AES-256-GCM 加密。</li>
+<li>留痕每次状态变化记一条：谁做的（人的账号，或
+<code>system:pipeline</code>）、什么时候、做了什么；最多保留最近 200
+条。</li>
+</ul>
+<h1 id="6-交付接口">6. 交付接口</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>接口</th>
+<th>谁调谁</th>
+<th>文件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>I1</td>
+<td>信封与任务契约（A2A）</td>
+<td>九安 → 各个 Agent</td>
+<td><a href="agent-interface.html">接口</a>、<a
+href="first-review-contract.html">单据初审</a>、<code>C/<wbr></code></td>
+</tr>
+<tr>
+<td>I2</td>
+<td>A2A 适配层</td>
+<td>九安的模型接入口 → 适配层</td>
+<td>本节下文</td>
+</tr>
+<tr>
+<td>I3</td>
+<td>模型接入口的 <code>agentTask</code></td>
+<td>Agent 任务服务 → 调用中间件 → 模型接入口</td>
+<td>本节下文</td>
+</tr>
+<tr>
+<td>I4</td>
+<td>Agent 任务服务</td>
+<td>九安的业务流程、页面 → Agent 任务服务</td>
+<td>本节下文（参考）</td>
+</tr>
+<tr>
+<td>I5</td>
+<td>审批流接口</td>
+<td>九安前端 → 九安服务端</td>
+<td><code>C/<wbr>workflows/<wbr>approval.<wbr>openapi.<wbr>yaml</code></td>
+</tr>
+<tr>
+<td>I6</td>
+<td>路由配置</td>
+<td>九安运维 → Agent 任务服务</td>
+<td>本节下文</td>
+</tr>
+<tr>
+<td>I7</td>
+<td>Agent 接入</td>
+<td>管理员（页面或命令行）→ 九安服务端</td>
+<td><a href="handover.html">交接文档</a>第 2.6 节；沿用 agent-access-v1
+的启用部分</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>I2 A2A
+适配层</strong>（<code>providers/nexus-a2a.mjs</code>，只依赖 Node
+标准库和 <code>fetch</code>）</p>
+<pre class="js"><code>createAgentClient({
+  nexusOrigin,          // &#39;https://nxs-….tinyboat.blog&#39;
+  getKey,               // async ({ publishId }) =&gt; &#39;nxa_…&#39;，从「Agent 接入」的启用记录读
+  tasks,                // { &#39;first_review@1&#39;: { check, limits }, … }，来自 contract/tasks/
+  fetchImpl = fetch, now = Date.now,
+}) → {
+  probe({ publishId }) → { ok, reason, tasks: [&#39;first_review@1&#39;, …] },     // 读名片，不花钱
+  call({ publishId, request, files, conversationId, attempt, signal }) → {
+    status: &#39;completed&#39; | &#39;declined&#39; | &#39;pending&#39;,   // pending 只出现在长任务
+    output, declined,
+    call: { publishId, taskId, contextId, callId, agentVersion, repaired },
+  },
+  collect({ publishId, request, taskId, contextId, signal }) → 同上,           // 长任务收结果
+}
+// request 是整个请求信封；出错抛 Error，code 是九安的模型错误码，detail 带 Nexus 的错误码</code></pre>
+<p><strong>I3
+模型接入口</strong>（<code>providers/ai-model.mjs</code>）</p>
+<ul>
+<li><code>createModelClient</code> 多返回一个通用方法
+<code>agentTask(input)</code>：
+<ul>
+<li>输入：<code>input = { publishId, request, files, conversationId, attempt, collect, dataContext, signal }</code>；</li>
+<li>方法开头先调
+<code>assertModelDataAllowed(dataPolicy, input.dataContext)</code>，再交给适配层。</li>
+</ul></li>
+<li><code>MODEL_PROVIDER_IMPLEMENTED</code> 改成
+<code>true</code>；<code>connectors.mjs</code> 里 <code>ai-model</code>
+的操作加 <code>agentTask</code>。</li>
+<li>调用记在哪张平台卡片上，由 Agent 任务服务用
+<code>runWithAttribution</code> 指定（例如
+<code>audit.first-review</code>），所以暂停开关和调用日志能按用法分开。额度不能：每张卡片的每日上限和整个连接器的上限是同一个数（<code>J/src/platform/call-middleware.mjs:596-603</code>），要按用法分额度得改中间件（第
+10 节第 2 条）。</li>
+<li>原有的 <code>advisory</code>、<code>reviewDraftEvidence</code>
+不在本期范围，保持原样。</li>
+</ul>
+<p><strong>I4 Agent 任务服务</strong>（九安内部，参考）</p>
+<pre class="js"><code>createAgentTaskService({ store, modelClient, enablement, routes, tasks }) → {
+  run({ actor, task, subject, conversation, attempt }) → step,
+  collect({ stepId }) → step,
+  view({ task, subject }) → step,
+  flags({ task, subject }) → { rulesUpdated, evidenceUpdated, … },
+}
+// tasks 里每个任务在九安这边登记：
+// { task, version, platformAgentId, assemble(ctx) → { input, fingerprints }, project(output) → 页面用的数据 }</code></pre>
+<p><strong>I6 路由配置</strong>（九安配置文件里加一段）</p>
+<pre class="json"><code>&quot;agents&quot;: {
+  &quot;nexusOrigin&quot;: &quot;https://nxs-….tinyboat.blog&quot;,
+  &quot;autoRetryDelayMs&quot;: 5000,
+  &quot;tasks&quot;: {
+    &quot;first_review&quot;: { &quot;enabled&quot;: false, &quot;version&quot;: 1,
+      &quot;routes&quot;: [ { &quot;when&quot;: { &quot;documentType&quot;: &quot;corporate_payment&quot; }, &quot;publishId&quot;: &quot;pub_…&quot; },
+                  { &quot;when&quot;: {}, &quot;publishId&quot;: &quot;pub_…&quot; } ] }
+  }
+}</code></pre>
+<ul>
+<li>每个任务从上往下找第一条匹配的路由；</li>
+<li>只认已经在「Agent
+接入」里启用、并且名片声明了这个任务和版本的发布；</li>
+<li>以后按费用类型拆 Agent，在 <code>when</code> 里加
+<code>expenseType</code> 即可；</li>
+<li><code>enabled</code> 默认关闭，由九安决定什么时候打开（第 10 节第 5
+条）。</li>
+</ul>
+<h1 id="7-补丁怎么交付">7. 补丁怎么交付</h1>
+<h2 id="71-分层">7.1 分层</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>补丁</th>
+<th>层</th>
+<th>内容</th>
+<th>依赖</th>
+<th>打完能看到什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0001 契约与 A2A 适配层</td>
+<td>通用</td>
+<td><code>contract/<wbr></code>
+目录、任务的检查代码；<code>providers/<wbr>nexus-<wbr>a2a.<wbr>mjs</code>
+和它的测试（本地假 A2A 网关）</td>
+<td>—</td>
+<td>适配层测试通过；对真实发布 <code>probe</code> 能读出任务列表</td>
+</tr>
+<tr>
+<td>0002 模型接入口与 Agent 接入</td>
+<td>通用</td>
+<td><code>agentTask</code>、打开开关、连接器操作，密钥来自启用记录时不再要求单独绑定；「Agent
+接入」的服务端</td>
+<td>0001</td>
+<td>管理员启用一个发布后，<code>ai-<wbr>model</code> 连接器变成启用</td>
+</tr>
+<tr>
+<td>0003 Agent 任务服务</td>
+<td>通用</td>
+<td>读 <code>task.<wbr>json</code>
+决定发起、存结果、路由、作废；分区与路由事实；三种调用方式（一问一答、多轮对话、长任务，长任务由服务自己定时收结果，重启时接着收）；通用展示组件</td>
+<td>0002</td>
+<td>用 <code>describe</code>
+任务在平台页面上「运行一次」能拿到结果；多轮对话和长任务用测试专用的任务契约跑通</td>
+</tr>
+<tr>
+<td>0004 规则生效</td>
+<td>业务流程</td>
+<td>规则库的发布；预审拿已发布规则</td>
+<td>—</td>
+<td>规则发布后，预审的规则试跑有结果</td>
+</tr>
+<tr>
+<td>0005 单据初审与审批流</td>
+<td>任务 + 业务流程</td>
+<td><code>first_<wbr>review</code>
+的组装器与展示、平台卡片；审批流、流水线一站、系统身份授权</td>
+<td>0003、0004</td>
+<td>新单据同步进来后自动走到「待人工复核」</td>
+</tr>
+<tr>
+<td>0006 审批流接口与界面</td>
+<td>业务流程</td>
+<td>审批流接口；单据池卡片、详情页面板、规则库「发布」按钮；「Agent
+接入」页（可选）</td>
+<td>0005</td>
+<td>复核人在页面上通过或退回</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>以后新增一类
+Agent，只交付一个「任务补丁」</strong>：任务契约、九安里的组装器与展示、平台卡片、路由表的一行；业务流程类再加上用到它的流程。0001–0003
+不动。</p>
+<h2 id="72-交付形态">7.2 交付形态</h2>
+<ul>
+<li><strong>补丁</strong>：针对九安 v0.5.3
+生成，<code>git format-patch</code>
+编号；每个补丁附一段说明：改了哪些文件、为什么、怎么测。</li>
+<li><strong>独立目录</strong>：适配层、契约和任务检查代码同时作为独立目录交付；九安升级时直接换文件，不用重打补丁。</li>
+<li><strong>基线风险</strong>不变：这个开发包是裁剪过的测试环境副本（<a
+href="integration.html">并入九安</a>第 1 节第 4
+条），补丁要在九安真实代码线上重新生成一次才能定稿。</li>
+<li><strong>PoC 用来验收补丁</strong>（测试台 2026-10-19 已就绪）：
+<ul>
+<li>PoC 跑的是「九安开发包副本 +
+补丁」：<code>poc/bench/build-jiuan.sh</code> 复制开发包、按文件名顺序打
+<code>patches/jiuan-v0.5.3/</code> 里的补丁、装上锁定的
+<code>mysql2</code>；这六个补丁写好后放进这个目录就行；</li>
+<li>实例是 t3.large，本机 MySQL
+8.0（Docker），和九安自己的测试编排一致（<code>J/deploy/gitea/compose.test.yaml:5</code>
+用的是 <code>mysql:8.0</code>），九安的 MySQL
+存储、平台存储、连接器、调用中间件和流水线运行器都是真的在跑；</li>
+<li>没有真实的汇联易凭据，汇联易和钉钉的连接器是暂停的；种子单据和「模拟来单」经九安存储的
+<code>createBatch</code> / <code>upsertPage</code> /
+<code>updateBatch</code> 写进去，和同步进来的单据走同一条路。</li>
+</ul></li>
+</ul>
+<h1 id="8-以后谁维护什么">8. 以后谁维护什么</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>东西</th>
+<th>谁维护</th>
+<th>改的时候要通知谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>信封与通用契约</td>
+<td>我们；九安一起评审</td>
+<td>两边。只加可选字段不用等对方；改结构要出新版本</td>
+</tr>
+<tr>
+<td>任务契约</td>
+<td>我们（和这个任务的 Agent 开发一起）；九安评审</td>
+<td>输入加可选字段不用等对方；输出改动要升任务版本</td>
+</tr>
+<tr>
+<td>各个 Agent 的提示词与发布</td>
+<td>Agent 开发</td>
+<td>只要输出格式不变，不用通知九安；<code>agentVersion</code>
+记进每次结果</td>
+</tr>
+<tr>
+<td>A2A 适配层</td>
+<td>我们</td>
+<td>九安：换文件即可</td>
+</tr>
+<tr>
+<td>Nexus 升级</td>
+<td>Nexus</td>
+<td>我们：适配层跑一遍测试；A2A 协议变了只改适配层</td>
+</tr>
+<tr>
+<td>九安的通用层（Agent 接入、路由、Agent 任务服务）</td>
+<td>九安</td>
+<td>不用通知我们，只要契约不变</td>
+</tr>
+<tr>
+<td>九安的任务层和业务流程</td>
+<td>九安</td>
+<td>不用通知我们，只要契约不变</td>
+</tr>
+<tr>
+<td>路由配置、密钥</td>
+<td>九安运维</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="9-和之前方案的关系">9. 和之前方案的关系</h1>
+<ul>
+<li><strong>取代</strong>：
+<ul>
+<li>2026-10-19 上午的「初审专用契约 <code>jiuan.first-review/v1</code>
+和方法 <code>firstReview</code>」：改成通用信封
+<code>jiuan.agent/v1</code>、通用方法
+<code>agentTask</code>，初审成了第一个任务
+<code>first_review@1</code>，输入输出的内容不变；</li>
+<li><a href="integration.html">并入九安</a>第 7 节里「第一期只交付模型
+provider（AI 独立建议）」；</li>
+<li><a href="rules-binding.html">客户规则与 AI 初审</a>方案 A1
+里的四种逐条状态：改成「通过 / 不通过 + 备注」。</li>
+</ul></li>
+<li><strong>沿用</strong>：
+<ul>
+<li>2026-10-18
+确认的三条规则做法：复核人发布、每次初审读最新的已发布规则、规则更新由人决定重跑；</li>
+<li>失败自动重试一次；一步人工复核；</li>
+<li>PoC
+的状态机（<code>P/approval/workflow.mjs</code>）作为审批流的参考实现。</li>
+</ul></li>
+<li><strong>不变</strong>：「我的 Nexus」（每个账号连接与启用）仍按<a
+href="integration.html">并入九安</a>的第三期。</li>
+</ul>
+<h1 id="10-要九安拍板的">10. 要九安拍板的</h1>
+<ol type="1">
+<li><strong>系统身份</strong>：业务流程类要以
+<code>system:pipeline</code> 读单据、跑预审和 AI 步骤。九安现在只允许
+admin 或 analyst
+的真人账号（<code>J/src/analysis-runtime-services.mjs:37-50</code>），要加一条受限的服务身份路径：只能读、只能用于登记过的任务、只限配置里的公司。这是安全相关的改动。</li>
+<li><strong>额度</strong>：<code>ai-model</code> 默认每天 150 次、并发
+2（<code>J/src/platform/call-middleware.mjs:16-19</code>），所有任务共用；中间件现在给每张卡片的上限和整个连接器的上限是同一个数（<code>:596-603</code>）。要按用法分额度，得改中间件，让每张卡片有自己的上限。</li>
+<li><strong>人工复核的定位</strong>：通过、退回只记在九安里，不回写汇联易（九安「只读优先」；设计方案第
+311 行的「回写」是以后的事）。</li>
+<li><strong>补丁基线</strong>：需要九安真实代码线上的相关文件。</li>
+<li><strong>什么时候打开</strong>：九安现在有意暂停了 AI
+功能（<code>J/src/platform/agent-catalog.mjs:159</code>「底座期间下线」）。每个任务的开关默认关闭，打不打开、什么时候打开由九安定。</li>
+<li><strong>调度</strong>：财务类要定时跑，九安的调度现在只排列表同步，要扩一支。</li>
+<li><strong>连接器的密钥</strong>：<code>ai-model</code> 现在没绑定
+<code>ai-model-api-key</code>
+就起不来（<code>J/src/platform/connectors.mjs:112-124、195-203</code>）。补丁
+0002 要改成：密钥来自「Agent
+接入」时不再要求绑定。这是安全相关的改动。</li>
+<li><strong>租户级的调用</strong>：平台级的能力清单、集团层面的问答和分析不属于哪一家公司（信封里
+<code>scope: tenant</code>）。九安的数据治理现在每次调用都要一家公司（<code>J/src/ai-data-governance.mjs</code>），要加一条租户级的路径。</li>
+</ol>
+<h1 id="11-验收">11. 验收</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>怎么算通过</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>契约</td>
+<td>信封和任务的 schema 自检通过；<code>first_<wbr>review</code>
+三对例子过信封检查和任务检查；<code>describe</code>
+的例子过信封检查（已经通过）</td>
+</tr>
+<tr>
+<td>适配层</td>
+<td>对本地假 A2A 网关的测试：正常流、分块和全文、断线后
+<code>tasks/<wbr>get</code>、修正一次、<code>declined</code>、长任务收结果、<code>error-<wbr>map.<wbr>json</code>
+里的每种错误</td>
+</tr>
+<tr>
+<td>通用层</td>
+<td>换一个任务（<code>describe</code>）走同一条路，不改通用层的代码；多轮对话、长任务、分区、<code>declined</code>
+用测试专用的任务契约跑通（这些契约放在测试目录里，不进任务目录）</td>
+</tr>
+<tr>
+<td>审核 Agent</td>
+<td>用两个例子请求各调一次（约 0.1
+美元），结果过检查；夹带指令的单据不被带偏</td>
+</tr>
+<tr>
+<td>九安</td>
+<td>新单据自动走到「待人工复核」；失败自动重试一次；单据改版自动开新一轮；规则发布后标「规则已更新」并能重跑；两个人同时操作，后到的回
+409</td>
+</tr>
+<tr>
+<td>端到端</td>
+<td>在 PoC（九安开发包 + 六个补丁）上跑，项目负责人确认后再提交</td>
+</tr>
+</tbody>
+</table>
+</div>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/agent-framework.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>
