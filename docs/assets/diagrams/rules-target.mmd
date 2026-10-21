@@ -16,7 +16,7 @@ flowchart TB
   end
   ruleset -- 按单据类型、费用类型筛选 --> pre
   ruleset -- 规则原文 + 引擎结果 --> first
-  ruleset -. 规则版本变了：建议失效、自动重跑 .-> first
+  ruleset -. 规则版本变了：标「规则已更新」，由人决定重跑 .-> first
   class policy,suggest nexus
   class edit,manual,publish poc
   class ruleset jiuan

@@ -76,7 +76,7 @@
   <text class="t" x="956" y="106">九安审核AI</text>
   <text class="m" x="956" y="128">pub_5c53e70d…</text>
   <text class="s" x="956" y="150">审批建议 · 草稿核验</text>
-  <text class="s" x="956" y="170">系统提供</text>
+  <text class="s" x="956" y="170">审批流用 · 各自启用</text>
   <rect class="nexus" x="944" y="194" width="142" height="116" rx="4"/>
   <text class="t" x="956" y="218">九安知识Agent</text>
   <text class="m" x="956" y="240">pub_2cc24c29…</text>
@@ -86,6 +86,9 @@
   <rect class="box" x="944" y="322" width="142" height="62" rx="4"/>
   <text class="t" x="956" y="346">REST /api/v2</text>
   <text class="s" x="956" y="368">发布与 Agent 列表</text>
+  <text class="s" x="946" y="414">线上 Nexus AI：</text>
+  <text class="m" x="946" y="434">d3u3hj2us186y</text>
+  <text class="m" x="946" y="452">.cloudfront.net</text>
 
   <!-- 部署 -->
   <rect class="box" x="20" y="318" width="200" height="104" rx="4"/>
@@ -126,7 +129,7 @@
     <path class="deploy" d="M560,10 L604,10"/>
     <text class="lbl" x="614" y="14">部署：deploy.sh → S3 → SSM 让实例拉取、重启</text>
     <rect class="secret" x="0" y="34" width="44" height="18" rx="3"/>
-    <text class="lbl" x="54" y="48">密钥只在本机这份文件里，经加密的构件桶装到实例</text>
+    <text class="lbl" x="54" y="48">启动配置只在本机这份文件里，经加密的构件桶装到实例；Agent 密钥在前端启用</text>
     <rect class="disk" x="560" y="34" width="44" height="18" rx="3"/>
     <text class="lbl" x="614" y="48">重启不丢；实例被替换才会丢</text>
   </g>

@@ -102,6 +102,16 @@ test('提示词把任务说明、输出 schema 和输入分段放入', () => {
   assert.match(prompt, /<input>\n\{"x":1\}\n<\/input>$/);
 });
 
+test('提示词带上输出规则：只输出一个 JSON 对象；字符串里不用英文双引号，引用时用「」（Agent 曾在字符串里写未转义的双引号，九安拒收）', () => {
+  const prompt = buildPrompt('任务', { type: 'object' }, '{"x":1}');
+  const rules = prompt.match(/<output_rules>\n([\s\S]*?)\n<\/output_rules>/)?.[1];
+  assert.ok(rules, '要有 <output_rules> 一段');
+  assert.match(rules, /只输出一个 JSON 对象/);
+  assert.match(rules, /英文双引号/);
+  assert.match(rules, /「」/);
+  assert.ok(prompt.indexOf('<output_rules>') > prompt.indexOf('</output_schema>') && prompt.indexOf('<output_rules>') < prompt.indexOf('<input>'), '规则放在 schema 之后、输入之前');
+});
+
 test('附件作为 A2A 0.3 文件 Part 跟在文字后面：文件名、类型与 base64 内容', async t => {
   const fake = await startFakeA2a(({ res }) => writeEvents(res, answerEvents('{"ok":true}')));
   t.after(() => fake.close());

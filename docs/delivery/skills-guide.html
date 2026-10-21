@@ -93,11 +93,11 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>Skills 配置指南：nexus-ai-operator 与 agent-access</h1>
+v0.1.0</span>Skills 配置指南：nexus-ai-operator 与 agent-access</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
     <tr><th scope="row">状态</th><td>交付版
-v0.1（封板）<span class="stamp">指南</span></td></tr>
+v0.1.0（封板）<span class="stamp">指南</span></td></tr>
     <tr><th scope="row">范围</th><td>编码工具（Claude Code、Codex、Kiro
 CLI）里的两个 Skill：nexus-ai-operator（Nexus 一侧）与
 agent-access（应用一侧）</td></tr>
@@ -114,9 +114,9 @@ agent-access（应用一侧）</td></tr>
 <li><a href="#3-配置-nexus-ai-operator"
 id="toc-3-配置-nexus-ai-operator">3. 配置 nexus-ai-operator</a>
 <ul>
-<li><a href="#31-拿到接入包" id="toc-31-拿到接入包">3.1
-拿到接入包</a></li>
-<li><a href="#32-安装" id="toc-32-安装">3.2 安装</a></li>
+<li><a href="#31-导入" id="toc-31-导入">3.1 导入</a></li>
+<li><a href="#32-生成-api-密钥" id="toc-32-生成-api-密钥">3.2 生成 API
+密钥</a></li>
 <li><a href="#33-连接" id="toc-33-连接">3.3 连接</a></li>
 <li><a href="#34-用它做什么" id="toc-34-用它做什么">3.4
 用它做什么</a></li>
@@ -166,10 +166,11 @@ Agent、发布；agent-access
 <td>在九安 PoC 里连接自己的 Nexus、启用发布、调用测试、停用</td>
 </tr>
 <tr>
-<td>谁提供</td>
-<td>Nexus 平台（网页生成 API 密钥时下载的接入包）</td>
-<td>本交付包 <code>skills/<wbr>agent-<wbr>access/<wbr></code>（版本
-0.1.0）</td>
+<td>在哪</td>
+<td>仓库里的
+<code>skills/<wbr>nexus-<wbr>ai-<wbr>operator/<wbr></code>（1.1.0，不带任何密钥）</td>
+<td>仓库里的
+<code>skills/<wbr>agent-<wbr>access/<wbr></code>（0.1.0）</td>
 </tr>
 <tr>
 <td>用什么身份</td>
@@ -203,9 +204,9 @@ Agent、发布；agent-access
 <a href="../assets/diagrams/skills-setup.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/skills-setup.svg" loading="lazy"
-alt="配置顺序：在 Nexus 网页生成密钥 A 并下载 operator 接入包，装好后建 Agent 和发布；再生成密钥 B 给 agent-access 连接 Nexus；最后本人给发布签调用密钥，agent-access 启用并调用测试" /></a>
-<figcaption>配置顺序：在 Nexus 网页生成密钥 A 并下载 operator
-接入包，装好后建 Agent 和发布；再生成密钥 B 给 agent-access 连接
+alt="配置顺序：从仓库导入 nexus-ai-operator，在 Nexus 网页生成密钥 A 连接，建 Agent 和发布；再生成密钥 B 给 agent-access 连接 Nexus；最后本人给发布签调用密钥，agent-access 启用并调用测试" /></a>
+<figcaption>配置顺序：从仓库导入 nexus-ai-operator，在 Nexus
+网页生成密钥 A 连接，建 Agent 和发布；再生成密钥 B 给 agent-access 连接
 Nexus；最后本人给发布签调用密钥，agent-access
 启用并调用测试</figcaption>
 </figure>
@@ -213,25 +214,11 @@ Nexus；最后本人给发布签调用密钥，agent-access
 会把它换成新的，原来那串随即作废。所以 operator（密钥
 A）和应用里的「我的 Nexus」（密钥 B）要各生成一把，不能共用。</p>
 <h1 id="3-配置-nexus-ai-operator">3. 配置 nexus-ai-operator</h1>
-<h2 id="31-拿到接入包">3.1 拿到接入包</h2>
-<ul>
-<li><strong>推荐</strong>：Nexus 网页 <a
-href="https://nxs-beine1013.tinyboat.blog">https://nxs-beine1013.tinyboat.blog</a>
-登录 → 「个人设置 › API 密钥」→ 生成一把（建 Agent、发布要
-<code>builder</code> 档位）。浏览器会同时下载
-<code>nexus-ai-operator</code> 接入包，里面的
-<code>config/connection.json</code>
-带着平台地址和这把还没用过的密钥。</li>
-<li>从 Nexus
-技能库下载的接入包只带平台地址、不带密钥：另外在同一个页面生成一把，交给编码工具。</li>
-<li><strong>本交付包里不带
-operator</strong>：接入包里装的是每个人自己的密钥，不能转交。维护人电脑上那份在
-<code>~/MyDev/LLM/Nexus-AI-strands/Nexus-AI/skills/system_skills/nexus-ai-operator/</code>（1.1.0），<code>deploy.sh</code>
-从这里取 <code>scripts/nexus.py</code> 打进构件（见第 3.5 节）。</li>
-</ul>
-<h2 id="32-安装">3.2 安装</h2>
-<p>把整个 <code>nexus-ai-operator</code>
-文件夹放进编码工具的技能目录，再重启一次编码工具：</p>
+<h2 id="31-导入">3.1 导入</h2>
+<p>仓库里的 <code>skills/nexus-ai-operator/</code> 就是能直接装的
+Skill：<code>SKILL.md</code>（给编码工具读）、<code>README.md</code>（给人读）、<code>scripts/nexus.py</code>、<code>references/</code>、<code>config/instance.example.json</code>。版本
+1.1.0，不带任何密钥。</p>
+<p>把整个文件夹复制进编码工具的技能目录，再重启一次编码工具：</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -261,22 +248,46 @@ operator</strong>：接入包里装的是每个人自己的密钥，不能转交
 </tbody>
 </table>
 </div>
-<p>不支持 Skills 的工具：把 <code>SKILL.md</code>
-交给它当说明，它照着运行 <code>scripts/nexus.py</code> 就行。</p>
-<h2 id="33-连接">3.3 连接</h2>
+<p>例如装到 Claude Code，并把平台地址指向你们自己的 Nexus：</p>
+<pre class="bash"><code>mkdir -p ~/.claude/skills
+cp -R skills/nexus-ai-operator ~/.claude/skills/nexus-ai-operator
+cd ~/.claude/skills/nexus-ai-operator
+cp config/instance.example.json config/instance.json
+# 编辑 config/instance.json：{&quot;origin&quot;: &quot;https://&lt;你们的 Nexus 地址&gt;&quot;}
+# 线上 Nexus AI 的实际地址：https://d3u3hj2us186y.cloudfront.net
+python3 scripts/nexus.py --help</code></pre>
 <ul>
-<li><p>接入包自带密钥时，对编码工具说「用 nexus-ai-operator 连接
-Nexus」。它会运行 <code>login --client claude_code</code>（或
-<code>codex</code>、<code>kiro</code>），连接成功后包里的密钥文件自动删除。</p></li>
-<li><p>没带密钥时，把平台地址和密钥交给它，密钥只经标准输入：</p>
-<pre class="bash"><code>python3 scripts/nexus.py login --origin https://nxs-beine1013.tinyboat.blog --token-stdin --client claude_code &lt;&lt;&#39;EOF&#39;
+<li>不支持 Skills 的工具：把 <code>SKILL.md</code>
+交给它当说明，它照着运行 <code>scripts/nexus.py</code> 就行。</li>
+<li>也可以不用仓库里这份：在你们 Nexus 的网页「个人设置 › API
+密钥」生成密钥时，浏览器会同时下载一份接入包，里面已经带着平台地址和这把密钥。平台比
+1.1.0 新时，用平台下载的那份。</li>
+<li>平台地址也可以不写进文件，改用环境变量
+<code>NEXUS_ORIGIN</code>，或者 <code>login --origin</code>。</li>
+</ul>
+<h2 id="32-生成-api-密钥">3.2 生成 API 密钥</h2>
+<p>在你们 Nexus 的网页登录（线上 Nexus AI 的实际地址：<a
+href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>）
+→「个人设置 › API 密钥」→ 生成一把。建 Agent、发布要
+<code>builder</code> 档位。这把就是第 2 节说的密钥 A，只给
+nexus-ai-operator 用。</p>
+<h2 id="33-连接">3.3 连接</h2>
+<p>把密钥交给编码工具，说「用 nexus-ai-operator 连接
+Nexus」。它会这样运行，密钥只经标准输入：</p>
+<pre class="bash"><code>python3 scripts/nexus.py login --token-stdin --client claude_code &lt;&lt;&#39;EOF&#39;
 &lt;密钥 A&gt;
 EOF
-python3 scripts/nexus.py whoami</code></pre></li>
-<li><p>之后访问凭证自动续期、连接密钥自动轮换，你和编码工具都不用再碰任何密钥。凭证存在本机
-<code>~/.nexus/</code>：<strong>不读、不复制、不打印</strong>。</p></li>
-<li><p>多套环境用 <code>--profile</code> 分开。维护人电脑上这套 Nexus 的
-profile 是 <code>beine1013</code>。</p></li>
+python3 scripts/nexus.py whoami</code></pre>
+<ul>
+<li><code>whoami</code> 显示的是你自己，就连好了。</li>
+<li>第一次连接时 Nexus
+会把这把密钥换成新的，对话里出现过的那串随即作废。之后访问凭证自动续期、连接密钥自动轮换，你和编码工具都不用再碰任何密钥。</li>
+<li>凭证存在本机
+<code>~/.nexus/</code>：<strong>不读、不复制、不打印</strong>。</li>
+<li><code>--client</code> 取
+<code>claude_code</code>、<code>codex</code>、<code>kiro</code>、<code>other</code>，平台在「最近使用」里显示主机名，方便认出这把密钥。</li>
+<li>多套环境（比如测试 Nexus 和生产 Nexus）用
+<code>--profile &lt;名称&gt;</code> 分开。</li>
 </ul>
 <h2 id="34-用它做什么">3.4 用它做什么</h2>
 <ul>
@@ -292,9 +303,9 @@ href="../../knowledge-agent/README.md">知识 Agent 说明</a>走。</li>
 </ul>
 <h2 id="35-部署脚本也用到它">3.5 部署脚本也用到它</h2>
 <p>服务端「我的 Nexus」连接每个账号的 Nexus 时，用的是同一个
-<code>nexus.py</code>。<code>deploy.sh</code> 默认从第 3.1
-节那个路径取它，打进构件的
-<code>operator/scripts/nexus.py</code>；换了路径时用环境变量
+<code>nexus.py</code>。<code>deploy.sh</code> 默认取仓库里的
+<code>skills/nexus-ai-operator/scripts/nexus.py</code>，打进构件的
+<code>operator/scripts/nexus.py</code>；要换版本时用环境变量
 <code>NEXUS_OPERATOR_SCRIPT=&lt;路径&gt;/scripts/nexus.py</code>
 指过去。只打包这一个脚本，不带任何凭证。</p>
 <h1 id="4-配置-agent-access应用自己的-skill">4. 配置
@@ -330,12 +341,9 @@ Nexus」。它会依次请你给：</p>
 <code>references/recipes.md</code>。</p>
 <h2 id="43-和页面的关系">4.3 和页面的关系</h2>
 <p>命令行和应用的「Nexus Agent」页走同一套接口
-<code>agent-access-v1</code>（<a
-href="../specs/2026-10-17-agent-registry-design.html">Agent
-注册与发现设计</a>第 12
-节）：在一边连接、启用，另一边马上看得到。端到端测试
+<code>agent-access-v1</code>（<code>skills/agent-access/references/interface.md</code>）：在一边连接、启用，另一边马上看得到。端到端测试
 <code>access.e2e.mjs</code>
-就是用这个命令行走一遍连接、启用、调用、停用。</p>
+就是用这个命令行检查审核员在页面上的连接和启用，再调用一次；审核员本人启用的项，测试只用不动（不换密钥、不停用）。</p>
 <h1 id="5-两个-skill-一起用四步使用逻辑">5. 两个 Skill
 一起用：四步使用逻辑</h1>
 <p>这是固定的使用逻辑，所有 Agent 都这样接入：</p>
@@ -398,7 +406,7 @@ Agent、写提示词、在平台内试用、建发布并打开 A2A。</li>
 <tr>
 <td>编码工具找不到 Skill</td>
 <td>目录放错了，或没重启</td>
-<td>对照第 3.2、4.1 节的路径；文件夹名要和 <code>SKILL.<wbr>md</code>
+<td>对照第 3.1、4.1 节的路径；文件夹名要和 <code>SKILL.<wbr>md</code>
 里的 <code>name</code> 一致</td>
 </tr>
 </tbody>

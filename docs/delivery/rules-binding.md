@@ -1,5 +1,5 @@
 ---
-subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1
+subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1.0
 date: 2026-10-18
 status: 分析与方案（待业务方确认后实施）
 scope: 九安规则库、九安预审与 AI 建议、PoC 审批流、知识 Agent
@@ -73,7 +73,6 @@ AI 现在收到的：每条规则只有编号、版本、名称、范围、状�
 | 2 | 方案 B：从知识推荐规则进规则库；可选：知识 Agent 的 `select` 结果填进 `personalFocus`（部门层关注点，要同时把它的哈希加进缓存键） | 1–2 天 |
 | 3 | 并入九安：provider 层照搬 A1；正式做法和九安一起做 A2 | 和九安一起排 |
 
-进度看板（`docs/progress.html`）里已经加了「客户规则与 AI 初审」这一组，按上面的分期列出。
 
 **2026-10-18 已确认**（PoC 按这三条做）：
 1. 规则由复核人发布：录入的人和发布的人不能是同一人。PoC 里先预置一批模拟规则做测试。

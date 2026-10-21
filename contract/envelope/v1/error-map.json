@@ -80,7 +80,7 @@
       },
       "jiuanCode": "AI_REQUEST_INVALID",
       "autoRetry": false,
-      "action": "v1 不发文件 Part；出现说明组装有问题"
+      "action": "任务不带文件（files: false）却出现，说明组装有问题；带文件的任务，检查附件的类型、个数和大小"
     },
     {
       "match": {
@@ -94,7 +94,7 @@
       },
       "jiuanCode": "AI_REQUEST_INVALID",
       "autoRetry": false,
-      "action": "同上"
+      "action": "同上：附件个数或大小超限、附件不合规"
     },
     {
       "match": {

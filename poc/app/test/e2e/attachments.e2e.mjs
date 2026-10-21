@@ -1,9 +1,9 @@
 /**
  * 附件与 A2A 发现的端到端测试（对线上地址）。接口部分走浏览器同一条路（CloudFront → PoC 服务端 → A2A → Nexus），真实调用 3 次，约 0.15 美元：
- *   - 知识 Agent（审核员先启用，跑完停用；审核员没连接 Nexus 时这两项跳过）：带住宿发票图片做 select；带差旅制度 Markdown 做 answer；
+ *   - 知识 Agent（用审核员本人在前端的启用；没启用时这两项跳过）：带住宿发票图片做 select；带差旅制度 Markdown 做 answer；
  *   - 审核 Agent：按单据 FYBX-POC-001 带住宿发票 PDF 出审批建议，输出照样过九安的校验。
  * 界面部分（Playwright + 本机 Chrome）只检查附件区：加入示例附件、上传本机文件、挡掉不支持的类型，不发送。
- * 请用 run.sh 运行：它先重启服务，再从 infra/secrets.env 读口令与知识 Agent 的调用密钥（E2E_KNOWLEDGE_A2A_KEY）。
+ * 请用 run.sh 运行：它先重置测试台，再从 infra/secrets.env 读审核员的口令。Agent 的调用密钥都用审核员本人在前端「我的 Agent」里的启用，不从文件读。
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,25 +25,17 @@ const KA_C01 = '员工出差住宿按城市分级报销：北京、上海、广�
 const AI_TIMEOUT = 5 * 60_000;
 let client, browser;
 
-// 审核员本人已经启用了知识 Agent（不论状态）时，测试只用不动：不换密钥，跑完也不停用。
-let knowledgeEnabled = false, enabledByTest = false;
+// 用审核员本人在前端的启用，测试只用不动：不换密钥，也不停用。
+let knowledgeEnabled = false;
 before(async () => {
   assert.ok(PASSWORD, '请用 run.sh 运行：它从 infra/secrets.env 读口令');
   await mkdir(SHOTS, { recursive: true });
   client = createPocClient({ base: BASE });
   await client.login('poc-reviewer', PASSWORD);
   const me = await client.me();
-  const existing = me.publications.find(item => item.publishId === KNOWLEDGE)?.enablement ?? null;
-  if (existing) knowledgeEnabled = existing.status === 'active';
-  else if (me.connection.status === 'connected' && process.env.E2E_KNOWLEDGE_A2A_KEY) {
-    await client.enable(KNOWLEDGE, { token: process.env.E2E_KNOWLEDGE_A2A_KEY, loadCapabilities: false, client: 'cli' });
-    knowledgeEnabled = enabledByTest = true;
-  }
+  knowledgeEnabled = me.publications.find(item => item.publishId === KNOWLEDGE)?.enablement?.status === 'active';
 });
-after(async () => {
-  await browser?.close();
-  if (enabledByTest) await client.disable(KNOWLEDGE).catch(() => {});
-});
+after(async () => { await browser?.close(); });
 
 const sampleFile = async id => { const sample = await client.sample(id); return { name: sample.name, type: sample.mimeType, data: sample.data }; };
 async function callAgent(body) {
@@ -52,10 +44,11 @@ async function callAgent(body) {
   return run;
 }
 
-test('发现：审批 Agent 是系统提供的，经 A2A 读到名片；附件规则单独下发', async () => {
+test('发现：审批 Agent 在审核员的发布列表里、已由本人启用，经 A2A 读到名片；附件规则单独下发', async () => {
   const me = await client.me();
-  const advisory = me.system.find(item => item.publishId === ADVISORY);
-  assert.ok(advisory, '审批 Agent 应该是系统提供的');
+  const advisory = me.publications.find(item => item.publishId === ADVISORY);
+  assert.ok(advisory, '审批 Agent 应该在审核员的发布列表里');
+  assert.equal(advisory.enablement?.status, 'active', '审核员要在前端「我的 Agent」里启用审批 Agent');
   assert.equal(advisory.card?.error, null);
   assert.equal(advisory.card.protocolVersion, '0.3');
   for (const mode of ['application/pdf', 'image/png', 'text/markdown']) assert.ok(advisory.card.inputModes.includes(mode), mode);
@@ -64,7 +57,7 @@ test('发现：审批 Agent 是系统提供的，经 A2A 读到名片；附件�
 });
 
 test('知识 Agent select：带住宿发票图片，从申请部门认出销售一部，挑出住宿标准，并说明从图片里读到了 580 元', { timeout: AI_TIMEOUT + 30_000 }, async t => {
-  if (!knowledgeEnabled) { t.skip('知识 Agent 没有可用的启用：审核员没连接 Nexus，或者已有的那一项不可用'); return; }
+  if (!knowledgeEnabled) { t.skip('知识 Agent 没有可用的启用：在前端「我的 Agent」里用审核员启用一次'); return; }
   const input = { document: { companyId: 'poc-company-a', number: 'FYBX-POC-001', documentType: 'employee_reimbursement', formName: '差旅费报销单', expenseType: '差旅费',
     amount: '1280', currency: 'CNY', departmentName: '销售一部（虚构）', fields: [{ label: '出差事由', value: '拜访客户，确认续约条款' }],
     description: '北京客户拜访差旅：高铁往返与一晚住宿（虚构）' } };
@@ -83,7 +76,7 @@ test('知识 Agent select：带住宿发票图片，从申请部门认出销售�
 });
 
 test('知识 Agent answer：带差旅制度 Markdown，回答引用 KA-C01（摘录逐字取自原文），并说明读到了附件', { timeout: AI_TIMEOUT + 30_000 }, async t => {
-  if (!knowledgeEnabled) { t.skip('知识 Agent 没有可用的启用：审核员没连接 Nexus，或者已有的那一项不可用'); return; }
+  if (!knowledgeEnabled) { t.skip('知识 Agent 没有可用的启用：在前端「我的 Agent」里用审核员启用一次'); return; }
   const policy = await sampleFile('travel-policy-md');
   const input = { question: '附件里的制度与知识库，对北京出差住宿每晚上限的说法一致吗？', companyId: 'poc-company-a' };
   const run = await callAgent({ publishId: KNOWLEDGE, mode: 'text', text: JSON.stringify({ task: 'answer', input }), attachments: [policy] });

@@ -83,7 +83,12 @@ JSON-RPC 2.0，A2A 0.3 的方法名（不带 `A2A-Version` 头），方法 `mess
 
 - **messageId**：每条消息一个新的 UUID。
 - **contextId**（Nexus 的会话编号，只收 1–128 位的字母、数字和 `. _ : @ -`，`N/…/executor.py:56`）：
-  - 一问一答的任务：每次调用一个新的，`jag-` 加 `sha256(tenantId|companyId|task|对象编号|对象版本|分区|输入指纹|第几次调用)` 的前 32 位；「修正一次」用同一个。
+  - 一问一答的任务：每次调用一个新的，`jag-` 加 `sha256(tenantId|companyId|task|对象编号|对象版本|分区|输入指纹|第几次调用)` 的十六进制前 32 位；「修正一次」用同一个。
+    - `task` 只写任务名，不带版本；没有的项写空串（例如 `scope: tenant` 的 `companyId`、没有对象的任务）；
+    - 分区：`result.partitioned` 的任务按哪一份调用（例如费用类型），不分区的写空串；
+    - 输入指纹：`input` 的键名逐层排序、不带空格的 JSON 文字（UTF-8，中文不转义）的 sha256 十六进制；
+    - 第几次调用：这个 AI 步骤第几次调用 Agent，从 1 开始；自动重试、人点「重试」都加一。
+    - `C/envelope/v1/examples/a2a-request.json` 的 contextId 就是按这条算的（第 1 次调用、不分区），可以拿来核对实现。
   - 多轮对话的任务：一段对话一个，由九安生成并保存，后面每一轮都用它；信封里的 `context.conversation` 写明九安的会话编号和第几轮。
   - 同一个会话同时只能跑一轮（`conversation_busy`），所以重试一定换新的。
 - **大小**：Nexus 会把 DataPart 转成 JSON 文字交给模型（`a2a_endpoint.py:120-123`），文字和信封合计不能超过 10 万字（`executor.py:57`）。每个任务在 `task.json` 的 `limits.maxRequestChars` 里定自己的上限。
@@ -94,19 +99,26 @@ Nexus 用 SSE 推回一串事件（样例：`C/envelope/v1/examples/stream.sse.t
 
 1. `kind: "task"`：记下任务编号；
 2. `status-update`，`state: "working"`；
-3. 若干个名为 `answer` 的 `artifact-update`：`append: true` 的往后接，**`lastChunk: true` 的是全文，用它替换，不要拼接**（`a2a_endpoint.py:272-304`）；
+3. 若干个名为 `answer` 的 `artifact-update`：`append: true` 的往后接，**`lastChunk: true` 的是全文，用它替换，不要拼接**（`a2a_endpoint.py:272-304`）；流以 `final` 结束却一直没有 `lastChunk` 时，用拼起来的文字；
 4. `status-update`，`final: true`：`completed`，或者 `failed` / `rejected` / `canceled`。失败时 `metadata.error_code` 是错误码。
 
 ### 4.3 断线
 
-流在拿到 `final` 之前断了，就每 3 秒用 `tasks/get {"id": 任务编号, "historyLength": 0}` 查一次，直到有结果或者到了时限。
+流在拿到 `final` 之前断了，就隔 3 秒用 `tasks/get {"id": 任务编号, "historyLength": 0}` 查一次（第一次也先等 3 秒），直到有结果或者到了时限。
+
+- 查到 `completed`：答案在任务的 `artifacts` 里，名为 `answer` 的那个就是全文；
+- 查的时候网络出错、回 429 或 5xx：当作暂时的，继续查到时限；
+- 回 JSON-RPC 错误「任务不存在」（A2A 的 TaskNotFound，`-32001`；Nexus 重启过，或这把密钥不是发起时那把）：按 `AI_UNAVAILABLE` 失败（`error-map.json` 的 `stream_dropped_then_task_not_found`）；
+- 还没拿到任务编号流就断了：没法查，按 `AI_NETWORK` 失败。
 
 - 客户端断开不会让 Nexus 停下这一轮，结果会保留 24 小时；
 - Nexus 网关一重启，任务就查不到了（`a2a_endpoint.py:19-23`），只能重发，会再计费一次。
 
 ### 4.4 时限与取消
 
-九安的统一调用中间件给每次 `ai-model` 调用设时限，默认 120 秒，最多 180 秒（`J/src/platform/call-middleware.mjs:16-19、28`）。每个任务在 `limits.timeoutMs` 里定自己用多少。时限到了或者对象变了，九安会中止调用：适配层先发 `tasks/cancel`，再按 `AI_CANCELLED` 抛出。
+九安的统一调用中间件给每次 `ai-model` 调用设时限，默认 120 秒，最多 180 秒（`J/src/platform/call-middleware.mjs:16-19、28`），并把它做成传给模型接入口的 `signal`。适配层自己不另定总时限，只听 `signal`；任务的 `limits.timeoutMs` 比中间件的时限短时，再叠一个计时器（`AbortSignal.any`）。断线后的 `tasks/get`、「修正一次」都算在同一个时限里。
+
+时限到了或者对象变了，九安会中止调用：适配层先发 `tasks/cancel`（尽力而为，不等结果），再按 `AI_CANCELLED` 抛出。中间件到时限时自己记 `CONNECTOR_TIMEOUT`；任务自己的计时器到点也一样发 `tasks/cancel`、抛 `AI_CANCELLED`，`detail.reason` 写 `task_timeout`，以便和人工中止分开。
 
 ### 4.5 长任务
 
@@ -167,7 +179,7 @@ Schema：`C/envelope/v1/result.schema.json`。Agent 的回答里只放这一个 
 
 ### 5.4 修正一次
 
-检查不过时，在**同一个 contextId** 里再发一条消息，列出没过的地方，要求只返回修正后的结果信封。再不过，这次调用就算失败（`AI_INVALID_RESPONSE`）。
+检查不过时，在**同一个 contextId** 里再发一条消息（新的 messageId），只带一个文字 Part：列出没过的地方，要求只返回修正后的完整结果信封。不重发请求信封和文件，靠同一会话里的历史。再不过，这次调用就算失败（`AI_INVALID_RESPONSE`）。
 
 ## 6. 状态上报
 
@@ -188,7 +200,7 @@ Nexus 不推送结果，也没有回调（`a2a_endpoint.py:357`，`pushNotificat
 
 ## 7. 错误码
 
-`C/envelope/v1/error-map.json` 对所有任务一样：Nexus 的每种错误（HTTP 状态、JSON-RPC 错误码、任务失败码）对应九安的哪个模型错误码，AI 步骤要不要自动重试。
+`C/envelope/v1/error-map.json` 对所有任务一样：Nexus 的每种错误（HTTP 状态、JSON-RPC 错误码、任务失败码）对应九安的哪个模型错误码，AI 步骤要不要自动重试。**下表是摘要，两者不一致时以 `error-map.json` 为准。**自动重试由 AI 步骤做（每轮最多一次），不在适配层，也不在调用中间件（`ai-model` 的 `maxRetries` 固定为 0）。同一个错误码有的重试、有的不重试（例如 `AI_UNAVAILABLE`），所以适配层抛的错误除了 `code`，还带 `autoRetry`（命中的那一条的值）和 `detail`（HTTP 状态、JSON-RPC 错误码、Nexus 错误码、任务状态）；AI 步骤只看 `autoRetry`。
 
 | 情况 | 九安错误码 | 自动重试 |
 |---|---|---|
@@ -196,8 +208,12 @@ Nexus 不推送结果，也没有回调（`a2a_endpoint.py:357`，`pushNotificat
 | 404 `publication_not_found`：发布暂停、A2A 关了、预算用完被自动暂停，或密钥属于别的发布 | `AI_UNAVAILABLE` | 否：核对路由表和密钥，通知 Agent 负责人 |
 | 429 `rate_limited`、`too_many_inflight` | `AI_RATE_LIMIT` | 是，按 Retry-After |
 | 429 `budget_exceeded` | `AI_UNAVAILABLE` | 否 |
-| 任务被拒 `message_too_long` 等 | `AI_REQUEST_INVALID` | 否 |
-| 任务失败 `timeout`、`agent_error` 等；503 | `AI_UNAVAILABLE` | 是 |
+| 413、`-32005`、`-32602`：请求太大、附件不合规 | `AI_REQUEST_INVALID` | 否 |
+| 任务被拒（`rejected`）`message_too_long`、`invalid_message`、`invalid_conversation_id` | `AI_REQUEST_INVALID` | 否 |
+| 任务被拒 `conversation_busy` | `AI_RATE_LIMIT` | 是（换新会话） |
+| 任务被拒 `agent_unavailable`、`session_unavailable` 等 | `AI_UNAVAILABLE` | 是 |
+| 任务失败 `timeout`、`agent_error` 等；503；断线后任务查不到 | `AI_UNAVAILABLE` | 是 |
+| 任务被取消（`canceled`），或九安中止了调用 | `AI_CANCELLED` | 否 |
 | 连不上 | `AI_NETWORK` | 是 |
 | 结果修正一次后仍不合格 | `AI_INVALID_RESPONSE` | 是（新会话） |
 | 结果是 `declined` | `AI_DECLINED` | 否：转人工 |
@@ -228,7 +244,7 @@ Nexus v0.3.28 的实际限制（`N/…/gates.py`、`settings.py`、`executor.py`
 
    | 字段 | 写什么 |
    |---|---|
-   | `family` | `process` 业务流程、`finance` 财务、`knowledge` 知识库 |
+   | `family` | `process` 业务流程、`finance` 财务、`knowledge` 知识库、`common` 通用（例如 `describe`） |
    | `mode` | `oneshot` 一问一答，或 `conversation` 多轮对话 |
    | `subjectKinds` | 针对什么对象 |
    | `scopes` | 针对一家公司（`company`），还是整个租户（`tenant`） |
@@ -247,7 +263,7 @@ Nexus v0.3.28 的实际限制（`N/…/gates.py`、`settings.py`、`executor.py`
 3. **写 `input.schema.json`、`output.schema.json`**：
    - 输入只放 Agent 判断要用的东西，九安内部的结构翻译成通用的「名称 + 值」；
    - 输出尽量少字段、少状态，原因写进备注。
-4. **写检查代码和例子**：至少一对「请求 + 结果」，跑通信封检查和任务检查。
+4. **写检查代码和例子**：`checks` 里 Schema 管不到的检查写成 `checks.mjs`（`export function check(result, request)`，返回问题列表，空数组表示通过；参考 `C/tasks/first_review/v1/checks.mjs`）。例子至少三个结果：通过、不通过、declined，每个结果配一个自己的请求，`requestId` 一一对应；都跑通信封检查和任务检查。
 5. **登记**：在 `C/tasks/index.json` 加一行；写一份任务文档（照[单据初审](first-review-contract.md)的格式）。
 6. **Agent 一侧**：按第 10 节建 Agent、发布；名片描述里写上这个任务。
 7. **九安一侧**：在初审服务旁边加这个任务的「组装器」（九安数据 → `input`）和「展示」（`output` → 页面），在平台里登记一张卡片用于额度和调用日志，路由表里加一行。**通用层不改。**

@@ -99,7 +99,9 @@ PoC：架构、模块与工作流</h1>
     <tr><th scope="row">状态</th><td>交付版
 v2（写的是现在线上跑着的样子，不是规划；2026-10-19
 起是测试台；数据全部虚构）</td></tr>
-    <tr><th scope="row">范围</th><td>andon-finance.tinyboat.blog、nxs-beine1013.tinyboat.blog、audit-nexus/poc、audit-nexus/skills</td></tr>
+    <tr><th scope="row">范围</th><td>andon-finance.tinyboat.blog、nxs-beine1013.tinyboat.blog（线上
+Nexus AI
+的实际地址：d3u3hj2us186y.cloudfront.net）、audit-nexus/poc、audit-nexus/skills</td></tr>
     <tr><th scope="row">读者</th><td>应用开发、Agent
 开发、运维</td></tr>
   </table>
@@ -133,21 +135,19 @@ v2（写的是现在线上跑着的样子，不是规划；2026-10-19
 </ul>
 </nav>
 <main id="main">
-<p>2026-10-17。写的是现在线上跑着的样子，不是规划。数据全部虚构。第 11
-节是模块与依赖，第 12 节是工作流；交付相关的文档见 <a
+<p>2026-10-20 更新。写的是现在线上跑着的样子，不是规划。数据全部虚构。第
+11 节是模块与依赖，第 12 节是工作流；交付相关的文档见 <a
 href="delivery/README.html">交付文档索引</a>。</p>
 <p>相关文档：</p>
 <ul>
 <li><a href="agent-developer-workflow.html">开发者工作流</a>：一个 Agent
 从建好到在前端可用的每一步。</li>
-<li><a href="specs/2026-10-17-agent-registry-design.html">Agent
-注册与发现：设计</a>（第一期已实现）：每个账号连接自己的 Nexus、启用
-Agent，接口约定 agent-access-v1。</li>
-<li><a href="specs/2026-10-17-agent-access-skills-design.html">Agent
-接入 Skills：设计</a>：Claude Code、Codex、Kiro CLI 用的
-<code>agent-access</code> 命令行。</li>
-<li><a
-href="agent-discovery-registration.html">机制讲解（HTML）</a>。</li>
+<li>「我的 Nexus」（第一期已实现）：每个账号连接自己的 Nexus、启用
+Agent，接口约定 agent-access-v1，见
+<code>skills/agent-access/references/interface.md</code>。</li>
+<li><a href="delivery/skills-guide.html">Skills 配置指南</a>：Claude
+Code、Codex、Kiro CLI 里的两个
+Skill（nexus-ai-operator、agent-access）怎么装、怎么连。</li>
 </ul>
 <h1 id="1-一句话">1. 一句话</h1>
 <p>九安审核平台 v0.5.3 的原服务端和原前端跑在一台 EC2 上，经 CloudFront
@@ -189,7 +189,7 @@ EC2 andon-finance-poc（t3.large；Nexus 同 VPC 公有子网；systemd 服务 a
                │ ① A2A 0.3 message/stream，Bearer &lt;这个账号启用时粘贴的 nxa_ 调用密钥&gt;，可带文件 Part
                │ ② A2A 名片 /a2a/&lt;发布编号&gt;/.well-known/agent-card.json（公开，不带密钥）
                │ ③ REST（nexus-ai-operator CLI，每个账号一份凭证，用这个账号自己的 API 密钥）
-Nexus nxs-beine1013（v0.3.28）
+Nexus nxs-beine1013（v0.3.28）（线上 Nexus AI 的实际地址：d3u3hj2us186y.cloudfront.net）
    ├─ 发布 pub_5c53e70d8dc7ddea → 九安审核AI（PoC）  agent_56d44dd9…：审批建议、草稿核验
    └─ 发布 pub_2cc24c29d2e5b2c9 → 九安知识Agent（PoC）agent_949d9bc4…：describe / answer / select / suggest_rules / propose</code></pre>
 <p>两个发布都打开了 A2A 和 MCP 两个通道；PoC 只用 A2A。</p>
@@ -220,10 +220,11 @@ href="delivery/call-chains.html">调用链与处理流程</a>第 2、5
 节）。原有的 8 张单据可以在单据详情里手动「发起 AI 初审」。</li>
 <li><strong>九安预审</strong>：基础检查与规则试跑（读原件之后）。</li>
 <li><strong>AI 初审</strong>：九安自己的 AI 建议服务经 PoC
-的模型客户端，用 A2A
-把九安的任务说明、输出格式和输入数据（单据事实、规则试跑结果）发给「九安审核AI」。调用密钥从系统里读：发起人在
-Agent 页启用的那把 → 别的账号启用的 → <code>secrets.env</code>
-兜底；来单自动发起的没有「发起人」，直接用系统里启用的那把。失败时系统隔
+的模型客户端，用 A2A 把九安的任务说明、输出格式、PoC
+加的输出规则（只输出
+JSON；字符串里不用英文双引号，引用用「」）和输入数据（单据事实、规则试跑结果）发给「九安审核AI」。调用密钥从系统里读：发起人在
+Agent 页启用的那把 → 别的账号启用的；都没有就报
+<code>AI_AUTH_INVALID</code>；来单自动发起的没有「发起人」，直接用系统里启用的那把。失败时系统隔
 5 秒自动重试一次，再失败就停在「AI 初审失败」。</li>
 <li><strong>显示建议</strong>：返回的结果用九安自己的校验函数检查；单据池的卡片上直接显示「AI
 初审：结论 · 风险」，进行中的卡片每 4
@@ -287,10 +288,8 @@ Agent；每个发布带 A2A
 <code>REGISTRY_KEY</code>（AES-256-GCM）加密，存进这个账号的
 <code>enabled.json</code>。默认顺便读一次能力清单（<code>{"task": "describe"}</code>，约
 0.03 美元）。不带密钥再调一次，就是用已保存的密钥重新验证。</li>
-<li><strong>调用</strong>：先找「我启用的」，再找「系统提供的」（<code>secrets.env</code>
-里的
-<code>NEXUS_A2A_KEY_&lt;发布编号&gt;</code>，现在只有审批流那一把）。只有
-Nexus 回 401，才把这把密钥标记为失效。</li>
+<li><strong>调用</strong>：用「我启用的」那把调用密钥。只有 Nexus 回
+401，才把这把密钥标记为失效，在页面上「换密钥」就好。</li>
 <li><strong>停用</strong>：删掉这一项，可以重复停用。每一步都记进这个账号的
 <code>audit.jsonl</code>。</li>
 </ol>
@@ -390,21 +389,24 @@ MB。Nexus 本身允许单个 20 MB、合计 40 MB；PoC 定得这么小，原�
 </ul>
 <h1 id="6-密钥与配置">6. 密钥与配置</h1>
 <ul>
-<li><strong>密钥文件</strong>：全部口令和密钥只在本机的
-<code>audit-nexus/poc/infra/secrets.env</code>（0600）。里面有：
+<li><strong>Agent 和 Nexus
+的密钥不在任何文件里</strong>：每个账号在「Nexus Agent」页自己连接
+Nexus、粘贴调用密钥启用（第 3
+节），应用当场验证、加密存在这个账号的目录里。加、换、停用都不改文件、不部署、不重启。</li>
+<li><strong>启动配置</strong>：应用自己的启动配置只在本机的
+<code>audit-nexus/poc/infra/secrets.env</code>（0600），一共六项，缺的由
+<code>deploy.sh</code> 生成，样例见
+<code>poc/infra/secrets.env.example</code>：
 <ul>
-<li>两个虚构账号的口令；</li>
+<li>两个虚构账号的口令
+<code>REVIEWER_PASSWORD</code>、<code>CHECKER_PASSWORD</code>；</li>
 <li><code>REGISTRY_KEY</code>：加密各账号调用密钥用的 32
-字节密钥（base64），<code>deploy.sh</code>
-缺了会自动补上；换掉它，所有账号都要重新启用 Agent；</li>
-<li>可选的兜底调用密钥：<code>NEXUS_A2A_KEY_&lt;发布编号&gt;</code>。审批流的调用密钥从系统里读（页面上的启用记录，见第
-3 节），系统里一把都没有时才用这里的；</li>
-<li>只给端到端测试用的两项：<code>E2E_KNOWLEDGE_A2A_KEY</code>（知识
-Agent 的调用密钥，测试里启用一次、跑完停用）和可选的
-<code>E2E_NEXUS_API_KEY</code>（审核员第一次连接 Nexus 用的 API
-密钥）。服务端不读这两项，但 <code>deploy.sh</code>
-现在会把整个文件传到实例上，应改成按白名单生成服务端的文件（<a
-href="delivery/code-review-2026-10-17.html">代码评审</a> I3）。</li>
+字节密钥（base64）；换掉它，所有账号都要重新启用 Agent；</li>
+<li>测试台的三项：<code>BENCH_MYSQL_ROOT_PASSWORD</code>、<code>BENCH_MYSQL_APP_PASSWORD</code>、<code>BENCH_DATA_KEY</code>。</li>
+<li>旧文件里如果还有 <code>NEXUS_A2A_KEY_…</code>、<code>E2E_…</code>
+几行，是以前留下的兜底，已经不用了。<code>deploy.sh</code>
+现在会把整个文件传到实例上，应改成按白名单生成服务端的文件（评审 I3，<a
+href="delivery/handover.html">交接文档</a>第 6.1 节）。</li>
 </ul></li>
 <li><strong>每个账号的数据</strong>：在实例的
 <code>/var/lib/andon-finance/users/&lt;账号&gt;/</code>（目录 0700，文件
@@ -446,7 +448,7 @@ EC2、EIP、安全组、构件桶、CloudFront 和 Route 53 记录。</p></li>
 <p>重启时单据和模拟来单留在 MySQL
 里；审批记录、登录状态和运行记录在内存里，会清空。</p></li>
 <li><p><strong>单元测试</strong>：<code>cd poc/app &amp;&amp; node --test "test/unit/**/*.test.mjs"</code>，共
-266 个。它们用本机的假 A2A 网关，不连 Nexus；其中 11 个要
+275 个。它们用本机的假 A2A 网关，不连 Nexus；其中 11 个要
 MySQL（<code>bench-*.test.mjs</code>），本机跳过，用
 <code>poc/infra/bench-test.sh</code> 在测试台上跑（只用
 <code>jiuan_bench_test</code> 库）。命令行 <code>agent_access.py</code>
@@ -462,12 +464,12 @@ MySQL（<code>bench-*.test.mjs</code>），本机跳过，用
 <li><code>attachments.e2e.mjs</code>：A2A
 发现、带附件的三次调用、附件区界面，约 0.15 美元；</li>
 <li><code>access.e2e.mjs</code>：用 <code>agent_access.py</code>
-走连接、启用、调用、停用，还有账号隔离和 Agent 页截图，约 0.06
-美元。</li>
+检查审核员的连接和启用、错误密钥被拒、调用一次、账号隔离，还有 Agent
+页截图，约 0.05 美元。</li>
 </ul>
-<p>审核员没连接 Nexus 时，要用知识 Agent
-的几项会跳过，并写明原因：在页面上连接一次，或者把一把新的 API 密钥写进
-<code>secrets.env</code> 的 <code>E2E_NEXUS_API_KEY</code>。</p></li>
+<p>测试用审核员本人在前端的连接和启用，不从文件读 Agent
+密钥。审核员没连接 Nexus、或者没启用知识 Agent
+时，相关的几项会跳过，并写明原因：在前端用审核员连接、启用一次就行。审核员本人启用的项，测试只用不动。</p></li>
 <li><p><strong>命令行</strong>：</p>
 <ul>
 <li><code>node poc/app/scripts/try-agent.mjs</code>：不经界面直接调 PoC
@@ -477,9 +479,7 @@ Claude Code、Codex、Kiro CLI
 用的接入命令行（登录、连接、启用、调用、停用），2026-10-19
 起打包成可以安装的
 Skill（<code>skills/agent-access/SKILL.md</code>），见 <a
-href="delivery/skills-guide.html">Skills 配置指南</a> 和 <a
-href="specs/2026-10-17-agent-access-skills-design.html">Skills
-设计</a>。</li>
+href="delivery/skills-guide.html">Skills 配置指南</a>。</li>
 </ul></li>
 </ul>
 <h1 id="8-代码地图pocapp">8. 代码地图（<code>poc/app/</code>）</h1>
@@ -823,15 +823,15 @@ Nexus</figcaption>
 </tr>
 <tr>
 <td><code>nexus/<wbr>keys.<wbr>mjs</code></td>
-<td>兜底的调用密钥（<code>secrets.<wbr>env</code> 里的
-<code>NEXUS_<wbr>A2A_<wbr>KEY_<wbr>*</code>，可选）</td>
+<td>以前留下的兜底（读 <code>secrets.<wbr>env</code> 里的
+<code>NEXUS_<wbr>A2A_<wbr>KEY_<wbr>*</code>）；现在的流程不用它</td>
 <td>—</td>
 <td><code>access/<wbr>me</code></td>
 <td>启动时读一次</td>
 </tr>
 <tr>
 <td><code>nexus/<wbr>system-<wbr>key.<wbr>mjs</code></td>
-<td>审批流的调用密钥从系统里读：按单据找发起人，用他在页面上启用的那把；401
+<td>审批流的调用密钥从系统里读：按单据找发起人，用他在页面上启用的那把，没有就用别的账号启用的；401
 时只把那一把标记失效</td>
 <td>—（<code>access/<wbr>me</code>、审批状态机由组合根注入）</td>
 <td>模型客户端</td>
@@ -891,13 +891,12 @@ Agent 的判断流程。要点：</p>
 <li><strong>启用</strong>：发布在我的列表里、同源、名片读得到、<code>tasks/get</code>
 返回 200，四关都过才加密保存；<code>putIf</code>
 保证验证期间被停用的不会写回。</li>
-<li><strong>调用</strong>：先找我启用的，再找系统提供的；只有 401
-才标记失效。</li>
+<li><strong>调用</strong>：用我启用的那把；只有 401 才标记失效。</li>
 <li><strong>审批流</strong>：状态机在
 <code>approval/workflow.mjs</code>，AI 建议经九安自己的建议服务和 PoC
 的模型客户端；调用密钥从系统里读：发起人在 Agent 页启用的那把 →
-别的账号启用的 → <code>secrets.env</code>
-兜底（<code>nexus/system-key.mjs</code>）。</li>
+别的账号启用的（<code>nexus/system-key.mjs</code>）；都没有就报
+<code>AI_AUTH_INVALID</code>，提示去页面上启用。</li>
 </ul>
 <h2 id="122-开发与交付">12.2 开发与交付</h2>
 <figure>

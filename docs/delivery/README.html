@@ -93,11 +93,11 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>交付文档索引</h1>
+v0.1.0</span>交付文档索引</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
     <tr><th scope="row">状态</th><td>封板 Finance-Audit-Nexus-PoC
-v0.1</td></tr>
+v0.1.0</td></tr>
     <tr><th scope="row">范围</th><td>audit-nexus/ 全部交付文档</td></tr>
     <tr><th scope="row">读者</th><td>所有接手的人</td></tr>
   </table>
@@ -116,20 +116,23 @@ src="../assets/diagrams/arch-overview.svg" loading="lazy"
 alt="系统总览" /></a>
 <figcaption>系统总览</figcaption>
 </figure>
-<p><strong>Finance-Audit-Nexus-PoC v0.1</strong>（2026-10-19
-封板）。现在的状态：</p>
+<p><strong>Finance-Audit-Nexus-PoC v0.1.0</strong>（2026-10-21
+封板；上一版 v0.1 是 2026-10-19）。现在的状态：</p>
 <ul>
 <li><strong>PoC 第一期</strong>已上线：审批流、「我的
 Nexus」、调用测试、命令行。</li>
 <li><strong>测试台</strong>已升级：t3.large；本机 MySQL
-8.0；服务端跑的是九安开发包的副本和九安自己的运行时。端到端测试 15
-通过、0 失败、1 按设计跳过。</li>
+8.0；服务端跑的是九安开发包的副本和九安自己的运行时。2026-10-21
+完整端到端测试 15 个全部通过。</li>
 <li><strong>Agent
 接入框架</strong>（<code>jiuan.agent/v1</code>）是设计稿
 v2，待批准；契约文件已写好。九安补丁 0001–0006 是下一份计划。</li>
 <li><strong>应用自己的 Skill</strong> <code>agent-access</code> 可以装进
 Claude Code、Codex、Kiro CLI 了；和 nexus-ai-operator 怎么一起配，见 <a
 href="skills-guide.html">Skills 配置指南</a>。</li>
+<li><strong>给九安开发者的对接指南</strong>（v0.1.0 新增）：每一步配
+Claude Code 提示词，已在九安开发包副本上演习过，见<a
+href="developer-guide.html">开发者快速对接指南</a>。</li>
 </ul>
 <p><strong>先读<a
 href="package-guide.html">交付包指南</a></strong>：包里有什么、怎么校验、谁先读什么、怎么验收。这里是交付用的全部文档；每份都有
@@ -145,9 +148,23 @@ Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打�
 </thead>
 <tbody>
 <tr>
+<td><a href="quick-guide.html">快速上手：把前端接上 Nexus 上的
+Agent</a></td>
+<td><strong>给前端用户</strong>：在客户自己的前端和线上 Nexus AI
+之间，一步步生成密钥、连接、启用、调用测试、在审批流里用；日常维护和常见问题</td>
+<td>审核员、复核人、Agent 开发者，第一份</td>
+</tr>
+<tr>
+<td><a href="developer-guide.html">九安开发者快速对接指南</a></td>
+<td><strong>给九安的前后端开发</strong>：一个业务需求怎么从写契约、在
+Nexus 上开发 Agent，做到后端调用、前端可用；每步配可以直接贴进 Claude
+Code 的提示词，附 <code>CLAUDE.<wbr>md</code> 模板</td>
+<td>九安前端、后端、Agent 开发</td>
+</tr>
+<tr>
 <td><a href="customer-rollout.html">客户部署路线</a></td>
-<td>从 v0.1
-到九安上线：从哪里入手、要部署哪三块、分五个阶段怎么走、第一周做什么、要九安提供什么、风险</td>
+<td>从 v0.1.0
+到九安上线：从哪里入手、要部署哪三块、分五个阶段怎么走、我们交付的部署工具包（九安自己适配，我们用代码协助部署）、第一周做什么、要九安提供什么、风险</td>
 <td>项目负责人、九安团队</td>
 </tr>
 <tr>
@@ -187,11 +204,6 @@ agent-access；配置顺序、排障、安全底线</td>
 <td><a href="operations.html">运维与后续迭代</a></td>
 <td>日常操作手册、故障排查、迭代的最佳方式</td>
 <td>运维、值班</td>
-</tr>
-<tr>
-<td><a href="../progress.html">开发进度看板</a></td>
-<td>每个能力、模块、任务的进度、依赖和测试证据，色块表示（快照）；实时版：<code>node tools/<wbr>progress/<wbr>serve.<wbr>mjs</code></td>
-<td>所有开发者</td>
 </tr>
 <tr>
 <td><a href="agent-framework-overview.html">Agent
@@ -234,25 +246,19 @@ Agent：调用链、解耦与处理流程</a></td>
 <td>客户在规则库录入的规则怎么进入 AI 初审：现状、缺口、方案与分期</td>
 <td>项目负责人、应用开发、九安团队</td>
 </tr>
-<tr>
-<td><a href="code-review-2026-10-17.html">交付前代码评审</a></td>
-<td>评审结论、上生产前必须改的、维护热点</td>
-<td>应用开发、项目负责人</td>
-</tr>
 </tbody>
 </table>
 </div>
-<p>设计依据：<a
-href="../specs/2026-10-19-agent-framework-design.html">Agent
-接入框架设计</a>、<a
-href="../plans/2026-10-19-bench-upgrade.md">测试台升级计划</a>（执行记录在
-<code>evidence/bench/2026-10-19-upgrade.md</code>）、<a
-href="../specs/2026-10-17-agent-registry-design.html">Agent
-注册与发现设计</a>、<a
-href="../specs/2026-10-17-agent-access-skills-design.html">Agent 接入
-Skills 设计</a>、<a
-href="../agent-developer-workflow.html">开发者工作流</a>、<a
-href="../agent-discovery-registration.html">机制讲解</a>。</p>
+<p>想深入了解设计：框架看 <a href="agent-framework.html">Agent
+接入框架</a>、<a href="agent-interface.html">Agent 接口</a>、<a
+href="first-review-contract.html">单据初审契约</a> 和
+<code>contract/</code>；「我的 Nexus」的接口约定看
+<code>skills/agent-access/references/interface.md</code>；一个 Agent
+从建好到能用的全过程看<a
+href="../agent-developer-workflow.html">开发者工作流</a>。上生产前必须改的在<a
+href="handover.html">交接文档</a>第 6.1
+节。测试台升级的执行记录在交付包的
+<code>evidence/bench/2026-10-19-upgrade.md</code>。</p>
 <h1 id="更新文档">更新文档</h1>
 <ol type="1">
 <li>改 Markdown（<code>docs/**/*.md</code>）。</li>

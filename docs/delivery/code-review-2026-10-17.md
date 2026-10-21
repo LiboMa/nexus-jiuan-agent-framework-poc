@@ -1,5 +1,5 @@
 ---
-subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1
+subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1.0
 date: 2026-10-17
 status: 交付前评审；结论：PoC 可以交接维护，上生产前必须先做第 4 节
 stamp: 评审

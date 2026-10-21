@@ -2,19 +2,18 @@
 subtitle: 九安审核平台 × Nexus AI · PoC 交付
 date: 2026-10-19
 status: 交付版 v2（写的是现在线上跑着的样子，不是规划；2026-10-19 起是测试台；数据全部虚构）
-scope: andon-finance.tinyboat.blog、nxs-beine1013.tinyboat.blog、audit-nexus/poc、audit-nexus/skills
+scope: andon-finance.tinyboat.blog、nxs-beine1013.tinyboat.blog（线上 Nexus AI 的实际地址：d3u3hj2us186y.cloudfront.net）、audit-nexus/poc、audit-nexus/skills
 audience: 应用开发、Agent 开发、运维
 ---
 
 # 九安 × Nexus PoC：架构、模块与工作流
 
-2026-10-17。写的是现在线上跑着的样子，不是规划。数据全部虚构。第 11 节是模块与依赖，第 12 节是工作流；交付相关的文档见 [交付文档索引](delivery/README.md)。
+2026-10-20 更新。写的是现在线上跑着的样子，不是规划。数据全部虚构。第 11 节是模块与依赖，第 12 节是工作流；交付相关的文档见 [交付文档索引](delivery/README.md)。
 
 相关文档：
 - [开发者工作流](agent-developer-workflow.md)：一个 Agent 从建好到在前端可用的每一步。
-- [Agent 注册与发现：设计](specs/2026-10-17-agent-registry-design.md)（第一期已实现）：每个账号连接自己的 Nexus、启用 Agent，接口约定 agent-access-v1。
-- [Agent 接入 Skills：设计](specs/2026-10-17-agent-access-skills-design.md)：Claude Code、Codex、Kiro CLI 用的 `agent-access` 命令行。
-- [机制讲解（HTML）](agent-discovery-registration.html)。
+- 「我的 Nexus」（第一期已实现）：每个账号连接自己的 Nexus、启用 Agent，接口约定 agent-access-v1，见 `skills/agent-access/references/interface.md`。
+- [Skills 配置指南](delivery/skills-guide.md)：Claude Code、Codex、Kiro CLI 里的两个 Skill（nexus-ai-operator、agent-access）怎么装、怎么连。
 
 ## 1. 一句话
 
@@ -44,7 +43,7 @@ EC2 andon-finance-poc（t3.large；Nexus 同 VPC 公有子网；systemd 服务 a
                │ ① A2A 0.3 message/stream，Bearer <这个账号启用时粘贴的 nxa_ 调用密钥>，可带文件 Part
                │ ② A2A 名片 /a2a/<发布编号>/.well-known/agent-card.json（公开，不带密钥）
                │ ③ REST（nexus-ai-operator CLI，每个账号一份凭证，用这个账号自己的 API 密钥）
-Nexus nxs-beine1013（v0.3.28）
+Nexus nxs-beine1013（v0.3.28）（线上 Nexus AI 的实际地址：d3u3hj2us186y.cloudfront.net）
    ├─ 发布 pub_5c53e70d8dc7ddea → 九安审核AI（PoC）  agent_56d44dd9…：审批建议、草稿核验
    └─ 发布 pub_2cc24c29d2e5b2c9 → 九安知识Agent（PoC）agent_949d9bc4…：describe / answer / select / suggest_rules / propose
 ```
@@ -61,7 +60,7 @@ Nexus nxs-beine1013（v0.3.28）
 
 1. **来单**：单据进入单据池后系统自动发起，不需要有人点。PoC 用单据池顶上的「模拟来单」（或 `POST /poc/intake`）按模板生成新的虚构单据来模拟；九安生产上应该是汇联易同步写入新单据之后触发，但九安现在的代码同步完只写库，不会自动发起（[调用链与处理流程](delivery/call-chains.md)第 2、5 节）。原有的 8 张单据可以在单据详情里手动「发起 AI 初审」。
 2. **九安预审**：基础检查与规则试跑（读原件之后）。
-3. **AI 初审**：九安自己的 AI 建议服务经 PoC 的模型客户端，用 A2A 把九安的任务说明、输出格式和输入数据（单据事实、规则试跑结果）发给「九安审核AI」。调用密钥从系统里读：发起人在 Agent 页启用的那把 → 别的账号启用的 → `secrets.env` 兜底；来单自动发起的没有「发起人」，直接用系统里启用的那把。失败时系统隔 5 秒自动重试一次，再失败就停在「AI 初审失败」。
+3. **AI 初审**：九安自己的 AI 建议服务经 PoC 的模型客户端，用 A2A 把九安的任务说明、输出格式、PoC 加的输出规则（只输出 JSON；字符串里不用英文双引号，引用用「」）和输入数据（单据事实、规则试跑结果）发给「九安审核AI」。调用密钥从系统里读：发起人在 Agent 页启用的那把 → 别的账号启用的；都没有就报 `AI_AUTH_INVALID`；来单自动发起的没有「发起人」，直接用系统里启用的那把。失败时系统隔 5 秒自动重试一次，再失败就停在「AI 初审失败」。
 4. **显示建议**：返回的结果用九安自己的校验函数检查；单据池的卡片上直接显示「AI 初审：结论 · 风险」，进行中的卡片每 4 秒自动刷新；详情页先显示建议，再是复核表单。
 5. **人工复核**：一位复核人（两个 PoC 账号都可以）通过或退回，流程结束。和 AI 建议相反时必须写理由，退回必须写退回说明。PoC 只记建议和决定，不写回任何系统。
 
@@ -86,7 +85,7 @@ Nexus nxs-beine1013（v0.3.28）
 1. **连接**：每个账号用自己的 Nexus API 密钥连接（`POST /poc/nexus/me/connect`）。PoC 为这个账号单独起一份 operator CLI 凭证（`users/<账号>/nexus/`），API 密钥交给 CLI 保存，PoC 自己不留。
 2. **列出**：`GET /poc/nexus/me` 经 REST 列出这个账号能看到的发布（自己的加上共享给他的），以及还没发布的 Agent；每个发布带 A2A 名片（名称、协议版本、能否流式、接受哪些附件类型）。列表超过 60 秒先刷新。
 3. **启用**：粘贴这个发布的调用密钥（`POST /poc/nexus/me/agents/<发布编号>/enable`）。当场验证两件事，都不花钱：名片读得到；用这把密钥发一个 `tasks/get`，Nexus 认这把密钥。通过后用 `REGISTRY_KEY`（AES-256-GCM）加密，存进这个账号的 `enabled.json`。默认顺便读一次能力清单（`{"task": "describe"}`，约 0.03 美元）。不带密钥再调一次，就是用已保存的密钥重新验证。
-4. **调用**：先找「我启用的」，再找「系统提供的」（`secrets.env` 里的 `NEXUS_A2A_KEY_<发布编号>`，现在只有审批流那一把）。只有 Nexus 回 401，才把这把密钥标记为失效。
+4. **调用**：用「我启用的」那把调用密钥。只有 Nexus 回 401，才把这把密钥标记为失效，在页面上「换密钥」就好。
 5. **停用**：删掉这一项，可以重复停用。每一步都记进这个账号的 `audit.jsonl`。
 
 ## 4. 两个 Agent
@@ -131,11 +130,12 @@ Nexus nxs-beine1013（v0.3.28）
 
 ## 6. 密钥与配置
 
-- **密钥文件**：全部口令和密钥只在本机的 `audit-nexus/poc/infra/secrets.env`（0600）。里面有：
-  - 两个虚构账号的口令；
-  - `REGISTRY_KEY`：加密各账号调用密钥用的 32 字节密钥（base64），`deploy.sh` 缺了会自动补上；换掉它，所有账号都要重新启用 Agent；
-  - 可选的兜底调用密钥：`NEXUS_A2A_KEY_<发布编号>`。审批流的调用密钥从系统里读（页面上的启用记录，见第 3 节），系统里一把都没有时才用这里的；
-  - 只给端到端测试用的两项：`E2E_KNOWLEDGE_A2A_KEY`（知识 Agent 的调用密钥，测试里启用一次、跑完停用）和可选的 `E2E_NEXUS_API_KEY`（审核员第一次连接 Nexus 用的 API 密钥）。服务端不读这两项，但 `deploy.sh` 现在会把整个文件传到实例上，应改成按白名单生成服务端的文件（[代码评审](delivery/code-review-2026-10-17.md) I3）。
+- **Agent 和 Nexus 的密钥不在任何文件里**：每个账号在「Nexus Agent」页自己连接 Nexus、粘贴调用密钥启用（第 3 节），应用当场验证、加密存在这个账号的目录里。加、换、停用都不改文件、不部署、不重启。
+- **启动配置**：应用自己的启动配置只在本机的 `audit-nexus/poc/infra/secrets.env`（0600），一共六项，缺的由 `deploy.sh` 生成，样例见 `poc/infra/secrets.env.example`：
+  - 两个虚构账号的口令 `REVIEWER_PASSWORD`、`CHECKER_PASSWORD`；
+  - `REGISTRY_KEY`：加密各账号调用密钥用的 32 字节密钥（base64）；换掉它，所有账号都要重新启用 Agent；
+  - 测试台的三项：`BENCH_MYSQL_ROOT_PASSWORD`、`BENCH_MYSQL_APP_PASSWORD`、`BENCH_DATA_KEY`。
+  - 旧文件里如果还有 `NEXUS_A2A_KEY_…`、`E2E_…` 几行，是以前留下的兜底，已经不用了。`deploy.sh` 现在会把整个文件传到实例上，应改成按白名单生成服务端的文件（评审 I3，[交接文档](delivery/handover.md)第 6.1 节）。
 - **每个账号的数据**：在实例的 `/var/lib/andon-finance/users/<账号>/`（目录 0700，文件 0600），重启、重新部署都不丢，实例被替换才会丢。里面有这个账号的 CLI 凭证、`enabled.json`（调用密钥已加密）、`connection.json`（不含密钥）和 `audit.jsonl`。
 - **怎么到实例上**：`deploy.sh` 把文件传到加密的构件桶，再装到实例的 `/etc/andon-finance/secrets.env`（root:andon，0640）。
   - 服务启动时读一次，改了要重启（`deploy.sh` 会重启服务）；
@@ -154,17 +154,17 @@ Nexus nxs-beine1013（v0.3.28）
   5. 让实例拉取新构件、配置测试台（`bench-configure.sh`：测试台密钥文件、`bench.env`、MySQL）、重启服务，并做健康检查；SSM 不是 `Success` 就报失败。
 
   重启时单据和模拟来单留在 MySQL 里；审批记录、登录状态和运行记录在内存里，会清空。
-- **单元测试**：`cd poc/app && node --test "test/unit/**/*.test.mjs"`，共 266 个。它们用本机的假 A2A 网关，不连 Nexus；其中 11 个要 MySQL（`bench-*.test.mjs`），本机跳过，用 `poc/infra/bench-test.sh` 在测试台上跑（只用 `jiuan_bench_test` 库）。命令行 `agent_access.py` 另有 6 个：`python3 -m unittest discover -s skills/agent-access/tests`。
+- **单元测试**：`cd poc/app && node --test "test/unit/**/*.test.mjs"`，共 275 个。它们用本机的假 A2A 网关，不连 Nexus；其中 11 个要 MySQL（`bench-*.test.mjs`），本机跳过，用 `poc/infra/bench-test.sh` 在测试台上跑（只用 `jiuan_bench_test` 库）。命令行 `agent_access.py` 另有 6 个：`python3 -m unittest discover -s skills/agent-access/tests`。
 - **端到端测试**：`poc/app/test/e2e/run.sh [文件…]`。它先重建测试台的库（`bench-reset.sh`，单据回到 8 张种子；实例上没有这个脚本时退回重启服务），再经 CloudFront 跑测试：
   - `poc.e2e.mjs` 里还有一项平台中心冒烟测试：九安的平台中心能打开（`#platformAgents`，卡片「汇联易单据同步」）；
   - `poc.e2e.mjs`：审批流，约 0.15 美元；
   - `attachments.e2e.mjs`：A2A 发现、带附件的三次调用、附件区界面，约 0.15 美元；
-  - `access.e2e.mjs`：用 `agent_access.py` 走连接、启用、调用、停用，还有账号隔离和 Agent 页截图，约 0.06 美元。
+  - `access.e2e.mjs`：用 `agent_access.py` 检查审核员的连接和启用、错误密钥被拒、调用一次、账号隔离，还有 Agent 页截图，约 0.05 美元。
 
-  审核员没连接 Nexus 时，要用知识 Agent 的几项会跳过，并写明原因：在页面上连接一次，或者把一把新的 API 密钥写进 `secrets.env` 的 `E2E_NEXUS_API_KEY`。
+  测试用审核员本人在前端的连接和启用，不从文件读 Agent 密钥。审核员没连接 Nexus、或者没启用知识 Agent 时，相关的几项会跳过，并写明原因：在前端用审核员连接、启用一次就行。审核员本人启用的项，测试只用不动。
 - **命令行**：
   - `node poc/app/scripts/try-agent.mjs`：不经界面直接调 PoC 接口（带附件、按任务、按单据），用法写在脚本开头的注释里；
-  - `python3 skills/agent-access/scripts/agent_access.py`：给 Claude Code、Codex、Kiro CLI 用的接入命令行（登录、连接、启用、调用、停用），2026-10-19 起打包成可以安装的 Skill（`skills/agent-access/SKILL.md`），见 [Skills 配置指南](delivery/skills-guide.md) 和 [Skills 设计](specs/2026-10-17-agent-access-skills-design.md)。
+  - `python3 skills/agent-access/scripts/agent_access.py`：给 Claude Code、Codex、Kiro CLI 用的接入命令行（登录、连接、启用、调用、停用），2026-10-19 起打包成可以安装的 Skill（`skills/agent-access/SKILL.md`），见 [Skills 配置指南](delivery/skills-guide.md)。
 
 ## 8. 代码地图（`poc/app/`）
 
@@ -249,8 +249,8 @@ Nexus nxs-beine1013（v0.3.28）
 | `nexus/attachments.mjs` | 附件规则与检查（类型、文件头、大小） | `http` | `invoke`、`routes`、`samples` | — |
 | `nexus/runs.mjs` | 运行记录 | — | `model-client`、`invoke`、`routes` | 内存，最多 50 条 |
 | `nexus/catalog.mjs` | 发布的展示字段、A2A 名片（只认 Nexus 同源） | — | `access/me` | — |
-| `nexus/keys.mjs` | 兜底的调用密钥（`secrets.env` 里的 `NEXUS_A2A_KEY_*`，可选） | — | `access/me` | 启动时读一次 |
-| `nexus/system-key.mjs` | 审批流的调用密钥从系统里读：按单据找发起人，用他在页面上启用的那把；401 时只把那一把标记失效 | —（`access/me`、审批状态机由组合根注入） | 模型客户端 | — |
+| `nexus/keys.mjs` | 以前留下的兜底（读 `secrets.env` 里的 `NEXUS_A2A_KEY_*`）；现在的流程不用它 | — | `access/me` | 启动时读一次 |
+| `nexus/system-key.mjs` | 审批流的调用密钥从系统里读：按单据找发起人，用他在页面上启用的那把，没有就用别的账号启用的；401 时只把那一把标记失效 | —（`access/me`、审批状态机由组合根注入） | 模型客户端 | — |
 | `nexus/cli.mjs` | 调 nexus-ai-operator CLI（子进程，最小环境变量） | — | `access/me`（每个账号一份凭证目录） | 实例磁盘 |
 | `nexus/governance.mjs` | 九安数据治理环境（PoC 的租户与公司） | `seed` | 模型客户端、`invoke` | — |
 | `public-src/nexus-poc.js` | 前端：口令登录、审批流卡片、Agent 页（连接、我的 Agent） | `nexus-invoke.js` | 九安 `analysis.js`（锚点补丁导入） | — |
@@ -267,8 +267,8 @@ Nexus nxs-beine1013（v0.3.28）
 
 - **连接**：API 密钥只经环境变量交给 operator CLI，PoC 自己不留；返回里不含任何密钥。
 - **启用**：发布在我的列表里、同源、名片读得到、`tasks/get` 返回 200，四关都过才加密保存；`putIf` 保证验证期间被停用的不会写回。
-- **调用**：先找我启用的，再找系统提供的；只有 401 才标记失效。
-- **审批流**：状态机在 `approval/workflow.mjs`，AI 建议经九安自己的建议服务和 PoC 的模型客户端；调用密钥从系统里读：发起人在 Agent 页启用的那把 → 别的账号启用的 → `secrets.env` 兜底（`nexus/system-key.mjs`）。
+- **调用**：用我启用的那把；只有 401 才标记失效。
+- **审批流**：状态机在 `approval/workflow.mjs`，AI 建议经九安自己的建议服务和 PoC 的模型客户端；调用密钥从系统里读：发起人在 Agent 页启用的那把 → 别的账号启用的（`nexus/system-key.mjs`）；都没有就报 `AI_AUTH_INVALID`，提示去页面上启用。
 
 ### 12.2 开发与交付
 

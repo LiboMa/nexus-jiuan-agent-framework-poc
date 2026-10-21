@@ -107,6 +107,9 @@ Agent（业务流程、财务、知识库）经 A2A
 <div class="layout">
 <nav class="toc" aria-label="目录">
 <ul>
+<li><a href="#0-范围本期做什么以后做什么"
+id="toc-0-范围本期做什么以后做什么">0.
+范围：本期做什么，以后做什么</a></li>
 <li><a href="#1-结论" id="toc-1-结论">1. 结论</a></li>
 <li><a href="#2-解耦的规则" id="toc-2-解耦的规则">2. 解耦的规则</a></li>
 <li><a href="#3-架构" id="toc-3-架构">3. 架构</a></li>
@@ -147,9 +150,8 @@ Agent 怎么接、AI
 <blockquote>
 <p><strong>2026-10-19 决定</strong>：网关层以后再做，本期先完成 PoC /
 MVP
-和测试台。本期只实现初审跑通需要的部分：一问一答、按对象存结果、按单据类型路由。多轮对话、长任务、分区与串联、租户级调用随网关层做。范围见<a
-href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7
-节。</p>
+和测试台。本期只实现初审跑通需要的部分：一问一答、按对象存结果、按单据类型路由。多轮对话、长任务、分区与串联、租户级调用随网关层做。范围见下面第
+0 节。</p>
 </blockquote>
 <p><strong>现在做到哪了</strong>（2026-10-19）：</p>
 <div class="table-wrap">
@@ -176,7 +178,7 @@ href="agent-framework-overview.html">总览</a>）</td>
 <td>已完成：t3.large、本机 MySQL 8.0、九安运行时在跑；九安副本由
 <code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>
 构建，<code>patches/<wbr>jiuan-<wbr>v0.<wbr>5.<wbr>3/<wbr></code>
-里的补丁按文件名顺序打进副本（记录：<code>evidence/<wbr>bench/<wbr>2026-<wbr>10-<wbr>19-<wbr>upgrade.<wbr>md</code>）</td>
+里的补丁按文件名顺序打进副本，这个目录现在还是空的（记录：<code>evidence/<wbr>bench/<wbr>2026-<wbr>10-<wbr>19-<wbr>upgrade.<wbr>md</code>）</td>
 </tr>
 <tr>
 <td>九安补丁 0001–0006</td>
@@ -206,6 +208,37 @@ first_review@1</a></li>
 目录，<code>P/</code> 指
 <code>audit-nexus/poc/app/</code>，<code>C/</code> 指
 <code>audit-nexus/contract/</code>。所有引用都在源码上核对过，九安开发包只读，没有执行其中任何东西。</p>
+<h1 id="0-范围本期做什么以后做什么">0. 范围：本期做什么，以后做什么</h1>
+<p><strong>本期（PoC /
+MVP）</strong>：在测试台上，用九安自己的运行时跑通「来单 → 预审 → AI
+初审（经 A2A）→ 人工复核」，接口按 <code>jiuan.agent/v1</code> 和
+<code>first_review@1</code>。</p>
+<ol type="1">
+<li>契约照现在的写法：信封
+v1、<code>first_review@1</code>、<code>describe@1</code>。</li>
+<li>九安里只做初审跑通需要的部分：
+<ul>
+<li>A2A 适配层，只做一问一答；</li>
+<li>模型接入口的 <code>agentTask</code>，以及连接器密钥的改动；</li>
+<li>「Agent 接入」（平台级启用）；</li>
+<li>简化的 Agent 任务服务：一问一答、按对象存结果、按单据类型路由、AI
+步骤状态、自动重试一次；</li>
+<li>规则生效；</li>
+<li>初审组装器与审批流；</li>
+<li>流水线一站、系统身份；</li>
+<li>界面。</li>
+</ul></li>
+<li>Nexus 上的审核
+Agent：新提示词和发布，名片描述写契约和任务，固定版本。</li>
+<li>验收：端到端测试通过、项目负责人确认后再提交。</li>
+</ol>
+<p><strong>以后（网关层）</strong>：</p>
+<ul>
+<li>把通用层做成我们维护的独立网关模块，经插口用宿主的存储、身份、调用中间件、数据治理和留痕；</li>
+<li>多轮对话、长任务、分区与串联、租户级调用、按用法分额度（契约里已经留好位置）；</li>
+<li>财务类、知识库类任务；知识 Agent 迁到信封。</li>
+</ul>
+<p>本期的代码给这些留出口子，但不提前实现。</p>
 <h1 id="1-结论">1. 结论</h1>
 <p><strong>一套通用层，所有 Agent 共用；每类 Agent
 只加一份任务契约。</strong></p>
@@ -770,31 +803,44 @@ href="first-review-contract.html">单据初审</a>、<code>C/<wbr></code></td>
 <pre class="js"><code>createAgentClient({
   nexusOrigin,          // &#39;https://nxs-….tinyboat.blog&#39;
   getKey,               // async ({ publishId }) =&gt; &#39;nxa_…&#39;，从「Agent 接入」的启用记录读
+  onKeyRejected,        // ({ publishId, keyFingerprint }) =&gt; void：401 或 -32010 时通知「Agent 接入」标失效（指纹相同才标）
   tasks,                // { &#39;first_review@1&#39;: { check, limits }, … }，来自 contract/tasks/
   fetchImpl = fetch, now = Date.now,
 }) → {
   probe({ publishId }) → { ok, reason, tasks: [&#39;first_review@1&#39;, …] },     // 读名片，不花钱
-  call({ publishId, request, files, conversationId, attempt, signal }) → {
+  verifyKey({ publishId, key }) → { ok, reason },                          // tasks/get 验证密钥，不花钱；「Agent 接入」启用、换密钥时用
+  call({ publishId, request, files, conversationId, attempt, partition, signal }) → {
     status: &#39;completed&#39; | &#39;declined&#39; | &#39;pending&#39;,   // pending 只出现在长任务
     output, declined,
     call: { publishId, taskId, contextId, callId, agentVersion, repaired },
   },
   collect({ publishId, request, taskId, contextId, signal }) → 同上,           // 长任务收结果
 }
-// request 是整个请求信封；出错抛 Error，code 是九安的模型错误码，detail 带 Nexus 的错误码</code></pre>
+// request 是整个请求信封；出错抛 Error：code 是九安的模型错误码，autoRetry 照 error-map.json 命中的那一条，detail 带 Nexus 的错误码
+// call 返回的 publishId 只给 Agent 任务服务内部用（存进 AI 步骤、对账），业务接口的返回里不带
+// 时限、额度、并发、调用日志都在九安的调用中间件，适配层只听 signal，也不自己重试（接口第 4.4、7 节）
+// collect 只给长任务（deferred: true）用；还没有长任务时可以先不写</code></pre>
 <p><strong>I3
 模型接入口</strong>（<code>providers/ai-model.mjs</code>）</p>
 <ul>
 <li><code>createModelClient</code> 多返回一个通用方法
 <code>agentTask(input)</code>：
 <ul>
-<li>输入：<code>input = { publishId, request, files, conversationId, attempt, collect, dataContext, signal }</code>；</li>
+<li>输入：<code>input = { publishId, request, files, conversationId, attempt, partition, collect, dataContext, signal }</code>；<code>attempt</code>、<code>partition</code>
+用来生成 contextId（<a href="agent-interface.html">接口</a>第 4.1
+节）；</li>
 <li>方法开头先调
 <code>assertModelDataAllowed(dataPolicy, input.dataContext)</code>，再交给适配层。</li>
 </ul></li>
 <li><code>MODEL_PROVIDER_IMPLEMENTED</code> 改成
 <code>true</code>；<code>connectors.mjs</code> 里 <code>ai-model</code>
 的操作加 <code>agentTask</code>。</li>
+<li>开关一打开，草稿核验会误以为模型已配置：<code>J/src/analysis-draft-evidence-service.mjs:23</code>
+只看 <code>model</code> 是不是字符串，空串也算。要一起改成要求
+<code>model</code> 非空（和 AI 建议
+<code>J/src/analysis-ai-advice.mjs:144</code>
+一样），否则页面会显示可以试跑，点了必然失败，还占 <code>ai-model</code>
+的每日额度。</li>
 <li>调用记在哪张平台卡片上，由 Agent 任务服务用
 <code>runWithAttribution</code> 指定（例如
 <code>audit.first-review</code>），所以暂停开关和调用日志能按用法分开。额度不能：每张卡片的每日上限和整个连接器的上限是同一个数（<code>J/src/platform/call-middleware.mjs:596-603</code>），要按用法分额度得改中间件（第
@@ -1038,8 +1084,8 @@ admin 或 analyst
 <tr>
 <td>契约</td>
 <td>信封和任务的 schema 自检通过；<code>first_<wbr>review</code>
-三对例子过信封检查和任务检查；<code>describe</code>
-的例子过信封检查（已经通过）</td>
+三对例子（通过、不通过、declined，各配自己的请求）过信封检查和任务检查；<code>describe</code>
+的一对例子过信封检查（已经通过）</td>
 </tr>
 <tr>
 <td>适配层</td>

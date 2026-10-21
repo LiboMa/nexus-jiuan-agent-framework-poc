@@ -1,6 +1,6 @@
 # 接口约定 agent-access-v1
 
-`agent_access.py` 和应用页面走的是同一套接口。原文见 `docs/specs/2026-10-17-agent-registry-design.md` 第 12 节；两边不一致时以那份为准。
+`agent_access.py` 和应用页面走的是同一套接口。这一份就是接口约定的正式说明。
 
 - **版本**：`GET /me` 的返回里带 `interfaceVersion: "agent-access-v1"`。
 - **只加不改**：以后只加字段，不改已有字段的含义，也不删字段。
@@ -32,4 +32,4 @@
 - `connection.status`：`connected`、`not_connected`、`error`。
 - `publications[]`：用户自己的发布；没启用的 `enablement` 为 `null`；启用的只带密钥指纹（`fingerprint`），从不带密钥。
 - `unpublished[]`：还没发布的 Agent。
-- `system[]`：应用自己用的「系统提供」Agent，不用启用。
+- `system[]`：旧的兜底配置，通常为空。审批流的调用密钥不从这里来，从各账号的启用里读（先发起人，再别的账号）。

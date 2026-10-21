@@ -114,3 +114,14 @@ test('卡片：一个操作还没结束时，卡片上的其他按钮也都不�
   await pending;
   assert.ok(buttons.every(item => !item.disabled));
 });
+
+test('页面文案和现在的做法一致：调用密钥在「我的 Agent」里启用，不让用户去改 infra/secrets.env；不说单据会在重启后重置', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const invoke = await readFile(new URL('../../public-src/nexus-invoke.js', import.meta.url), 'utf8');
+  const poc = await readFile(new URL('../../public-src/nexus-poc.js', import.meta.url), 'utf8');
+  for (const [name, text] of [['nexus-invoke.js', invoke], ['nexus-poc.js', poc]]) {
+    assert.doesNotMatch(text, /secrets\.env[^'`\n]{0,20}(填好)?调用密钥|填好调用密钥/, `${name} 不能让用户把调用密钥写进 secrets.env`);
+    assert.doesNotMatch(text, /单据与审批记录会重置/, `${name}：测试台上单据存在库里，重启不丢`);
+  }
+  assert.match(invoke, /目前没有可调用的发布：[^'`\n]*「我的 Agent」/);
+});

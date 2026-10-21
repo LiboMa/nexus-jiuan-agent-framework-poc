@@ -7,7 +7,7 @@ sequenceDiagram
   P->>I: POST /poc/nexus/invoke（文字 + 附件）
   I->>I: 检查附件：类型 · 文件头 · 大小
   I->>M: credentialFor（用户，发布）
-  M-->>I: 我启用的 → 系统提供的<br/>都没有就 409
+  M-->>I: 我启用的那把<br/>没启用就 409
   I-->>P: 202，立即返回 runId
   par 后台调用
     I->>N: A2A message/stream<br/>Bearer nxa_… · 文字 Part + 文件 Part

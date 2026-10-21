@@ -112,7 +112,7 @@ export function passwordLoginForm(ctx) {
     element('div', { class: 'field' }, element('label', { for: 'poc-login-account' }, '账号'), account),
     element('div', { class: 'field' }, element('label', { for: 'poc-login-password' }, '口令'), password),
     message, submit,
-    element('p', { class: 'quiet-note' }, '两个虚构账号的口令由部署脚本生成，写在 infra/secrets.env。测试环境重启后，单据与审批记录会重置，需要重新登录。'));
+    element('p', { class: 'quiet-note' }, '两个虚构账号的口令由部署脚本生成，写在 infra/secrets.env。测试台重启后，登录状态和审批记录会清空，需要重新登录；单据存在库里，不会丢。'));
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 ---
-subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1
+subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1.0
 date: 2026-10-19
-status: 交付版 v0.1（封板）
+status: 交付版 v0.1.0（封板）
 stamp: 指南
 scope: 编码工具（Claude Code、Codex、Kiro CLI）里的两个 Skill：nexus-ai-operator（Nexus 一侧）与 agent-access（应用一侧）
 audience: Agent 开发、应用开发、接手维护的工程师
@@ -16,7 +16,7 @@ audience: Agent 开发、应用开发、接手维护的工程师
 | | nexus-ai-operator | agent-access |
 |---|---|---|
 | 管什么 | 在 Nexus 上建 Agent、写提示词、试用、建 A2A 发布、看用量 | 在九安 PoC 里连接自己的 Nexus、启用发布、调用测试、停用 |
-| 谁提供 | Nexus 平台（网页生成 API 密钥时下载的接入包） | 本交付包 `skills/agent-access/`（版本 0.1.0） |
+| 在哪 | 仓库里的 `skills/nexus-ai-operator/`（1.1.0，不带任何密钥） | 仓库里的 `skills/agent-access/`（0.1.0） |
 | 用什么身份 | 你的 Nexus 账号，经 API 密钥 | 你的应用账号（会话）+ 你的 Nexus 连接 |
 | 命令 | `python3 scripts/nexus.py …` | `python3 scripts/agent_access.py …` |
 | 运行环境 | Python 3.9+，不装依赖 | Python 3.9+，不装依赖 |
@@ -27,21 +27,17 @@ audience: Agent 开发、应用开发、接手维护的工程师
 
 ## 2. 配置顺序
 
-![配置顺序：在 Nexus 网页生成密钥 A 并下载 operator 接入包，装好后建 Agent 和发布；再生成密钥 B 给 agent-access 连接 Nexus；最后本人给发布签调用密钥，agent-access 启用并调用测试](../assets/diagrams/skills-setup.svg)
+![配置顺序：从仓库导入 nexus-ai-operator，在 Nexus 网页生成密钥 A 连接，建 Agent 和发布；再生成密钥 B 给 agent-access 连接 Nexus；最后本人给发布签调用密钥，agent-access 启用并调用测试](../assets/diagrams/skills-setup.svg)
 
 **每把 API 密钥只给一个地方用。** 第一次连接时 Nexus 会把它换成新的，原来那串随即作废。所以 operator（密钥 A）和应用里的「我的 Nexus」（密钥 B）要各生成一把，不能共用。
 
 ## 3. 配置 nexus-ai-operator
 
-### 3.1 拿到接入包
+### 3.1 导入
 
-- **推荐**：Nexus 网页 <https://nxs-beine1013.tinyboat.blog> 登录 → 「个人设置 › API 密钥」→ 生成一把（建 Agent、发布要 `builder` 档位）。浏览器会同时下载 `nexus-ai-operator` 接入包，里面的 `config/connection.json` 带着平台地址和这把还没用过的密钥。
-- 从 Nexus 技能库下载的接入包只带平台地址、不带密钥：另外在同一个页面生成一把，交给编码工具。
-- **本交付包里不带 operator**：接入包里装的是每个人自己的密钥，不能转交。维护人电脑上那份在 `~/MyDev/LLM/Nexus-AI-strands/Nexus-AI/skills/system_skills/nexus-ai-operator/`（1.1.0），`deploy.sh` 从这里取 `scripts/nexus.py` 打进构件（见第 3.5 节）。
+仓库里的 `skills/nexus-ai-operator/` 就是能直接装的 Skill：`SKILL.md`（给编码工具读）、`README.md`（给人读）、`scripts/nexus.py`、`references/`、`config/instance.example.json`。版本 1.1.0，不带任何密钥。
 
-### 3.2 安装
-
-把整个 `nexus-ai-operator` 文件夹放进编码工具的技能目录，再重启一次编码工具：
+把整个文件夹复制进编码工具的技能目录，再重启一次编码工具：
 
 | 编码工具 | 个人目录（对所有项目生效） | 项目目录（只对这个项目生效） |
 |---|---|---|
@@ -49,21 +45,42 @@ audience: Agent 开发、应用开发、接手维护的工程师
 | Codex | `~/.agents/skills/nexus-ai-operator/`（较早的版本是 `~/.codex/skills/`） | `<项目>/.agents/skills/nexus-ai-operator/` |
 | Kiro CLI | `~/.kiro/skills/nexus-ai-operator/` | `<项目>/.kiro/skills/nexus-ai-operator/` |
 
-不支持 Skills 的工具：把 `SKILL.md` 交给它当说明，它照着运行 `scripts/nexus.py` 就行。
+例如装到 Claude Code，并把平台地址指向你们自己的 Nexus：
+
+```bash
+mkdir -p ~/.claude/skills
+cp -R skills/nexus-ai-operator ~/.claude/skills/nexus-ai-operator
+cd ~/.claude/skills/nexus-ai-operator
+cp config/instance.example.json config/instance.json
+# 编辑 config/instance.json：{"origin": "https://<你们的 Nexus 地址>"}
+# 线上 Nexus AI 的实际地址：https://d3u3hj2us186y.cloudfront.net
+python3 scripts/nexus.py --help
+```
+
+- 不支持 Skills 的工具：把 `SKILL.md` 交给它当说明，它照着运行 `scripts/nexus.py` 就行。
+- 也可以不用仓库里这份：在你们 Nexus 的网页「个人设置 › API 密钥」生成密钥时，浏览器会同时下载一份接入包，里面已经带着平台地址和这把密钥。平台比 1.1.0 新时，用平台下载的那份。
+- 平台地址也可以不写进文件，改用环境变量 `NEXUS_ORIGIN`，或者 `login --origin`。
+
+### 3.2 生成 API 密钥
+
+在你们 Nexus 的网页登录（线上 Nexus AI 的实际地址：<https://d3u3hj2us186y.cloudfront.net/>） →「个人设置 › API 密钥」→ 生成一把。建 Agent、发布要 `builder` 档位。这把就是第 2 节说的密钥 A，只给 nexus-ai-operator 用。
 
 ### 3.3 连接
 
-- 接入包自带密钥时，对编码工具说「用 nexus-ai-operator 连接 Nexus」。它会运行 `login --client claude_code`（或 `codex`、`kiro`），连接成功后包里的密钥文件自动删除。
-- 没带密钥时，把平台地址和密钥交给它，密钥只经标准输入：
+把密钥交给编码工具，说「用 nexus-ai-operator 连接 Nexus」。它会这样运行，密钥只经标准输入：
 
-  ```bash
-  python3 scripts/nexus.py login --origin https://nxs-beine1013.tinyboat.blog --token-stdin --client claude_code <<'EOF'
-  <密钥 A>
-  EOF
-  python3 scripts/nexus.py whoami
-  ```
-- 之后访问凭证自动续期、连接密钥自动轮换，你和编码工具都不用再碰任何密钥。凭证存在本机 `~/.nexus/`：**不读、不复制、不打印**。
-- 多套环境用 `--profile` 分开。维护人电脑上这套 Nexus 的 profile 是 `beine1013`。
+```bash
+python3 scripts/nexus.py login --token-stdin --client claude_code <<'EOF'
+<密钥 A>
+EOF
+python3 scripts/nexus.py whoami
+```
+
+- `whoami` 显示的是你自己，就连好了。
+- 第一次连接时 Nexus 会把这把密钥换成新的，对话里出现过的那串随即作废。之后访问凭证自动续期、连接密钥自动轮换，你和编码工具都不用再碰任何密钥。
+- 凭证存在本机 `~/.nexus/`：**不读、不复制、不打印**。
+- `--client` 取 `claude_code`、`codex`、`kiro`、`other`，平台在「最近使用」里显示主机名，方便认出这把密钥。
+- 多套环境（比如测试 Nexus 和生产 Nexus）用 `--profile <名称>` 分开。
 
 ### 3.4 用它做什么
 
@@ -74,7 +91,7 @@ audience: Agent 开发、应用开发、接手维护的工程师
 
 ### 3.5 部署脚本也用到它
 
-服务端「我的 Nexus」连接每个账号的 Nexus 时，用的是同一个 `nexus.py`。`deploy.sh` 默认从第 3.1 节那个路径取它，打进构件的 `operator/scripts/nexus.py`；换了路径时用环境变量 `NEXUS_OPERATOR_SCRIPT=<路径>/scripts/nexus.py` 指过去。只打包这一个脚本，不带任何凭证。
+服务端「我的 Nexus」连接每个账号的 Nexus 时，用的是同一个 `nexus.py`。`deploy.sh` 默认取仓库里的 `skills/nexus-ai-operator/scripts/nexus.py`，打进构件的 `operator/scripts/nexus.py`；要换版本时用环境变量 `NEXUS_OPERATOR_SCRIPT=<路径>/scripts/nexus.py` 指过去。只打包这一个脚本，不带任何凭证。
 
 ## 4. 配置 agent-access（应用自己的 Skill）
 
@@ -107,7 +124,7 @@ python3 -m unittest discover -s skills/agent-access/tests        # 13 个测试
 
 ### 4.3 和页面的关系
 
-命令行和应用的「Nexus Agent」页走同一套接口 `agent-access-v1`（[Agent 注册与发现设计](../specs/2026-10-17-agent-registry-design.md)第 12 节）：在一边连接、启用，另一边马上看得到。端到端测试 `access.e2e.mjs` 就是用这个命令行走一遍连接、启用、调用、停用。
+命令行和应用的「Nexus Agent」页走同一套接口 `agent-access-v1`（`skills/agent-access/references/interface.md`）：在一边连接、启用，另一边马上看得到。端到端测试 `access.e2e.mjs` 就是用这个命令行检查审核员在页面上的连接和启用，再调用一次；审核员本人启用的项，测试只用不动（不换密钥、不停用）。
 
 ## 5. 两个 Skill 一起用：四步使用逻辑
 
@@ -130,7 +147,7 @@ python3 -m unittest discover -s skills/agent-access/tests        # 13 个测试
 | `enable` 退出码 4，`POC_CALL_KEY_INVALID` | 调用密钥无效、被吊销，或不属于这个发布 | 本人在网页上给这个发布签一把新的 |
 | `enable` 退出码 6，`POC_CARD_UNAVAILABLE` | 发布暂停了，或 A2A 没打开 | 在 Nexus 上恢复发布、打开 A2A（operator 或网页） |
 | 退出码 8，`POC_NEXUS_UNREACHABLE` | 暂时连不上 Nexus | 稍后重试；**不要**因此换新的 API 密钥，连接还在 |
-| 编码工具找不到 Skill | 目录放错了，或没重启 | 对照第 3.2、4.1 节的路径；文件夹名要和 `SKILL.md` 里的 `name` 一致 |
+| 编码工具找不到 Skill | 目录放错了，或没重启 | 对照第 3.1、4.1 节的路径；文件夹名要和 `SKILL.md` 里的 `name` 一致 |
 
 ## 7. 安全底线
 

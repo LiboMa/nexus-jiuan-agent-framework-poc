@@ -1,0 +1,13 @@
+flowchart TB
+  s1["① Nexus 网页 · 确认 Agent 已发布<br/>互联中心 › 对外发布，A2A 已打开"]
+  s2["② Nexus 网页 · 生成 API 密钥<br/>个人设置 › API 密钥，只读档位就够"]
+  s3["③ 前端 · 登录，打开「Nexus Agent」页<br/>左侧「Nexus › Nexus Agent」"]
+  s4["④ 前端 · 连接 Nexus<br/>「我的 Nexus 连接」粘贴 API 密钥 → 连接"]
+  s5["⑤ Nexus 网页 · 签发调用密钥<br/>互联中心 › 对外发布，每个发布一把"]
+  s6["⑥ 前端 · 启用 Agent<br/>「我的 Agent」› 待启用 › 启用，粘贴调用密钥"]
+  s7["⑦ 前端 · 调用测试<br/>选发布 · 输入方式 · 附件 → 发送"]
+  s8["⑧ 前端 · 在审批流里用<br/>来单 → AI 初审 → 人工复核"]
+  s1 --> s2 --> s3 --> s4 --> s5 --> s6 --> s7 --> s8
+  class s1,s2,s5 warn
+  class s3,s4,s6,s7 poc
+  class s8 good

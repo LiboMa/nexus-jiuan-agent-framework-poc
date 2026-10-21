@@ -85,6 +85,15 @@ test('shell 脚本里变量名后面不能紧跟中文等非 ASCII 字符（bash
   }
 });
 
+test('deploy.sh 默认用仓库里固定版本的 nexus-ai-operator（skills/nexus-ai-operator，1.1.0），可以用 NEXUS_OPERATOR_SCRIPT 换；仓库里这份不带任何密钥', async () => {
+  const deploy = await readFile(infra('deploy.sh'), 'utf8');
+  assert.match(deploy, /^OPERATOR_SCRIPT="\$\{NEXUS_OPERATOR_SCRIPT:-\$POC_DIR\/\.\.\/skills\/nexus-ai-operator\/scripts\/nexus\.py\}"$/m);
+  const skill = fileURLToPath(new URL('../../../../skills/nexus-ai-operator/', import.meta.url));
+  assert.match(await readFile(path.join(skill, 'SKILL.md'), 'utf8'), /^version: "1\.1\.0"$/m);
+  await readFile(path.join(skill, 'scripts/nexus.py'), 'utf8');
+  for (const name of ['config/connection.json', 'config/instance.json']) await assert.rejects(readFile(path.join(skill, name)), `${name} 不能进仓库`);
+});
+
 test('deploy.sh 开头的变量定义在 set -u 下能跑通（变量要先定义再引用）', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   const prelude = deploy.slice(0, deploy.indexOf('\nsay() '));
@@ -97,6 +106,28 @@ test('deploy.sh：secrets.env 没有 REGISTRY_KEY 时追加一条（openssl 32 �
   assert.match(deploy, /grep -q '\^REGISTRY_KEY=' "\$SECRETS"/);
   assert.match(deploy, /REGISTRY_KEY=\$\(openssl rand -base64 32\)/);
   assert.equal(/^NEXUS_API_KEY=/m.test(deploy), false);
+});
+
+test('Agent 的密钥不经过 secrets.env：deploy.sh 新建的 secrets.env 里没有调用密钥那一行，也不提示去填', async () => {
+  const deploy = await readFile(new URL('../../../infra/deploy.sh', import.meta.url), 'utf8');
+  const template = deploy.slice(deploy.indexOf('<<SECRETSFILE'), deploy.indexOf('\nSECRETSFILE\n'));
+  assert.ok(template.length > 20, '要有新文件模板');
+  assert.doesNotMatch(template, /NEXUS_A2A_KEY|NEXUS_API_KEY|nxa_/);
+  assert.doesNotMatch(deploy, /调用密钥留空|填好后再运行/);
+});
+
+test('端到端测试不读 secrets.env 里的 Agent 密钥：用审核员本人在前端的连接和启用；也不依赖「系统提供」那一项', async () => {
+  const e2e = await readFile(fileURLToPath(new URL('../e2e/run.sh', import.meta.url)), 'utf8');
+  assert.doesNotMatch(e2e, /E2E_KNOWLEDGE_A2A_KEY|E2E_NEXUS_API_KEY/);
+  for (const name of ['access.e2e.mjs', 'attachments.e2e.mjs', 'poc.e2e.mjs']) {
+    const text = await readFile(fileURLToPath(new URL(`../e2e/${name}`, import.meta.url)), 'utf8');
+    assert.doesNotMatch(text, /E2E_KNOWLEDGE_A2A_KEY|E2E_NEXUS_API_KEY|\.system\b|系统提供/, name);
+  }
+});
+
+test('交接仓库里没有进度看板（tools/），run.sh 照样能跑：报告器存在才多记一份结果', async () => {
+  const e2e = await readFile(fileURLToPath(new URL('../e2e/run.sh', import.meta.url)), 'utf8');
+  assert.match(e2e, /\[\[ -f "\$ROOT\/tools\/progress\/reporter\.mjs" \]\]/);
 });
 
 test('端到端测试另记一份结果给进度看板：用 tools/progress/reporter.mjs 写到 evidence/e2e/last-run.jsonl，终端照样是 spec 输出', async () => {

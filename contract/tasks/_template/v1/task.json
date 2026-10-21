@@ -27,7 +27,7 @@
   ],
   "files": false,
   "deferred": false,
-  "description": "<这个任务做什么、结果给谁用>",
+  "description": "<这个任务做什么；结果是推进流程，还是只是提醒>",
   "input": "input.schema.json",
   "output": "output.schema.json",
   "checks": [
@@ -37,7 +37,7 @@
     }
   ],
   "outcome": {
-    "field": "<输出里决定流程走向的字段；不推进流程的任务填 null>",
+    "field": "<输出里决定流程走向的字段名。不推进流程的任务：把整个 outcome 写成 null，不是只把 field 写成 null>",
     "labels": {},
     "next": "<下一步>"
   },
@@ -48,9 +48,9 @@
     "<哪些东西变了，只标记、由人决定要不要重跑>"
   ],
   "limits": {
-    "maxRequestChars": 90000,
-    "maxAnswerChars": 30000,
-    "timeoutMs": 180000,
+    "maxRequestChars": "<最大输入 + 2000>",
+    "maxAnswerChars": "<最大输出 × 2>",
+    "timeoutMs": "<毫秒：一问一答的检查类任务默认 90000，最多 180000>",
     "perUserPerMinute": "<可选：人发起时每人每分钟几次>",
     "maxTurns": "<可选：多轮对话最多几轮>"
   },
@@ -58,5 +58,5 @@
     "<会发给 Agent 的数据类别，九安数据治理要登记>"
   ],
   "sideEffects": "<none 只读 | proposes 只提建议，由人确认后九安自己改>",
-  "doc": "docs/delivery/<任务文档>.md"
+  "doc": "docs/tasks/<任务名>.md"
 }

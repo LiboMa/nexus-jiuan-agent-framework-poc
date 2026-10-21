@@ -1,7 +1,7 @@
 flowchart LR
   q{"出了什么问题？"}
   code["应用代码回滚<br/>归档包（只留 14 天）→ releases/current.tgz<br/>→ SSM 重启 → 健康检查 → 记 CHANGELOG"]
-  key["密钥失效或填错<br/>改 secrets.env → deploy.sh --code-only<br/>（代码回滚不动密钥）"]
+  key["Agent 调用密钥失效 → Agent 页「换密钥」<br/>（不改文件、不部署、不重启）<br/>口令、REGISTRY_KEY 填错 → 改 secrets.env → deploy.sh --code-only<br/>（代码回滚不动密钥）"]
   param["栈参数改错<br/>改回原值 → deploy.sh --code-only"]
   tpl{"模板更新<br/>失败了？"}
   auto["CloudFormation 自动回滚<br/>什么都不用做"]

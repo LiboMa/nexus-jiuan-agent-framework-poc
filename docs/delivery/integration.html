@@ -93,7 +93,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>以补丁和独立模块的形式并入九安</h1>
+v0.1.0</span>以补丁和独立模块的形式并入九安</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
     <tr><th scope="row">状态</th><td>交付版
@@ -158,8 +158,8 @@ href="agent-framework.html">Agent
 独立建议）」由它取代，其余分析仍然有效。</p>
 <p><strong>2026-10-19 测试台</strong>：PoC
 实例现在跑的是九安开发包的副本（<code>poc/bench/build-jiuan.sh</code>
-构建，补丁按顺序打进 <code>patches/jiuan-v0.5.3/</code>），用九安自己的
-MySQL
+构建：复制开发包，再按文件名顺序打 <code>patches/jiuan-v0.5.3/</code>
+里的补丁；这个目录现在还是空的，副本和开发包一样），用九安自己的 MySQL
 存储、平台存储、连接器、调用中间件和流水线运行器（<code>P/bench/</code>、<code>P/jiuan-mysql.mjs</code>）。下表里「PoC
 怎么用」写的是第一期的做法；单据、来单原文和来单编号已经在九安的库和键值状态里，审批流状态、限流和运行记录还在内存里。</p>
 </blockquote>
@@ -221,8 +221,8 @@ alt="集成面：插件经组合根注册（S1）、经模型接入口（S4）�
 <td><code>handle({req,<wbr>url,<wbr>path,<wbr>session,<wbr>res,<wbr>body}) → Promise&lt;boolean&gt;</code>；可选审计回调
 <code>recordAuth</code> / <code>recordAccessDenied</code> /
 <code>recordPreAuthDenied</code></td>
-<td>三个插件串起来（<code>P/<wbr>poc-<wbr>app.<wbr>mjs:80</code>）：审批流、「我的
-Nexus」、调用测试</td>
+<td>三个插件串起来（<code>P/<wbr>poc-<wbr>app.<wbr>mjs:97</code>、<code>107-<wbr>110</code>）：审批流、「我的
+Nexus」、调用测试；测试台上不认的请求再交给九安自己的平台接口</td>
 <td>库代码不改；启动脚本要组合（第 4 节 S1）</td>
 </tr>
 <tr>
@@ -230,7 +230,7 @@ Nexus」、调用测试</td>
 <td><code>J/<wbr>src/<wbr>analysis-<wbr>runtime-<wbr>services.<wbr>mjs:60</code></td>
 <td><code>{model,<wbr> dataPolicy,<wbr> advisory(input),<wbr> reviewDraftEvidence(input)}</code>，出错抛
 <code>AI_<wbr>*</code> 错误码</td>
-<td><code>P/<wbr>server.<wbr>mjs:40-<wbr>42</code> 注入
+<td><code>P/<wbr>server.<wbr>mjs:54-<wbr>55</code> 注入
 <code>P/<wbr>nexus/<wbr>model-<wbr>client.<wbr>mjs</code></td>
 <td>不改</td>
 </tr>
@@ -280,7 +280,7 @@ Nexus」、调用测试</td>
 <td><code>J/<wbr>analysis-<wbr>server.<wbr>mjs:13</code></td>
 <td>写死</td>
 <td>PoC
-在自己的包装层里另提供（<code>P/<wbr>poc-<wbr>app.<wbr>mjs:17-<wbr>22、85-<wbr>87</code>），不能交付</td>
+在自己的包装层里另提供（<code>P/<wbr>poc-<wbr>app.<wbr>mjs:19-<wbr>24</code>、<code>115</code>、<code>138</code>），不能交付</td>
 <td><strong>要改 1 行</strong></td>
 </tr>
 <tr>
@@ -293,10 +293,11 @@ Nexus」、调用测试</td>
 </tbody>
 </table>
 </div>
-<p>PoC 从九安导入的符号都集中在
-<code>P/jiuan.mjs:10-33</code>（按路径动态导入，目录由
-<code>JIUAN_CODE_DIR</code>
-决定）。其中模型合同那一组（<code>ADVISORY_TASK</code>、<code>ADVISORY_SCHEMA</code>、校验函数、数据治理函数）是有文档的公开接口；<code>createAnalysisApp</code>、<code>createAnalysisRuntimeServices</code>、<code>createAnalysisRuntimeRegistry</code>
+<p>PoC
+从九安导入的符号集中在两个文件：<code>P/jiuan.mjs</code>（服务端、模型合同）和测试台用的
+<code>P/jiuan-mysql.mjs</code>（MySQL
+存储、平台部分），都按路径动态导入，目录由 <code>JIUAN_CODE_DIR</code>
+决定。其中模型合同那一组（<code>ADVISORY_TASK</code>、<code>ADVISORY_SCHEMA</code>、校验函数、数据治理函数）是有文档的公开接口；<code>createAnalysisApp</code>、<code>createAnalysisRuntimeServices</code>、<code>createAnalysisRuntimeRegistry</code>
 是九安启动脚本自己也在用的组合根接口；其余（<code>createAnalysisAuth</code>、<code>normalizeAnalysisReport</code>、<code>createAnalysisAiAdviceService</code>
 的内部行为）是内部细节，升级时最容易变。</p>
 <h1 id="3-poc-每个文件归哪一类">3. PoC 每个文件归哪一类</h1>
@@ -354,8 +355,14 @@ REST 客户端；账号键改成 <code>principalId</code> 的哈希</td>
 </tr>
 <tr>
 <td>D</td>
-<td><code>nexus/<wbr>invoke.<wbr>mjs</code>、<code>nexus/<wbr>runs.<wbr>mjs</code>、<code>nexus/<wbr>routes.<wbr>mjs</code>、<code>nexus/<wbr>keys.<wbr>mjs</code>、<code>nexus/<wbr>governance.<wbr>mjs</code>、<code>config.<wbr>mjs</code></td>
-<td>限流和运行记录从内存换成持久化（运行记录<strong>要带公司</strong>、按公司过滤、设保留期、原始返回加密存）；治理范围按主机配置生成；密钥改用主机的密钥文件</td>
+<td><code>nexus/<wbr>invoke.<wbr>mjs</code>、<code>nexus/<wbr>runs.<wbr>mjs</code>、<code>nexus/<wbr>routes.<wbr>mjs</code>、<code>nexus/<wbr>governance.<wbr>mjs</code>、<code>config.<wbr>mjs</code></td>
+<td>限流和运行记录从内存换成持久化（运行记录<strong>要带公司</strong>、按公司过滤、设保留期、原始返回加密存）；治理范围按主机配置生成；调用密钥从启用记录（<code>stores.<wbr>enablements</code>）取</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>nexus/<wbr>system-<wbr>key.<wbr>mjs</code></td>
+<td>审批流找调用密钥的顺序（发起人启用的 →
+别的账号启用的）沿用；改成从九安「Agent 接入」的启用记录读</td>
 </tr>
 <tr>
 <td>D</td>
@@ -385,7 +392,8 @@ REST 客户端；账号键改成 <code>principalId</code> 的哈希</td>
 </tr>
 <tr>
 <td>C</td>
-<td><code>memory-<wbr>store.<wbr>mjs</code>、<code>seed.<wbr>mjs</code>、<code>login.<wbr>mjs</code>、<code>accounts.<wbr>mjs</code>、<code>secrets.<wbr>mjs</code>、<code>jiuan.<wbr>mjs</code>、<code>jiuan-<wbr>path.<wbr>mjs</code></td>
+<td><code>memory-<wbr>store.<wbr>mjs</code>、<code>seed.<wbr>mjs</code>、<code>login.<wbr>mjs</code>、<code>accounts.<wbr>mjs</code>、<code>secrets.<wbr>mjs</code>、<code>nexus/<wbr>keys.<wbr>mjs</code>（<code>secrets.<wbr>env</code>
+里的旧兜底）、<code>jiuan.<wbr>mjs</code>、<code>jiuan-<wbr>path.<wbr>mjs</code>、<code>jiuan-<wbr>mysql.<wbr>mjs</code>、<code>bench/<wbr></code></td>
 <td>主机已有 MySQL
 store、汇联易同步、钉钉登录、<code>analysis.<wbr>json</code>
 账号、挂载的密钥文件；模块形态下九安的东西改成注入</td>
@@ -570,7 +578,7 @@ S1–S6 写成 <code>0001</code>、<code>0002</code>；</li>
   nexus:   { origin, advisoryPublishId, timeoutMs /* 不超过网关 ai-model 的上限 180000 */ },
   host:    { tenantId, store, runtimeRegistry, getConfig, sourceCompanyIds, runWithAttribution, createAdviceService,
              aiContract /* providers/ai-model.mjs 导出的常量和校验函数 */, audit /* 包一层 platformStore.appendChange */, log },
-  secrets: { advisoryCallKey: () =&gt; string, registryKey: Buffer },
+  secrets: { registryKey: Buffer },   // 调用密钥不从这里来：从 stores.enablements 取（各账号或管理员启用时粘贴的）
   roles:   { approvalRoleOf: user =&gt; &#39;reviewer&#39; | &#39;checker&#39; | null },
   stores:  { approvals, enablements, connections, runs },   // 可选，默认用九安键值状态的适配器
   limits:  { invokePerMinute: 5, mePerMinute: 5, attachmentPolicy },
@@ -608,9 +616,10 @@ S1–S6 写成 <code>0001</code>、<code>0002</code>；</li>
 </tr>
 <tr>
 <td>密钥</td>
-<td>审批用的调用密钥作为
-<code>ai-<wbr>model-<wbr>api-<wbr>key</code>（<code>AI_<wbr>API_<wbr>KEY_<wbr>FILE</code>，<code>J/<wbr>src/<wbr>platform/<wbr>secret-<wbr>source.<wbr>mjs:89</code>）；一个
-32 字节的加密密钥文件（替代 <code>REGISTRY_<wbr>KEY</code>）；各用户的
+<td>审批用的调用密钥：管理员在九安「Agent
+接入」里粘贴，九安加密存进自己的存储，不另放密钥文件（<a
+href="handover.html">交接文档</a>第 2.6 节）；一个 32
+字节的加密密钥文件（替代 <code>REGISTRY_<wbr>KEY</code>）；各用户的
 Nexus 连接凭证和调用密钥加密存库</td>
 </tr>
 <tr>

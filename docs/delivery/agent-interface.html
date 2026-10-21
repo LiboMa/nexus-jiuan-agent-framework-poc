@@ -289,7 +289,20 @@ Accept: text/event-stream</code></pre>
 <ul>
 <li>一问一答的任务：每次调用一个新的，<code>jag-</code> 加
 <code>sha256(tenantId|companyId|task|对象编号|对象版本|分区|输入指纹|第几次调用)</code>
-的前 32 位；「修正一次」用同一个。</li>
+的十六进制前 32 位；「修正一次」用同一个。
+<ul>
+<li><code>task</code> 只写任务名，不带版本；没有的项写空串（例如
+<code>scope: tenant</code> 的
+<code>companyId</code>、没有对象的任务）；</li>
+<li>分区：<code>result.partitioned</code>
+的任务按哪一份调用（例如费用类型），不分区的写空串；</li>
+<li>输入指纹：<code>input</code> 的键名逐层排序、不带空格的 JSON
+文字（UTF-8，中文不转义）的 sha256 十六进制；</li>
+<li>第几次调用：这个 AI 步骤第几次调用 Agent，从 1
+开始；自动重试、人点「重试」都加一。</li>
+<li><code>C/envelope/v1/examples/a2a-request.json</code> 的 contextId
+就是按这条算的（第 1 次调用、不分区），可以拿来核对实现。</li>
+</ul></li>
 <li>多轮对话的任务：一段对话一个，由九安生成并保存，后面每一轮都用它；信封里的
 <code>context.conversation</code> 写明九安的会话编号和第几轮。</li>
 <li>同一个会话同时只能跑一轮（<code>conversation_busy</code>），所以重试一定换新的。</li>
@@ -309,28 +322,49 @@ Accept: text/event-stream</code></pre>
 <li>若干个名为 <code>answer</code> 的
 <code>artifact-update</code>：<code>append: true</code>
 的往后接，<strong><code>lastChunk: true</code>
-的是全文，用它替换，不要拼接</strong>（<code>a2a_endpoint.py:272-304</code>）；</li>
+的是全文，用它替换，不要拼接</strong>（<code>a2a_endpoint.py:272-304</code>）；流以
+<code>final</code> 结束却一直没有 <code>lastChunk</code>
+时，用拼起来的文字；</li>
 <li><code>status-update</code>，<code>final: true</code>：<code>completed</code>，或者
 <code>failed</code> / <code>rejected</code> /
 <code>canceled</code>。失败时 <code>metadata.error_code</code>
 是错误码。</li>
 </ol>
 <h2 id="43-断线">4.3 断线</h2>
-<p>流在拿到 <code>final</code> 之前断了，就每 3 秒用
+<p>流在拿到 <code>final</code> 之前断了，就隔 3 秒用
 <code>tasks/get {"id": 任务编号, "historyLength": 0}</code>
-查一次，直到有结果或者到了时限。</p>
+查一次（第一次也先等 3 秒），直到有结果或者到了时限。</p>
 <ul>
-<li>客户端断开不会让 Nexus 停下这一轮，结果会保留 24 小时；</li>
-<li>Nexus
-网关一重启，任务就查不到了（<code>a2a_endpoint.py:19-23</code>），只能重发，会再计费一次。</li>
+<li><p>查到 <code>completed</code>：答案在任务的 <code>artifacts</code>
+里，名为 <code>answer</code> 的那个就是全文；</p></li>
+<li><p>查的时候网络出错、回 429 或
+5xx：当作暂时的，继续查到时限；</p></li>
+<li><p>回 JSON-RPC 错误「任务不存在」（A2A 的
+TaskNotFound，<code>-32001</code>；Nexus
+重启过，或这把密钥不是发起时那把）：按 <code>AI_UNAVAILABLE</code>
+失败（<code>error-map.json</code> 的
+<code>stream_dropped_then_task_not_found</code>）；</p></li>
+<li><p>还没拿到任务编号流就断了：没法查，按 <code>AI_NETWORK</code>
+失败。</p></li>
+<li><p>客户端断开不会让 Nexus 停下这一轮，结果会保留 24 小时；</p></li>
+<li><p>Nexus
+网关一重启，任务就查不到了（<code>a2a_endpoint.py:19-23</code>），只能重发，会再计费一次。</p></li>
 </ul>
 <h2 id="44-时限与取消">4.4 时限与取消</h2>
 <p>九安的统一调用中间件给每次 <code>ai-model</code> 调用设时限，默认 120
 秒，最多 180
-秒（<code>J/src/platform/call-middleware.mjs:16-19、28</code>）。每个任务在
-<code>limits.timeoutMs</code>
-里定自己用多少。时限到了或者对象变了，九安会中止调用：适配层先发
-<code>tasks/cancel</code>，再按 <code>AI_CANCELLED</code> 抛出。</p>
+秒（<code>J/src/platform/call-middleware.mjs:16-19、28</code>），并把它做成传给模型接入口的
+<code>signal</code>。适配层自己不另定总时限，只听
+<code>signal</code>；任务的 <code>limits.timeoutMs</code>
+比中间件的时限短时，再叠一个计时器（<code>AbortSignal.any</code>）。断线后的
+<code>tasks/get</code>、「修正一次」都算在同一个时限里。</p>
+<p>时限到了或者对象变了，九安会中止调用：适配层先发
+<code>tasks/cancel</code>（尽力而为，不等结果），再按
+<code>AI_CANCELLED</code> 抛出。中间件到时限时自己记
+<code>CONNECTOR_TIMEOUT</code>；任务自己的计时器到点也一样发
+<code>tasks/cancel</code>、抛
+<code>AI_CANCELLED</code>，<code>detail.reason</code> 写
+<code>task_timeout</code>，以便和人工中止分开。</p>
 <h2 id="45-长任务">4.5 长任务</h2>
 <p><code>task.json</code> 里 <code>deferred: true</code>
 的任务（例如财务分析）可能超过一次调用的时限。这时：</p>
@@ -447,8 +481,9 @@ Agent。九安不重试，转人工，把理由记进留痕。</li>
 href="agent-framework.html">架构</a>第 6 节）。</li>
 </ol>
 <h2 id="54-修正一次">5.4 修正一次</h2>
-<p>检查不过时，在<strong>同一个 contextId</strong>
-里再发一条消息，列出没过的地方，要求只返回修正后的结果信封。再不过，这次调用就算失败（<code>AI_INVALID_RESPONSE</code>）。</p>
+<p>检查不过时，在<strong>同一个 contextId</strong> 里再发一条消息（新的
+messageId），只带一个文字
+Part：列出没过的地方，要求只返回修正后的完整结果信封。不重发请求信封和文件，靠同一会话里的历史。再不过，这次调用就算失败（<code>AI_INVALID_RESPONSE</code>）。</p>
 <h1 id="6-状态上报">6. 状态上报</h1>
 <p>Nexus
 不推送结果，也没有回调（<code>a2a_endpoint.py:357</code>，<code>pushNotifications: false</code>）。状态分两层：调用本身成没成，看
@@ -508,7 +543,15 @@ A2A 任务状态；业务结论在 <code>output</code> 里，由任务契约的
 <p><code>C/envelope/v1/error-map.json</code> 对所有任务一样：Nexus
 的每种错误（HTTP 状态、JSON-RPC
 错误码、任务失败码）对应九安的哪个模型错误码，AI
-步骤要不要自动重试。</p>
+步骤要不要自动重试。**下表是摘要，两者不一致时以
+<code>error-map.json</code> 为准。**自动重试由 AI
+步骤做（每轮最多一次），不在适配层，也不在调用中间件（<code>ai-model</code>
+的 <code>maxRetries</code> 固定为
+0）。同一个错误码有的重试、有的不重试（例如
+<code>AI_UNAVAILABLE</code>），所以适配层抛的错误除了
+<code>code</code>，还带 <code>autoRetry</code>（命中的那一条的值）和
+<code>detail</code>（HTTP 状态、JSON-RPC 错误码、Nexus
+错误码、任务状态）；AI 步骤只看 <code>autoRetry</code>。</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -542,15 +585,37 @@ A2A 任务状态；业务结论在 <code>output</code> 里，由任务契约的
 <td>否</td>
 </tr>
 <tr>
-<td>任务被拒 <code>message_<wbr>too_<wbr>long</code> 等</td>
+<td>413、<code>-<wbr>32005</code>、<code>-<wbr>32602</code>：请求太大、附件不合规</td>
 <td><code>AI_<wbr>REQUEST_<wbr>INVALID</code></td>
 <td>否</td>
 </tr>
 <tr>
-<td>任务失败 <code>timeout</code>、<code>agent_<wbr>error</code>
-等；503</td>
+<td>任务被拒（<code>rejected</code>）<code>message_<wbr>too_<wbr>long</code>、<code>invalid_<wbr>message</code>、<code>invalid_<wbr>conversation_<wbr>id</code></td>
+<td><code>AI_<wbr>REQUEST_<wbr>INVALID</code></td>
+<td>否</td>
+</tr>
+<tr>
+<td>任务被拒 <code>conversation_<wbr>busy</code></td>
+<td><code>AI_<wbr>RATE_<wbr>LIMIT</code></td>
+<td>是（换新会话）</td>
+</tr>
+<tr>
+<td>任务被拒
+<code>agent_<wbr>unavailable</code>、<code>session_<wbr>unavailable</code>
+等</td>
 <td><code>AI_<wbr>UNAVAILABLE</code></td>
 <td>是</td>
+</tr>
+<tr>
+<td>任务失败 <code>timeout</code>、<code>agent_<wbr>error</code>
+等；503；断线后任务查不到</td>
+<td><code>AI_<wbr>UNAVAILABLE</code></td>
+<td>是</td>
+</tr>
+<tr>
+<td>任务被取消（<code>canceled</code>），或九安中止了调用</td>
+<td><code>AI_<wbr>CANCELLED</code></td>
+<td>否</td>
 </tr>
 <tr>
 <td>连不上</td>
@@ -613,7 +678,8 @@ A2A 任务状态；业务结论在 <code>output</code> 里，由任务契约的
 <tr>
 <td><code>family</code></td>
 <td><code>process</code> 业务流程、<code>finance</code>
-财务、<code>knowledge</code> 知识库</td>
+财务、<code>knowledge</code> 知识库、<code>common</code> 通用（例如
+<code>describe</code>）</td>
 </tr>
 <tr>
 <td><code>mode</code></td>
@@ -690,8 +756,11 @@ A2A 任务状态；业务结论在 <code>output</code> 里，由任务契约的
 值」；</li>
 <li>输出尽量少字段、少状态，原因写进备注。</li>
 </ul></li>
-<li><p><strong>写检查代码和例子</strong>：至少一对「请求 +
-结果」，跑通信封检查和任务检查。</p></li>
+<li><p><strong>写检查代码和例子</strong>：<code>checks</code> 里 Schema
+管不到的检查写成
+<code>checks.mjs</code>（<code>export function check(result, request)</code>，返回问题列表，空数组表示通过；参考
+<code>C/tasks/first_review/v1/checks.mjs</code>）。例子至少三个结果：通过、不通过、declined，每个结果配一个自己的请求，<code>requestId</code>
+一一对应；都跑通信封检查和任务检查。</p></li>
 <li><p><strong>登记</strong>：在 <code>C/tasks/index.json</code>
 加一行；写一份任务文档（照<a
 href="first-review-contract.html">单据初审</a>的格式）。</p></li>

@@ -516,7 +516,7 @@ diff -ruN a/nexus-invoke.js b/nexus-invoke.js
 +  }
 +
 +  const node = panel('调用测试', '经 A2A 调用，记在 Nexus 发布者名下（每次约 0.05 美元）；每个账号每分钟最多 5 次。', element('div', { class: 'poc-invoke', id: 'poc-invoke' },
-+    callable.length ? null : element('div', { class: 'note-block amber' }, '目前没有可调用的发布：需要已发布、打开 A2A，并在 infra/secrets.env 填好调用密钥。'),
++    callable.length ? null : element('div', { class: 'note-block amber' }, '目前没有可调用的发布：先在上面「我的 Agent」里启用一个（粘贴这个发布的调用密钥）。'),
 +    element('div', { class: 'field' }, element('label', { for: 'poc-invoke-target' }, '调用哪个发布'), target), cardLine,
 +    element('fieldset', { class: 'poc-choice' }, element('legend', {}, '输入方式'),
 +      element('label', { for: 'poc-invoke-mode-text' }, modes.text, '自由文本'),
@@ -763,7 +763,7 @@ diff -ruN a/nexus-poc.js b/nexus-poc.js
 +    element('div', { class: 'field' }, element('label', { for: 'poc-login-account' }, '账号'), account),
 +    element('div', { class: 'field' }, element('label', { for: 'poc-login-password' }, '口令'), password),
 +    message, submit,
-+    element('p', { class: 'quiet-note' }, '两个虚构账号的口令由部署脚本生成，写在 infra/secrets.env。测试环境重启后，单据与审批记录会重置，需要重新登录。'));
++    element('p', { class: 'quiet-note' }, '两个虚构账号的口令由部署脚本生成，写在 infra/secrets.env。测试台重启后，登录状态和审批记录会清空，需要重新登录；单据存在库里，不会丢。'));
 +}
 +
 +// ---------------------------------------------------------------------------

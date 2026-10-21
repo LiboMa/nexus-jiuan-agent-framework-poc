@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="data:,">
-<title>客户部署路线：从 v0.1 到九安上线</title>
+<title>客户部署路线：从 v0.1.0 到九安上线</title>
 <style>
 :root{
   --paper:#F4F5F7; --sheet:#FCFCFD;
@@ -93,11 +93,11 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>客户部署路线：从 v0.1 到九安上线</h1>
+v0.1.0</span>客户部署路线：从 v0.1.0 到九安上线</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
-    <tr><th scope="row">状态</th><td>建议稿（从 v0.1
-到九安上线的路线；待项目负责人确认）<span class="stamp">路线</span></td></tr>
+    <tr><th scope="row">状态</th><td>建议稿
+v2（部署方式已定：九安自己适配，我们用代码协助部署；其余待项目负责人确认）<span class="stamp">路线</span></td></tr>
     <tr><th scope="row">范围</th><td>九安审核平台（客户环境）、Nexus
 上的审核 Agent、我们的测试台</td></tr>
     <tr><th scope="row">读者</th><td>项目负责人、应用开发、九安团队</td></tr>
@@ -108,8 +108,8 @@ v0.1</span>客户部署路线：从 v0.1 到九安上线</h1>
 <ul>
 <li><a href="#1-结论从哪里入手" id="toc-1-结论从哪里入手">1.
 结论：从哪里入手</a></li>
-<li><a href="#2-现在在哪v01" id="toc-2-现在在哪v01">2.
-现在在哪（v0.1）</a></li>
+<li><a href="#2-现在在哪v010" id="toc-2-现在在哪v010">2.
+现在在哪（v0.1.0）</a></li>
 <li><a href="#3-整体部署要部署哪三块" id="toc-3-整体部署要部署哪三块">3.
 「整体部署」要部署哪三块</a></li>
 <li><a href="#4-分阶段怎么走" id="toc-4-分阶段怎么走">4.
@@ -120,21 +120,24 @@ v0.1</span>客户部署路线：从 v0.1 到九安上线</h1>
 <li><a href="#阶段-1测试台上跑通-mvp第二份计划我们做"
 id="toc-阶段-1测试台上跑通-mvp第二份计划我们做">阶段 1：测试台上跑通
 MVP（第二份计划，我们做）</a></li>
-<li><a href="#阶段-2九安测试环境九安做我们支持"
-id="toc-阶段-2九安测试环境九安做我们支持">阶段
-2：九安测试环境（九安做，我们支持）</a></li>
+<li><a href="#阶段-2九安测试环境九安适配我们用代码协助部署"
+id="toc-阶段-2九安测试环境九安适配我们用代码协助部署">阶段
+2：九安测试环境（九安适配，我们用代码协助部署）</a></li>
 <li><a href="#阶段-3试运行" id="toc-阶段-3试运行">阶段
 3：试运行</a></li>
 <li><a href="#阶段-4生产上线" id="toc-阶段-4生产上线">阶段
 4：生产上线</a></li>
 </ul></li>
-<li><a href="#5-第一周做什么" id="toc-5-第一周做什么">5.
+<li><a href="#5-我们交付的部署代码部署工具包"
+id="toc-5-我们交付的部署代码部署工具包">5.
+我们交付的部署代码（部署工具包）</a></li>
+<li><a href="#6-第一周做什么" id="toc-6-第一周做什么">6.
 第一周做什么</a></li>
-<li><a href="#6-要九安和客户提供的" id="toc-6-要九安和客户提供的">6.
+<li><a href="#7-要九安和客户提供的" id="toc-7-要九安和客户提供的">7.
 要九安和客户提供的</a></li>
-<li><a href="#7-风险" id="toc-7-风险">7. 风险</a></li>
-<li><a href="#8-要你先回答的" id="toc-8-要你先回答的">8.
-要你先回答的</a></li>
+<li><a href="#8-风险" id="toc-8-风险">8. 风险</a></li>
+<li><a href="#9-已经回答的问题" id="toc-9-已经回答的问题">9.
+已经回答的问题</a></li>
 </ul>
 </nav>
 <main id="main">
@@ -151,8 +154,8 @@ id="toc-阶段-2九安测试环境九安做我们支持">阶段
 节要九安拍板的 8 件事。</li>
 </ul></li>
 <li><strong>你批准设计稿之后，我这边马上开工第二份计划</strong>：在测试台上写补丁
-0001–0006，让初审 MVP 跑通（第 4 节阶段 1）。其中 0001–0003
-是通用层，不依赖九安的决定，可以先写。</li>
+0001–0006 和部署工具包（第 5 节），让初审 MVP 跑通（第 4 节阶段
+1）。其中 0001–0003 是通用层，不依赖九安的决定，可以先写。</li>
 <li><strong>选定生产用的 Nexus 环境</strong>，在上面建审核
 Agent（<code>first_review@1</code>）的发布。</li>
 </ol>
@@ -161,9 +164,14 @@ Agent（<code>first_review@1</code>）的发布。</li>
 Nexus 上的
 Agent。我们的测试台（<code>andon-finance.tinyboat.blog</code>）一直留在我们这边，只用来验收补丁，只放虚构数据。所以
 PoC 测试台自己的那些上生产前事项（源站明文 HTTP、<code>deploy.sh</code>
-的回滚缺口等，<a href="code-review-2026-10-17.html">代码评审</a>第 4
-节第 1、2、10、11
+的回滚缺口等，<a href="handover.html">交接文档</a>第 6.1 节第
+1、2、10、11
 条）<strong>不挡客户部署</strong>；前提是测试台上永远不放真实单据。</p>
+<p><strong>部署方式</strong>（2026-10-19
+定）：九安拿到补丁和代码后，在自己的环境里自己适配；<strong>部署由我们用代码协助完成</strong>。我们交付一套部署工具包（第
+5 节），接进九安现有的 Gitea Actions + Docker Compose
+流水线。九安的人或他们的编码工具运行它，就能完成打补丁、测试、部署、检查，不靠手工步骤。只有一步必须人手做：发布者本人在
+Nexus 网页上签发调用密钥。</p>
 <figure>
 <a href="../assets/diagrams/rollout-phases.svg" class="figure-link"
 target="_blank" rel="noopener"><img
@@ -172,7 +180,7 @@ alt="五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环�
 <figcaption>五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环境 →
 试运行 → 生产上线；每一步都有进入下一步的门槛</figcaption>
 </figure>
-<h1 id="2-现在在哪v01">2. 现在在哪（v0.1）</h1>
+<h1 id="2-现在在哪v010">2. 现在在哪（v0.1.0）</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -206,9 +214,10 @@ alt="五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环�
 </tr>
 <tr>
 <td>现在审批流用的「九安审核AI」</td>
-<td>可用；偶发返回不合法的 JSON（<a href="handover.html">交接文档</a>第
-6 节第 12 条）</td>
-<td>新提示词里一并改掉</td>
+<td>可用（前提：至少一个账号在「我的 Agent」里启用了它）；偶发输出不合法
+JSON 的问题已在请求里加输出规则处理（<a
+href="handover.html">交接文档</a>第 6 节第 12 条）</td>
+<td>新提示词里把输出规则固定下来</td>
 </tr>
 <tr>
 <td>「我的 Nexus」（每个账号连接自己的 Nexus）</td>
@@ -246,7 +255,7 @@ alt="五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环�
 <td><strong>九安侧</strong></td>
 <td>补丁 0001–0006 打进九安真实代码线；「Agent
 接入」里启用发布、粘贴调用密钥；路由表；规则发布；任务开关</td>
-<td>我们出补丁和说明；九安评审、合入、部署、配置</td>
+<td>九安适配、评审、合入；我们交付补丁和部署工具包，用代码协助部署</td>
 <td>九安的测试环境 → 生产环境</td>
 </tr>
 <tr>
@@ -290,8 +299,10 @@ href="first-review-contract.html">初审契约</a>）</td>
 </tr>
 <tr>
 <td>前置 3</td>
-<td>生产用哪一套 Nexus：九安自建，还是用我们这套
-<code>nxs-<wbr>beine1013</code>（旧部署模板，要先加固）</td>
+<td>生产用哪一套 Nexus：<strong>已定</strong>，用另外一套已经建成的线上
+Nexus AI（<a
+href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>）；我们的测试台仍连
+<code>nxs-<wbr>beine1013</code></td>
 <td>决定 Agent 发布到哪里、名片地址、网络怎么通</td>
 <td>项目负责人 + 九安</td>
 </tr>
@@ -339,6 +350,9 @@ MVP（第二份计划，我们做）</h2>
 <li>补丁放进
 <code>patches/jiuan-v0.5.3/</code>，<code>build-jiuan.sh</code>
 打进副本，<code>deploy.sh</code> 部署到测试台。</li>
+<li><strong>部署工具包</strong>（第 5
+节）和补丁一起写，先在我们的测试台上用它走一遍：打补丁、测试、检查、Nexus
+侧配方、启用、验收测试。</li>
 <li>端到端测试覆盖这几种情况：
 <ul>
 <li>来单自动初审；</li>
@@ -348,22 +362,29 @@ MVP（第二份计划，我们做）</h2>
 <li>两个人同时操作，后到的回 409。</li>
 </ul></li>
 </ol>
-<h2 id="阶段-2九安测试环境九安做我们支持">阶段
-2：九安测试环境（九安做，我们支持）</h2>
+<h2 id="阶段-2九安测试环境九安适配我们用代码协助部署">阶段
+2：九安测试环境（九安适配，我们用代码协助部署）</h2>
 <p>进入阶段 3
-的门槛：九安评审过补丁（两处安全相关的改动单独评审），九安测试环境上的端到端测试通过。</p>
+的门槛：九安评审过补丁（两处安全相关的改动单独评审），九安测试环境上的部署检查和验收测试都通过。</p>
 <ol type="1">
-<li>在九安真实代码线上重新生成补丁、定稿。适配层和契约同时作为独立目录交付，九安以后升级时直接换文件。</li>
-<li>九安按自己的流程合入、部署到测试环境（MySQL 8.0，和
-<code>compose.test.yaml</code> 一致）。</li>
-<li>配置：
+<li><strong>定稿</strong>：在九安真实代码线（前置 2）上用
+<code>apply-patches.sh</code>
+试打补丁，打不上的地方改好，补丁定稿。适配层和契约同时作为独立目录交付，九安以后升级时直接换文件。</li>
+<li><strong>九安适配</strong>：九安在自己的分支上运行工具包，按自己的环境和习惯改，比如界面、配置方式。契约测试和适配层测试加进九安的
+CI，改坏了接口当场就报。</li>
+<li><strong>部署</strong>：我们协助九安，用他们现有的 Gitea Actions +
+Docker Compose 流水线（<code>deploy/gitea/</code>）部署到测试环境（MySQL
+8.0）。流水线不用加新密钥：调用密钥存在「Agent
+接入」的启用记录里，用九安已有的数据密钥加密。部署后自动跑部署检查。</li>
+<li><strong>配置</strong>：
 <ul>
 <li>管理员在「Agent 接入」里填发布编号、粘贴调用密钥（发布者本人在 Nexus
-网页签发），九安当场验证名片和密钥；</li>
+网页签发），也可以用启用脚本，密钥只经标准输入。九安当场验证名片和密钥；</li>
 <li>填好路由表（单据类型 → 发布）；</li>
 <li>复核人发布规则。</li>
 </ul></li>
 <li>接上汇联易测试租户的真实同步。凭据由九安放进自己的密钥源，我们不经手。</li>
+<li>对九安测试环境跑验收测试。</li>
 <li>九安开发者需要时，按 <a href="skills-guide.html">Skills
 配置指南</a>装两个 Skill，自己调试 Agent。</li>
 </ol>
@@ -387,10 +408,77 @@ MVP（第二份计划，我们做）</h2>
 href="handover.html">交接文档</a>第 2.5 节）。</li>
 <li>回退办法：关掉任务开关就回到纯人工复核，业务不受影响。上线前演练一次。</li>
 <li>上线后：财务类、知识库类任务和网关层（多轮对话、长任务、租户级调用）按<a
-href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
-节排期。</li>
+href="agent-framework.html">Agent 接入框架</a>第 0
+节的「以后」排期。</li>
 </ul>
-<h1 id="5-第一周做什么">5. 第一周做什么</h1>
+<h1 id="5-我们交付的部署代码部署工具包">5.
+我们交付的部署代码（部署工具包）</h1>
+<p>和补丁一起在第二份计划里做，先在我们的测试台上用一遍，再交给九安。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>做什么</th>
+<th>接到九安哪里</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>补丁与独立目录</td>
+<td>补丁 0001–0006，加上独立目录（A2A
+适配层、契约与任务检查代码）。<code>apply-<wbr>patches.<wbr>sh &lt;九安代码目录&gt;</code>
+先用 <code>-<wbr>-<wbr>dry-<wbr>run -<wbr>-<wbr>fuzz=0</code>
+试打，打不上就列出冲突的文件和位置，不留半成品</td>
+<td>九安在自己的分支上运行</td>
+</tr>
+<tr>
+<td>测试</td>
+<td>契约测试、适配层测试（本地假 A2A 网关，不连
+Nexus、不花钱）、九安侧的单元测试</td>
+<td>加进九安 CI 的测试步骤</td>
+</tr>
+<tr>
+<td>部署检查
+<code>check-<wbr>agent-<wbr>integration.<wbr>mjs</code></td>
+<td>照九安自己的
+<code>scripts/<wbr>check-<wbr>deployment.<wbr>mjs</code>
+的写法，检查这几项，都不花钱：<br>Nexus
+通不通；名片里有没有契约和任务；调用密钥有效（<code>tasks/<wbr>get</code>）；路由表指向的发布都已启用；任务开关和数据治理变量（<code>AI_<wbr>DATA_<wbr>ENVIRONMENT</code>、<code>AI_<wbr>PROD_<wbr>DATA_<wbr>COMPANY_<wbr>IDS</code>）是什么状态</td>
+<td>部署后自动跑，不通过就报失败</td>
+</tr>
+<tr>
+<td>配置即代码</td>
+<td>每个环境一份：路由表（单据类型 →
+发布）、任务开关、额度、数据治理变量</td>
+<td>走九安现有的 Actions Variables，不加新密钥</td>
+</tr>
+<tr>
+<td>Nexus 侧即代码</td>
+<td>审核 Agent 的提示词文件，加一个 operator 配方脚本：建或更新
+Agent、建 A2A
+发布、写名片描述（契约与任务）、固定版本；先只读预览，确认后执行</td>
+<td>在维护人的编码工具里运行（nexus-ai-operator）</td>
+</tr>
+<tr>
+<td>启用脚本</td>
+<td>把调用密钥经标准输入交给九安的「Agent 接入」接口，当场验证</td>
+<td>管理员运行，或者在页面上粘贴</td>
+</tr>
+<tr>
+<td>验收测试</td>
+<td>端到端冒烟：站点地址、账号、公司都参数化；先在我们测试台上跑通，再对九安测试环境跑</td>
+<td>九安测试环境部署后跑一次</td>
+</tr>
+<tr>
+<td>给编码工具的说明</td>
+<td><code>AGENTS.<wbr>md</code>：哪些文件按契约不能改，哪些可以按九安的习惯改，改完必须跑哪些测试</td>
+<td>放进独立目录；九安开发者用 Claude Code、Codex 适配时直接读它</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="6-第一周做什么">6. 第一周做什么</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -409,19 +497,21 @@ href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
 </tr>
 <tr>
 <td>2</td>
-<td>约九安对接会，带上：一页总览、本文第 4 节阶段 0 的表、第 6
+<td>约九安对接会，带上：一页总览、本文第 4 节阶段 0 的表、第 7
 节的资料清单</td>
 <td>你</td>
 </tr>
 <tr>
 <td>3</td>
-<td>定生产用哪套 Nexus；如果用
-<code>nxs-<wbr>beine1013</code>，我列一份加固清单</td>
-<td>你；我出清单</td>
+<td>生产用线上 Nexus AI（<a
+href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>，已定）：在上面建审核
+Agent 的发布</td>
+<td>我们</td>
 </tr>
 <tr>
 <td>4</td>
-<td>设计批准后写第二份计划（实现计划），从 0001 开工</td>
+<td>设计批准后写第二份计划：补丁 0001–0006 加部署工具包（第 5 节），从
+0001 开工</td>
 <td>我</td>
 </tr>
 <tr>
@@ -432,7 +522,7 @@ href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
 </tbody>
 </table>
 </div>
-<h1 id="6-要九安和客户提供的">6. 要九安和客户提供的</h1>
+<h1 id="7-要九安和客户提供的">7. 要九安和客户提供的</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -481,7 +571,7 @@ href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
 </tbody>
 </table>
 </div>
-<h1 id="7-风险">7. 风险</h1>
+<h1 id="8-风险">8. 风险</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -497,6 +587,11 @@ href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
 <td>补丁打不上，或者打上了运行才出错</td>
 <td>尽早拿基线（前置
 2）；适配层和契约做成独立目录，少依赖九安内部名字</td>
+</tr>
+<tr>
+<td>九安适配时改到了契约</td>
+<td>Agent 收到的请求或九安读到的结果对不上</td>
+<td>契约测试加进九安 CI；<code>AGENTS.<wbr>md</code> 写明哪些不能改</td>
 </tr>
 <tr>
 <td>九安有意下线了 AI 功能</td>
@@ -531,12 +626,18 @@ href="../specs/2026-10-19-agent-framework-design.html">设计</a>第 7.2
 </tbody>
 </table>
 </div>
-<h1 id="8-要你先回答的">8. 要你先回答的</h1>
+<h1 id="9-已经回答的问题">9. 已经回答的问题</h1>
+<p>2026-10-20 的回答：</p>
 <ol type="1">
-<li><strong>生产用哪套 Nexus</strong>：九安自建，还是我们这套？</li>
-<li><strong>部署谁来做</strong>：九安按补丁和说明自己合入、部署，还是我们到九安的环境里一起做？</li>
-<li><strong>第一批上线范围和时间窗</strong>：哪几家公司、哪类单据，九安那边有没有固定的发版窗口？</li>
+<li><strong>生产用哪套 Nexus</strong>：另外一套，已经建成：线上 Nexus AI
+<a
+href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>。</li>
+<li><strong>第一批上线范围和时间窗</strong>：没有固定的。</li>
+<li><strong>九安的生产环境也用这套 Gitea + Compose
+流水线吗</strong>：大概率是，部署工具包先按这一套做。</li>
+<li><strong>要不要在我们的测试台上演练九安的部署方式</strong>：现在不需要，以后需要时再做。</li>
 </ol>
+<p>部署由谁做已经定了：九安自己适配，我们用代码协助部署（第 1 节）。</p>
 </main>
 </div>
 <footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/customer-rollout.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>

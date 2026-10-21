@@ -2,7 +2,7 @@ flowchart TB
   subgraph laptop["本机（维护人的电脑）"]
     direction LR
     repo["audit-nexus/<br/>代码 · 文档 · 测试 · 契约"]
-    secrets["poc/infra/secrets.env（0600）<br/>口令 · REGISTRY_KEY · 测试台密钥 · 兜底调用密钥（可选）"]
+    secrets["poc/infra/secrets.env（0600）<br/>启动配置：口令 · REGISTRY_KEY · 测试台密钥<br/>（Agent 密钥不在这里）"]
     operator["nexus-ai-operator<br/>~/.nexus 凭证（不读不复制）"]
     source["source/ 九安开发包 v0.5.3<br/>只读，不执行"]
     build[".build/jiuan<br/>副本 + 补丁 + mysql2"]
@@ -10,15 +10,15 @@ flowchart TB
   subgraph aws["AWS 533267047935 · us-east-1 · 栈 andon-finance-poc"]
     direction LR
     s3["S3 构件桶<br/>releases/current.tgz · archive/（14 天）<br/>secrets/secrets.env"]
-    ec2["EC2 i-01d753d48056fd423 · t3.large<br/>/opt/andon-finance/current<br/>/etc/andon-finance/secrets.env · bench/<br/>/var/lib/andon-finance/users/"]
+    ec2["EC2 i-01d753d48056fd423 · t3.large<br/>/opt/andon-finance/current<br/>/etc/andon-finance/secrets.env · bench/<br/>/var/lib/andon-finance/users/（各账号的连接与启用的调用密钥，加密）"]
     db["MySQL 8.0 容器 jiuan-mysql<br/>127.0.0.1:3306 · 库 jiuan_analysis<br/>/var/lib/jiuan-mysql"]
     cf["CloudFront E92MPQ217VIPX<br/>andon-finance.tinyboat.blog"]
   end
-  subgraph nx["Nexus nxs-beine1013 · v0.3.28"]
+  subgraph nx["Nexus nxs-beine1013 · v0.3.28 · 线上 Nexus AI 实际地址：d3u3hj2us186y.cloudfront.net"]
     direction LR
-    adv["九安审核AI<br/>pub_5c53e70d8dc7ddea（系统提供）"]
+    adv["九安审核AI<br/>pub_5c53e70d8dc7ddea（审批流用，各账号自己启用）"]
     kn["九安知识Agent<br/>pub_2cc24c29d2e5b2c9"]
-    keys["调用密钥：本人在网页签发<br/>API 密钥：个人设置"]
+    keys["调用密钥：本人在网页签发 → 用户在前端启用时粘贴<br/>API 密钥：个人设置 → 用户在前端连接时填"]
   end
   source -. 只复制 .-> build
   build -- deploy.sh --> s3

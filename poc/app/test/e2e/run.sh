@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 对线上地址跑端到端测试。先重置：测试台上用 bench-reset.sh 删掉并重建九安的库再开服务（单据回到 8 张种子、审批流清空）；
-# 实例上还没有这个脚本时退回到重启服务（清空内存状态）。各账号的连接与启用存在磁盘上，都不受影响。口令与密钥从 infra/secrets.env 读进环境变量，只在本进程里使用。
+# 实例上还没有这个脚本时退回到重启服务（清空内存状态）。各账号的连接与启用存在磁盘上，都不受影响。两个账号的口令从 infra/secrets.env 读进环境变量，只在本进程里使用；
+# Agent 的调用密钥和 Nexus 连接用审核员本人在前端「Nexus Agent」页上的，不从文件读。
 set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 STACK="andon-finance-poc"
@@ -27,14 +28,14 @@ export E2E_BASE_URL="$SITE"
 E2E_REVIEWER_PASSWORD="$(secret REVIEWER_PASSWORD)"
 E2E_CHECKER_PASSWORD="$(secret CHECKER_PASSWORD)"
 export E2E_REVIEWER_PASSWORD E2E_CHECKER_PASSWORD
-E2E_KNOWLEDGE_A2A_KEY="$(secret E2E_KNOWLEDGE_A2A_KEY)"
-E2E_NEXUS_API_KEY="$(secret E2E_NEXUS_API_KEY)"
-export E2E_KNOWLEDGE_A2A_KEY E2E_NEXUS_API_KEY
 # 不带参数时跑全部端到端测试；也可以只跑某几个文件，例如 run.sh attachments.e2e.mjs。
 FILES=("$@")
 [[ ${#FILES[@]} -gt 0 ]] || FILES=(poc.e2e.mjs attachments.e2e.mjs access.e2e.mjs)
-# 结果另记一份（每行一条用例），开发进度看板（tools/progress）读它：evidence/e2e/last-run.jsonl
+# 开发目录里有进度看板（tools/progress）时，结果另记一份（每行一条用例）：evidence/e2e/last-run.jsonl；交接仓库里没有看板，只输出到终端。
 ROOT="$(cd "$HERE/../../../.." && pwd)"
-mkdir -p "$ROOT/evidence/e2e"
-node --test --test-concurrency=1 --test-reporter=spec --test-reporter-destination=stdout \
-  --test-reporter="file://$ROOT/tools/progress/reporter.mjs" --test-reporter-destination="$ROOT/evidence/e2e/last-run.jsonl" "${FILES[@]}"
+REPORT=()
+if [[ -f "$ROOT/tools/progress/reporter.mjs" ]]; then
+  mkdir -p "$ROOT/evidence/e2e"
+  REPORT=(--test-reporter="file://$ROOT/tools/progress/reporter.mjs" --test-reporter-destination="$ROOT/evidence/e2e/last-run.jsonl")
+fi
+node --test --test-concurrency=1 --test-reporter=spec --test-reporter-destination=stdout ${REPORT[@]+"${REPORT[@]}"} "${FILES[@]}"

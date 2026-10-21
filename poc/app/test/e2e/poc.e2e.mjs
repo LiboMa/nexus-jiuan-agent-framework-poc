@@ -109,7 +109,7 @@ test('4. 原有单据手动发起 AI 初审；审核员人工复核通过，结�
   await reviewer.context().close();
 });
 
-test('5. Nexus Agent 页：系统提供的审批 Agent 在调用测试里，调用成功并通过九安校验', { timeout: 6 * 60_000 }, async () => {
+test('5. Nexus Agent 页：审核员本人启用的审批 Agent 在调用测试里，调用成功并通过九安校验', { timeout: 6 * 60_000 }, async () => {
   const page = await signIn('poc-reviewer');
   await go(page, '#nexusAgents');
   const target = page.locator('#poc-invoke-target');
@@ -120,7 +120,11 @@ test('5. Nexus Agent 页：系统提供的审批 Agent 在调用测试里，调�
   await option.waitFor({ state: 'attached' });
   await page.locator('#poc-invoke-document').selectOption(await option.getAttribute('value'));
   await page.getByRole('button', { name: '发送' }).click();
-  await page.locator('#poc-invoke .poc-result .tag', { hasText: '成功' }).waitFor({ timeout: 5 * 60_000 });
+  // 一出结果就判断：失败时带上面板里的错误码直接报出来，不等到超时。
+  const result = page.locator('#poc-invoke .poc-result');
+  const outcome = result.locator('.tag', { hasText: /^(成功|失败)$/ }).first();
+  await outcome.waitFor({ timeout: 5 * 60_000 });
+  assert.equal((await outcome.textContent()).trim(), '成功', (await result.innerText()).slice(0, 500));
   await page.locator('#poc-invoke .poc-result .tag', { hasText: '九安校验通过' }).waitFor();
   await page.locator('table.poc-runs td', { hasText: '调用测试' }).first().waitFor();
   await shot(page, '05-nexus-agents');

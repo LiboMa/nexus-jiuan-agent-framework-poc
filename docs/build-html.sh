@@ -3,7 +3,7 @@
 #   docs/build-html.sh          先把 assets/diagrams/*.mmd 画成同名 .svg，再把下面清单里的文档生成同目录、同名的 .html
 #   docs/build-html.sh --check  只检查图和 HTML 是不是最新的（有过期的就退出 1），适合放进推送前检查
 # 需要 pandoc ≥ 3、mermaid-cli（mmdc）和本机 Chrome（CHROME_PATH 可改）。
-# 只处理清单里的文档，不会覆盖手工做的 HTML（如 agent-discovery-registration.html）；
+# 只处理清单里的文档，不会覆盖手工做的 HTML（如 delivery/agent-framework-overview.html）；
 # assets/diagrams/ 里没有同名 .mmd 的 .svg（如 arch-overview.svg）是手工画的，脚本不动它。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,13 +17,14 @@ CHROME_PATH="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Googl
 DOCS=(
   delivery/README.md
   delivery/package-guide.md
+  delivery/quick-guide.md
+  delivery/developer-guide.md
   delivery/skills-guide.md
   delivery/customer-rollout.md
   delivery/handover.md
   delivery/integration.md
   delivery/deploy-iteration.md
   delivery/operations.md
-  delivery/code-review-2026-10-17.md
   delivery/rules-binding.md
   delivery/call-chains.md
   delivery/agent-framework.md
@@ -31,9 +32,6 @@ DOCS=(
   delivery/first-review-contract.md
   architecture.md
   agent-developer-workflow.md
-  specs/2026-10-17-agent-registry-design.md
-  specs/2026-10-17-agent-access-skills-design.md
-  specs/2026-10-19-agent-framework-design.md
 )
 CONVERTED="$(IFS=,; echo "${DOCS[*]}")"
 CHECK=false

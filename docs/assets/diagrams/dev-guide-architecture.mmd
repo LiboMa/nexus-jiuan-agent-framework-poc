@@ -1,0 +1,33 @@
+flowchart TB
+  subgraph tools["开发者的电脑：Claude Code / Codex / Kiro CLI"]
+    direction LR
+    op["nexus-ai-operator<br/>建 Agent · 试用 · 发布"]
+    cc["写代码<br/>按 CLAUDE.md 和契约"]
+  end
+  subgraph jiuan["九安"]
+    direction TB
+    fe["前端：任务结果那一块<br/>只调本站后端 · 不碰密钥"]
+    adm["平台页面：Agent 接入（管理员）<br/>启用发布 · 粘贴调用密钥"]
+    svc["Agent 任务服务 + 任务模块<br/>人发起 / 流水线发起 · 查结果 · 自动重试"]
+    mw["统一调用中间件 → 模型接入口 agentTask<br/>暂停开关 · 额度 · 时限 · 调用日志"]
+    acc["Agent 接入<br/>加密存调用密钥 · 名片里的任务"]
+    ad["A2A 适配层（写一次，所有任务共用）<br/>读名片 · 验密钥 · 发信封 · 收结果 · 查格式 · 映射错误码"]
+  end
+  subgraph nexus["线上 Nexus AI · d3u3hj2us186y.cloudfront.net"]
+    direction TB
+    pub["发布（A2A 打开）<br/>名片：契约 jiuan.agent/v1 · 任务 &lt;任务&gt;@1"]
+    agent["Agent<br/>读请求信封 · 回结果信封"]
+  end
+  contract["契约 contract/<br/>信封 · 任务契约 · 检查代码 · 错误码"]
+  fe --> svc --> mw --> ad
+  adm --> acc
+  acc -. 调用密钥 .-> ad
+  ad e1@== "A2A message/stream" ==> pub --> agent
+  op -. 建、改、试用 .-> agent
+  cc -. 生成代码 .-> jiuan
+  contract -. 校验请求与结果 .-> ad
+  e1@{ animate: true }
+  class op,cc poc
+  class fe,adm,svc,mw,acc,ad jiuan
+  class pub,agent nexus
+  class contract good

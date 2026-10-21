@@ -287,7 +287,8 @@ Agent，只在路由表里加条件</td>
 <code>output</code>
 里）。例子：<code>examples/result-pass.json</code>（对应
 <code>request.json</code>）、<code>examples/result-fail.json</code>（对应
-<code>request-no-evidence.json</code>）、<code>examples/result-declined.json</code>。</p>
+<code>request-no-evidence.json</code>）、<code>examples/result-declined.json</code>（对应
+<code>request-misrouted.json</code>：一张员工报销单，带着对公付款的规则被错发过来）。</p>
 <pre class="json"><code>{ &quot;result&quot;: &quot;pass | fail&quot;,
   &quot;note&quot;: &quot;综合备注&quot;,
   &quot;rules&quot;: [ { &quot;ruleId&quot;: &quot;…&quot;, &quot;ruleVersion&quot;: 2, &quot;result&quot;: &quot;pass | fail&quot;, &quot;note&quot;: &quot;原因和依据&quot; } ] }</code></pre>
@@ -345,7 +346,14 @@ Agent，只在路由表里加条件</td>
 <li>字段核对类的结果和引擎一致；</li>
 <li>有任何一条不通过，综合结论就必须是不通过。</li>
 </ol>
-<p>这三条和信封检查在 <code>examples/</code> 的三对例子上都验证过。</p>
+<p>三条的代码在
+<code>checks.mjs</code>：<code>check(result, request)</code>
+返回问题列表，空数组表示通过；declined 的结果不带
+<code>output</code>，直接通过。九安的适配层在
+<code>output.schema.json</code> 之后调用它。这三条和信封检查在
+<code>examples/</code>
+的三对例子上都验证过（每个结果都对应自己的请求），测试在交接仓库的
+<code>poc/app/test/unit/contract-checks.test.mjs</code>。</p>
 <h1 id="5-在审批流里">5. 在审批流里</h1>
 <p>审批流是第一个用到框架的业务流程：九安预审 → AI 步骤（本任务）→
 人工复核。状态机、自动重试、失效和存储见<a

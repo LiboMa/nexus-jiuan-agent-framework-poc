@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>快速上手：把前端接上 Nexus 上的 Agent</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
+v0.1.0</span>快速上手：把前端接上 Nexus 上的 Agent</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-10-20</td></tr>
+    <tr><th scope="row">状态</th><td>快速上手指南（给前端用户）<span class="stamp">上手</span></td></tr>
+    <tr><th scope="row">范围</th><td>在客户自己的前端和线上 Nexus AI
+之间，把 Agent 接起来、用起来</td></tr>
+    <tr><th scope="row">读者</th><td>前端用户：审核员、复核人、Agent
+开发者</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#1-开始前" id="toc-1-开始前">1. 开始前</a>
+<ul>
+<li><a href="#11-你需要准备的" id="toc-11-你需要准备的">1.1
+你需要准备的</a></li>
+<li><a href="#12-两把密钥别弄混" id="toc-12-两把密钥别弄混">1.2
+两把密钥，别弄混</a></li>
+</ul></li>
+<li><a href="#2-整个流程" id="toc-2-整个流程">2. 整个流程</a></li>
+<li><a href="#3-第-1-步确认-agent-已经发布"
+id="toc-3-第-1-步确认-agent-已经发布">3. 第 1 步：确认 Agent
+已经发布</a></li>
+<li><a href="#4-第-2-步生成-api-密钥" id="toc-4-第-2-步生成-api-密钥">4.
+第 2 步：生成 API 密钥</a></li>
+<li><a href="#5-第-3-步登录前端打开nexus-agent页"
+id="toc-5-第-3-步登录前端打开nexus-agent页">5. 第 3
+步：登录前端，打开「Nexus Agent」页</a></li>
+<li><a href="#6-第-4-步连接-nexus" id="toc-6-第-4-步连接-nexus">6. 第 4
+步：连接 Nexus</a></li>
+<li><a href="#7-第-5-步签发调用密钥" id="toc-7-第-5-步签发调用密钥">7.
+第 5 步：签发调用密钥</a></li>
+<li><a href="#8-第-6-步启用-agent" id="toc-8-第-6-步启用-agent">8. 第 6
+步：启用 Agent</a></li>
+<li><a href="#9-第-7-步调用测试" id="toc-9-第-7-步调用测试">9. 第 7
+步：调用测试</a></li>
+<li><a href="#10-第-8-步在审批流里用"
+id="toc-10-第-8-步在审批流里用">10. 第 8 步：在审批流里用</a></li>
+<li><a href="#11-日常维护" id="toc-11-日常维护">11. 日常维护</a></li>
+<li><a href="#12-遇到问题" id="toc-12-遇到问题">12. 遇到问题</a></li>
+<li><a href="#13-用编码工具做同样的事可选"
+id="toc-13-用编码工具做同样的事可选">13.
+用编码工具做同样的事（可选）</a></li>
+</ul>
+</nav>
+<main id="main">
+<p>这份指南带你一步步把前端和 Nexus 上的 Agent 接起来：先在 Nexus
+网页上准备两把密钥，再在前端「Nexus
+Agent」页连接、启用、调用测试，最后在审批流里用上它。第一次从头做完大约
+10 分钟。</p>
+<p>全程只在两个网页上操作，<strong>不用改任何文件，不用找运维部署，也不用重启服务</strong>。</p>
+<h1 id="1-开始前">1. 开始前</h1>
+<h2 id="11-你需要准备的">1.1 你需要准备的</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>要什么</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>前端地址</td>
+<td>你们部署的九安前端。下文说「前端」就是它。我们的参考环境是 <a
+href="https://andon-finance.tinyboat.blog">https://andon-finance.tinyboat.blog</a></td>
+</tr>
+<tr>
+<td>前端账号</td>
+<td>能登录前端的账号，比如审核员、复核人。参考环境用口令登录；你们的正式环境按你们自己的登录方式</td>
+</tr>
+<tr>
+<td>Nexus 地址</td>
+<td>线上 Nexus AI：<a
+href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a></td>
+</tr>
+<tr>
+<td>Nexus 账号</td>
+<td>能登录 Nexus 网页的账号。要接的 Agent
+最好就是这个账号发布的，或者已经分享给它</td>
+</tr>
+<tr>
+<td>已经发布的 Agent</td>
+<td>Agent 在 Nexus 上发布过，并且打开了 A2A。还没有的话，先看第 3
+章</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="12-两把密钥别弄混">1.2 两把密钥，别弄混</h2>
+<p>整个过程要用到两把不同的密钥，都在 Nexus 网页上生成：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th></th>
+<th>API 密钥</th>
+<th>调用密钥</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>用来做什么</td>
+<td>让前端用你的 Nexus 身份，列出你能用的 Agent</td>
+<td>让前端调用某一个发布</td>
+</tr>
+<tr>
+<td>在哪生成</td>
+<td>Nexus「个人设置 › API 密钥」</td>
+<td>Nexus「互联中心 › 对外发布」，在那个发布里签发</td>
+</tr>
+<tr>
+<td>要几把</td>
+<td>每个前端账号一把，连接一次就行</td>
+<td>每个要用的发布一把</td>
+</tr>
+<tr>
+<td>粘贴到哪</td>
+<td>前端「我的 Nexus 连接」</td>
+<td>前端「我的 Agent」里那个发布的「启用」</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>两把都只能由你本人在 Nexus
+网页上生成。密钥只粘贴进前端的输入框，不要发到聊天工具、邮件里，也不要写进任何文件。</p>
+<h1 id="2-整个流程">2. 整个流程</h1>
+<figure>
+<a href="../assets/diagrams/quick-guide-flow.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/quick-guide-flow.svg" loading="lazy"
+alt="八步：Nexus 网页上确认 Agent 已发布、生成 API 密钥；前端登录、连接 Nexus；Nexus 网页上签发调用密钥；前端启用 Agent、调用测试；最后在单据池的审批流里用" /></a>
+<figcaption>八步：Nexus 网页上确认 Agent 已发布、生成 API
+密钥；前端登录、连接 Nexus；Nexus 网页上签发调用密钥；前端启用
+Agent、调用测试；最后在单据池的审批流里用</figcaption>
+</figure>
+<p>黄色的步骤在 Nexus 网页上做，蓝色和绿色的步骤在前端做。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>步</th>
+<th>在哪</th>
+<th>做什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Nexus 网页</td>
+<td>确认 Agent 已发布、A2A 已打开</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Nexus 网页</td>
+<td>生成 API 密钥</td>
+</tr>
+<tr>
+<td>3</td>
+<td>前端</td>
+<td>登录，打开「Nexus Agent」页</td>
+</tr>
+<tr>
+<td>4</td>
+<td>前端</td>
+<td>连接 Nexus（粘贴 API 密钥）</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Nexus 网页</td>
+<td>给要用的发布签发调用密钥</td>
+</tr>
+<tr>
+<td>6</td>
+<td>前端</td>
+<td>启用 Agent（粘贴调用密钥）</td>
+</tr>
+<tr>
+<td>7</td>
+<td>前端</td>
+<td>调用测试</td>
+</tr>
+<tr>
+<td>8</td>
+<td>前端</td>
+<td>在审批流里用</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>第 2、4 步每个账号只做一次。以后每接一个新的 Agent，只要重复第
+1、5、6、7 步。</p>
+<h1 id="3-第-1-步确认-agent-已经发布">3. 第 1 步：确认 Agent
+已经发布</h1>
+<ol type="1">
+<li>打开 Nexus 网页 <a
+href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>，用你的
+Nexus 账号登录。</li>
+<li>进「互联中心 › 对外发布」，找到要接的 Agent 的发布。</li>
+<li>确认两点：发布是上线状态（没有暂停）；A2A 已经打开。</li>
+</ol>
+<p>还没有这个发布，就请 Agent 开发者先建好：他们用编码工具（Claude
+Code、Codex、Kiro CLI）加 nexus-ai-operator 建 Agent、试用、建发布并打开
+A2A。做法见 <a href="skills-guide.html">Skills 配置指南</a>第 3 节。</p>
+<h1 id="4-第-2-步生成-api-密钥">4. 第 2 步：生成 API 密钥</h1>
+<ol type="1">
+<li>在 Nexus 网页进「个人设置 › API 密钥」。</li>
+<li>新建一把。名字写清楚给谁用，比如「九安前端」。档位选<strong>只读</strong>就够了。</li>
+<li>复制生成的密钥（<code>nxc_</code> 开头）。</li>
+</ol>
+<p>这把密钥只给前端用一次：第一次连接时，Nexus
+会把它换成新的，你复制的那一串随即作废。以后要给别的地方用（比如编码工具），再新建一把。</p>
+<h1 id="5-第-3-步登录前端打开nexus-agent页">5. 第 3
+步：登录前端，打开「Nexus Agent」页</h1>
+<ol type="1">
+<li><p>打开前端，用你的前端账号登录。登录后先看到单据池。</p>
+<figure class="screen">
+<a href="../assets/screens/documents.png" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/screens/documents.png" loading="lazy"
+alt="单据池：单据卡片上显示审批状态，顶上有「模拟来单」" /></a>
+<figcaption>单据池：单据卡片上显示审批状态，顶上有「模拟来单」</figcaption>
+</figure></li>
+<li><p>点左侧导航「Nexus」分组下的 <strong>Nexus
+Agent</strong>。</p></li>
+</ol>
+<h1 id="6-第-4-步连接-nexus">6. 第 4 步：连接 Nexus</h1>
+<ol type="1">
+<li>在「<strong>我的 Nexus 连接</strong>」里，把第 2 步复制的 API
+密钥粘贴进「Nexus API 密钥」框。</li>
+<li>点「<strong>连接</strong>」。</li>
+<li>连上以后：
+<ul>
+<li>状态变成「<strong>已连接</strong>」，下面显示你的 Nexus
+账号和档位；</li>
+<li>下面的「<strong>我的 Agent</strong>」列出你在 Nexus
+上的发布，分「已启用」「待启用」「有问题」三组；还没发布的 Agent
+折叠在最下面。</li>
+</ul></li>
+</ol>
+<figure class="screen">
+<a href="../assets/screens/agents-page.png" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/screens/agents-page.png" loading="lazy"
+alt="「Nexus Agent」页：上面是「我的 Nexus 连接」（已连接、Nexus 账号与档位），下面是「我的 Agent」" /></a>
+<figcaption>「Nexus Agent」页：上面是「我的 Nexus 连接」（已连接、Nexus
+账号与档位），下面是「我的 Agent」</figcaption>
+</figure>
+<p>以后打开这一页，列表会自动更新；在 Nexus 上刚发布的 Agent
+没出现，点「<strong>刷新</strong>」。</p>
+<h1 id="7-第-5-步签发调用密钥">7. 第 5 步：签发调用密钥</h1>
+<ol type="1">
+<li>回到 Nexus 网页，进「互联中心 ›
+对外发布」，打开要用的那个发布。</li>
+<li>签发一把调用密钥，复制下来（<code>nxa_</code> 开头）。</li>
+</ol>
+<p>每把调用密钥只对这一个发布有效。只有你本人在网页上能签发：编码工具和
+API 密钥都签不了，这是平台的限制。</p>
+<h1 id="8-第-6-步启用-agent">8. 第 6 步：启用 Agent</h1>
+<ol type="1">
+<li>回到前端「Nexus Agent」页，在「我的
+Agent」的「<strong>待启用</strong>」里找到这个发布的卡片。</li>
+<li>点「<strong>启用</strong>」，把第 5
+步复制的调用密钥粘贴进「调用密钥」框。</li>
+<li>「顺便读一次能力清单」默认是勾上的（约 0.03
+美元），建议保留：读到之后，调用测试里就能按任务来调。</li>
+<li>点「<strong>确认启用</strong>」。</li>
+</ol>
+<p>前端会当场检查：能读到这个发布的名片，这把密钥也有效。检查不花钱，通过才保存，密钥会加密存起来。成功后卡片移到「<strong>已启用</strong>」。</p>
+<p>检查没通过时，卡片上会写明原因，按第 12 章处理。</p>
+<h1 id="9-第-7-步调用测试">9. 第 7 步：调用测试</h1>
+<ol type="1">
+<li>在「已启用」的卡片上点「<strong>调用测试</strong>」，或者往下翻到调用测试面板。</li>
+<li>「<strong>调用哪个发布</strong>」选你刚启用的
+Agent。下面会显示它的名片：协议版本，以及接受哪些附件类型。</li>
+<li>「<strong>输入方式</strong>」选一种：
+<ul>
+<li><strong>自由文本</strong>：直接写问题，比如「请对照附件里的发票，说明住宿是否超标」；</li>
+<li><strong>审批建议（选一张单据）</strong>：前端按九安审批建议的格式组装输入，并用九安的规则检查输出；</li>
+<li><strong>按任务（读取能力清单）</strong>：先点「读取能力清单」，再选一个任务，按提示填
+JSON 输入。</li>
+</ul></li>
+<li>「<strong>附件（可选）</strong>」可以带发票图片、PDF、Excel、Word、Markdown、JSON
+等：最多 5 个，单个不超过 5 MB，合计不超过 6
+MB。也可以点虚构的示例附件。</li>
+<li>点「<strong>发送</strong>」。通常 30–60
+秒出结果，带附件会慢一些。</li>
+</ol>
+<figure class="screen">
+<a href="../assets/screens/invoke-panel.png" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/screens/invoke-panel.png" loading="lazy"
+alt="调用测试面板：选发布、看名片、选输入方式、加附件，再发送" /></a>
+<figcaption>调用测试面板：选发布、看名片、选输入方式、加附件，再发送</figcaption>
+</figure>
+<p>看结果：</p>
+<ul>
+<li>「<strong>成功</strong>」：Agent
+的回答显示在下面。用「审批建议」方式调用时，还会显示「九安校验通过」或「九安校验未通过」。</li>
+<li>「<strong>失败</strong>」：下面写着错误码和原因，按第 12
+章处理。偶尔是 Agent 这一次没答好，再点一次「发送」就行。</li>
+<li>每次调用都记在页面最下面的调用记录里，能看到用时、错误码和原始返回。</li>
+</ul>
+<p>每次调用约 0.05 美元，记在发布者名下；每个账号每分钟最多 5 次。</p>
+<h1 id="10-第-8-步在审批流里用">10. 第 8 步：在审批流里用</h1>
+<p>审批流用的是「九安审核AI」这个发布。<strong>至少要有一个账号在「我的
+Agent」里启用它</strong>，审批流才能调到它：系统先用发起审批的人自己启用的那把，没有就用别的账号启用的。</p>
+<ol type="1">
+<li>回到单据池。新单据一进来，系统会自动跑九安预审和 AI
+初审，不用点。参考环境里用顶上的「<strong>模拟来单</strong>」生成一张虚构单据来试。</li>
+<li>等 30–60 秒，卡片上出现「AI 初审：建议 · 风险」。</li>
+<li>打开单据详情，在「<strong>审批流</strong>」卡片里看 AI
+初审建议，再做人工复核：「<strong>通过</strong>」或「<strong>退回</strong>」。和
+AI 建议不一致时，要写明理由。</li>
+</ol>
+<figure class="screen">
+<a href="../assets/screens/document-approval.png" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/screens/document-approval.png" loading="lazy"
+alt="单据详情里的审批流卡片：AI 初审建议，再由人工复核" /></a>
+<figcaption>单据详情里的审批流卡片：AI
+初审建议，再由人工复核</figcaption>
+</figure>
+<p>AI 只给初审建议，结论由人做。AI
+初审失败时，系统会自动重试一次；还不行，可以点「重试
+AI」，或者直接人工复核（不带 AI 建议）。</p>
+<h1 id="11-日常维护">11. 日常维护</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>情况</th>
+<th>在前端怎么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent 在 Nexus 上改了版本</td>
+<td>卡片上会提示「Agent
+版本有变化」：点「<strong>重新读能力清单</strong>」。它会用已保存的密钥重新检查一遍</td>
+</tr>
+<tr>
+<td>调用密钥过期或失效</td>
+<td>在 Nexus
+上签一把新的，在卡片上点「<strong>换密钥</strong>」，粘贴新的，「确认换密钥」</td>
+</tr>
+<tr>
+<td>不再用某个 Agent</td>
+<td>卡片上点「<strong>停用</strong>」。以后要用，再「启用」一次</td>
+</tr>
+<tr>
+<td>换一个 Nexus 账号</td>
+<td>「我的 Nexus 连接」里点「<strong>断开</strong>」，再用新账号的 API
+密钥连接。断开只删前端保存的连接；那把 API 密钥要到
+Nexus「个人设置」里停用</td>
+</tr>
+<tr>
+<td>Nexus 上新发布了 Agent</td>
+<td>点「<strong>刷新</strong>」，它会出现在「待启用」里</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>这些操作都当场生效，不用改文件、不用部署、不用重启。</p>
+<h1 id="12-遇到问题">12. 遇到问题</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>页面上的提示</th>
+<th>原因</th>
+<th>怎么办</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>还没有连接 Nexus：先在上面填入你的 API 密钥</td>
+<td>这个账号还没连接</td>
+<td>按第 4、6 章做</td>
+</tr>
+<tr>
+<td>API 密钥无效、已经用过，或者不属于这个 Nexus</td>
+<td>这把用过了（第一次连接就会被换掉）、已经停用，或者是别的 Nexus
+上生成的</td>
+<td>在线上 Nexus AI「个人设置 › API 密钥」新建一把，再连接</td>
+</tr>
+<tr>
+<td>暂时连不上 Nexus，稍后再试</td>
+<td>网络或 Nexus 一时不通</td>
+<td>等一会儿点「刷新」。<strong>不要</strong>因此换新的 API
+密钥，连接还在</td>
+</tr>
+<tr>
+<td>这个发布不在你的 Nexus 列表里</td>
+<td>用的 API 密钥不是发布者本人的，发布也没分享给这个账号</td>
+<td>换成发布者本人的 API
+密钥，或者请发布者把发布分享给你，再「刷新」</td>
+</tr>
+<tr>
+<td>读不到这个发布的 A2A 名片</td>
+<td>发布暂停了，或者 A2A 没打开</td>
+<td>在 Nexus「互联中心 › 对外发布」恢复发布、打开 A2A</td>
+</tr>
+<tr>
+<td>调用密钥无效，或者不属于这个发布</td>
+<td>粘错了，或者这把不是这个发布签的</td>
+<td>在这个发布里重新签一把，再粘贴</td>
+</tr>
+<tr>
+<td>调用密钥失效（卡片在「有问题」里）</td>
+<td>密钥过期或被停用</td>
+<td>签一把新的，点「换密钥」</td>
+</tr>
+<tr>
+<td>这个 Agent 还没有启用</td>
+<td>还没启用就去调用</td>
+<td>先在「我的 Agent」里启用</td>
+</tr>
+<tr>
+<td>连接和启用每分钟最多 5 次 / 调用测试每分钟最多 5 次</td>
+<td>太快了</td>
+<td>等一分钟</td>
+</tr>
+<tr>
+<td>调用失败，错误码 <code>AI_<wbr>INVALID_<wbr>RESPONSE</code></td>
+<td>Agent 这一次的输出不合格式</td>
+<td>再发送一次；总是这样就告诉 Agent 开发者</td>
+</tr>
+<tr>
+<td>调用失败，错误码 <code>AI_<wbr>UNAVAILABLE</code></td>
+<td>Nexus 暂时不可用、额度用完，或者超过 180 秒没答完</td>
+<td>稍后再试；附件多时可以减少附件</td>
+</tr>
+<tr>
+<td>审批停在「AI 初审失败」，错误码
+<code>AI_<wbr>AUTH_<wbr>INVALID</code></td>
+<td>系统里没有能用的「九安审核AI」调用密钥</td>
+<td>有人在「我的 Agent」里启用（或换密钥）「九安审核AI」，再点「重试
+AI」</td>
+</tr>
+<tr>
+<td>附件被挡住</td>
+<td>类型不支持、超过大小，或者扩展名和内容对不上</td>
+<td>换成支持的类型，控制大小，用原始文件</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="13-用编码工具做同样的事可选">13.
+用编码工具做同样的事（可选）</h1>
+<p>习惯在 Claude Code、Codex、Kiro CLI 里工作，可以装应用自己的 Skill
+agent-access，用命令完成第 4–7
+步。命令前后和网页上的操作一一对应，两边看到的是同一份数据：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>步</th>
+<th>网页上</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>登录前端</td>
+<td>登录</td>
+<td><code>agent_<wbr>access.<wbr>py login -<wbr>-<wbr>origin &lt;前端地址&gt; -<wbr>-<wbr>account &lt;账号&gt; -<wbr>-<wbr>password-<wbr>stdin -<wbr>-<wbr>client claude_<wbr>code -<wbr>-<wbr>yes</code></td>
+</tr>
+<tr>
+<td>连接 Nexus</td>
+<td>「我的 Nexus 连接」› 连接</td>
+<td><code>agent_<wbr>access.<wbr>py nexus connect -<wbr>-<wbr>yes</code>（API
+密钥从标准输入给）</td>
+</tr>
+<tr>
+<td>看列表</td>
+<td>「我的 Agent」</td>
+<td><code>agent_<wbr>access.<wbr>py status</code>、<code>agent_<wbr>access.<wbr>py agents -<wbr>-<wbr>state pending</code></td>
+</tr>
+<tr>
+<td>启用</td>
+<td>启用 › 粘贴调用密钥</td>
+<td><code>agent_<wbr>access.<wbr>py enable &lt;发布编号&gt; -<wbr>-<wbr>key-<wbr>stdin -<wbr>-<wbr>yes</code></td>
+</tr>
+<tr>
+<td>调用测试</td>
+<td>调用测试 › 发送</td>
+<td><code>agent_<wbr>access.<wbr>py invoke &lt;发布编号&gt; -<wbr>-<wbr>text "…" -<wbr>-<wbr>wait -<wbr>-<wbr>yes</code></td>
+</tr>
+<tr>
+<td>停用</td>
+<td>停用</td>
+<td><code>agent_<wbr>access.<wbr>py disable &lt;发布编号&gt; -<wbr>-<wbr>yes</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>怎么装、怎么连，见 <a href="skills-guide.html">Skills 配置指南</a>第
+4 节。</p>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/quick-guide.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

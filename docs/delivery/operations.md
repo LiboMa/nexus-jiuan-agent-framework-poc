@@ -1,8 +1,8 @@
 ---
-subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1
+subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1.0
 date: 2026-10-19
 status: 交付版 v2（实例已是测试台：t3.large、本机 MySQL 8.0、九安运行时）
-scope: 线上 PoC（栈 andon-finance-poc）与 Nexus nxs-beine1013
+scope: 线上 PoC（栈 andon-finance-poc）与 Nexus nxs-beine1013（线上 Nexus AI 的实际地址：d3u3hj2us186y.cloudfront.net）
 audience: 运维、值班、应用开发、Agent 开发
 ---
 
@@ -17,7 +17,7 @@ audience: 运维、值班、应用开发、Agent 开发
 | 站点是否在线 | `curl -fsS https://andon-finance.tinyboat.blog/api/health` | HTTP 200，`status` 为 `ok`（刚重启的几秒是 `starting`） |
 | MySQL 容器 | 经 SSM：`docker ps`（`jiuan-mysql` 是 Up）；健康检查 `/api/health` 每次都问一次库（`SELECT 1`，3 秒超时），`database` 是 `ok`、`source` 是 `poc-bench` | 容器 Up；`database: ok`。库断了健康检查回 503，`database` 是 `unavailable` |
 | 服务日志 | 第 1.2 节 | 有 `andon-finance-poc listening on …`；没有成串的 `APP_ERROR` / `APPROVAL_ERROR` |
-| 审批流能不能出建议 | 单据池顶上点一次「模拟来单」，看新卡片上出现「AI 初审：…」和「待人工复核」 | 健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（[代码评审](code-review-2026-10-17.md) I6） |
+| 审批流能不能出建议 | 单据池顶上点一次「模拟来单」，看新卡片上出现「AI 初审：…」和「待人工复核」 | 健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（评审 I6，[交接文档](handover.md)第 6.1 节） |
 | Nexus 费用 | Nexus 网页上发布者名下的用量 | 每次 Agent 调用约 0.05 美元；读能力清单约 0.03 美元；验证调用密钥不花钱 |
 | AWS 费用 | 账单 | t3.large 约 61 美元 / 月（2026-10-19 前是 t3.small，约 15 美元），16 GB gp3 根卷约 1.3 美元 / 月，公网 IPv4 约 3.6 美元 / 月；升级前的快照不到 1 美元 / 月 |
 
@@ -77,14 +77,14 @@ curl -fsS https://andon-finance.tinyboat.blog/api/health
 
 不需要改 `secrets.env`，不需要部署，不需要重启。
 
-![调用测试面板：选一个已启用或系统提供的发布，看它的 A2A 名片，加示例附件或本机文件，再发送](../assets/screens/invoke-panel.png)
+![调用测试面板：选一个你已启用的发布，看它的 A2A 名片，加示例附件或本机文件，再发送](../assets/screens/invoke-panel.png)
 
 ### 2.2 审批流用哪把调用密钥
 
 审批流的调用密钥**从系统里读**，不用另外配：
 1. 先用发起（或重试）这张单据审批的人，在 Agent 页启用的「九安审核AI」那把；
 2. 他没启用，就用别的账号启用的、最近验证过的那把；
-3. 系统里一把都没有，才用 `secrets.env` 里 `NEXUS_A2A_KEY_pub_5c53e70d8dc7ddea` 那一行兜底（可选，可以删）。
+3. 都没有，审批停在「AI 初审失败」，错误码 `AI_AUTH_INVALID`：在 Agent 页启用「九安审核AI」后点「重试 AI」。不要往 `secrets.env` 里放调用密钥。
 
 Nexus 回 401 时，只把用到的那一把标记为「密钥失效」，下一次自动换下一把。要换密钥：在 Agent 页那张卡片上点「换密钥」，粘贴新的；不用改文件，不用部署。
 
@@ -176,8 +176,8 @@ audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认
 | 步骤 | 做什么 | 产出 |
 |---|---|---|
 | 1 需求 | 写清楚要什么、给谁用、怎么算做成 | 一段需求说明 |
-| 2 设计 | 改接口、改数据、改流程的，写设计文档并评审；小改动在合并请求里写清楚 | `docs/specs/<日期>-<主题>-design.md` |
-| 3 计划 | 拆成小任务，每个任务带测试 | `docs/plans/<日期>-<主题>.md` |
+| 2 设计 | 改接口、改数据、改流程的，写设计文档并评审；小改动在合并请求里写清楚 | 设计文档（放在开发仓库） |
+| 3 计划 | 拆成小任务，每个任务带测试 | 实现计划（放在开发仓库） |
 | 4 实现 | 先写会失败的测试，再写实现 | 代码 + 测试 |
 | 5 评审 | 整体评审一次，Critical / Important 当场修 | 评审记录 |
 | 6 部署与验证 | 按[部署与迭代规范](deploy-iteration.md)第 5 节 | 端到端测试结果、截图 |
@@ -211,4 +211,4 @@ audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认
 7. **预发环境**：同一模板另建一个栈，并入九安之前先在那里验证（评审 I10）。
 8. **调用量与费用看板**：按账号、按发布统计调用次数（运行记录现在只在内存里）。
 
-这些在[交付前代码评审](code-review-2026-10-17.md)里也有对应的条目。
+编号对应[交接文档](handover.md)第 6.1 节「上生产前必须改的」。

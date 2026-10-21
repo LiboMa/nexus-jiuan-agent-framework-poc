@@ -31,8 +31,14 @@ export function unwrapJson(text) {
   return match ? { text: match[1].trim(), fenced: true } : { text: trimmed, fenced: false };
 }
 
+// 输出规则：Agent 曾在 JSON 字符串里直接写英文双引号（没转义），JSON 不合法，九安按规定拒收（AI_INVALID_RESPONSE）。
+const OUTPUT_RULES = [
+  '只输出一个 JSON 对象，符合上面的 output_schema；前后不加任何说明文字。',
+  '字符串内容里不要出现英文双引号 "；需要引用原文、词语或字段名时，一律用中文引号「」。',
+].join('\n');
+
 export function buildPrompt(task, schema, input) {
-  return `<task>\n${task}\n</task>\n\n<output_schema>\n${JSON.stringify(schema)}\n</output_schema>\n\n<input>\n${input}\n</input>`;
+  return `<task>\n${task}\n</task>\n\n<output_schema>\n${JSON.stringify(schema)}\n</output_schema>\n\n<output_rules>\n${OUTPUT_RULES}\n</output_rules>\n\n<input>\n${input}\n</input>`;
 }
 
 async function* sseEvents(body) {

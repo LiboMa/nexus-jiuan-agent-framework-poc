@@ -13,7 +13,7 @@ sequenceDiagram
   A->>A: 组装单据事实 + 规则试跑结果
   A->>M: modelClient.advisory（facts, ruleResults, …）
   M->>K: getKey（按单据找发起人）
-  K-->>M: 发起人启用的 → 别人启用的 → secrets.env
+  K-->>M: 发起人启用的 → 别人启用的<br/>都没有就报 AI_AUTH_INVALID
   M->>N: A2A message/stream · Bearer nxa_…<br/>九安的任务说明 + 输出格式 + 输入
   N-->>M: 流式返回 JSON
   M->>M: 九安自己的 parseAdvisoryResult 校验

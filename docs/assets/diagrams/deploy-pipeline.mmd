@@ -1,5 +1,5 @@
 flowchart TD
-  local["本机检查<br/>单元测试 209 · 命令行 6 · build-html.sh --check"]
+  local["本机检查<br/>单元测试（要 MySQL 的在测试台跑）· Skill 测试 · build-html.sh --check"]
   review["评审：合并请求"]
   deploy["deploy.sh --code-only<br/>测试 → 前端副本 → 打包上传 → SSM 让实例拉取、重启"]
   gates["三道关<br/>① SSM 那一行是 Success（脚本不替你检查）<br/>② 健康检查 200<br/>③ 端到端测试全部通过（发布那次「跳过」算失败）"]

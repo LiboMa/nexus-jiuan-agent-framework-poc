@@ -1,5 +1,5 @@
 ---
-subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1
+subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1.0
 date: 2026-10-19
 status: 交付版 v1（分析与方案；补丁生成器和插件拆分还没做；2026-10-19 加了框架与测试台的说明）
 scope: PoC 代码（poc/app/）→ 九安审核平台 v0.5.3（source/审核平台-测试环境开发包-v0.5.3/code/）
@@ -12,7 +12,7 @@ audience: 应用开发、九安团队、项目负责人
 
 > **2026-10-19 更新**：各类 Agent 怎么接进九安，改按[Agent 接入框架：架构、工作流与交付接口](agent-framework.md)：通用信封 `jiuan.agent/v1` 和一个通用方法 `agentTask`，经九安的模型接入口和统一调用中间件；每类 Agent 一份任务契约，第一个是审批流里的单据初审 `first_review@1`，来单由九安平台流水线自动发起。本文第 7 节里「第一期只交付模型 provider（AI 独立建议）」由它取代，其余分析仍然有效。
 >
-> **2026-10-19 测试台**：PoC 实例现在跑的是九安开发包的副本（`poc/bench/build-jiuan.sh` 构建，补丁按顺序打进 `patches/jiuan-v0.5.3/`），用九安自己的 MySQL 存储、平台存储、连接器、调用中间件和流水线运行器（`P/bench/`、`P/jiuan-mysql.mjs`）。下表里「PoC 怎么用」写的是第一期的做法；单据、来单原文和来单编号已经在九安的库和键值状态里，审批流状态、限流和运行记录还在内存里。
+> **2026-10-19 测试台**：PoC 实例现在跑的是九安开发包的副本（`poc/bench/build-jiuan.sh` 构建：复制开发包，再按文件名顺序打 `patches/jiuan-v0.5.3/` 里的补丁；这个目录现在还是空的，副本和开发包一样），用九安自己的 MySQL 存储、平台存储、连接器、调用中间件和流水线运行器（`P/bench/`、`P/jiuan-mysql.mjs`）。下表里「PoC 怎么用」写的是第一期的做法；单据、来单原文和来单编号已经在九安的库和键值状态里，审批流状态、限流和运行记录还在内存里。
 
 ## 1. 结论
 
@@ -32,17 +32,17 @@ audience: 应用开发、九安团队、项目负责人
 
 | 扩展点 | 九安的定义 | 约定 | PoC 怎么用 | 要不要改九安 |
 |---|---|---|---|---|
-| `platformRoutes` 钩子 | `J/analysis-server.mjs:55` 的选项，448 行调用 | `handle({req,url,path,session,res,body}) → Promise<boolean>`；可选审计回调 `recordAuth` / `recordAccessDenied` / `recordPreAuthDenied` | 三个插件串起来（`P/poc-app.mjs:80`）：审批流、「我的 Nexus」、调用测试 | 库代码不改；启动脚本要组合（第 4 节 S1） |
-| 模型客户端注入 | `J/src/analysis-runtime-services.mjs:60` | `{model, dataPolicy, advisory(input), reviewDraftEvidence(input)}`，出错抛 `AI_*` 错误码 | `P/server.mjs:40-42` 注入 `P/nexus/model-client.mjs` | 不改 |
+| `platformRoutes` 钩子 | `J/analysis-server.mjs:55` 的选项，448 行调用 | `handle({req,url,path,session,res,body}) → Promise<boolean>`；可选审计回调 `recordAuth` / `recordAccessDenied` / `recordPreAuthDenied` | 三个插件串起来（`P/poc-app.mjs:97`、`107-110`）：审批流、「我的 Nexus」、调用测试；测试台上不认的请求再交给九安自己的平台接口 | 库代码不改；启动脚本要组合（第 4 节 S1） |
+| 模型客户端注入 | `J/src/analysis-runtime-services.mjs:60` | `{model, dataPolicy, advisory(input), reviewDraftEvidence(input)}`，出错抛 `AI_*` 错误码 | `P/server.mjs:54-55` 注入 `P/nexus/model-client.mjs` | 不改 |
 | 模型 provider（正式入口） | `J/providers/ai-model.mjs:1-29、164-185` | 实现 `createModelClient`，把 `MODEL_PROVIDER_IMPLEMENTED` 改成 `true` | 没用（PoC 走注入） | 改 3 行（第 4 节 S4） |
 | store 键值状态 | `J/src/mysql-analysis-store.mjs:476-493` | `readState` / `readStates` / `writeState` / `compareAndWriteState`，AES-GCM 加密、乐观锁 | 第一期没用（内存和文件）；测试台起用它存来单原文（`poc-raw:<单据号>`）和来单编号（`poc-intake-sequence`，`compareAndWriteState` 取号） | 不改；**生产持久化直接用它** |
 | 会话与安全检查 | `J/analysis-server.mjs:85-86、190-217`；`J/src/analysis-auth.mjs:41` | 会话用户 `{id,name,role,companyIds,mode,principalId,providerScopes}` | 自动继承 | 不改 |
 | 运行时授权 | `J/src/analysis-runtime-services.mjs:37-50` | 只允许 admin、analyst；每次重读配置 | 审批流、调用测试读单据时经过它 | 不改 |
 | 前端路由与导航 | `J/public/analysis.js:12-38、781-828` | 没有注册机制 | 锚点补丁 | **要改** |
-| 静态文件白名单 | `J/analysis-server.mjs:13` | 写死 | PoC 在自己的包装层里另提供（`P/poc-app.mjs:17-22、85-87`），不能交付 | **要改 1 行** |
+| 静态文件白名单 | `J/analysis-server.mjs:13` | 写死 | PoC 在自己的包装层里另提供（`P/poc-app.mjs:19-24`、`115`、`138`），不能交付 | **要改 1 行** |
 | 能力开关 | `J/analysis-server.mjs:221` | 写死在 `/session` 里 | 没用：Nexus 导航所有人可见 | 可选改，或由插件自己提供能力查询接口 |
 
-PoC 从九安导入的符号都集中在 `P/jiuan.mjs:10-33`（按路径动态导入，目录由 `JIUAN_CODE_DIR` 决定）。其中模型合同那一组（`ADVISORY_TASK`、`ADVISORY_SCHEMA`、校验函数、数据治理函数）是有文档的公开接口；`createAnalysisApp`、`createAnalysisRuntimeServices`、`createAnalysisRuntimeRegistry` 是九安启动脚本自己也在用的组合根接口；其余（`createAnalysisAuth`、`normalizeAnalysisReport`、`createAnalysisAiAdviceService` 的内部行为）是内部细节，升级时最容易变。
+PoC 从九安导入的符号集中在两个文件：`P/jiuan.mjs`（服务端、模型合同）和测试台用的 `P/jiuan-mysql.mjs`（MySQL 存储、平台部分），都按路径动态导入，目录由 `JIUAN_CODE_DIR` 决定。其中模型合同那一组（`ADVISORY_TASK`、`ADVISORY_SCHEMA`、校验函数、数据治理函数）是有文档的公开接口；`createAnalysisApp`、`createAnalysisRuntimeServices`、`createAnalysisRuntimeRegistry` 是九安启动脚本自己也在用的组合根接口；其余（`createAnalysisAuth`、`normalizeAnalysisReport`、`createAnalysisAiAdviceService` 的内部行为）是内部细节，升级时最容易变。
 
 ## 3. PoC 每个文件归哪一类
 
@@ -59,12 +59,13 @@ PoC 从九安导入的符号都集中在 `P/jiuan.mjs:10-33`（按路径动态�
 | A（有漂移风险） | `nexus/advisory-input.mjs` | 依赖九安建议服务的内部行为（`enqueue` 会用组装好的输入调用 `modelClient.advisory`） |
 | D | `approval/workflow.mjs`、`approval/runner.mjs`、`approval/routes.mjs` | 内存 Map → 九安键值状态（每张单据一个键，带公司）；`pocRole` → 主机的角色映射；重启后把「预审中」「AI 处理中」收尾成「AI 失败」；读单据改用九安的公司范围（`analysisHuilianyiCompanyIds`）和 `getDocumentHead` |
 | D | `access/me.mjs`、`access/store.mjs`、`nexus/cli.mjs` | 逻辑沿用；文件 → 数据库；每个账号一个 CLI 子进程 → 服务端的 Nexus REST 客户端；账号键改成 `principalId` 的哈希 |
-| D | `nexus/invoke.mjs`、`nexus/runs.mjs`、`nexus/routes.mjs`、`nexus/keys.mjs`、`nexus/governance.mjs`、`config.mjs` | 限流和运行记录从内存换成持久化（运行记录**要带公司**、按公司过滤、设保留期、原始返回加密存）；治理范围按主机配置生成；密钥改用主机的密钥文件 |
+| D | `nexus/invoke.mjs`、`nexus/runs.mjs`、`nexus/routes.mjs`、`nexus/governance.mjs`、`config.mjs` | 限流和运行记录从内存换成持久化（运行记录**要带公司**、按公司过滤、设保留期、原始返回加密存）；治理范围按主机配置生成；调用密钥从启用记录（`stores.enablements`）取 |
+| D | `nexus/system-key.mjs` | 审批流找调用密钥的顺序（发起人启用的 → 别的账号启用的）沿用；改成从九安「Agent 接入」的启用记录读 |
 | D | `public-src/nexus-poc.js`、`public-src/nexus-invoke.js` | 审批面板和 Agent 页交付；口令登录（`passwordLoginForm`、`LOGIN_ACCOUNTS`）不交付；提到 `secrets.env`、`deploy.sh` 的文案要改；`KNOWLEDGE_EXAMPLES` 里是虚构公司 |
 | D | `scripts/build-public.mjs` | 改造成主机补丁的生成器（第 4.3 节） |
 | A + C | `http.mjs` | `fail` / `sendJson` / `readJson` / `onlyFields` 交付；静态文件、`clientIp`、页面 CSP 不交付 |
 | C | `server.mjs`、`poc-app.mjs` | 组合根，被九安的 `start-analysis.mjs` 取代；它们的接线方式就是主机注册代码的样板 |
-| C | `memory-store.mjs`、`seed.mjs`、`login.mjs`、`accounts.mjs`、`secrets.mjs`、`jiuan.mjs`、`jiuan-path.mjs` | 主机已有 MySQL store、汇联易同步、钉钉登录、`analysis.json` 账号、挂载的密钥文件；模块形态下九安的东西改成注入 |
+| C | `memory-store.mjs`、`seed.mjs`、`login.mjs`、`accounts.mjs`、`secrets.mjs`、`nexus/keys.mjs`（`secrets.env` 里的旧兜底）、`jiuan.mjs`、`jiuan-path.mjs`、`jiuan-mysql.mjs`、`bench/` | 主机已有 MySQL store、汇联易同步、钉钉登录、`analysis.json` 账号、挂载的密钥文件；模块形态下九安的东西改成注入 |
 | C | `nexus/samples.mjs`、`samples/`、`scripts/poc-client.mjs`、`scripts/try-agent.mjs`、`infra/` | 虚构示例、开发工具、PoC 部署 |
 
 ## 4. 补丁形态
@@ -155,7 +156,7 @@ createNexusAgentPlugin({
   nexus:   { origin, advisoryPublishId, timeoutMs /* 不超过网关 ai-model 的上限 180000 */ },
   host:    { tenantId, store, runtimeRegistry, getConfig, sourceCompanyIds, runWithAttribution, createAdviceService,
              aiContract /* providers/ai-model.mjs 导出的常量和校验函数 */, audit /* 包一层 platformStore.appendChange */, log },
-  secrets: { advisoryCallKey: () => string, registryKey: Buffer },
+  secrets: { registryKey: Buffer },   // 调用密钥不从这里来：从 stores.enablements 取（各账号或管理员启用时粘贴的）
   roles:   { approvalRoleOf: user => 'reviewer' | 'checker' | null },
   stores:  { approvals, enablements, connections, runs },   // 可选，默认用九安键值状态的适配器
   limits:  { invokePerMinute: 5, mePerMinute: 5, attachmentPolicy },
@@ -175,7 +176,7 @@ createNexusAgentPlugin({
 | 类 | 内容 |
 |---|---|
 | 配置 | `NEXUS_ORIGIN`、`NEXUS_ADVISORY_PUBLICATION`；可选 `NEXUS_TIMEOUT_MS`（不超过网关上限）；每个账号的审批角色（例如 `accounts[].nexusApprovalRole`。注意改账号会让已有会话失效，因为会话指纹是整个账号对象的哈希，`J/src/analysis-auth.mjs:60,67`）；确认已有的 `AI_DATA_ENVIRONMENT`、`AI_PROD_DATA_TENANT_ID`、`AI_PROD_DATA_COMPANY_IDS`、`AI_MODEL_DATA_RETENTION` |
-| 密钥 | 审批用的调用密钥作为 `ai-model-api-key`（`AI_API_KEY_FILE`，`J/src/platform/secret-source.mjs:89`）；一个 32 字节的加密密钥文件（替代 `REGISTRY_KEY`）；各用户的 Nexus 连接凭证和调用密钥加密存库 |
+| 密钥 | 审批用的调用密钥：管理员在九安「Agent 接入」里粘贴，九安加密存进自己的存储，不另放密钥文件（[交接文档](handover.md)第 2.6 节）；一个 32 字节的加密密钥文件（替代 `REGISTRY_KEY`）；各用户的 Nexus 连接凭证和调用密钥加密存库 |
 | 持久化 | 审批记录 `nexus-approval:v1:<租户>:<公司>:<单据>`、启用 `nexus-enabled:v1:<principal 哈希>`、连接 `nexus-connection:v1:<principal 哈希>` 都可以放九安键值状态；运行记录建议单独建表（要按公司过滤、设保留期）；审计走 `appendChange` |
 | 网络 | 只出到 `NEXUS_ORIGIN`：`POST /a2a/<发布>`（SSE，最长 180 秒）、名片、`/api/v2/publications`、`/api/v2/agents`；带附件的请求体约 8.45 MB，反向代理要放行 |
 | 会话字段 | `id`、`name`、`role`、`mode`、`principalId`、`providerScopes`；公司范围改用 `providerScopes.huilianyi.companyIds` |

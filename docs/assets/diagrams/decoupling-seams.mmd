@@ -9,7 +9,7 @@ flowchart TB
     pfe["前端扩展<br/>nexus-poc.js · nexus-invoke.js"]
     proutes["插件接口 /poc/*<br/>审批流 · 我的 Nexus · 调用测试"]
     pmc["模型客户端<br/>model-client.mjs"]
-    pj["jiuan.mjs<br/>唯一的导入口"]
+    pj["jiuan.mjs · jiuan-mysql.mjs<br/>导入口（测试台多一个）"]
     pa2a["A2A 客户端<br/>a2a-client.mjs"]
   end
   subgraph N["Nexus（两个发布，互不知道）"]

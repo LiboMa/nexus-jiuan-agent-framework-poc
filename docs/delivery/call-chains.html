@@ -93,7 +93,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>前端到 A2A Agent：调用链、解耦与处理流程</h1>
+v0.1.0</span>前端到 A2A Agent：调用链、解耦与处理流程</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
     <tr><th scope="row">状态</th><td>交付版 v1（写的是现状；2026-10-19
@@ -161,7 +161,8 @@ id="toc-6-agent-只管初审不碰汇联易">6. Agent
 的每一跳都由服务端发出。页面上看得到 Nexus
 的地址和发布编号，看不到任何密钥（第 3.3 节）。</li>
 <li><strong>两个模块之间只有 6 个接缝</strong>（第 4
-节）：两个在服务端（路由钩子、模型客户端），一个协议（A2A），一份数据约定，一处前端补丁，一个导入口。任何一处变了，坏在哪、怎么发现，都写在第
+节）：两个在服务端（路由钩子、模型客户端），一个协议（A2A），一份数据约定，一处前端补丁，一组导入口（<code>jiuan.mjs</code>，加上测试台用的
+<code>jiuan-mysql.mjs</code>）。任何一处变了，坏在哪、怎么发现，都写在第
 4.2 节。</li>
 <li><strong>处理流程</strong>：汇联易同步 → 规范化 → 入库 → 读原件 →
 九安预审 → AI 初审 → 人工复核。PoC
@@ -266,17 +267,18 @@ alt="九安原前端「AI 独立建议」的时序：浏览器只请求九安服
 <code>modelClient.advisory({ facts, ruleResults, personalFocus: [], dataContext, signal })</code>。</p></li>
 <li><p><strong>这里接到 PoC。</strong>
 模型客户端是九安组合根注入的（<code>J/src/analysis-runtime-services.mjs:60</code>）；PoC
-在 <code>P/server.mjs:45</code> 建好
-<code>P/nexus/model-client.mjs</code>，经 <code>P/poc-app.mjs:43</code>
+在 <code>P/server.mjs:54</code> 建好
+<code>P/nexus/model-client.mjs</code>，经 <code>P/poc-app.mjs:66</code>
 交给九安。</p></li>
 <li><p>PoC 模型客户端：</p>
 <ul>
 <li>先用九安自己的函数校验输入（<code>validateAdvisoryInput</code>）；</li>
 <li>从系统里取调用密钥（<code>P/nexus/system-key.mjs</code>：发起人在
-Agent 页启用的那把 → 别的账号启用的 → <code>secrets.env</code>
-兜底）；</li>
+Agent 页启用的那把 → 别的账号启用的；都没有就报
+<code>AI_AUTH_INVALID</code>，提示去 Agent 页启用）；</li>
 <li>把九安的任务说明 <code>ADVISORY_TASK</code>、输出格式
-<code>ADVISORY_SCHEMA</code> 和输入拼成一条消息，经
+<code>ADVISORY_SCHEMA</code>、PoC 加的输出规则（只输出
+JSON；字符串里不用英文双引号，引用用「」）和输入拼成一条消息（<code>buildPrompt</code>），经
 <code>P/nexus/a2a-client.mjs</code> 用 A2A <code>message/stream</code>
 发给 <code>/a2a/pub_5c53e70d8dc7ddea</code>；</li>
 <li>用九安自己的 <code>parseAdvisoryResult</code>
@@ -293,7 +295,8 @@ A2A 路径。</p>
 <h2 id="32-poc-加的入口">3.2 PoC 加的入口</h2>
 <p>PoC 的接口都在 <code>/api/analysis/v1/poc/*</code>，挂在九安的
 <code>platformRoutes</code>
-钩子上（<code>P/poc-app.mjs:82</code>）。主机名、Origin、会话、CSRF
+钩子上（<code>P/poc-app.mjs:107-110</code>；PoC
+插件先处理，不认的再交给九安自己的平台接口）。主机名、Origin、会话、CSRF
 都由九安先检查完，才轮到 PoC。</p>
 <div class="table-wrap">
 <table>
@@ -326,13 +329,13 @@ A2A 路径。</p>
 <td><code>P/<wbr>access/<wbr>me.<wbr>mjs</code>、<code>P/<wbr>access/<wbr>routes.<wbr>mjs</code></td>
 <td>列表：operator CLI 经 REST，用这个账号自己的 API 密钥；名片：公开的
 <code>/<wbr>.<wbr>well-<wbr>known/<wbr>agent-<wbr>card.<wbr>json</code>；启用：<code>tasks/<wbr>get</code>
-验证密钥，不花钱</td>
+验证密钥，不花钱，默认再读一次能力清单（约 0.03 美元）</td>
 </tr>
 <tr>
 <td>Agent 页「调用测试」</td>
 <td><code>POST /<wbr>poc/<wbr>nexus/<wbr>invoke</code>、<code>GET /<wbr>poc/<wbr>nexus/<wbr>runs/<wbr>:id</code></td>
 <td><code>P/<wbr>nexus/<wbr>invoke.<wbr>mjs</code></td>
-<td>直接经 A2A 客户端；密钥先找「我启用的」，再找「系统提供的」</td>
+<td>直接经 A2A 客户端；用「我启用的」那把调用密钥</td>
 </tr>
 <tr>
 <td>附件规则、示例附件</td>
@@ -461,11 +464,13 @@ Nexus。PoC：不碰九安的存储，也不判审批，只把输入送出去、
 </tr>
 <tr>
 <td>⑥</td>
-<td>唯一的导入口</td>
+<td>导入口</td>
 <td>PoC → 九安库函数</td>
-<td>所有九安符号只从 <code>P/<wbr>jiuan.<wbr>mjs:10-<wbr>33</code>
-来，按 <code>JIUAN_<wbr>CODE_<wbr>DIR</code> 动态导入</td>
-<td>PoC 其余文件不出现九安的路径；换九安版本只看这一个文件</td>
+<td>九安符号只从两个文件来：<code>P/<wbr>jiuan.<wbr>mjs</code>（服务端、模型合同）和测试台用的
+<code>P/<wbr>jiuan-<wbr>mysql.<wbr>mjs</code>（MySQL
+存储、平台部分），都按 <code>JIUAN_<wbr>CODE_<wbr>DIR</code>
+动态导入</td>
+<td>PoC 其余文件不出现九安的路径；换九安版本只看这两个文件</td>
 </tr>
 </tbody>
 </table>
@@ -476,7 +481,8 @@ Nexus。PoC：不碰九安的存储，也不判审批，只把输入送出去、
 Nexus」、调用测试彼此不导入，只经组合根注入的函数打交道（<code>credentialFor</code>、<code>systemCredential</code>、<code>markInvalid</code>）。</li>
 <li><strong>两个 Agent
 之间</strong>：「九安审核AI」和「九安知识Agent」是两个发布、两把调用密钥，彼此不知道。审批流只绑定栈参数
-<code>NEXUS_ADVISORY_PUBLICATION</code> 指定的那个发布；知识 Agent
+<code>AdvisoryPublicationId</code> 指定的那个发布（实例上的环境变量是
+<code>NEXUS_ADVISORY_PUBLICATION</code>）；知识 Agent
 现在只在调用测试里用。</li>
 </ul>
 <h2 id="42-哪边变了坏在哪怎么发现">4.2 哪边变了，坏在哪、怎么发现</h2>
@@ -523,6 +529,14 @@ Nexus」、调用测试彼此不导入，只经组合根注入的函数打交道
 <td>改 <code>jiuan.<wbr>mjs</code> 一个文件</td>
 </tr>
 <tr>
+<td>九安改了存储或平台接口（测试台用的
+<code>createBatch</code>、<code>upsertPage</code>、键值状态、平台路由）</td>
+<td>测试台起不来</td>
+<td><code>bench-<wbr>*.<wbr>test.<wbr>mjs</code>（<code>poc/<wbr>infra/<wbr>bench-<wbr>test.<wbr>sh</code>）</td>
+<td>改 <code>jiuan-<wbr>mysql.<wbr>mjs</code> 和
+<code>P/<wbr>bench/<wbr></code></td>
+</tr>
+<tr>
 <td>Nexus 的 A2A 协议升级</td>
 <td>调用或验证失败</td>
 <td><code>a2a-<wbr>client.<wbr>test.<wbr>mjs</code>、端到端测试</td>
@@ -532,8 +546,10 @@ Nexus」、调用测试彼此不导入，只经组合根注入的函数打交道
 <td>换一个审核 Agent（换发布）</td>
 <td>无代码改动</td>
 <td>健康检查之后跑 <code>poc.<wbr>e2e.<wbr>mjs</code></td>
-<td>改栈参数 <code>NEXUS_<wbr>ADVISORY_<wbr>PUBLICATION</code>，再
-<code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
+<td>先改栈参数
+<code>AdvisoryPublicationId</code>（<code>aws cloudformation deploy -<wbr>-<wbr>parameter-<wbr>overrides</code>），再
+<code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>；然后至少一个账号在「我的
+Agent」里启用新发布</td>
 </tr>
 <tr>
 <td>某一把调用密钥失效</td>
@@ -570,12 +586,13 @@ alt="从汇联易到人工复核：九安生产上由汇联易测试租户经九
 <td>1 取单</td>
 <td><code>createAnalysisSync</code> 按 <code>lastModifyDate</code>
 增量拉汇联易测试租户的报销单列表和详情</td>
-<td>「模拟来单」按模板生成虚构单据（<code>P/<wbr>seed.<wbr>mjs:125</code>）；测试台上编号从九安的键值状态里取（<code>poc-<wbr>intake-<wbr>sequence</code>），重启接着排</td>
+<td>「模拟来单」按模板生成虚构单据（<code>P/<wbr>seed.<wbr>mjs:138</code>）；测试台上编号从九安的键值状态里取（<code>poc-<wbr>intake-<wbr>sequence</code>），重启接着排</td>
 </tr>
 <tr>
 <td>2 规范化</td>
 <td><code>normalizeAnalysisReport</code></td>
-<td>同一个函数（<code>P/<wbr>seed.<wbr>mjs:103</code>）</td>
+<td>测试台上在九安的 <code>upsertPage</code>
+里做，和同步进来的单据一样；内存模式下用同一个函数（<code>P/<wbr>seed.<wbr>mjs</code>）</td>
 </tr>
 <tr>
 <td>3 入库</td>

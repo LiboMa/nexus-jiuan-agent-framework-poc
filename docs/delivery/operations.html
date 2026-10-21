@@ -93,13 +93,14 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>运维与后续迭代</h1>
+v0.1.0</span>运维与后续迭代</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
     <tr><th scope="row">状态</th><td>交付版
 v2（实例已是测试台：t3.large、本机 MySQL 8.0、九安运行时）</td></tr>
     <tr><th scope="row">范围</th><td>线上 PoC（栈 andon-finance-poc）与
-Nexus nxs-beine1013</td></tr>
+Nexus nxs-beine1013（线上 Nexus AI
+的实际地址：d3u3hj2us186y.cloudfront.net）</td></tr>
     <tr><th scope="row">读者</th><td>运维、值班、应用开发、Agent
 开发</td></tr>
   </table>
@@ -192,8 +193,8 @@ Up）；健康检查 <code>/<wbr>api/<wbr>health</code>
 <td>审批流能不能出建议</td>
 <td>单据池顶上点一次「模拟来单」，看新卡片上出现「AI
 初审：…」和「待人工复核」</td>
-<td>健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（<a
-href="code-review-2026-10-17.html">代码评审</a> I6）</td>
+<td>健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（评审
+I6，<a href="handover.html">交接文档</a>第 6.1 节）</td>
 </tr>
 <tr>
 <td>Nexus 费用</td>
@@ -312,8 +313,8 @@ Agent（发布跟随最新版本），回到页面点「重新读能力清单」
 <a href="../assets/screens/invoke-panel.png" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/screens/invoke-panel.png" loading="lazy"
-alt="调用测试面板：选一个已启用或系统提供的发布，看它的 A2A 名片，加示例附件或本机文件，再发送" /></a>
-<figcaption>调用测试面板：选一个已启用或系统提供的发布，看它的 A2A
+alt="调用测试面板：选一个你已启用的发布，看它的 A2A 名片，加示例附件或本机文件，再发送" /></a>
+<figcaption>调用测试面板：选一个你已启用的发布，看它的 A2A
 名片，加示例附件或本机文件，再发送</figcaption>
 </figure>
 <h2 id="22-审批流用哪把调用密钥">2.2 审批流用哪把调用密钥</h2>
@@ -322,9 +323,9 @@ alt="调用测试面板：选一个已启用或系统提供的发布，看它的
 <li>先用发起（或重试）这张单据审批的人，在 Agent
 页启用的「九安审核AI」那把；</li>
 <li>他没启用，就用别的账号启用的、最近验证过的那把；</li>
-<li>系统里一把都没有，才用 <code>secrets.env</code> 里
-<code>NEXUS_A2A_KEY_pub_5c53e70d8dc7ddea</code>
-那一行兜底（可选，可以删）。</li>
+<li>都没有，审批停在「AI 初审失败」，错误码
+<code>AI_AUTH_INVALID</code>：在 Agent 页启用「九安审核AI」后点「重试
+AI」。不要往 <code>secrets.env</code> 里放调用密钥。</li>
 </ol>
 <p>Nexus 回 401
 时，只把用到的那一把标记为「密钥失效」，下一次自动换下一把。要换密钥：在
@@ -539,12 +540,12 @@ Operator Skill 在 Nexus 上建 Agent、发布、拿调用密钥。</li>
 <tr>
 <td>2 设计</td>
 <td>改接口、改数据、改流程的，写设计文档并评审；小改动在合并请求里写清楚</td>
-<td><code>docs/<wbr>specs/<wbr>&lt;日期&gt;-<wbr>&lt;主题&gt;-<wbr>design.<wbr>md</code></td>
+<td>设计文档（放在开发仓库）</td>
 </tr>
 <tr>
 <td>3 计划</td>
 <td>拆成小任务，每个任务带测试</td>
-<td><code>docs/<wbr>plans/<wbr>&lt;日期&gt;-<wbr>&lt;主题&gt;.<wbr>md</code></td>
+<td>实现计划（放在开发仓库）</td>
 </tr>
 <tr>
 <td>4 实现</td>
@@ -613,8 +614,8 @@ C1；<a href="deploy-iteration.html">部署与迭代规范</a>第 2 节）。</l
 I10）。</li>
 <li><strong>调用量与费用看板</strong>：按账号、按发布统计调用次数（运行记录现在只在内存里）。</li>
 </ol>
-<p>这些在<a
-href="code-review-2026-10-17.html">交付前代码评审</a>里也有对应的条目。</p>
+<p>编号对应<a href="handover.html">交接文档</a>第 6.1
+节「上生产前必须改的」。</p>
 </main>
 </div>
 <footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/operations.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>

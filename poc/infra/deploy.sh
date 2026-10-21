@@ -4,7 +4,7 @@
 #   infra/deploy.sh --code-only 跳过建栈，只打包上传、重启、健康检查
 # 测试台：构件里的九安是构建出来的副本（poc/bench/build-jiuan.sh：开发包 + 补丁 + mysql2）；重启前在实例上配置测试台（bench/bench-configure.sh）。
 #   POC_STORE=memory|mysql 决定服务用内存存储还是本机 MySQL（默认 mysql；回到内存存储：POC_STORE=memory deploy.sh --code-only）。
-# 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command）。口令与 Nexus 密钥只在 infra/secrets.env，不打印。
+# 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
@@ -14,7 +14,7 @@ SECRETS="$HERE/secrets.env"
 POC_DIR="$(cd "$HERE/.." && pwd)"
 APP_DIR="$POC_DIR/app"
 JIUAN_CODE_DIR="${JIUAN_CODE_DIR:-$POC_DIR/../source/审核平台-测试环境开发包-v0.5.3/code}"
-OPERATOR_SCRIPT="${NEXUS_OPERATOR_SCRIPT:-$HOME/MyDev/LLM/Nexus-AI-strands/Nexus-AI/skills/system_skills/nexus-ai-operator/scripts/nexus.py}"
+OPERATOR_SCRIPT="${NEXUS_OPERATOR_SCRIPT:-$POC_DIR/../skills/nexus-ai-operator/scripts/nexus.py}"
 CODE_ONLY=false
 [[ "${1:-}" == "--code-only" ]] && CODE_ONLY=true
 POC_STORE="${POC_STORE:-mysql}"
@@ -63,15 +63,13 @@ say "密钥配置文件 $SECRETS"
 if [[ ! -f "$SECRETS" ]]; then
   install -m 600 /dev/null "$SECRETS"   # 先建成 0600，再写入
   cat >> "$SECRETS" <<SECRETSFILE
-# andon-finance PoC 的口令与密钥。只放在本机和实例上，不进构件、不进文档、不贴进对话。改完运行 infra/deploy.sh --code-only。
+# andon-finance PoC 的启动配置（口令、REGISTRY_KEY、测试台密钥）。只放在本机和实例上，不进构件、不进文档、不贴进对话。改完运行 infra/deploy.sh --code-only。Agent 的调用密钥不放这里，在前端「Nexus Agent」页启用。
 REVIEWER_PASSWORD=$(openssl rand -base64 18)
 CHECKER_PASSWORD=$(openssl rand -base64 18)
-# 系统提供的 A2A 调用密钥（审批流在用的发布）：「互联中心 › 对外发布」签发，nxa_ 开头。NEXUS_A2A_KEY_<发布编号>=…
-NEXUS_A2A_KEY_$(param AdvisoryPublicationId)=
 # 加密各用户调用密钥的密钥（32 字节 base64）。换掉它，所有用户都要重新启用 Agent。
 REGISTRY_KEY=$(openssl rand -base64 32)
 SECRETSFILE
-  echo "已生成 ${SECRETS}：两条随机口令和 REGISTRY_KEY；系统提供的调用密钥留空，填好后再运行 deploy.sh --code-only"
+  echo "已生成 ${SECRETS}：两条随机口令和 REGISTRY_KEY（测试台的三项密钥接着补上）。Agent 的调用密钥不放这里，在前端「Nexus Agent」页启用"
 fi
 if ! grep -q '^REGISTRY_KEY=' "$SECRETS"; then
   printf '%s\n' '# 加密各用户调用密钥的密钥（32 字节 base64）。换掉它，所有用户都要重新启用 Agent。' "REGISTRY_KEY=$(openssl rand -base64 32)" >> "$SECRETS"

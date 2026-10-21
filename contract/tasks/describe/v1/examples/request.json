@@ -1,0 +1,14 @@
+{
+  "envelope": "jiuan.agent/v1",
+  "task": "describe",
+  "taskVersion": 1,
+  "requestId": "9d2c6a41-7e3b-4c58-b0f1-2a6e8d4c3b17",
+  "context": {
+    "tenantId": "poc-tenant",
+    "scope": "tenant",
+    "companyId": null,
+    "subject": null,
+    "locale": "zh-CN"
+  },
+  "input": {}
+}

@@ -54,7 +54,7 @@ Schema：`input.schema.json`（放在信封的 `input` 里）。例子：`exampl
 
 ## 4. 输出
 
-Schema：`output.schema.json`（放在结果信封的 `output` 里）。例子：`examples/result-pass.json`（对应 `request.json`）、`examples/result-fail.json`（对应 `request-no-evidence.json`）、`examples/result-declined.json`。
+Schema：`output.schema.json`（放在结果信封的 `output` 里）。例子：`examples/result-pass.json`（对应 `request.json`）、`examples/result-fail.json`（对应 `request-no-evidence.json`）、`examples/result-declined.json`（对应 `request-misrouted.json`：一张员工报销单，带着对公付款的规则被错发过来）。
 
 ```json
 { "result": "pass | fail",
@@ -80,7 +80,7 @@ Schema：`output.schema.json`（放在结果信封的 `output` 里）。例子�
 2. 字段核对类的结果和引擎一致；
 3. 有任何一条不通过，综合结论就必须是不通过。
 
-这三条和信封检查在 `examples/` 的三对例子上都验证过。
+三条的代码在 `checks.mjs`：`check(result, request)` 返回问题列表，空数组表示通过；declined 的结果不带 `output`，直接通过。九安的适配层在 `output.schema.json` 之后调用它。这三条和信封检查在 `examples/` 的三对例子上都验证过（每个结果都对应自己的请求），测试在交接仓库的 `poc/app/test/unit/contract-checks.test.mjs`。
 
 ## 5. 在审批流里
 

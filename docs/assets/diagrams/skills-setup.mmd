@@ -1,13 +1,13 @@
 flowchart TB
   subgraph web["Nexus 网页（本人登录）"]
     direction LR
-    k1["① 个人设置 › API 密钥<br/>生成密钥 A（档位 builder）<br/>浏览器同时下载 operator 接入包"]
+    k1["① 个人设置 › API 密钥<br/>生成密钥 A（档位 builder）"]
     k2["② 个人设置 › API 密钥<br/>再生成密钥 B（只读档位即可）"]
     k3["③ 互联中心 › 对外发布<br/>给这个发布签调用密钥"]
   end
   subgraph tool["编码工具（Claude Code · Codex · Kiro CLI）"]
     direction LR
-    op["nexus-ai-operator<br/>装进技能目录 → login（密钥 A）<br/>建 Agent · 试用 · 建 A2A 发布"]
+    op["nexus-ai-operator（仓库里的 1.1.0）<br/>装进技能目录 → login（密钥 A）<br/>建 Agent · 试用 · 建 A2A 发布"]
     aa["agent-access<br/>装进技能目录 → login 应用<br/>nexus connect（密钥 B）"]
     en["agent-access<br/>enable --key-stdin（调用密钥）<br/>invoke --task describe"]
   end

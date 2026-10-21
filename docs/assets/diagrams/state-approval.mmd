@@ -27,6 +27,10 @@ stateDiagram-v2
     AI 只给初审建议，结论由人做；
     与建议相反时必须写理由
   end note
+  note left of invalidated
+    还没走完的任何一步，单据版本一变
+    都会进「已失效」，图里只画了一条
+  end note
   class approved good
   class returned risk
   class ai_failed warn

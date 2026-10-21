@@ -10,7 +10,7 @@ audience: 九安开发者（含他们的编码工具）、应用开发、Agent �
 
 九安平台以后会接很多类型的 Agent：业务流程类、财务类、知识库类。本文写这套框架：架构、选型理由、三类 Agent 怎么接、AI 步骤与审批流、交付的接口、补丁怎么分层、谁维护什么。
 
-> **2026-10-19 决定**：网关层以后再做，本期先完成 PoC / MVP 和测试台。本期只实现初审跑通需要的部分：一问一答、按对象存结果、按单据类型路由。多轮对话、长任务、分区与串联、租户级调用随网关层做。范围见[设计](../specs/2026-10-19-agent-framework-design.md)第 7 节。
+> **2026-10-19 决定**：网关层以后再做，本期先完成 PoC / MVP 和测试台。本期只实现初审跑通需要的部分：一问一答、按对象存结果、按单据类型路由。多轮对话、长任务、分区与串联、租户级调用随网关层做。范围见下面第 0 节。
 
 **现在做到哪了**（2026-10-19）：
 
@@ -18,7 +18,7 @@ audience: 九安开发者（含他们的编码工具）、应用开发、Agent �
 |---|---|
 | 设计（本文、[接口](agent-interface.md)、[初审契约](first-review-contract.md)、[总览](agent-framework-overview.html)） | 设计稿 v2，待项目负责人批准 |
 | 契约文件 `contract/` | 已写好；schema 自检、例子过信封检查和任务检查都通过 |
-| 测试台（用来验收补丁） | 已完成：t3.large、本机 MySQL 8.0、九安运行时在跑；九安副本由 `poc/bench/build-jiuan.sh` 构建，`patches/jiuan-v0.5.3/` 里的补丁按文件名顺序打进副本（记录：`evidence/bench/2026-10-19-upgrade.md`） |
+| 测试台（用来验收补丁） | 已完成：t3.large、本机 MySQL 8.0、九安运行时在跑；九安副本由 `poc/bench/build-jiuan.sh` 构建，`patches/jiuan-v0.5.3/` 里的补丁按文件名顺序打进副本，这个目录现在还是空的（记录：`evidence/bench/2026-10-19-upgrade.md`） |
 | 九安补丁 0001–0006 | 没开始，是下一份计划；设计批准后写 |
 | 审核 Agent 的 `first_review@1` | 没开始，和补丁 0005 一起做；在这之前审批流仍由 PoC 插件调用「九安审核AI」 |
 | 网关层（多轮对话、长任务、分区与串联、租户级调用、按用法分额度） | 以后再做 |
@@ -28,6 +28,29 @@ audience: 九安开发者（含他们的编码工具）、应用开发、Agent �
 - 第一个任务：[单据初审 first_review@1](first-review-contract.md)
 
 下文 `J/` 指九安开发包的 `code/` 目录，`P/` 指 `audit-nexus/poc/app/`，`C/` 指 `audit-nexus/contract/`。所有引用都在源码上核对过，九安开发包只读，没有执行其中任何东西。
+
+## 0. 范围：本期做什么，以后做什么
+
+**本期（PoC / MVP）**：在测试台上，用九安自己的运行时跑通「来单 → 预审 → AI 初审（经 A2A）→ 人工复核」，接口按 `jiuan.agent/v1` 和 `first_review@1`。
+1. 契约照现在的写法：信封 v1、`first_review@1`、`describe@1`。
+2. 九安里只做初审跑通需要的部分：
+   - A2A 适配层，只做一问一答；
+   - 模型接入口的 `agentTask`，以及连接器密钥的改动；
+   - 「Agent 接入」（平台级启用）；
+   - 简化的 Agent 任务服务：一问一答、按对象存结果、按单据类型路由、AI 步骤状态、自动重试一次；
+   - 规则生效；
+   - 初审组装器与审批流；
+   - 流水线一站、系统身份；
+   - 界面。
+3. Nexus 上的审核 Agent：新提示词和发布，名片描述写契约和任务，固定版本。
+4. 验收：端到端测试通过、项目负责人确认后再提交。
+
+**以后（网关层）**：
+- 把通用层做成我们维护的独立网关模块，经插口用宿主的存储、身份、调用中间件、数据治理和留痕；
+- 多轮对话、长任务、分区与串联、租户级调用、按用法分额度（契约里已经留好位置）；
+- 财务类、知识库类任务；知识 Agent 迁到信封。
+
+本期的代码给这些留出口子，但不提前实现。
 
 ## 1. 结论
 
@@ -177,26 +200,32 @@ audience: 九安开发者（含他们的编码工具）、应用开发、Agent �
 createAgentClient({
   nexusOrigin,          // 'https://nxs-….tinyboat.blog'
   getKey,               // async ({ publishId }) => 'nxa_…'，从「Agent 接入」的启用记录读
+  onKeyRejected,        // ({ publishId, keyFingerprint }) => void：401 或 -32010 时通知「Agent 接入」标失效（指纹相同才标）
   tasks,                // { 'first_review@1': { check, limits }, … }，来自 contract/tasks/
   fetchImpl = fetch, now = Date.now,
 }) → {
   probe({ publishId }) → { ok, reason, tasks: ['first_review@1', …] },     // 读名片，不花钱
-  call({ publishId, request, files, conversationId, attempt, signal }) → {
+  verifyKey({ publishId, key }) → { ok, reason },                          // tasks/get 验证密钥，不花钱；「Agent 接入」启用、换密钥时用
+  call({ publishId, request, files, conversationId, attempt, partition, signal }) → {
     status: 'completed' | 'declined' | 'pending',   // pending 只出现在长任务
     output, declined,
     call: { publishId, taskId, contextId, callId, agentVersion, repaired },
   },
   collect({ publishId, request, taskId, contextId, signal }) → 同上,           // 长任务收结果
 }
-// request 是整个请求信封；出错抛 Error，code 是九安的模型错误码，detail 带 Nexus 的错误码
+// request 是整个请求信封；出错抛 Error：code 是九安的模型错误码，autoRetry 照 error-map.json 命中的那一条，detail 带 Nexus 的错误码
+// call 返回的 publishId 只给 Agent 任务服务内部用（存进 AI 步骤、对账），业务接口的返回里不带
+// 时限、额度、并发、调用日志都在九安的调用中间件，适配层只听 signal，也不自己重试（接口第 4.4、7 节）
+// collect 只给长任务（deferred: true）用；还没有长任务时可以先不写
 ```
 
 **I3 模型接入口**（`providers/ai-model.mjs`）
 
 - `createModelClient` 多返回一个通用方法 `agentTask(input)`：
-  - 输入：`input = { publishId, request, files, conversationId, attempt, collect, dataContext, signal }`；
+  - 输入：`input = { publishId, request, files, conversationId, attempt, partition, collect, dataContext, signal }`；`attempt`、`partition` 用来生成 contextId（[接口](agent-interface.md)第 4.1 节）；
   - 方法开头先调 `assertModelDataAllowed(dataPolicy, input.dataContext)`，再交给适配层。
 - `MODEL_PROVIDER_IMPLEMENTED` 改成 `true`；`connectors.mjs` 里 `ai-model` 的操作加 `agentTask`。
+- 开关一打开，草稿核验会误以为模型已配置：`J/src/analysis-draft-evidence-service.mjs:23` 只看 `model` 是不是字符串，空串也算。要一起改成要求 `model` 非空（和 AI 建议 `J/src/analysis-ai-advice.mjs:144` 一样），否则页面会显示可以试跑，点了必然失败，还占 `ai-model` 的每日额度。
 - 调用记在哪张平台卡片上，由 Agent 任务服务用 `runWithAttribution` 指定（例如 `audit.first-review`），所以暂停开关和调用日志能按用法分开。额度不能：每张卡片的每日上限和整个连接器的上限是同一个数（`J/src/platform/call-middleware.mjs:596-603`），要按用法分额度得改中间件（第 10 节第 2 条）。
 - 原有的 `advisory`、`reviewDraftEvidence` 不在本期范围，保持原样。
 
@@ -297,7 +326,7 @@ createAgentTaskService({ store, modelClient, enablement, routes, tasks }) → {
 
 | 层 | 怎么算通过 |
 |---|---|
-| 契约 | 信封和任务的 schema 自检通过；`first_review` 三对例子过信封检查和任务检查；`describe` 的例子过信封检查（已经通过） |
+| 契约 | 信封和任务的 schema 自检通过；`first_review` 三对例子（通过、不通过、declined，各配自己的请求）过信封检查和任务检查；`describe` 的一对例子过信封检查（已经通过） |
 | 适配层 | 对本地假 A2A 网关的测试：正常流、分块和全文、断线后 `tasks/get`、修正一次、`declined`、长任务收结果、`error-map.json` 里的每种错误 |
 | 通用层 | 换一个任务（`describe`）走同一条路，不改通用层的代码；多轮对话、长任务、分区、`declined` 用测试专用的任务契约跑通（这些契约放在测试目录里，不进任务目录） |
 | 审核 Agent | 用两个例子请求各调一次（约 0.1 美元），结果过检查；夹带指令的单据不被带偏 |

@@ -93,11 +93,11 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1</span>交付包指南（Delivery Package Guide）</h1>
+v0.1.0</span>交付包指南（Delivery Package Guide）</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
     <tr><th scope="row">状态</th><td>封板 Finance-Audit-Nexus-PoC
-v0.1（交付包由 make-package.sh
+v0.1.0（交付包由 make-package.sh
 生成）<span class="stamp">交付</span></td></tr>
     <tr><th scope="row">范围</th><td>audit-nexus/
 下的代码、文档、测试与证据；不含密钥和九安开发包</td></tr>
@@ -116,21 +116,28 @@ v0.1（交付包由 make-package.sh
 <li><a href="#5-不在包里另行交接的" id="toc-5-不在包里另行交接的">5.
 不在包里、另行交接的</a></li>
 <li><a href="#6-验收清单" id="toc-6-验收清单">6. 验收清单</a></li>
-<li><a href="#7-封板时的状态v012026-10-19"
-id="toc-7-封板时的状态v012026-10-19">7.
-封板时的状态（v0.1，2026-10-19）</a></li>
+<li><a href="#7-封板时的状态v0102026-10-21"
+id="toc-7-封板时的状态v0102026-10-21">7.
+封板时的状态（v0.1.0，2026-10-21）</a></li>
 <li><a href="#8-签收" id="toc-8-签收">8. 签收</a></li>
-<li><a href="#9-以后怎么更新这个包" id="toc-9-以后怎么更新这个包">9.
-以后怎么更新这个包</a></li>
+<li><a href="#9-以后怎么更新这个包和交接仓库"
+id="toc-9-以后怎么更新这个包和交接仓库">9.
+以后怎么更新这个包和交接仓库</a></li>
 </ul>
 </nav>
 <main id="main">
 <h1 id="1-一句话">1. 一句话</h1>
 <p>交付包是一个压缩包，加一个校验文件：<strong>Finance-Audit-Nexus-PoC
-v0.1</strong>，九安 × Nexus PoC 的全部代码（含测试台）、测试、应用自己的
-Skill、Agent 接入框架的契约、文档（Markdown 和
-HTML）、图、截图和参考补丁。密钥和九安开发包不在包里，另行交接（第 5
-节）。拿到之后按第 6 节验收，按第 8 节签收。</p>
+v0.1.0</strong>，九安 × Nexus PoC
+的交接内容：全部代码（含测试台）、测试、两个
+Skill（nexus-ai-operator、agent-access）、Agent
+接入框架的契约、交接文档（Markdown 和
+HTML）、图、截图、参考补丁，再加上测试证据 <code>evidence/</code>。除了
+<code>evidence/</code>，包里的内容和交接仓库 <a
+href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide">https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide</a>
+一致，两边由同一份白名单生成（第 9
+节）。设计稿、实现计划、进度看板、历次评估、评审记录不在包里，在开发仓库。密钥和九安开发包也不在包里，另行交接（第
+5 节）。拿到之后按第 6 节验收，按第 8 节签收。</p>
 <figure>
 <a href="../assets/diagrams/package-contents.svg" class="figure-link"
 target="_blank" rel="noopener"><img
@@ -144,16 +151,18 @@ alt="交付包里有什么：docs、poc/app、poc/bench、contract、poc/infra�
 <pre class="bash"><code>docs/delivery/make-package.sh</code></pre>
 <p>脚本按顺序做这些事，任何一步失败就停下来，不出包：</p>
 <ol type="1">
-<li>跑单元测试（266 个；本机没有 MySQL，其中 11
+<li>跑单元测试（275 个；本机没有 MySQL，其中 11
 个会跳过，它们在测试台上用 <code>poc/infra/bench-test.sh</code> 跑）和
 Skill 与命令行测试（13 个）；</li>
 <li><code>docs/build-html.sh --check</code>：图和 HTML 都是最新的；</li>
 <li>重新生成参考补丁，并在干净的九安副本上
-<code>patch --dry-run --fuzz=0</code>；校验进度清单
-<code>progress.json</code>，重出进度看板快照
-<code>docs/progress.html</code>；</li>
+<code>patch --dry-run --fuzz=0</code>；</li>
 <li>按白名单把文件拷到暂存目录（第 4
 节），排除生成物、依赖、杂物和密钥；</li>
+<li><strong>脱敏</strong>：<code>docs/delivery/sanitize.py</code>
+按对照表 <code>sanitize.conf</code>（只在开发目录）把 AWS 账号和 EC2
+的标识换成 AWS
+文档的示例值，再按格式补一遍；还留着对照表里的真实值就停下；</li>
 <li><strong>密钥检查</strong>：暂存目录里不能有
 <code>secrets.env</code>，不能有像 <code>nxa_</code> / <code>nxc_</code>
 / <code>nxp_</code> / <code>afp_</code> 密钥、AWS
@@ -162,13 +171,13 @@ Skill 与命令行测试（13 个）；</li>
 <li>写 <code>MANIFEST.txt</code>（每个文件的 sha256）；</li>
 <li>打包成 <code>dist/&lt;版本&gt;.tar.gz</code>（版本取自根目录的
 <code>VERSION</code>，空格换成
-<code>-</code>：<code>dist/Finance-Audit-Nexus-PoC-v0.1.tar.gz</code>），并写同名的
+<code>-</code>：<code>dist/Finance-Audit-Nexus-PoC-v0.1.0.tar.gz</code>），并写同名的
 <code>.sha256</code>。</li>
 </ol>
 <p><strong>校验</strong>（拿到包的人）：</p>
-<pre class="bash"><code>shasum -a 256 -c Finance-Audit-Nexus-PoC-v0.1.tar.gz.sha256        # 包没被改过
-tar -xzf Finance-Audit-Nexus-PoC-v0.1.tar.gz
-cd Finance-Audit-Nexus-PoC-v0.1 &amp;&amp; shasum -a 256 -c MANIFEST.txt --quiet   # 每个文件都对得上
+<pre class="bash"><code>shasum -a 256 -c Finance-Audit-Nexus-PoC-v0.1.0.tar.gz.sha256        # 包没被改过
+tar -xzf Finance-Audit-Nexus-PoC-v0.1.0.tar.gz
+cd Finance-Audit-Nexus-PoC-v0.1.0 &amp;&amp; shasum -a 256 -c MANIFEST.txt --quiet   # 每个文件都对得上
 open docs/delivery/README.html                                          # 从文档索引开始</code></pre>
 <h1 id="3-按角色从哪读起">3. 按角色从哪读起</h1>
 <figure>
@@ -190,9 +199,22 @@ alt="四种角色的阅读路线：项目负责人、应用开发、运维 / 值
 </thead>
 <tbody>
 <tr>
+<td>前端用户（审核员、复核人）</td>
+<td><a href="quick-guide.html">快速上手</a></td>
+<td>照着做一遍：连接 Nexus、启用 Agent、调用测试、在审批流里用</td>
+</tr>
+<tr>
+<td>九安的前后端开发</td>
+<td><a href="developer-guide.html">开发者快速对接指南</a> → <a
+href="agent-interface.html">Agent 接口</a> → <a
+href="agent-framework.html">Agent 接入框架</a>第 6 节</td>
+<td>拿一个业务需求，按指南的提示词 P1–P5 在 Claude Code 里走一遍</td>
+</tr>
+<tr>
 <td>项目负责人</td>
-<td>本文 → <a href="handover.html">交接文档</a>第 1、6 节 → <a
-href="code-review-2026-10-17.html">代码评审</a>第 1、4 节</td>
+<td>本文 → <a href="handover.html">交接文档</a>第 1、6 节（含 6.1
+上生产前必须改的）→ <a
+href="customer-rollout.html">客户部署路线</a></td>
 <td>按第 6 节验收，第 8 节签收</td>
 </tr>
 <tr>
@@ -239,11 +261,13 @@ href="operations.html">运维</a>第 2.1 节</td>
 <tbody>
 <tr>
 <td><code>docs/<wbr>delivery/<wbr></code></td>
-<td>交付文档（本文、交接、并入九安、部署与迭代、运维、代码评审、Agent
+<td>交付文档（本文、快速上手、Skills
+配置指南、客户部署路线、交接、并入九安、部署与迭代、运维、Agent
 接入框架、Agent 接口、单据初审契约、调用链、客户规则与 AI 初审），每份有
 <code>.<wbr>md</code> 和 <code>.<wbr>html</code>；一页总览
 <code>agent-<wbr>framework-<wbr>overview.<wbr>html</code>（手写）；<code>patches/<wbr></code>
-参考补丁与生成脚本；<code>make-<wbr>package.<wbr>sh</code></td>
+参考补丁与生成脚本；<code>make-<wbr>package.<wbr>sh</code>（打包、导出交接仓库）与
+<code>sanitize.<wbr>py</code>（脱敏）</td>
 <td><a href="README.html">交付文档索引</a></td>
 </tr>
 <tr>
@@ -256,8 +280,8 @@ href="operations.html">运维</a>第 2.1 节</td>
 </tr>
 <tr>
 <td><code>docs/<wbr></code>（其余）</td>
-<td>架构文档、开发者工作流、设计（<code>specs/<wbr></code>）、实现计划（<code>plans/<wbr></code>）、历次评估、<code>build-<wbr>html.<wbr>sh</code>
-与 <code>html-<wbr>kit/<wbr></code></td>
+<td>架构文档、开发者工作流、<code>build-<wbr>html.<wbr>sh</code> 与
+<code>html-<wbr>kit/<wbr></code></td>
 <td><a href="../architecture.html">架构</a></td>
 </tr>
 <tr>
@@ -289,6 +313,12 @@ href="operations.html">运维</a>第 2.7 节</td>
 <td><a href="../../poc/README.md">PoC 说明</a></td>
 </tr>
 <tr>
+<td><code>skills/<wbr>nexus-<wbr>ai-<wbr>operator/<wbr></code></td>
+<td>Nexus 一侧的 Skill（1.1.0，不带任何密钥）：在 Nexus 上建
+Agent、发布</td>
+<td><a href="skills-guide.html">Skills 配置指南</a>第 3 节</td>
+</tr>
+<tr>
 <td><code>skills/<wbr>agent-<wbr>access/<wbr></code></td>
 <td>应用自己的
 Skill：<code>SKILL.<wbr>md</code>、<code>README.<wbr>md</code>、<code>scripts/<wbr>agent_<wbr>access.<wbr>py</code>、<code>references/<wbr></code>、测试</td>
@@ -313,12 +343,6 @@ v2，<code>prompt-<wbr>v1.<wbr>yaml</code>）与说明</td>
 <td><a href="../../knowledge-agent/README.md">知识 Agent 说明</a></td>
 </tr>
 <tr>
-<td><code>progress.<wbr>json</code>、<code>tools/<wbr>progress/<wbr></code></td>
-<td>开发进度清单（唯一来源）与看板：实时服务、快照、校验、测试</td>
-<td><a href="../progress.html">开发进度看板</a>；<a
-href="deploy-iteration.html">部署与迭代规范</a>第 1 节第 7 条</td>
-</tr>
-<tr>
 <td><code>evidence/<wbr></code></td>
 <td>各轮的测试证据与截图；<code>evidence/<wbr>e2e/<wbr>last-<wbr>run.<wbr>jsonl</code>
 是最近一次端到端测试的结果；<code>evidence/<wbr>bench/<wbr></code>
@@ -336,8 +360,7 @@ href="deploy-iteration.html">部署与迭代规范</a>第 1 节第 7 条</td>
 <p><strong>特意不放进包的</strong>：<code>node_modules/</code>、生成的
 <code>poc/app/public/</code> 和
 <code>.build/</code>（九安副本，<code>deploy.sh</code>
-每次重建）、<code>dist/</code>、<code>archive/</code>（旧证据、旧包，说明见
-<code>archive/README.md</code>）、<code>__pycache__/</code>、<code>.DS_Store</code>；和这个
+每次重建）、<code>dist/</code>、<code>archive/</code>（旧证据、旧包）、<code>__pycache__/</code>、<code>.DS_Store</code>；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；和这个
 PoC 无关或已过时的
 <code>get_passwd.sh</code>、<code>poc/a2a-entry/</code>（第四轮的旧验证，不再部署）、<code>poc/infra/design-jiuan-nexus-integrate.md</code>（原始笔记）。这些都还留在维护人的电脑上。</p>
 <h1 id="5-不在包里另行交接的">5. 不在包里、另行交接的</h1>
@@ -352,8 +375,11 @@ PoC 无关或已过时的
 </thead>
 <tbody>
 <tr>
-<td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code></td>
-<td>有口令、<code>REGISTRY_<wbr>KEY</code>、测试台的三项密钥（<code>BENCH_<wbr>*</code>）和真实的调用密钥。<strong><code>BENCH_<wbr>DATA_<wbr>KEY</code>
+<td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code>（包里有样例
+<code>secrets.<wbr>env.<wbr>example</code>，没有真实的值）</td>
+<td>有两条口令、<code>REGISTRY_<wbr>KEY</code>
+和测试台的三项密钥（<code>BENCH_<wbr>*</code>）。Agent
+的调用密钥不在这里：各账号在前端启用，加密存在实例上。<strong><code>BENCH_<wbr>DATA_<wbr>KEY</code>
 丢了，测试台的库就打不开</strong></td>
 <td><strong>当面交接</strong>（不经聊天工具、邮件、网盘）；接手后放回
 <code>poc/<wbr>infra/<wbr></code>，权限 0600</td>
@@ -372,12 +398,15 @@ PoC 无关或已过时的
 <td>不交接；接手的人用自己的 Nexus 账号和 API 密钥</td>
 </tr>
 <tr>
-<td>nexus-ai-operator 接入包</td>
-<td>每份接入包里带着生成它的那个人的 API 密钥，不能转交</td>
-<td>接手的人在 Nexus 网页「个人设置 › API 密钥」自己生成、下载（<a
-href="skills-guide.html">Skills 配置指南</a>第 3.1
-节）；<code>deploy.<wbr>sh</code> 要用其中的
-<code>scripts/<wbr>nexus.<wbr>py</code></td>
+<td>各人的 Nexus API 密钥</td>
+<td>个人凭证；每把只能给一个地方用</td>
+<td>接手的人在自己的 Nexus 网页「个人设置 › API
+密钥」生成，交给编码工具里的 nexus-ai-operator（<a
+href="skills-guide.html">Skills 配置指南</a>第 3
+节）；另生成一把，在应用「Nexus Agent」页「我的 Nexus 连接」里连接（或
+agent-access <code>nexus connect</code>）。包里的
+<code>skills/<wbr>nexus-<wbr>ai-<wbr>operator/<wbr></code>
+不带任何密钥</td>
 </tr>
 <tr>
 <td>实例上的各账号数据（<code>/<wbr>var/<wbr>lib/<wbr>andon-<wbr>finance/<wbr>users/<wbr></code>）</td>
@@ -430,7 +459,7 @@ href="operations.html">运维</a>第 2.6 节</td>
 <td>单元测试</td>
 <td>先放好九安开发包（第 5 节），再
 <code>cd poc/<wbr>app &amp;&amp; node -<wbr>-<wbr>test "test/<wbr>unit/<wbr>**/<wbr>*.<wbr>test.<wbr>mjs"</code></td>
-<td>266 个：255 通过、11 个要 MySQL 的跳过、0
+<td>275 个：264 通过、11 个要 MySQL 的跳过、0
 失败（没有九安开发包时有一部分会失败，因为它们要导入九安的代码）</td>
 </tr>
 <tr>
@@ -501,10 +530,20 @@ Agent）；截图交项目负责人</td>
 </tbody>
 </table>
 </div>
-<h1 id="7-封板时的状态v012026-10-19">7.
-封板时的状态（v0.1，2026-10-19）</h1>
+<h1 id="7-封板时的状态v0102026-10-21">7.
+封板时的状态（v0.1.0，2026-10-21）</h1>
 <p><strong>已完成</strong></p>
 <ul>
+<li><strong>开发者快速对接指南</strong>（v0.1.0
+新增）：给九安的前后端开发，一个业务需求从写契约、在 Nexus 上开发
+Agent，做到后端调用、前端可用，每一步配可以直接贴进 Claude Code
+的提示词。提示词 P1、P3、P3b、P4、P5 在九安开发包 v0.5.3
+的副本上按顺序演习过，发现的问题都改进了提示词；P2
+和签发调用密钥要在线上写入、花钱、本人操作，没有演习。</li>
+<li>契约补了单据初审的检查代码 <code>checks.mjs</code>；envelope 例子的
+contextId 按规则重算；接口文档补了
+contextId、断线轮询、时限、错误对象这些细节（<a
+href="../../CHANGELOG.md">变更记录</a>）。</li>
 <li>PoC 第一期上线：审批流、「我的
 Nexus」（连接、启用、换密钥、停用）、调用测试（带附件）、命令行
 <code>agent_access.py</code>；审批流的调用密钥从系统里读（页面上的启用记录）。</li>
@@ -515,37 +554,41 @@ Nexus」（连接、启用、换密钥、停用）、调用测试（带附件）
 <code>jiuan.agent/v1</code>、任务目录、第一个任务单据初审
 <code>first_review@1</code>；契约文件在
 <code>contract/</code>，已校验。</li>
-<li>测试：单元测试 266 个（本机 255 通过、11 个要 MySQL 的跳过；测试台上
-11/11）；Skill 与命令行测试 13 个；完整端到端测试：测试台升级后 15
-通过、0 失败、1 按设计跳过；封板前 14 通过、1 失败、1
-按设计跳过（失败原因见<a href="handover.html">交接文档</a>第 6 节第 12
-条，项目负责人接受这个结果封板）。</li>
+<li>测试：单元测试 280 个（本机 269 通过、11 个要 MySQL 的跳过；这 11 个
+2026-10-19 在测试台上 11/11，之后没改）；Skill 与命令行测试 13
+个；2026-10-21 完整端到端测试 15 个全部通过（0 失败、0
+跳过；测试只用审核员本人在前端的连接和启用）。</li>
 <li>测试台的最终评审：3 个 Important
 已修好（实例上的测试台密钥只认原值；健康检查真的去查库；回到内存存储不依赖
 MySQL），每个都先有失败的测试；2026-10-19 已部署。</li>
-<li>应用自己的 Skill 打包成可以安装的形式；<a
-href="skills-guide.html">Skills 配置指南</a>写了它和 nexus-ai-operator
-怎么装、怎么连。</li>
+<li>两个 Skill 都在包里：应用自己的 agent-access
+打包成可以安装的形式，nexus-ai-operator 固定为 1.1.0；<a
+href="skills-guide.html">Skills 配置指南</a>写了怎么导入、怎么连到自己的
+Nexus。</li>
+<li>交接仓库 <a
+href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide">https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide</a>：只有交接内容；封板标签
+<code>v0.1</code>（2026-10-19）和 <code>v0.1.0</code>（本版）。</li>
 <li>旧证据、旧包、建 Agent 时的调用记录移进
 <code>archive/</code>（不进包）。</li>
-<li>交付文档 11 份加索引、一页总览、架构文档，Markdown 和 HTML
-两个版本；由源码生成的图、1 张手工图（系统总览）、线上截图。</li>
+<li>交付文档 14 份加索引、一页总览、架构文档，Markdown 和 HTML
+两个版本；由源码生成的图、1
+张手工图（系统总览）、线上截图和开发者指南演习的截图。</li>
 <li>参考补丁可重复生成、可在干净副本上验证。</li>
 </ul>
 <p><strong>还没完成</strong>（详见<a href="handover.html">交接文档</a>第
 6 节）</p>
 <ol type="1">
-<li>构件和健康检查还不带提交号（评审 C1 的后一半；代码已进私有仓库，标签
-<code>v0.1</code>）；源站还是明文 HTTP（评审 C2）。</li>
+<li>构件和健康检查还不带提交号（评审 C1 的后一半；代码已进交接仓库（标签
+<code>v0.1.0</code>）和开发仓库（标签 <code>v0.1</code>）；源站还是明文
+HTTP（评审 C2）。</li>
 <li>部署脚本还剩一个缺口（评审 I2）；值班看不到 Nexus 调用的问题（评审
 I6）。</li>
 <li>初审 MVP：设计稿待批准，九安补丁 0001–0006
 是下一份计划；审批记录还在内存里。</li>
 <li>上生产前的密钥事项：审核员连接 Nexus
 的档位改只读（I4）、清理不再用的凭证。开发测试阶段不用动。</li>
-<li>评审其余的 Important 与 Minor：见<a
-href="code-review-2026-10-17.html">代码评审</a>第 3、4 节；测试台评审的
-12 个 Minor 见<a href="handover.html">交接文档</a>第 6 节。</li>
+<li>上生产前必须改的，见<a href="handover.html">交接文档</a>第 6.1
+节；测试台评审的 12 个 Minor 见同一份文档第 6 节第 11 条。</li>
 </ol>
 <h1 id="8-签收">8. 签收</h1>
 <div class="table-wrap">
@@ -612,7 +655,8 @@ href="code-review-2026-10-17.html">代码评审</a>第 3、4 节；测试台评�
 </tbody>
 </table>
 </div>
-<h1 id="9-以后怎么更新这个包">9. 以后怎么更新这个包</h1>
+<h1 id="9-以后怎么更新这个包和交接仓库">9.
+以后怎么更新这个包和交接仓库</h1>
 <ol type="1">
 <li>改代码按<a
 href="deploy-iteration.html">部署与迭代规范</a>走完；</li>
@@ -623,10 +667,15 @@ href="deploy-iteration.html">部署与迭代规范</a>走完；</li>
 <li>改根目录的 <code>VERSION</code>（比如
 <code>Finance-Audit-Nexus-PoC v0.2</code>），在
 <code>CHANGELOG.md</code> 加一节；</li>
-<li>运行 <code>docs/delivery/make-package.sh</code>
-出新包，文件名就是版本；旧包和它的 <code>.sha256</code> 一起移进
-<code>archive/dist/</code>。</li>
+<li>同步交接仓库：<code>docs/delivery/make-package.sh --export &lt;交接仓库的工作副本&gt;</code>。跑完全部检查和密钥检查后，把白名单里的文件同步过去（<code>.git</code>
+保留，白名单外的旧文件删掉），再在那边提交、打标签、推送；</li>
+<li>出新包：<code>docs/delivery/make-package.sh</code>，文件名就是版本；旧包和它的
+<code>.sha256</code> 一起移进 <code>archive/dist/</code>。</li>
 </ol>
+<p>白名单写在 <code>make-package.sh</code>
+里，交付包和交接仓库共用：要加一类交接内容，就加一行
+<code>copy</code>；设计、过程类的文件放进
+<code>NOT_HANDOVER</code>。</p>
 </main>
 </div>
 <footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/package-guide.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>

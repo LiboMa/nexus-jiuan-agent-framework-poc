@@ -1,9 +1,9 @@
 ---
-subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1
+subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.1.0
 date: 2026-10-19
 status: 封板 Finance-Audit-Nexus-PoC v0.1（PoC 第一期已上线；测试台是九安真实运行时 + 本机 MySQL；Agent 接入框架是设计稿，九安补丁还没写）
 stamp: 交接
-scope: andon-finance.tinyboat.blog（PoC）、nxs-beine1013.tinyboat.blog（Nexus）、本机 audit-nexus/ 目录
+scope: andon-finance.tinyboat.blog（PoC）、nxs-beine1013.tinyboat.blog（Nexus；线上 Nexus AI 的实际地址是 d3u3hj2us186y.cloudfront.net）、本机 audit-nexus/ 目录
 audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 ---
 
@@ -26,9 +26,9 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | 应用自己的 Skill `agent-access`（给 Claude Code、Codex、Kiro CLI 用） | 已实现；2026-10-19 打包成可以安装的 Skill（`SKILL.md`、`README.md`、`references/`）。怎么装、怎么和 nexus-ai-operator 配合，见 [Skills 配置指南](skills-guide.md) |
 | 知识 Agent（`pub_2cc24c29d2e5b2c9`） | 在 Nexus 上可用；知识写在提示词里（虚构） |
 | Agent 接入框架（契约 `jiuan.agent/v1`） | 设计稿 v2，待批准。契约文件 `contract/` 已写好、已校验；第一个任务是单据初审 `first_review@1`。九安补丁 0001–0006 还没写（第二份计划），审批流现在仍由 PoC 插件调用「九安审核AI」 |
-| 测试 | 单元测试 266 个：本机 255 个通过，11 个要 MySQL 的跳过；这 11 个用 `poc/infra/bench-test.sh` 在测试台上跑，11/11 通过。Skill 与命令行测试 13 个通过。2026-10-19 测试台升级后完整端到端测试 16 个：15 通过、0 失败、1 个按设计跳过（不停用本人启用的知识 Agent）。封板前（部署了评审的 3 个修复之后）再跑一次：14 通过、1 失败、1 按设计跳过；失败的是调用测试里「九安审核AI」偶发返回了不合法的 JSON（第 6 节第 12 条），项目负责人接受这个结果封板 |
-| 交付前评审 | 作为 PoC 可以交接维护；上生产前有 2 个 Critical、11 个 Important 要改，见[代码评审](code-review-2026-10-17.md)（I1 已在 2026-10-19 修好） |
-| 代码托管 | 私有仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>，分支 `main`，封板标签 `v0.1`；不进仓库的见根目录 `.gitignore`（密钥、九安开发包、生成物、`evidence/`、`archive/`） |
+| 测试 | 单元测试 280 个：本机 269 个通过，11 个要 MySQL 的跳过（这 11 个用 `poc/infra/bench-test.sh` 在测试台上跑，2026-10-19 11/11 通过，之后这部分没改）。Skill 与命令行测试 13 个通过。2026-10-21 完整端到端测试 15 个全部通过（0 失败、0 跳过；测试只用审核员本人在前端的连接和启用）。v0.1 封板前有两次各 1 项失败，都是第 6 节第 12 条那个 Agent 输出问题，已处理 |
+| 交付前评审 | 作为 PoC 可以交接维护；上生产前有 2 个 Critical、11 个 Important 要改，见第 6.1 节（I1 已在 2026-10-19 修好） |
+| 代码托管 | **交接仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>：只有交接内容（代码、两个 Skill、契约、交接文档），给客户用；由 `docs/delivery/make-package.sh --export` 从开发目录同步。**开发仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>：另外还有设计稿、实现计划、进度看板、历次评估和评审记录。两个都是私有仓库。交接仓库的封板标签是 `v0.1`（2026-10-19）和 `v0.1.0`（2026-10-21，本版）；开发仓库停在 `v0.1` |
 
 **页面长这样**（2026-10-17 截自线上，数据都是虚构的）：
 
@@ -36,7 +36,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 
 ![Nexus Agent 页：「我的 Nexus 连接」（已连接、Nexus 账号与档位）和「我的 Agent」（已启用的两个 Agent）](../assets/screens/agents-page.png)
 
-**一句话的交接要点**：Markdown 文档是唯一的源；部署只用 `poc/infra/deploy.sh`；密钥只在本机的 `poc/infra/secrets.env`，不进构件、不进文档、不贴进对话；九安开发包只读，服务端跑的是打过补丁的副本，前端改动靠锚点补丁生成。
+**一句话的交接要点**：Markdown 文档是唯一的源；部署只用 `poc/infra/deploy.sh`；Agent 的调用密钥和 Nexus 的 API 密钥由各账号在前端「Nexus Agent」页自己加载，加密存在实例上，加、换、停用都不用部署或重启；应用自己的启动配置（两条口令、`REGISTRY_KEY`、测试台的三项密钥）只在本机的 `poc/infra/secrets.env`，不进构件、不进文档、不贴进对话；九安开发包只读，服务端跑的是打过补丁的副本，前端改动靠锚点补丁生成。
 
 ## 2. 资产清单
 
@@ -60,21 +60,22 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `patches/jiuan-v0.5.3/` | 打进九安副本的补丁，按文件名顺序。现在还没有这个目录，第二份计划写 0001–0006 | 应用开发 |
 | `contract/` | Agent 接入框架的契约：信封、名片要求、错误码、任务目录、审批流接口 | 应用开发、Agent 开发 |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`（升级前备份）、`upgrade-instance.sh`（换实例类型）、`bench-test.sh`（在测试台上跑要 MySQL 的测试）、`bench/`（实例上的 MySQL 安装、配置、重置脚本与 systemd 片段）、`secrets.env`（只在本机，0600） | 运维 |
+| `skills/nexus-ai-operator/` | Nexus 一侧的 Skill（1.1.0，从 Nexus-AI 项目复制，不带任何密钥）：编码工具用它在 Nexus 上建 Agent、发布；`deploy.sh` 也从这里取 `scripts/nexus.py` 打进构件 | Agent 开发 |
 | `skills/agent-access/` | 应用自己的 Skill：`SKILL.md`（给编码工具读）、`README.md`（给人读）、`scripts/agent_access.py`（Python 3.9 标准库）、`references/`（接口约定、配方）、`tests/`（13 个） | 应用开发 |
 | `knowledge-agent/` | 知识 Agent 的提示词（`prompt.yaml` v2，`prompt-v1.yaml`）与维护说明 | Agent 开发 |
-| `docs/` | 全部文档；`docs/delivery/` 是交付文档；`docs/build-html.sh` 生成 HTML | 全员 |
+| `docs/` | 交接文档：`docs/delivery/` 是交付文档，另有架构文档和开发者工作流；`docs/build-html.sh` 生成 HTML。设计稿、实现计划、进度看板、历次评估和评审记录只在开发仓库 | 全员 |
 | `evidence/` | 各轮的截图与测试证据；`bench/` 是 2026-10-19 测试台升级的记录与日志；`e2e/last-run.jsonl` 是最近一次端到端测试的结果 | — |
 | `archive/` | 不再使用、只留作记录的旧证据、旧包、建 Agent 时的调用记录、测试台升级的执行记录（说明见 `archive/README.md`）；不进交付包 | — |
 | `VERSION`、`CHANGELOG.md`、`README.md`（根目录） | 版本号 `Finance-Audit-Nexus-PoC v0.1`、每个版本改了什么、包的入口说明 | 应用开发 |
 | `source/审核平台-测试环境开发包-v0.5.3/` | 九安原开发包。**只读，不改，不执行其中脚本** | 九安 |
 
 另外两处本机依赖：
-- nexus-ai-operator：`~/MyDev/LLM/Nexus-AI-strands/Nexus-AI/skills/system_skills/nexus-ai-operator`，部署时只打包其中的 `scripts/nexus.py`；
+- nexus-ai-operator：用仓库里的 `skills/nexus-ai-operator/`（1.1.0），`deploy.sh` 只打包其中的 `scripts/nexus.py`；要换版本用环境变量 `NEXUS_OPERATOR_SCRIPT`；
 - 本机 operator 凭证 `~/.nexus/`：不读、不复制、不打印。
 
 ### 2.2 线上环境
 
-AWS 账号 533267047935，区域 us-east-1。
+AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本节和全文的 AWS 账号与 EC2 标识（实例、IP、VPC、子网、安全组、快照、卷、构件桶、CloudFront 分发、托管区、证书）都已换成 AWS 文档的示例值，比如账号 `123456789012`、实例 `i-0123456789abcdef0`。
 
 | 资源 | 值 |
 |---|---|
@@ -89,11 +90,11 @@ AWS 账号 533267047935，区域 us-east-1。
 
 ### 2.3 Nexus
 
-<https://nxs-beine1013.tinyboat.blog>，v0.3.28。
+<https://nxs-beine1013.tinyboat.blog>，v0.3.28。（线上 Nexus AI 的实际地址：<https://d3u3hj2us186y.cloudfront.net/>）
 
 | 对象 | 编号 | 用途 |
 |---|---|---|
-| 九安审核AI（PoC） | Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea` | 审批建议、草稿核验；审批流在用，是「系统提供」的 Agent |
+| 九安审核AI（PoC） | Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea` | 审批建议、草稿核验；审批流在用（栈参数 `AdvisoryPublicationId`）。调用密钥取自账号在「我的 Agent」里对它的启用：先用发起人本人的，再用别的账号的，所以至少要有一个账号启用它 |
 | 九安知识Agent（PoC） | Agent `agent_949d9bc407b9430aae20f26326ef6fca`，发布 `pub_2cc24c29d2e5b2c9` | `describe` / `answer` / `select` / `suggest_rules` / `propose` |
 
 两个发布都打开了 A2A 和 MCP；PoC 只用 A2A。这套 Nexus 用的是旧部署模板（`/a2a` 经前端反代，请求体上限 10 MB），所以 PoC 把附件合计限在 6 MB。
@@ -107,30 +108,46 @@ AWS 账号 533267047935，区域 us-east-1。
 
 ### 2.5 密钥清单
 
-只写位置和用途，不写值。
+只写位置和用途，不写值。密钥分两类：**Agent 和 Nexus 的密钥由用户在前端加载**，不放进任何文件；**应用自己的启动配置**放在 `secrets.env`。
 
-| 名字 | 在哪 | 用途 | 谁签发 / 怎么换 |
+**Agent 和 Nexus 的密钥（用户在前端加载，不在 `secrets.env` 里）**
+
+| 名字 | 在哪 | 用途 | 怎么加、怎么换 |
 |---|---|---|---|
-| `REVIEWER_PASSWORD`、`CHECKER_PASSWORD` | `secrets.env` | 两个虚构账号的口令 | 改文件后 `deploy.sh --code-only` |
-| `REGISTRY_KEY` | `secrets.env` | 加密各账号保存的调用密钥（AES-256-GCM） | `deploy.sh` 缺了会自动生成。**换掉它，所有账号都要重新启用 Agent** |
-| `NEXUS_A2A_KEY_pub_5c53e70d8dc7ddea`（可选） | `secrets.env` | 兜底：审批流先用页面上启用的那把，系统里一把都没有时才用它 | 不用维护；现在这一把 Nexus 已经不认，留着或删掉都可以 |
-| `E2E_KNOWLEDGE_A2A_KEY`（可选） | `secrets.env` | 端到端测试的兜底：审核员本人启用了知识 Agent 时，测试直接用本人的（会随整个文件传到实例上，[评审](code-review-2026-10-17.md) I3） | 现在这一把 Nexus 已经不认，留着或删掉都可以 |
-| `E2E_NEXUS_API_KEY`（可选） | `secrets.env` | 端到端测试里审核员第一次连接 Nexus（同上，会传到实例上；不用时别留在文件里） | Nexus「个人设置 › API 密钥」，只读档位，用一次就作废 |
-| `NEXUS_API_KEY` | `secrets.env` | 旧的共享 API 密钥，服务端已经不读 | 可以删掉这一行 |
-| `BENCH_MYSQL_ROOT_PASSWORD`、`BENCH_MYSQL_APP_PASSWORD` | `secrets.env`；实例上 `/etc/andon-finance/bench/` | 测试台 MySQL 的 root 和应用账号 | `deploy.sh` 缺了才补，已有的不改 |
-| `BENCH_DATA_KEY` | `secrets.env`；实例上 `/etc/andon-finance/bench/analysis_data_key` | 九安存储的数据密钥（32 字节 base64） | `deploy.sh` 缺了才补。**永远不要换**：九安会用它核对库里的连接行，换了整个库就打不开了 |
-| 各账号的 Nexus 连接 | 实例 `/var/lib/andon-finance/users/<账号>/nexus/` | 每个账号自己的 CLI 凭证 | 页面上「断开」；Nexus 上停用 API 密钥 |
-| 各账号启用时粘贴的调用密钥 | 实例 `users/<账号>/enabled.json`（加密） | 调用测试 | 页面上「换密钥」「停用」 |
+| 各账号的 Nexus 连接 | 实例 `/var/lib/andon-finance/users/<账号>/nexus/` | 按这个账号自己的 Nexus 身份读发布列表 | 用户在「Nexus Agent」页 ›「我的 Nexus 连接」填自己的 API 密钥（或 `agent_access.py nexus connect`）；页面上「断开」；Nexus 上停用 API 密钥 |
+| 各账号启用的调用密钥 | 实例 `users/<账号>/enabled.json`（用 `REGISTRY_KEY` 加密） | 调用测试，以及审批流（先用发起人自己启用的「九安审核AI」，没有就用别的账号启用的） | 用户在「我的 Agent」里「启用」时粘贴（或 `agent_access.py enable --key-stdin`），当场验证；页面上「换密钥」「停用」。不用改文件、不用部署、不用重启 |
+| operator 的 API 密钥 `claude_code` | 本机 `~/.nexus/` | 本机 nexus-ai-operator 建 Agent、发布 | 一直用到过期；上生产前统一清理 |
 | 旧的共享 CLI 连接 `jiuan-audit-host` | 实例 `/var/lib/andon-finance/nexus/` | 第一期之前用的，已不用 | 开发测试阶段不用管；上生产前统一清理 |
-| operator 的 API 密钥 `claude_code` | 本机 `~/.nexus/` | 本机 Operator 建 Agent、发布 | 一直用到过期；上生产前统一清理 |
+
+**应用的启动配置（`poc/infra/secrets.env`）**
+
+样例：`poc/infra/secrets.env.example`，里面没有任何真实的值。
+
+流向：本机 `poc/infra/secrets.env`（0600）→ `deploy.sh` 上传到构件桶 `secrets/secrets.env`（服务端加密）→ SSM 在重启服务之前装到实例的 `/etc/andon-finance/secrets.env`（root:andon 0640）→ `bench/bench-configure.sh` 把三项 `BENCH_*` 再写成 `/etc/andon-finance/bench/` 下的三个文件 → 服务启动时读一次（`POC_SECRETS_FILE`、`BENCH_SECRETS_DIR`）。
+
+| 键 | 实例上在哪 | 谁读 | 怎么来 |
+|---|---|---|---|
+| `REVIEWER_PASSWORD`、`CHECKER_PASSWORD` | `/etc/andon-finance/secrets.env` | 服务端（口令登录，至少 12 个字符）；端到端测试（`run.sh` 读出来传成 `E2E_REVIEWER_PASSWORD`、`E2E_CHECKER_PASSWORD`） | 自己定，或 `deploy.sh` 第一次运行时生成 |
+| `REGISTRY_KEY` | 同上 | 服务端：加密各账号 `enabled.json` 里的调用密钥 | 缺了 `deploy.sh` 自动补（`openssl rand -base64 32`）。**换掉它，所有账号都要在页面上重新启用 Agent** |
+| `BENCH_MYSQL_ROOT_PASSWORD` | `/etc/andon-finance/bench/mysql_root_password` | MySQL 容器（建库）、`bench-reset.sh`（重建库） | 缺了自动补（`openssl rand -hex 16`），只补不换 |
+| `BENCH_MYSQL_APP_PASSWORD` | `/etc/andon-finance/bench/mysql_app_password` | MySQL 容器（建应用账号）、服务端（连库） | 同上 |
+| `BENCH_DATA_KEY` | `/etc/andon-finance/bench/analysis_data_key` | 服务端（打开九安的库） | 缺了自动补（`openssl rand -base64 32`）。**永远不要换**：九安会用它核对库里的连接行，换了整个库就打不开 |
+
+旧文件里如果还有 `NEXUS_API_KEY`、`NEXUS_A2A_KEY_…`、`E2E_KNOWLEDGE_A2A_KEY`、`E2E_NEXUS_API_KEY` 这几行，都可以删掉：Agent 的密钥已经改成在前端加载，端到端测试也用审核员本人在前端的连接和启用。
+
+操作：
+1. **新环境**：最省事是不建这个文件，直接运行 `poc/infra/deploy.sh`，它会生成两条随机口令、`REGISTRY_KEY` 和三项 `BENCH_*`。要自己定口令，就 `cp poc/infra/secrets.env.example poc/infra/secrets.env && chmod 600 poc/infra/secrets.env`，填好两条口令，其余保持注释。
+2. **改口令**：改本机文件，再 `deploy.sh --code-only`；服务重启后生效。
+3. **测试台的三项密钥**：只补不换。实例上已有的只认原值，`secrets.env` 里的不一样时，部署在重启前就失败、服务照旧跑（[运维](operations.md)第 2.7 节）。
+4. **交接**：整个文件当面交接。丢了 `BENCH_DATA_KEY`，测试台的库就打不开。
 
 规则：
 - 调用密钥只能由 Nexus 网页登录的本人签发，Operator 和 API 密钥签发都会被拒（Nexus 代码 `api/v2/services/access_credential_service.py:283-286`）。
-- **开发测试阶段：给出的密钥一直用到过期，不主动吊销、不轮换。** Agent 用的调用密钥一律从系统里读（页面上的启用记录），不另放。轮换与清理放到上生产前统一做（[代码评审](code-review-2026-10-17.md)第 4 节第 8 条）。
+- **开发测试阶段：给出的密钥一直用到过期，不主动吊销、不轮换。** Agent 用的调用密钥一律由用户在前端加载、从系统里读（页面上的启用记录），不另放。轮换与清理放到上生产前统一做（第 6.1 节第 8 条）。
 
 ### 2.6 并入九安时：调用密钥与「Agent 接入」
 
-2026-10-19 定：九安里审核 Agent 的调用密钥**从启用记录读**，和上面第 3 条规则一样，不另放密钥文件。
+2026-10-19 定：九安里审核 Agent 的调用密钥**从启用记录读**，和第 2.5 节的规则一样，不另放密钥文件。
 
 - **服务端（必须做）**：九安平台中心加「Agent 接入」：
   - 管理员填发布编号、粘贴这个发布的调用密钥；
@@ -148,15 +165,16 @@ AWS 账号 533267047935，区域 us-east-1。
 
 1. 本文。
 2. [架构、模块与工作流](../architecture.md)：线上跑着的样子、每个模块、调用链。
-3. [Skills 配置指南](skills-guide.md)：在编码工具里装好、连好 nexus-ai-operator 和 agent-access。
+3. [快速上手](quick-guide.md)：给前端用户，一步步把前端接上 Nexus 上的 Agent。
+   [开发者快速对接指南](developer-guide.md)：给九安的前后端开发，一个业务需求从写契约、在 Nexus 上开发 Agent，做到后端调用、前端可用，每步配 Claude Code 提示词。
+   [Skills 配置指南](skills-guide.md)：在编码工具里装好、连好 nexus-ai-operator 和 agent-access。
 4. [以补丁和独立模块的形式并入九安](integration.md)：交付给原应用的两种方式与推荐做法。
    - 各类 Agent 怎么经 A2A 接进九安（设计稿）：[Agent 接入框架总览（HTML）](agent-framework-overview.html) → [Agent 接入框架：架构、工作流与交付接口](agent-framework.md) → [Agent 接口](agent-interface.md) → 第一个任务[单据初审](first-review-contract.md)。
 5. [部署与迭代规范](deploy-iteration.md)：每类变更怎么改、怎么测、怎么发、怎么回滚。
 6. [运维与后续迭代](operations.md)：日常操作手册、故障排查、迭代的最佳方式。
-7. [交付前代码评审](code-review-2026-10-17.md)：评审结论、上生产前必须改的、维护热点。
-8. 设计依据：[Agent 注册与发现设计](../specs/2026-10-17-agent-registry-design.md)、[Agent 接入 Skills 设计](../specs/2026-10-17-agent-access-skills-design.md)、[开发者工作流](../agent-developer-workflow.md)。
-9. [开发进度看板](../progress.html)：能力、模块、依赖与测试证据的色块图（快照）；实时版 `node tools/progress/serve.mjs`。
-10. 使用说明：[PoC 说明](../../poc/README.md)、[部署说明](../../poc/infra/README.md)、[知识 Agent 说明](../../knowledge-agent/README.md)。
+7. [客户部署路线](customer-rollout.md)：从 v0.1.0 到九安上线的五个阶段、部署工具包、第一周做什么。
+8. [开发者工作流](../agent-developer-workflow.md)：一个 Agent 从建好到在前端可用的全过程；接口约定 agent-access-v1 见 `skills/agent-access/references/interface.md`。
+9. 使用说明：[PoC 说明](../../poc/README.md)、[部署说明](../../poc/infra/README.md)、[知识 Agent 说明](../../knowledge-agent/README.md)。
 
 每份交付文档都有同名的 HTML 版本，由 `docs/build-html.sh` 从 Markdown 生成。
 
@@ -182,11 +200,11 @@ AWS 账号 533267047935，区域 us-east-1。
 - [ ] 拿到 AWS 账号 533267047935 的部署权限（CloudFormation、S3 构件桶、SSM Run Command）和 Nexus 账号。
 - [ ] 本机装好 Node ≥ 24、Python 3.9+、AWS CLI v2、pandoc ≥ 3、本机 Chrome（端到端测试用）。
 - [ ] 从现任维护人那里当面拿到 `poc/infra/secrets.env`（不经聊天工具），放到 `poc/infra/`，权限 0600。
-- [ ] 跑一遍单元测试：`cd poc/app && node --test "test/unit/**/*.test.mjs"`（266 个，本机有 11 个要 MySQL 的会跳过）和 `python3 -m unittest discover -s ../../skills/agent-access/tests`（13 个）。
+- [ ] 跑一遍单元测试：`cd poc/app && node --test "test/unit/**/*.test.mjs"`（275 个，本机有 11 个要 MySQL 的会跳过）和 `python3 -m unittest discover -s ../../skills/agent-access/tests`（13 个）。
 - [ ] 按 [Skills 配置指南](skills-guide.md)把 nexus-ai-operator 和 agent-access 装进自己的编码工具，各用一把自己的 API 密钥连接。
 - [ ] 用 `poc/infra/bench-test.sh` 在测试台上跑那 11 个要 MySQL 的测试（只用 `jiuan_bench_test` 库，不碰线上的库）。
 - [ ] 读第 3 节的前五份文档。
-- [ ] 在页面上用审核员走一遍：连接 Nexus → 启用知识 Agent → 调用测试 → 停用。
+- [ ] 在页面上用审核员走一遍：「我的 Nexus 连接」已连接 →「我的 Agent」里两个 Agent 已启用 → 调用测试 →「重新读能力清单」。不要停用审核员已启用的两个 Agent：审批流和端到端测试都用它们。要练启用和停用，用复核人账号连接自己的 Nexus 来练。
 - [ ] 做一次只改文档的 `deploy.sh --code-only`，看健康检查通过；再按[部署与迭代规范](deploy-iteration.md)练一次回滚。
 - [ ] 跑一次完整的端到端测试（约 0.36 美元；开始前会重建测试台的库），把结果和截图交给项目负责人确认。
 
@@ -194,16 +212,16 @@ AWS 账号 533267047935，区域 us-east-1。
 
 按紧急程度排列。
 
-1. **构件和健康检查还不带提交号**（评审 C1 的后一半）：代码已经进了私有仓库（标签 `v0.1`），但 `deploy.sh` 的归档包名和健康检查里还没有提交号，线上跑的是哪个提交要靠时间对。见[部署与迭代规范](deploy-iteration.md)第 2 节。
+1. **构件和健康检查还不带提交号**（评审 C1 的后一半）：代码已经进了私有仓库（交接仓库的标签 `v0.1.0`），但 `deploy.sh` 的归档包名和健康检查里还没有提交号，线上跑的是哪个提交要靠时间对。见[部署与迭代规范](deploy-iteration.md)第 2 节。
 2. **CloudFront 到源站是明文 HTTP**（评审 C2）：登录口令、会话、用户粘贴的密钥在这一段上没有加密。PoC 只有虚构数据，开发测试阶段可以接受；上生产前必须改成 HTTPS。
 3. **部署脚本还剩一个缺口**（评审 I2）：服务崩溃循环会覆盖实例上的 `previous`，回滚只用构件桶里的归档包。（I1 已修好：SSM 不是 `Success`，`deploy.sh` 就报失败。）
 4. **值班看不到问题**（评审 I6）：健康检查只看服务是否就绪；调用密钥失效、Nexus 调用失败都不会让它变红，日志里也没有。每天要实际发起一次审批看看。
 5. **上生产前要做的密钥事项**（开发测试阶段不用动）：审核员连接 Nexus 用的是 `builder`（可写）档位，上生产前改成只读（评审 I4）；统一清理 operator 的 API 密钥 `claude_code`、旧的共享 CLI 连接 `jiuan-audit-host` 和 `secrets.env` 里不再用的几行。
-6. **评审的其余问题**：见[交付前代码评审](code-review-2026-10-17.md)第 3 节；上生产前必须改的见第 4 节。
+6. **上生产前必须改的**：见第 6.1 节。
 7. **初审 MVP（第二份计划）**：Agent 接入框架设计稿待项目负责人批准；批准后写九安补丁 0001–0006（通用的 Agent 接入、任务调用、规则、初审与审批流、界面）。在这之前，客户规则不进 AI 初审（[客户规则与 AI 初审](rules-binding.md)）。
 8. **审批记录还在内存里**：单据和模拟来单已经在 MySQL 里，重启不丢；审批记录、登录状态和运行记录重启后清空。初审 MVP 里审批状态改存九安的存储。
 9. **测试台的小缺口**：九安左侧导航还没有「平台运行」分组，平台中心只能经地址 `#platformAgents` 打开；测试台的 MySQL 数据只在这台实例的数据卷上，实例被替换前先跑 `poc/infra/backup.sh`（[运维](operations.md)第 2.6 节）。
-10. **业务网关层以后再做**：多轮会话、延后结果、分区与串联、整个租户范围的任务、按次配额（[设计](../specs/2026-10-19-agent-framework-design.md)第 7.2 节）。
+10. **业务网关层以后再做**：多轮会话、延后结果、分区与串联、整个租户范围的任务、按次配额（[Agent 接入框架](agent-framework.md)第 0 节）。
 11. **测试台评审的 Minor**（12 个，都不影响现在的使用，按需要再改）：
     - 来单编号第一次并发取号可能死锁一次（回 500，再点一次就好）；
     - 连上 MySQL 之后的启动步骤失败会让进程退出；
@@ -218,7 +236,12 @@ AWS 账号 533267047935，区域 us-east-1。
     - `backup.sh` 默认第一块卷是根卷；
     - 测试台打开九安存储时没带上部署方式，环境里多出的 `MYSQL_URL` 会把它指到别处。
     - 另外：九安左侧导航没有「平台运行」分组（见第 9 条）。
-12. **「九安审核AI」偶发返回不合法的 JSON**（v0.1 封板前的端到端测试里出现一次）：字符串里直接写了未转义的英文双引号，九安的解析器按规定拒收，错误码 `AI_INVALID_RESPONSE`。审批流遇到它会自动重试一次；调用测试面板只调一次，就显示失败。端到端测试第 5 项看到失败也要等满 5 分钟才报超时。要改的有两处：发给 Agent 的任务说明加一条「字符串里不要用英文双引号，需要时用「」」；这项测试一显示失败就报出错误码。
+12. **「九安审核AI」偶发返回不合法的 JSON**（已处理，2026-10-20）：Agent 曾在 JSON 字符串里直接写未转义的英文双引号，九安按规定拒收（`AI_INVALID_RESPONSE`）。现在发给 Agent 的每条请求都带一段输出规则（`nexus/a2a-client.mjs` 的 `buildPrompt`：只输出一个 JSON 对象；字符串里不用英文双引号，引用一律用「」）；端到端测试第 5 项一显示失败就带错误码报出来。改完之后完整端到端测试 15 个全部通过。模型仍可能偶尔不守规则，审批流会自动重试一次；调用测试面板失败时再点一次发送就行。
+
+已经解决的（2026-10-20）：
+- **工作流文档按应用现状更新**：Agent 的调用密钥在前端加载，`secrets.env` 只放应用的启动配置；端到端测试只用审核员本人在前端的连接和启用；`deploy.sh` 新建 `secrets.env` 时不再写调用密钥那一行。
+- **Agent 输出不合法 JSON**（第 6 节第 12 条）：请求里加了输出规则，完整端到端测试 15 个全部通过。
+- **交接仓库**：<https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>，只有交接内容；AWS 账号与 EC2 标识已脱敏；有 `secrets.env.example`。
 
 已经解决的（2026-10-19）：
 - **测试台升级**：升级前备份（根卷快照 `snap-03051c671bc2738a0`，实例上打包了账号目录）→ 停机换型到 t3.large → 先按内存存储部署、装好 MySQL → 在测试台上跑要 MySQL 的测试（11/11，4 次故意改坏代码都被抓住）→ 切到 MySQL → 端到端测试 15 通过、0 失败、1 按设计跳过。各账号的连接与启用都没变。记录在 `evidence/bench/2026-10-19-upgrade.md`。
@@ -230,13 +253,48 @@ AWS 账号 533267047935，区域 us-east-1。
 - **端到端测试不再重启服务**：开始前用 `bench/bench-reset.sh` 重建测试台的库（重建失败才退回重启）。
 - **Agent 接入框架**：设计稿 v2 与契约文件（`contract/`），按通用框架设计，以后的财务、知识库等各类 Agent 都用同一套信封和任务目录。
 - **应用自己的 Skill**：`skills/agent-access/` 打包成可以安装的 Skill（`SKILL.md`、`README.md`、`references/`），有测试检查它和命令行脚本一致；两个 Skill 的配置写进 [Skills 配置指南](skills-guide.md)。
-- **代码进 Git**（评审 C1 的前一半）：私有仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>，一个干净的初始提交，标签 `v0.1`。
+- **代码进 Git**（评审 C1 的前一半）：交接仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>（只有交接内容；标签 `v0.1`，2026-10-21 起 `v0.1.0`），开发仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>（标签 `v0.1`）。
 - **整理**：第 2–4 轮的原始接口返回、10-17 和 10-18 的旧包、建 Agent 时的调用记录、测试台升级的执行记录移进 `archive/`（不进交付包，引用它们的历史文档已改链接）。
 
 已经解决的（2026-10-18）：
-- **审批流的调用密钥**：改为从系统里读：先用发起人在 Agent 页启用的那把，没有再用别的账号启用的，最后才用 `secrets.env` 兜底；Nexus 回 401 时只把用到的那一把标记失效。线上验证：`secrets.env` 里那把 Nexus 已不认，审批流照样走通。
+- **审批流的调用密钥**：改为从系统里读：先用发起人在 Agent 页启用的那把，没有再用别的账号启用的，最后才用 `secrets.env` 兜底（这个兜底 2026-10-20 起也不用了：调用密钥一律在前端加载）；Nexus 回 401 时只把用到的那一把标记失效。线上验证：`secrets.env` 里那把 Nexus 已不认，审批流照样走通。
 - **完整端到端测试**：14 通过、0 失败、1 按设计跳过。
 - **被端到端测试删掉的知识 Agent 启用**：已由本人重新启用；测试也改成了只用、不动本人启用的项。
+
+### 6.1 上生产前必须改的
+
+来自 2026-10-17 的交付前代码评审（评审记录在开发仓库），编号沿用评审里的：
+
+| 编号 | 问题 | 现在 |
+|---|---|---|
+| C1 | 没有版本管理，也没有版本标识 | 代码已进 Git（交接仓库标签 `v0.1.0`）；构件和健康检查还不带提交号 |
+| C2 | CloudFront 到源站是明文 HTTP，走公网 | 没改 |
+| I1 | `deploy.sh` 没部署成功也可能报成功 | 已修好（2026-10-19） |
+| I2 | 每次服务启动都重新拉包，崩溃循环会毁掉回滚点 | 没改；回滚只用构件桶里的归档 |
+| I3 | 只给测试用的真凭证被装到了公网主机上 | 没改 |
+| I4 | 没有强制 Nexus 连接用只读档位；CLI 的凭证明文落盘 | 没改 |
+| I5 | 调用测试的「审批建议」模式，会把单据事实发给用户启用的任何 Agent | 没改；要加发布白名单 |
+| I6 | 值班看不到问题 | 没改 |
+| I7 | 前端补丁的检查只看锚点和语法 | 没改 |
+| I8 | operator 脚本没钉版本，也没有合同测试 | 一半：仓库里固定为 `skills/nexus-ai-operator/` 1.1.0；合同测试没做 |
+| I9 | 测试关卡不在生产的运行时上跑 | 没改 |
+| I10 | 唯一的集成关卡是在唯一的线上环境跑端到端测试 | 没改 |
+| I11 | 主机从不打补丁 | 没改 |
+
+按这个顺序改：
+1. 版本（C1）；
+2. 传输加密（C2）；
+3. 持久化：审批记录、运行记录、限流放进九安的 MySQL 存储，运行记录带公司、按公司过滤；
+4. 每个账号的 Nexus 数据改存数据库、信封加密，强制只读档位（I4）；
+5. 去掉 PoC 脚手架：口令登录、种子数据、内存存储、`exchange` 的回环绕过；
+6. 模型调用走九安的 `ai-model` 连接器；
+7. 「审批建议」模式的发布白名单（I5）；
+8. 密钥：服务端和测试的分开（I3），静态加密用 KMS，`REGISTRY_KEY` 能轮换，清理第 2.5 节列的旧凭证；
+9. 可观测性（I6）；
+10. 流水线（I1、I2、I8、I9、I10）；
+11. 主机（I11）。
+
+九安自己部署时（[客户部署路线](customer-rollout.md)），第 3–8 条由框架补丁在九安里实现；第 1、2、10、11 条只关我们自己的测试台。
 
 ## 7. 交接确认
 

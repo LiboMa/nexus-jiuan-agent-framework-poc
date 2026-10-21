@@ -1,6 +1,7 @@
 # 密钥：只在本机，当面交接（docs/delivery/package-guide.md 第 5 节）
 poc/infra/secrets.env
 poc/infra/secrets.env.*
+!poc/infra/secrets.env.example
 
 # 九安开发包：第三方代码，按版本号另行存放
 source/
