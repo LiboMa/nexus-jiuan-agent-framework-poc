@@ -18,7 +18,7 @@ import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
 import { nexusAccessRoutes } from './nexus-access.mjs';
 import { createOperatorCli } from '../app/nexus/cli.mjs';
-import { agentCallRoutes } from './agent-calls.mjs';
+import { agentCallRoutes, everyDocument } from './agent-calls.mjs';
 import { createAgentTests } from './agent-tests.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
@@ -147,7 +147,7 @@ const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard:
 const companyIds = COMPANIES.map(company => company.id);
 const agentTests = createAgentTests({
   readDocument: id => store.getDocument({ id, companyIds }),
-  listDocuments: async () => (await store.listDocuments({ companyIds, limit: 200, type: 'corporate_payment' })).items,
+  listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, type: 'corporate_payment', ...page })),
   prepare: async document => {
     try { await runtimeRegistry.evidenceService.enqueue({ actor: J.serviceIdentity.SYSTEM_PIPELINE, companyId: document.companyId, documentId: document.id, sourceVersion: document.version }); }
     catch (error) { log(`POC_TEST_ORIGINALS_FAILED ${error?.code || ''}`); }
@@ -159,8 +159,8 @@ const agentTests = createAgentTests({
       inputFingerprint: assembled.inputFingerprint, dataContext: { environment: 'prod', purpose: 'read_only_analysis', tenantId, companyId } })),
 });
 // 「Agent 接入」页的调用记录：从单据池的单据反查九安存的每一轮，加上手动测试
-const agentCalls = agentCallRoutes({ extraRows: () => agentTests.rows(), tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
-  listDocuments: async () => (await store.listDocuments({ companyIds, limit: 200 })).items, readState: key => store.readState(key) });
+const agentCalls = agentCallRoutes({ log, extraRows: () => agentTests.rows(), tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
+  listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, ...page })), readState: key => store.readState(key) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
   return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
 } };

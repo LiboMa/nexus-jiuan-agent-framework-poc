@@ -26,8 +26,8 @@
  }
  
 --- a/public/platform-center.css	2026-10-26 01:25:51
-+++ b/public/platform-center.css	2026-10-26 01:33:47
-@@ -157,3 +157,48 @@
++++ b/public/platform-center.css	2026-10-26 01:48:23
+@@ -157,3 +157,49 @@
  .platform-ops-dialog-result.error{background:#fffbeb;border:1px solid #fcd34d;color:#92400e}
  .platform-ops-dialog-result.success{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
  .platform-ops-run-buttons{display:flex;flex-wrap:wrap;gap:6px}
@@ -66,6 +66,7 @@
 +.platform-access-calls .platform-ops-table td{vertical-align:middle}
 +.platform-access-feedback{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--ui-line);border-left:3px solid var(--ui-accent);border-radius:10px;background:#fff}
 +.platform-access-feedback .platform-access-head strong{color:var(--ui-ink);font-size:13px}
++.platform-access-feedback .platform-ops-table :is(th,td):is(:nth-child(1),:nth-child(3)){white-space:nowrap}
 +.platform-access-note{padding:8px 10px;border-radius:8px;background:var(--ui-bg)}
 +.platform-access-note span{color:var(--ui-muted);font-size:11px}
 +.platform-access-note p{margin:3px 0 0;color:#374151;font-size:13px;line-height:1.7;white-space:pre-wrap}
@@ -77,8 +78,8 @@
 +}
 +@media(prefers-reduced-motion:reduce){.platform-access-agent{transition:none}}
 --- a/public/platform-ops.js	2026-10-26 01:25:51
-+++ b/public/platform-ops.js	2026-10-26 01:33:47
-@@ -320,123 +320,234 @@
++++ b/public/platform-ops.js	2026-10-26 01:48:23
+@@ -320,123 +320,238 @@
    input.setAttribute?.('autocomplete', 'off'); input.setAttribute?.('spellcheck', 'false'); return input;
  }
  function textInput(name, placeholder) { const input = document.createElement('input'); input.name = name; input.placeholder = placeholder; input.setAttribute?.('autocomplete', 'off'); return input; }
@@ -113,6 +114,8 @@
 +const BASIS_KIND = Object.freeze({ rule: '规则', field: '字段', evidence: '原件' });
 +const seconds = ms => (Number.isFinite(ms) ? `${Math.round(ms / 1000)} 秒` : '—');
 +const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
++// 原件依据的编号是附件内容的 sha256：只显示前 12 位
++const shortRef = ref => (/^[a-f0-9]{64}$/u.test(String(ref ?? '')) ? `${String(ref).slice(0, 12)}…` : dash(ref));
 +/** 「https://…/a2a/pub_x」「…/a2a/pub_x/.well-known/agent-card.json」或「pub_x」→ 发布编号；认不出返回空。 */
 +export function publishIdFrom(text) {
 +  const value = String(text || '').trim();
@@ -176,8 +179,8 @@
 +function labelled(text, input) { return append(el('label', '', 'platform-access-field'), el('span', text), input); }
 +function sayer(node) { return (text, kind = '') => { node.textContent = text; node.className = `platform-ops-dialog-result ${kind}`.trim(); }; }
 +function statusLine() { const node = el('p', '', 'platform-ops-dialog-result'); node.setAttribute?.('role', 'status'); return node; }
-+/** 一轮的反馈：结论、备注（模型自评）、逐条依据、发给哪个发布、用时。调用记录和测试共用。 */
-+function callFeedback(call) {
++/** 一轮的反馈：结论、备注（模型自评）、逐条依据、发给哪个 Agent、用时。调用记录和测试共用；nameOf 把发布编号换成 Agent 名称。 */
++function callFeedback(call, nameOf = () => null) {
 +  const [label, color] = CALL_RESULT[call.result] || [CALL_STATUS[call.status] || dash(call.status), call.status === 'failed' ? 'amber' : ''];
 +  return append(el('div', '', 'platform-access-feedback'),
 +    append(el('div', '', 'platform-access-head'), pill(label, color), el('strong', dash(call.number)),
@@ -185,9 +188,9 @@
 +    call.errorCode ? el('p', `没有完成：${accessResult(call.errorCode)}`, 'platform-access-meta') : null,
 +    call.declinedReason ? el('p', `Agent 没有给出建议：${call.declinedReason}`, 'platform-access-meta') : null,
 +    call.note ? append(el('div', '', 'platform-access-note'), el('span', '备注（模型自评，未核实）'), el('p', call.note)) : null,
-+    list(call.basis).length ? table(['类型', '依据', '页', '说明'], list(call.basis).map(item => [BASIS_KIND[item?.kind] || dash(item?.kind), dash(item?.ref),
++    list(call.basis).length ? table(['类型', '依据', '页', '说明'], list(call.basis).map(item => [BASIS_KIND[item?.kind] || dash(item?.kind), shortRef(item?.ref),
 +      item?.page ? String(item.page) : '—', dash(item?.note)])) : null,
-+    el('p', `发给 ${dash(call.publishId)} · Agent 版本 ${dash(call.agentVersion)}${call.repaired ? ' · 修正过一次格式' : ''}`, 'platform-access-id'));
++    el('p', `发给 ${nameOf(call.publishId) || dash(call.publishId)}（${dash(call.publishId)}） · Agent 版本 ${dash(call.agentVersion)}${call.repaired ? ' · 修正过一次格式' : ''}`, 'platform-access-id'));
 +}
 +
 +function agentCard(agent, opts, refresh) {
@@ -245,7 +248,7 @@
 +      try {
 +        let test = await opts.agentTest.start(agent.publishId, picked.id);
 +        for (let waited = 0; test?.status === 'running' && waited < 300000; waited += 3000) { await sleep(3000); test = await opts.agentTest.view(test.testId); }
-+        result.replaceChildren(callFeedback(test));
++        result.replaceChildren(callFeedback(test, () => agent.name));
 +        say(test?.status === 'completed' ? '测试完成，已记进下面的调用记录。' : '这次没有得到结论，原因见上。', test?.status === 'completed' ? 'success' : 'error');
 +        opts.onCallsChanged?.();
 +      } catch (error) { say(error?.message || '没有发起成功，请稍后重试', 'error'); }
@@ -327,7 +330,7 @@
 +  return bar;
 +}
 +
-+function callsCard(opts) {
++function callsCard(opts, nameOf) {
 +  const box = el('section', '', 'platform-ops-card platform-access-calls'), rows = el('div'), detail = el('div'), message = statusLine(), say = sayer(message);
    async function load() {
 -    let state;
@@ -342,8 +345,8 @@
 +    try { data = await opts.calls(); say(''); } catch (error) { say(error?.message || '调用记录暂时读不到', 'error'); return; }
 +    rows.replaceChildren(table(['时间', '单据', '发给', '触发', '结论', '用时', ''], list(data?.items).map(call => {
 +      const [label, color] = CALL_RESULT[call.result] || [`${CALL_STATUS[call.status] || dash(call.status)}${call.errorCode ? `：${accessResult(call.errorCode)}` : ''}`, call.status === 'failed' ? 'amber' : ''];
-+      return [time(call.at), dash(call.number), dash(call.publishId), CALL_TRIGGER[call.trigger] || dash(call.trigger), pill(label, color), seconds(call.latencyMs),
-+        act('查看反馈', () => { detail.replaceChildren(callFeedback(call)); detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, opts)];
++      return [time(call.at), dash(call.number), nameOf(call.publishId) || dash(call.publishId), CALL_TRIGGER[call.trigger] || dash(call.trigger), pill(label, color), seconds(call.latencyMs),
++        act('查看反馈', () => { detail.replaceChildren(callFeedback(call, nameOf)); detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, opts)];
 +    }), '还没有调用记录：单据读完详情后九安会自动发起，也可以在上面「测试」'));
    }
 -  append(box, el('h2', 'Nexus 上已发布的 Agent'), head, rows, message);
@@ -376,12 +379,14 @@
 -  };
 +  const state = { records: list(payload?.records), audit: list(payload?.audit), nexus: null, published: [], nexusError: '' };
 +  const bar = el('div'), agents = el('div', '', 'platform-access-agents'), audit = el('div');
-+  const calls = opts.calls ? callsCard(opts) : null;
++  const names = new Map();
++  const calls = opts.calls ? callsCard(opts, publishId => names.get(publishId) ?? null) : null;
 +  const agentOpts = { ...opts, onCallsChanged: () => calls?.reload?.() };
 +  const usable = payload.configured !== false;
 +  function paint() {
 +    bar.replaceChildren(usable ? nexusBar(opts, state, refresh) : '');
 +    const merged = mergeAgents(state.records, state.published);
++    for (const agent of merged) names.set(agent.publishId, agent.name);
 +    agents.replaceChildren(...(merged.length ? merged.map(agent => agentCard(agent, agentOpts, refresh))
 +      : [el('p', state.nexus?.connected ? '你在 Nexus 上还没有开了 A2A 的发布。' : '还没有 Agent：连接 Nexus 列出你发布的 Agent，或手动添加。', 'platform-access-empty')]));
 +    audit.replaceChildren(append(el('details', '', 'platform-access-audit'), el('summary', `操作记录（${state.audit.length} 条）`),

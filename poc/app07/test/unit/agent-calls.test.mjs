@@ -50,3 +50,12 @@ test('调用记录只给管理员；别的路径交还九安', async () => {
   assert.equal((await call(routes, { role: 'analyst' })).status, 403);
   assert.equal((await call(routes, { path: '/api/analysis/v1/platform/agent-access' })).handled, false);
 });
+
+test('单据池按页读全（九安每页最多 50 张），读到不满一页为止', async () => {
+  const { everyDocument } = await import('../../agent-calls.mjs');
+  const pool = Array.from({ length: 120 }, (_, index) => ({ id: `d${index}` }));
+  const asked = [];
+  const listPage = async ({ limit, offset }) => { asked.push([limit, offset]); if (limit > 50) throw new Error('ANALYSIS_VALIDATION'); return { items: pool.slice(offset, offset + limit) }; };
+  assert.equal((await everyDocument(listPage)).length, 120);
+  assert.deepEqual(asked, [[50, 0], [50, 50], [50, 100]]);
+});

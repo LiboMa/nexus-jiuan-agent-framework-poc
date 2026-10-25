@@ -26,8 +26,19 @@ function rowOf(document, task, record) {
   };
 }
 
+/** 单据池全部单据：九安的 listDocuments 每页最多 50 张（再多回 ANALYSIS_VALIDATION），按页读到不满一页为止，最多 max 张。 */
+export async function everyDocument(listPage, { pageSize = 50, max = 1000 } = {}) {
+  const items = [];
+  for (let offset = 0; offset < max; offset += pageSize) {
+    const page = (await listPage({ limit: pageSize, offset })).items ?? [];
+    items.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return items;
+}
+
 /** extraRows：别处产生的调用（「Agent 接入」页的手动测试，agent-tests.mjs），和九安存的轮次合在一起按时间排。 */
-export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, readState, extraRows = () => [] }) {
+export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, readState, extraRows = () => [], log = () => {} }) {
   async function calls() {
     const rows = [];
     for (const document of await listDocuments()) {
@@ -46,7 +57,7 @@ export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, 
       if (session?.user?.role !== 'admin') send(res, 403, { error: { code: 'AGENT_CALLS_FORBIDDEN', message: '只有管理员能查看 Agent 调用记录。' } });
       else {
         try { send(res, 200, { data: await calls() }); }
-        catch { send(res, 503, { error: { code: 'AGENT_CALLS_UNAVAILABLE', message: '调用记录暂时读不到，稍后刷新。' } }); }
+        catch (error) { log(`POC_AGENT_CALLS_FAILED ${error?.code || error?.name || ''}`); send(res, 503, { error: { code: 'AGENT_CALLS_UNAVAILABLE', message: '调用记录暂时读不到，稍后刷新。' } }); }
       }
       return true;
     },

@@ -130,7 +130,7 @@ test('补丁 0002：一张表列出 Nexus 上的发布和已启用的 Agent，�
     reload: async () => ({ records: [active], audit: [] }),
     onEnable: async input => { enabled.push(input); return { fingerprint: 'ff00ff00' }; },
     calls: async () => ({ items: [{ at: '2026-10-26T01:02:00Z', number: 'DGZF-F07-001', publishId: 'pub_audit0001', trigger: 'upstream', status: 'completed', result: 'pass', latencyMs: 61000,
-      note: '核对一致', basis: [{ kind: 'rule', ref: 'C05-3.4', page: null, note: '…' }] }] }),
+      note: '核对一致', basis: [{ kind: 'rule', ref: 'C05-3.4', page: null, note: '…' }, { kind: 'evidence', ref: 'c5921eaca9973a799e6d05941907dae167127694165eb1f153033b7bde5a6f41', page: 1, note: '税务事项通知书' }] }] }),
     agentTest: { documents: async () => ({ items: [] }), start: async () => ({}), view: async () => ({}) },
     nexus: { status: async () => ({ connected: true, user: 'admin' }), publications: async () => ({ items: [
       { publishId: 'pub_audit0001', name: '九安审核AI（PoC）', tasks: ['review_advice@1'], declaredBy: 'card', enableable: true, a2aReady: true, problems: [] },
@@ -147,7 +147,11 @@ test('补丁 0002：一张表列出 Nexus 上的发布和已启用的 Agent，�
   assert.match(cards[1].textContent, /未启用.*（名片没有声明，由平台指定）/s, '名片只差契约 / 任务两行的照样能启用');
   assert.match(cards[2].textContent, /不能启用：不支持流式/);
   assert.match(page.textContent, /已连接 Nexus.*admin/s);
-  assert.match(page.textContent, /调用记录.*DGZF-F07-001.*建议通过/s);
+  assert.match(page.textContent, /调用记录.*DGZF-F07-001.*九安审核AI（PoC）.*建议通过/s, '调用记录里「发给」写 Agent 的名称');
+  // 查看反馈：原件依据只显示哈希的前 12 位
+  await page.all(node => node.tagName === 'BUTTON' && node.textContent === '查看反馈')[0].click();
+  assert.match(page.textContent, /原件c5921eaca997…1税务事项通知书/);
+  assert.doesNotMatch(page.textContent, /c5921eaca9973a799e6d0594/);
   // 启用：只贴调用密钥，发布编号来自卡片，原因自动填；密钥框提交后清空
   await cards[1].all(node => node.textContent === '启用' && node.tagName === 'BUTTON')[0].click();
   const key = cards[1].all(node => node.tagName === 'INPUT')[0];
@@ -157,4 +161,34 @@ test('补丁 0002：一张表列出 Nexus 上的发布和已启用的 Agent，�
   await cards[1].all(node => node.textContent === '验证并启用')[0].click();
   assert.deepEqual(enabled, [{ publishId: 'pub_newagent01', key: pasted, reason: '在「Agent 接入」页启用' }]);
   assert.equal(key.value, '');
+});
+
+test('补丁 0002：停用先确认再提交，换钥匙只在密钥失效时出现，复核用已存的密钥；原因都自动填', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  const writes = [];
+  const records = [{ publishId: 'pub_audit0001', status: 'active', fingerprint: 'ab12cd34', card: { name: '审核', tasks: ['review_advice@1'] } },
+    { publishId: 'pub_stale00001', status: 'invalid', invalidReason: 'AGENT_KEY_REJECTED', fingerprint: '0badc0de', card: { name: '过期的', tasks: ['review_advice@1'] } }];
+  const record = kind => async input => { writes.push([kind, input]); return {}; };
+  const page = renderPlatformOps('agentAccess', { records, audit: [] }, { platformAdmin: true, reload: async () => ({ records, audit: [] }),
+    onDisable: record('disable'), onRotate: record('rotate'), onRefresh: record('refresh') });
+  await settle();
+  const [active, stale] = page.all(node => node.className === 'platform-access-agent');
+  const press = async (card, label) => card.all(node => node.tagName === 'BUTTON' && node.textContent === label)[0].click();
+  assert.deepEqual(stale.all(node => node.tagName === 'BUTTON').map(node => node.textContent), ['换钥匙', '停用']);
+  assert.match(stale.textContent, /密钥失效.*失效原因：Nexus 不认这把密钥/s);
+  await press(active, '停用');
+  assert.equal(writes.length, 0, '点「停用」只打开确认');
+  assert.match(active.textContent, /停用后九安不再把单据交给「审核」/);
+  await press(active, '确认停用');
+  await press(active, '复核');
+  await settle();
+  await press(stale, '换钥匙');
+  const key = stale.all(node => node.tagName === 'INPUT')[0];
+  key.value = 'nxa_' + 'r'.repeat(43);
+  await press(stale, '验证并更换');
+  assert.deepEqual(writes, [['disable', { publishId: 'pub_audit0001', reason: '在「Agent 接入」页停用' }], ['refresh', { publishId: 'pub_audit0001', reason: '在「Agent 接入」页复核' }],
+    ['rotate', { publishId: 'pub_stale00001', key: 'nxa_' + 'r'.repeat(43), reason: '在「Agent 接入」页换钥匙' }]]);
 });
