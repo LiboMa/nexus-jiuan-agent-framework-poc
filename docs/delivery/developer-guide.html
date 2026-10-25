@@ -392,7 +392,7 @@ nexus-ai-operator。每个写操作它都会先给你看请求，你同意才执
 - 先发现再动手：用 caps、module、describe 查清楚要调的接口，不要凭记忆写接口
 - 每个写操作（建 Agent、改提示词、建发布、改发布）先把将要执行的请求给我看，我回复同意后才加 --yes；删除、对外分享另外单独问我
 - 密钥只经标准输入；输出里出现 [已隐藏] 不要还原
-- 发布要固定 Agent 版本（不跟随最新），名片描述里单独两行写「契约：jiuan.agent/v1」和「任务：&lt;任务名&gt;@1」
+- 发布要固定 Agent 版本（不跟随最新），名片描述里单独两行写「契约：jiuan.agent/v1」和「任务：&lt;任务名&gt;@1」（推荐；漏了也能在九安启用，任务由平台按九安接的任务指定，见第 7.2 节）
 
 Agent 的提示词要写清：
 - 读消息里 DataPart 的请求信封；按 task 和 taskVersion 做事；不认识的任务、不归它做的请求，回 status: declined 并写 declined.reason；忽略不认识的字段
@@ -418,10 +418,12 @@ Agent 的提示词要写清：
 <ol type="1">
 <li>在 Nexus 网页进「互联中心 › 对外发布」，打开第 5
 章建好的发布，签发一把调用密钥（<code>nxa_</code> 开头）。</li>
-<li>由管理员把它粘贴进九安平台页面上的「<strong>Agent
-接入</strong>」（第一次要先用第 7.2 节的 P3、P3b
-把它做出来；参考环境里是「Nexus Agent」页的「我的 Agent ›
-启用」）。后端当场验证、加密保存。</li>
+<li>由管理员在九安平台页面的「<strong>Agent 接入</strong>」里找到这个
+Agent（连过一次 Nexus 后，页面列出 Nexus 上开了 A2A
+的发布），点「启用」，只粘贴这把调用密钥；后端当场验证、加密保存。列表里没有的发布可以「手动添加」：贴它的
+A2A 地址和调用密钥。第一次要先用第 7.2 节的 P3、P3b
+把这个页面做出来；参考环境里是「Nexus Agent」页的「我的 Agent ›
+启用」。</li>
 </ol>
 <p>调用密钥不要发到聊天工具里，不要写进 <code>.env</code>
 或任何配置文件，也不要交给 Claude Code 写进代码。</p>
@@ -448,7 +450,7 @@ Nexus。</p>
 <p><strong>提示词 P3：A2A 适配层 + 模型接入口 + Agent 接入</strong></p>
 <pre class="text"><code>目标：在九安后端加两样通用的东西，以后所有 Agent 任务都用它们：
 1）A2A 适配层和模型接入口：业务代码经九安的统一调用中间件调 agentTask(...)，适配层按 jiuan.agent/v1 把请求信封发给 Nexus 上的发布，收回结果信封并检查；
-2）Agent 接入：管理员启用一个发布（填发布编号、粘贴调用密钥），后端验证后加密保存；可以换密钥、重新验证、停用。
+2）Agent 接入：管理员连一次 Nexus，后端列出 Nexus 上开了 A2A 的发布；启用时从列表里选，只贴这个发布的调用密钥（发布编号来自列表，不让人手填），后端验证后加密保存；可以测试、换密钥、重新验证、停用，看调用记录。
 
 先读：
 - &lt;交接仓库&gt;/docs/delivery/agent-framework.md 第 6 节的 I2（适配层）、I3（模型接入口）、I6（路由配置）、I7（Agent 接入，细节在 &lt;交接仓库&gt;/docs/delivery/handover.md 第 2.6 节）
@@ -458,6 +460,7 @@ Nexus。</p>
 - 参考实现（只看做法，不复制粘贴整文件，按九安的代码风格重写）：
   &lt;交接仓库&gt;/poc/app/nexus/a2a-client.mjs（message/stream、SSE 解析、tasks/cancel）
   &lt;交接仓库&gt;/poc/app/access/verify.mjs（tasks/get 验证密钥）、crypto.mjs（AES-256-GCM）、me.mjs 里的 enable / disable / markInvalid
+  &lt;交接仓库&gt;/poc/app/nexus/cli.mjs（经 nexus-ai-operator 命令行登录、列发布）、catalog.mjs 的 publicationView（从发布里认出 A2A 地址、是否就绪）
   &lt;交接仓库&gt;/poc/app/test/unit/helpers/fake-a2a.mjs（本地假 A2A 网关）
   参考实现是 PoC，有几处和契约不同，一律以契约和 agent-interface.md 为准：
   PoC 把 404 也当作密钥失效（契约：AI_UNAVAILABLE，不标失效）；PoC 每次用随机 contextId（契约：按 4.1 生成）；PoC 断线后不用 tasks/get 查；PoC 只发文字 Part（契约：一行文字 + 请求信封 DataPart）；PoC 用 AI_OUTPUT_TRUNCATED（契约没有这个码：流没给 final 就断了，按 4.3 处理）；PoC 不经九安的调用中间件
@@ -485,6 +488,10 @@ Nexus。</p>
 - 接口只给管理员（其他人 403），挂在 /api/analysis/v1/platform/agent-access：GET 列出，POST 启用（{ publishId, callKey, reason }），POST …/&lt;publishId&gt;/key（{ callKey, reason }，换密钥）、…/verify（{ reason }，用已保存的密钥重读名片、重验密钥）、…/disable（{ reason }）。reason 必填、1–200 字。照九安平台写操作现有的约定：analysis-server.mjs 的写操作白名单、留痕写 platform_change_log（记动作、原因、密钥指纹和错误码）
 - 每个发布记下最近一次检查的结果和时间（可用 / 密钥失效 / 名片读不到），列表返回 status、verifiedAt、invalidAt；错误码集中定义在一处并导出，页面要逐个给说明
 - 启用和换密钥时：先读名片（按 card-requirements.json 检查，记下名片声明的任务），再用 verifyKey 验证（不花钱），都过了才保存；名片读不到、名片不合要求、密钥无效，分别给出错误码
+- 名片只差说明里的「契约：jiuan.agent/v1」「任务：…」两行（其余都合 card-requirements.json）时照样启用：任务由平台按这个实例接的任务指定，记录上标 declaredBy: platform（名片声明的标 card），页面上写明「名片没有声明，由平台指定」。Nexus 新建的发布常常没有这两行，拒绝启用只会让管理员卡住。名片还有别的问题，或只声明了九安不接的任务，照旧拒绝
+- 列出 Nexus 上的发布：管理员贴一次自己的 Nexus API 密钥（nxc_ 开头）连上 Nexus。照 cli.mjs 的做法交给 nexus-ai-operator 命令行登录：API 密钥只经环境变量交给 login，第一次登录后 Nexus 会换新，命令行自己保存、续期，凭证目录放九安自己的数据目录。接口：GET …/agent-access/nexus（连接状态）、POST …/agent-access/nexus（{ apiKey }，连接）、POST …/agent-access/nexus/disconnect（只删本机凭证）、GET …/agent-access/publications（开了 A2A 的发布：名称、任务、能不能启用，不能的写明原因）。连接、断开要进 analysis-server.mjs 的写操作白名单，否则回 404
+- 测试：POST …/agent-access/&lt;publishId&gt;/test（{ documentId }，先回 202），GET …/agent-access/tests/&lt;testId&gt; 查结论、备注、依据和用时。照自动发起的做法组装请求（先读原件），用单独的会话分区，结果只记进调用记录，不改单据的结论；每个管理员每分钟最多 5 次（每次都真实调用 Nexus）。这个写操作也要进白名单
+- 调用记录：GET …/agent-access/calls，每一轮 Agent 任务一行，新的在前（含测试）：单据号、发给哪个发布、触发方式、状态、结论、用时、错误码，以及 Agent 返回的备注和逐条依据。读单据池时注意 listDocuments 每页最多 50 张
 - 服务启动时，对已启用的发布各重读一次名片、更新任务列表；读不到只记错误码，不影响启动
 - 调用密钥只在启用、换密钥时从请求体读一次；只查是 16–512 个可见字符，不查前缀。用 AES-256-GCM 加密存进九安自己的存储；加密密钥用 HKDF 从九安的分析数据密钥（analysisSecrets 的 dataKey）派生，info 写 jiuan-agent-enablement/v1，不新增密钥文件。返回只带指纹；日志只记错误码
 - onKeyRejected 来了，只在密钥指纹和现在保存的相同时才标「密钥失效」（刚换上的新密钥不会被旧调用标掉）
@@ -500,25 +507,28 @@ Nexus。</p>
 步骤：
 1. 先写适配层的测试：用假 A2A 网关覆盖正常流、分块和全文、断线后 tasks/get（查到、查不到、查的时候网络出错）、修正一次、declined、401（标失效）、404（不标）、429、conversation_busy、signal 中止（发了 tasks/cancel）、名片 url 不同源，以及 error-map.json 里的每一种；
 2. 写适配层和模型接入口，让测试通过；再加一个测试：经调用中间件调 agentTask，调用日志里记下了这次调用；
-3. 写 Agent 接入的接口和测试（含「返回里没有密钥」「非管理员看不到」的断言）；
+3. 写 Agent 接入的接口和测试（含「返回里没有密钥」「非管理员看不到」「名片只差那两行时能启用、任务标平台指定」「声明了别的任务时拒绝」的断言）；
 4. 跑全部测试，把结果贴给我。
 
 验收：全部测试通过；经调用中间件，用 contract/tasks/first_review/v1/examples/request.json 对假网关跑通一次完整调用（含 checks.mjs）；grep 仓库和测试输出，找不到 nxa_ / nxc_ 开头的真密钥。
 
 不许做：不在测试里调用真的 Nexus；不把密钥写进任何文件；不改 contract/。</code></pre>
-<p>P3 只做了「Agent
-接入」的后端接口。管理员要在页面上启用发布、粘贴调用密钥，再用 P3b
-在九安的平台页面上加一块。演习时做出来的样子（发布编号是虚构的）：</p>
+<p>P3 只做了「Agent 接入」的后端接口。管理员要在页面上连
+Nexus、启用、测试，再用 P3b
+在九安的平台页面上加一块。测试台上做出来的样子（发布编号和指纹换成了虚构的）：</p>
 <figure class="screen">
 <a href="../assets/screens/dev-guide-agent-access.png"
 class="figure-link" target="_blank" rel="noopener"><img
 src="../assets/screens/dev-guide-agent-access.png" loading="lazy"
-alt="九安「后台配置」里的「Agent 接入」页签：已启用、可用、要处理三个数字，「启用一个发布」按钮，列表每行是发布编号、名称、名片声明的任务、状态、密钥指纹、最后验证时间和换密钥、重新验证、停用" /></a>
-<figcaption>九安「后台配置」里的「Agent
-接入」页签：已启用、可用、要处理三个数字，「启用一个发布」按钮，列表每行是发布编号、名称、名片声明的任务、状态、密钥指纹、最后验证时间和换密钥、重新验证、停用</figcaption>
+alt="九安「后台配置」里的「Agent 接入」页签：顶上一条显示「已连接 Nexus」和刷新、断开 Nexus、手动添加 Agent；下面每个 Agent 一张卡：名称、状态（已启用 / 未启用）、发布编号、任务（名片没声明的标「由平台指定」）、密钥指纹和最近验证时间，右边只放合用的按钮（已启用的是测试、停用、复核，没启用的是启用）；再下面是调用记录，每一轮一行：时间、单据、发给哪个 Agent、触发方式、结论、用时、查看反馈" /></a>
+<figcaption>九安「后台配置」里的「Agent 接入」页签：顶上一条显示「已连接
+Nexus」和刷新、断开 Nexus、手动添加 Agent；下面每个 Agent
+一张卡：名称、状态（已启用 /
+未启用）、发布编号、任务（名片没声明的标「由平台指定」）、密钥指纹和最近验证时间，右边只放合用的按钮（已启用的是测试、停用、复核，没启用的是启用）；再下面是调用记录，每一轮一行：时间、单据、发给哪个
+Agent、触发方式、结论、用时、查看反馈</figcaption>
 </figure>
 <p><strong>提示词 P3b：「Agent 接入」页面</strong></p>
-<pre class="text"><code>目标：在九安的平台页面上加「Agent 接入」，让管理员不用命令行就能列出、启用发布、换密钥、重新验证、停用。
+<pre class="text"><code>目标：在九安的平台页面上加「Agent 接入」，让管理员不用命令行就能连 Nexus、看到已发布的 Agent、启用（只贴调用密钥）、测试、换密钥、重新验证、停用，看调用记录。
 
 先读：
 - 上一步（P3）做好的 Agent 接入接口：/api/analysis/v1/platform/agent-access 的请求体、返回、错误码（代码在 src/agent-enablement.mjs）
@@ -529,15 +539,18 @@ alt="九安「后台配置」里的「Agent 接入」页签：已启用、可用
 约束：
 - 入口放在「后台配置」的页签里，排在「连接器」后面；后台配置整组只给管理员，其他角色看不到这个页签（接口本来也回 403）。不要放进所有人都能看到的「平台运行」
 - 组件只依赖从外面传进来的请求函数（createAnalysisClient）和画页面的小函数，不直接用 document、fetch，这样才能用假后端测；以后的任务页面（P5）也照这个写法
-- 列表每个发布一行：发布编号、名片里的名称、名片声明的任务、状态（可用 / 密钥失效 / 名片读不到，用 P3 列表返回的 status）、密钥指纹、最后验证时间（verifiedAt；密钥失效的另外显示失效时间 invalidAt）
-- 启用：填发布编号、粘贴调用密钥（密码输入框，不回显）、写原因；后端当场验证。P3 的每个错误码都要有一句能照着做的话，测试从 P3 的代码里读出全部错误码逐个核对。例如：名片读不到 → 在 Nexus 上确认发布没暂停、A2A 打开了；名片不合要求 → 名片描述里要有「契约：jiuan.agent/v1」和「任务：…」两行；密钥无效 → 在这个发布里重新签一把
-- 换密钥、停用要二次确认；启用、换密钥、重新验证、停用都要写原因，随请求发给后端
-- 调用密钥只出现在输入框里：不放进组件的状态、对话框的状态、analysis.js 的 state、浏览器存储、日志、地址栏；页面上只显示指纹。只是校验没过（缺发布编号、缺原因）时不清空密钥框；真正提交时读出来马上清空
-- 页面里不出现 Nexus 地址
+- 顶上一条：没连 Nexus 时是 Nexus API 密钥的输入框和「连接 Nexus」；连上后显示「已连接 Nexus」和账号，带「刷新」「断开 Nexus」。不连 Nexus 也能「手动添加」：贴 A2A 地址（页面从地址里认出发布编号）和调用密钥
+- 一张表：Nexus 上的发布和已经启用的发布按发布编号合在一起，同一个发布只出现一次，每个一张卡：名称、状态（已启用 / 未启用 / 密钥失效 / 已停用 / 不能启用和原因）、发布编号、任务（平台指定的标出来）、密钥指纹、最后验证时间（verifiedAt；密钥失效的写失效原因）。卡上只放当前状态合用的按钮：已启用的「测试」「停用」「复核」，没启用或已停用的「启用」，密钥失效的「换钥匙」「停用」；不能启用的不放按钮
+- 启用、换钥匙：在卡上展开一个只有调用密钥（密码输入框，不回显）的小表单；发布编号来自卡片，原因由页面按操作自动填（例如「在「Agent 接入」页启用」），不让人手填。后端当场验证。P3 的每个错误码都要有一句能照着做的话，测试从 P3 的代码里读出全部错误码逐个核对。例如：名片读不到 → 在 Nexus 上确认发布没暂停、A2A 打开了；名片不合要求 → 说清是哪一项（例如不支持流式）；密钥无效 → 在这个发布里重新签一把
+- 停用要先确认（说清停用后九安不再交单、已存的密钥一并清除）
+- 测试：已启用的卡上点「测试」，选一张能测的单据，等结论（轮询 P3 的查询接口）；结论、备注（模型自评，未核实）、逐条依据、用时，和调用记录的「查看反馈」用同一个展示
+- 页面下方是调用记录（「刷新」；每一轮一行，「查看反馈」展开），操作记录折叠起来
+- 调用密钥只出现在输入框里：不放进组件的状态、对话框的状态、analysis.js 的 state、浏览器存储、日志、地址栏；页面上只显示指纹。只是校验没过（例如手动添加时认不出 A2A 地址）时不清空密钥框；真正提交时读出来马上清空
+- 页面上不显示 Nexus 地址（手动添加时管理员自己贴的 A2A 地址只用来认出发布编号）
 - 沿用九安平台页面现有的组件和样式，不引入新的前端库
 
 步骤：先写组件测试（照 public/analysis.js 的写法：组件只依赖从外面传进来的请求函数和画页面的函数，测试用假后端，node:test 跑），再写页面。
-验收：测试通过；测试里断言「提交后输入框已清空、页面状态里没有密钥」；画页面的假函数要和真 DOM 的行为一致（例如 replaceChildren(null) 会显示成文字「null」）。在本机起服务（没有 MySQL 就用 createAnalysisApp 加内存存储、假 A2A 网关和一个只认一个令牌的假登录），截三张图：列表、启用对话框、密钥失效的一行。截图要登录、点按钮：用本机 Chrome 的 --headless=new --remote-debugging-port 加 Node 自带的 WebSocket 走 DevTools 协议，或者用你们已有的 Playwright；只访问 127.0.0.1。
+验收：测试通过；测试里断言「提交后输入框已清空、页面状态里没有密钥」「每种状态的卡上只有合用的按钮」「同一个发布只出现一次」「名片只差那两行的能启用」；画页面的假函数要和真 DOM 的行为一致（例如 replaceChildren(null) 会显示成文字「null」）。在本机起服务（没有 MySQL 就用 createAnalysisApp 加内存存储、假 A2A 网关和一个只认一个令牌的假登录），截四张图：列表、启用（只贴密钥）、测试结果、密钥失效的一张卡。截图要登录、点按钮：用本机 Chrome 的 --headless=new --remote-debugging-port 加 Node 自带的 WebSocket 走 DevTools 协议，或者用你们已有的 Playwright；只访问 127.0.0.1。
 不许做：不在浏览器里直连 Nexus；不改 P3 的接口。</code></pre>
 <h2 id="73-每个需求一个任务模块和查结果接口">7.3
 每个需求一个任务模块和查结果接口</h2>
@@ -572,7 +585,7 @@ I4），要先把它搭起来；以后每个需求只加一个任务模块。</p
 - 组装：从九安的数据组装 input（只放契约里有的字段），按 input.schema.json 校验；不合格就不调用，存成失败 AI_REQUEST_INVALID
 
 约束（选发布、开关、重试）：
-- 发给哪个发布：按 I6 的路由配置（config.agents.tasks.&lt;任务名&gt;.routes），从上往下取第一条 when 匹配的；它的发布没在「Agent 接入」里启用、名片没声明 &lt;任务名&gt;@1 或密钥失效，就直接失败 AI_UNAVAILABLE：不调用、不存，流水线这一轮停下，下一轮再试
+- 发给哪个发布：按 I6 的路由配置（config.agents.tasks.&lt;任务名&gt;.routes），从上往下取第一条 when 匹配的；它的发布没在「Agent 接入」里启用、启用记录里没有 &lt;任务名&gt;@1（名片声明的或平台指定的）或密钥失效，就直接失败 AI_UNAVAILABLE：不调用、不存，流水线这一轮停下，下一轮再试
 - 任务开关 config.agents.tasks.&lt;任务名&gt;.enabled 默认关闭：关闭时流水线这一站什么都不做，POST 和查结果都回 503 AGENT_TASK_DISABLED
 - 失败时看错误对象上的 autoRetry，为 true 的重试一次：等 max(agents.autoRetryDelayMs, Retry-After)，最多 5 分钟，attempt 加一；declined 不重试。平台这边让调用没发生的失败（暂停、额度用完、连接器关闭、服务中断）下一轮流水线照常重发；因为密钥、发布出问题的失败（AI_AUTH_INVALID、AI_UNAVAILABLE），管理员在「Agent 接入」里换好密钥或重新验证通过后，下一轮重发；其他 Agent 那边的失败，这个版本的对象不再自动重发
 
