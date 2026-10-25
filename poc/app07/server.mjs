@@ -40,7 +40,7 @@ const agentClient = J.nexusA2a.createAgentClient({ nexusOrigin: config.agents.ne
 const agentEnablement = J.enablement.createAgentEnablement({ store, tenantId: config.scope.tenantId, client: agentClient });
 await agentEnablement.load();
 
-const fake = createFakeHuilianyi({ onCall: call => { if (call.blocked) console.error(`POC_HLY_WRITE_BLOCKED ${call.method} ${call.path}`); } });
+const fake = createFakeHuilianyi({ restampSeeds: true, onCall: call => { if (call.blocked) console.error(`POC_HLY_WRITE_BLOCKED ${call.method} ${call.path}`); } });
 const registry = J.connectors.createConnectorRegistry({ secretSource, huilianyiSource: config, agents: config.agents, agentKeys: agentEnablement,
   transports: { 'hly-prod': { fetchImpl: fake.fetchImpl, downloadFetchImpl: fake.downloadFetchImpl } } });
 const lockPool = database.lockPool();
