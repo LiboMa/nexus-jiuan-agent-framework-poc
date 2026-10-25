@@ -1,3 +1,16 @@
+--- a/analysis-server.mjs	2026-10-26 00:47:37
++++ b/analysis-server.mjs	2026-10-26 00:47:37
+@@ -341,7 +341,9 @@
+           || /^\/api\/analysis\/v1\/platform\/agents\/[^/]+\/runs\/[^/]+\/cancel$/u.test(path)
+           || /^\/api\/analysis\/v1\/platform\/connectors\/[^/]+\/probe$/u.test(path)
+           // NX-2c Agent access: paste a key, then rotate / disable / refresh one publication (the route itself is 404 off the test instance).
+-          || path === PREFIX + '/platform/agent-access' || /^\/api\/analysis\/v1\/platform\/agent-access\/[^/]+\/(?:rotate|disable|refresh)$/u.test(path)));
++          || path === PREFIX + '/platform/agent-access' || /^\/api\/analysis\/v1\/platform\/agent-access\/[^/]+\/(?:rotate|disable|refresh)$/u.test(path)
++          // Bench patch 0001: connect / disconnect Nexus for the publication list on the Agent 接入 tab.
++          || path === PREFIX + '/platform/agent-access/nexus' || path === PREFIX + '/platform/agent-access/nexus/disconnect'));
+       if(path.startsWith(PREFIX+'/platform')&&req.method!=='GET'&&!platformWritePath) fail('NOT_FOUND',404);
+       if(req.method!=='GET')auth.checkCsrf(session,req.headers['x-csrf-token']);
+        if (milestone && await milestone.routes.handle(req, res, { session, path, url })) return;
 --- a/public/platform-ops.js	2026-10-26 00:16:35
 +++ b/public/platform-ops.js	2026-10-26 00:16:35
 @@ -350,11 +350,73 @@

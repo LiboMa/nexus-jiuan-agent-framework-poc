@@ -85,6 +85,10 @@ test('补丁：「Agent 接入」页改成连一次 Nexus、列出已发布的 A
   assert.match(ops, /'Nexus 上已发布的 Agent'/);
   assert.doesNotMatch(ops, /'启用一个发布'/, '不再有手填发布编号的启用表单');
   assert.match(analysis, /nexus: \{ status: \(\) => api\('\/platform\/agent-access\/nexus'\)/);
+  // 九安对 /platform 下的写请求有白名单（analysis-server.mjs），连接、断开 Nexus 的两个 POST 要在上面，否则回 404
+  const server = await readFile(path.join(out, 'analysis-server.mjs'), 'utf8');
+  assert.match(server, /path === PREFIX \+ '\/platform\/agent-access\/nexus' \|\| path === PREFIX \+ '\/platform\/agent-access\/nexus\/disconnect'/);
+  await run('node', ['--check', path.join(out, 'analysis-server.mjs')]);
   await run('node', ['--check', path.join(out, 'public/platform-ops.js')]);
   await run('node', ['--check', path.join(out, 'public/analysis.js')]);
 });
