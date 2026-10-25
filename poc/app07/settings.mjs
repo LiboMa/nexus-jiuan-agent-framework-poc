@@ -37,6 +37,8 @@ export function readSettings(env = process.env) {
     nexusOrigin: httpsOrigin(env, 'NEXUS_ORIGIN'),
     // 「Agent 接入」页连 Nexus（列出已发布的 Agent）用的 Operator 命令行；凭证目录是 v0.7.10 自己的，不和 PoC 共用
     operatorScript: absolute(env, 'NEXUS_OPERATOR'), nexusHome: absolute(env, 'POC07_NEXUS_HOME', '/var/lib/jiuan07/nexus'),
+    // 服务自己的数据目录：种子时间锚点（seed-anchor.json）等
+    stateDir: absolute(env, 'POC07_STATE_DIR', '/var/lib/jiuan07'),
     database: { host: env.POC07_MYSQL_HOST || '127.0.0.1', port: portOf(env, 'POC07_MYSQL_PORT', 3306),
       database: env.POC07_MYSQL_DATABASE || 'jiuan07', user: env.POC07_MYSQL_USER || 'jiuan07_app' },
   };

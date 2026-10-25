@@ -23,6 +23,7 @@ import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
 import { withOriginalsFirst } from './originals-first.mjs';
 import { createAgentRouting } from './agent-routes.mjs';
+import { loadSeedAnchor } from './seed-anchor.mjs';
 import * as J from './jiuan.mjs';
 
 const log = code => console.error(code);
@@ -49,7 +50,7 @@ await agentEnablement.load();
 routing = await createAgentRouting({ enablement: agentEnablement, baseConfig: config, log });
 const enablement = routing.enablement;   // 包过的启用服务：页面上启用、换钥匙、停用、复核、标记失效之后刷新路由
 
-const fake = createFakeHuilianyi({ restampSeeds: true, onCall: call => { if (call.blocked) console.error(`POC_HLY_WRITE_BLOCKED ${call.method} ${call.path}`); } });
+const fake = createFakeHuilianyi({ restampSeeds: await loadSeedAnchor(path.join(settings.stateDir, 'seed-anchor.json')), onCall: call => { if (call.blocked) console.error(`POC_HLY_WRITE_BLOCKED ${call.method} ${call.path}`); } });
 const registry = J.connectors.createConnectorRegistry({ secretSource, huilianyiSource: config, agents: config.agents, agentKeys: enablement,
   transports: { 'hly-prod': { fetchImpl: fake.fetchImpl, downloadFetchImpl: fake.downloadFetchImpl } } });
 const lockPool = database.lockPool();

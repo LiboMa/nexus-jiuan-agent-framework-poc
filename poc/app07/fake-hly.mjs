@@ -25,6 +25,7 @@
  *  其他路径 404。calls 只记 { method, path, status, blocked? }，不记正文、查询串和令牌。
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { yesterdayNoon } from './seed-anchor.mjs';
 import { DEPARTMENTS, EMPLOYEES, COMPANIES, FILES, FILE_HOST, REPORTS } from './fixtures.mjs';
 
 export const API_HOST = 'apistage.huilianyi.com';
@@ -58,7 +59,6 @@ async function bodyJson(options) {
 const TIME_KEYS = ['createdDate', 'lastSubmittedDate', 'lastModifyDate', 'activatedDate'];
 const DAY_MS = 24 * 3600_000, SHANGHAI_MS = 8 * 3600_000;
 /** 昨天中午（北京时间）：九安首轮增量同步从昨天 0 点读起，落在这里的种子首轮就读得到；同一天里算出来都一样。 */
-const yesterdayNoon = at => Math.floor((at + SHANGHAI_MS) / DAY_MS) * DAY_MS - SHANGHAI_MS - DAY_MS + 12 * 3600_000;
 
 /** 按 lastModifyDate 的先后逐张落位：最晚一张在 anchor，往前每张早 10 分钟；每张单内部的时间差（创建、提交、审批）照原样。 */
 function restamp(raws, anchor) {
@@ -77,12 +77,14 @@ function restamp(raws, anchor) {
 }
 
 /**
- * restampSeeds：测试台上打开。种子单据的日期是写死的，九安首轮增量同步只读昨天 0 点以后的，所以创建时把它们落到昨天中午前后；
+ * restampSeeds：测试台上传锚点（seed-anchor.mjs 存下的那个时间，毫秒）；传 true 就按 now 现算昨天中午（只给单元测试用）。
+ * 种子单据的日期是写死的，九安首轮增量同步只读昨天 0 点以后的，所以创建时把它们落到锚点前后；
  * 同一天里重启，时间和版本都不变（不会重复发起 AI 初审），换了天重启会变成新版本、重新初审一次。单元测试默认关闭，用写死的日期。
  */
 export function createFakeHuilianyi({ reports = REPORTS, files = FILES, now = () => new Date(), onCall = () => {}, arrivalLagMs = ARRIVAL_LAG_MS,
   restampSeeds = false } = {}) {
-  const seeds = restampSeeds ? restamp(reports.map(clone), yesterdayNoon(new Date(now()).getTime())) : reports.map(clone);
+  const anchor = Number.isFinite(restampSeeds) ? restampSeeds : restampSeeds === true ? yesterdayNoon(new Date(now()).getTime()) : null;
+  const seeds = anchor === null ? reports.map(clone) : restamp(reports.map(clone), anchor);
   const live = seeds.map(clone);           // 种子单据 + 模拟来单
   const tokens = new Set(), calls = [];
   let sequence = 0;
