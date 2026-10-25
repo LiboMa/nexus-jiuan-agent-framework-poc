@@ -63,6 +63,19 @@ test('配置脚本：实例上已有的库密码和数据密钥只认原值，�
   assert.doesNotMatch(reset, /jiuan_analysis/, '重置 v0.7.10 不碰 PoC 的库');
 });
 
+test('重置脚本：保留管理员在「Agent 接入」页上的启用记录（先导出、重建库跑完迁移后写回，再正式起服务），不读也不写任何调用密钥文件', async () => {
+  const reset = await readFile(infra('bench/bench07-reset.sh'), 'utf8');
+  const steps = ["scope_key LIKE 'agent-enablement:%'", 'DROP DATABASE IF EXISTS', 'systemctl start andon-jiuan07.service', 'systemctl stop andon-jiuan07.service',
+    'mysql -uroot jiuan07', 'systemctl start andon-jiuan07.service'];
+  let at = -1;
+  for (const step of steps) {
+    const next = reset.indexOf(step, at + 1);
+    assert.ok(next > at, `重置顺序不对或缺少：${step}`);
+    at = next;
+  }
+  assert.doesNotMatch(reset, /secrets\.env|NEXUS_A2A_KEY|nxa_/);
+});
+
 test('deploy.sh：构建 v0.7.10 副本、把 app07 和副本打进发布包；先配置 v0.7.10 再重启 PoC（它要读转发设置），最后重启 v0.7.10；密钥只补不换', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   assert.match(deploy, /bench\/build-jiuan07\.sh/);

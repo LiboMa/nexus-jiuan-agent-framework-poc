@@ -1,7 +1,8 @@
 /**
- * 测试台上九安 v0.7.10（https://jiuan-v0710.tinyboat.blog）的端到端测试（Playwright + 本机 Chrome）。请用 run07.sh 运行：它先重置库，
- * 再从 infra/secrets.env 把两个账号的口令和发布的调用密钥读进环境变量（调用密钥只在「Agent 接入」页粘贴，九安加密存库）。
- * 流程：口令登录 → 管理员在「Agent 接入」启用发布 → 四张虚构对公付款单先读取原件、再手动发起 AI 独立建议（重置后发布未启用时失败的那几轮九安不自动重排）
+ * 测试台上九安 v0.7.10（https://jiuan-v0710.tinyboat.blog）的端到端测试（Playwright + 本机 Chrome）。请用 run07.sh 运行：它先重置库
+ * （保留「Agent 接入」的启用记录），再从 infra/secrets.env 读两个账号的口令。调用密钥不经过测试：管理员在
+ * 「后台配置 › Agent 接入」页上粘贴一次，九安加密存库，之后的调用都用这条启用记录。
+ * 流程：口令登录 → 页面上的启用记录在、可用 → 四张虚构对公付款单先读取原件、再手动发起 AI 独立建议（重置后启用记录写回之前的那一轮九安不自动重排）
  * → 结论和依据核对，Agent 引用的规则编号到测试台的知识库（nexus-pgvector 的 approval_rules）里逐个核对 → 计入两档结论 → 没有回写
  * → 模拟来单一张，等九安同步、读详情后自动发起并完成 → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
  * 真实调用 Nexus：五次 AI 独立建议，每次约 0.1–0.3 美元。
@@ -28,7 +29,7 @@ let browser, page;
 const advices = new Map();
 
 before(async () => {
-  assert.ok(process.env.E2E_REVIEWER_PASSWORD && process.env.E2E07_CALL_KEY && INSTANCE, '请用 run07.sh 运行：它重置测试台并从 infra/secrets.env 读口令和调用密钥');
+  assert.ok(process.env.E2E_REVIEWER_PASSWORD && INSTANCE, '请用 run07.sh 运行：它重置测试台并从 infra/secrets.env 读两个账号的口令');
   await mkdir(SHOTS, { recursive: true });
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   page = await (await browser.newContext({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } })).newPage();
@@ -87,17 +88,13 @@ test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联
   await shot('01-documents');
 });
 
-test('Agent 接入：管理员粘贴调用密钥，九安当场验证名片与密钥后启用；名片声明的任务是 review_advice@1', async () => {
+test('Agent 接入：管理员在页面上启用的发布还在，状态「已启用」，名片声明的任务是 review_advice@1（密钥只在页面上粘贴，测试不碰）', async () => {
   await page.getByRole('link', { name: '后台配置' }).click();
   await page.getByRole('tab', { name: 'Agent 接入' }).click();
-  await page.getByRole('button', { name: '启用一个发布' }).click();
-  await page.getByRole('textbox', { name: /发布编号/ }).fill(PUBLISH_ID);
-  await page.getByRole('textbox', { name: /调用密钥/ }).fill(process.env.E2E07_CALL_KEY);
-  await page.getByRole('textbox', { name: /操作原因/ }).fill('端到端测试：启用知识库版审核 Agent（review_advice@1）');
-  await page.getByRole('button', { name: '验证并启用' }).click();
   const row = page.getByRole('row', { name: new RegExp(PUBLISH_ID) });
-  await row.waitFor({ timeout: 60_000 });
-  await assert.doesNotReject(row.getByText('review_advice@1').waitFor({ timeout: 10_000 }));
+  await row.waitFor({ timeout: 20_000 }).catch(() => assert.fail(`还没有启用 ${PUBLISH_ID}：请到 ${BASE}/#adminConfig?tab=agentAccess 用「启用一个发布」粘贴调用密钥，再跑测试`));
+  await row.getByText('已启用').waitFor({ timeout: 10_000 }).catch(() => assert.fail(`${PUBLISH_ID} 的启用记录不是「已启用」（可能已失效）：请到 Agent 接入页换一把密钥`));
+  await row.getByText('review_advice@1').waitFor({ timeout: 10_000 });
   await shot('02-agent-access');
 });
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 对测试台上的九安 v0.7.10（https://jiuan-v0710.tinyboat.blog）跑端到端测试。先重置：bench07-reset.sh 删掉并重建库 jiuan07 再起服务，
-# 单据从模拟汇联易重新同步；「Agent 接入」的启用记录也在这个库里，测试里由管理员重新启用。PoC 的库和服务不动。
-# 两个账号的口令和发布的调用密钥从 infra/secrets.env 读进本进程的环境变量，只在进程内使用（调用密钥在九安「Agent 接入」页粘贴，九安加密存库）。
+# 单据从模拟汇联易重新同步；「Agent 接入」的启用记录保留（重置脚本导出后写回）。PoC 的库和服务不动。
+# 两个账号的口令从 infra/secrets.env 读进本进程的环境变量。调用密钥不经过这里：管理员在九安「后台配置 › Agent 接入」页上粘贴一次。
 # 真实调用 Nexus：每张对公付款单一次 AI 独立建议（约 0.1–0.3 美元），一轮约 5 张。用法：run07.sh [node --test 的参数，例如 --test-name-pattern 登录]
 set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
@@ -24,6 +24,5 @@ aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --in
 export E2E07_BASE_URL="$SITE" E2E07_INSTANCE="$INSTANCE"
 E2E_REVIEWER_PASSWORD="$(secret REVIEWER_PASSWORD)"
 E2E_CHECKER_PASSWORD="$(secret CHECKER_PASSWORD)"
-E2E07_CALL_KEY="$(secret NEXUS_A2A_KEY_pub_5c53e70d8dc7ddea)"
-export E2E_REVIEWER_PASSWORD E2E_CHECKER_PASSWORD E2E07_CALL_KEY
+export E2E_REVIEWER_PASSWORD E2E_CHECKER_PASSWORD
 node --test --test-concurrency=1 "$@" jiuan07.e2e.mjs
