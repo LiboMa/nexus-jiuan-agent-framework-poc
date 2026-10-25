@@ -78,8 +78,8 @@
 +}
 +@media(prefers-reduced-motion:reduce){.platform-access-agent{transition:none}}
 --- a/public/platform-ops.js	2026-10-26 01:25:51
-+++ b/public/platform-ops.js	2026-10-26 01:48:23
-@@ -320,123 +320,238 @@
++++ b/public/platform-ops.js	2026-10-26 02:06:28
+@@ -320,123 +320,240 @@
    input.setAttribute?.('autocomplete', 'off'); input.setAttribute?.('spellcheck', 'false'); return input;
  }
  function textInput(name, placeholder) { const input = document.createElement('input'); input.name = name; input.placeholder = placeholder; input.setAttribute?.('autocomplete', 'off'); return input; }
@@ -293,8 +293,10 @@
 +  function manualForm() {
 +    const address = textInput('address', 'https://…/a2a/pub_…'), key = secretInput('key', 'nxa_ 开头，粘贴后不再显示');
 +    const go = act('验证并添加', async () => {
-+      const publishId = publishIdFrom(address.value), value = String(key.value || '').trim(); key.value = '';
++      // 只是地址认不出时不清空密钥框；真正提交时读出来马上清空
++      const publishId = publishIdFrom(address.value);
 +      if (!publishId) { say('认不出发布：请粘贴这个发布的 A2A 地址（含 /a2a/pub_…）', 'error'); return; }
++      const value = String(key.value || '').trim(); key.value = '';
 +      if (!value) { say('请贴上调用密钥', 'error'); return; }
 +      go.disabled = true; say(`正在向 Nexus 当场验证 ${publishId} 的名片与密钥…`);
 +      try { await opts.onEnable({ publishId, key: value, reason: REASONS.manual }); drawer.hidden = true; await refresh(); }

@@ -87,3 +87,13 @@ test('模拟来单：登录后能看模板；只有管理员能来单，每分�
   assert.equal((await ask('POST', '/api/analysis/v1/poc/intake', session('admin'), { template: 'DGZF-V07-001' })).status, 429);
   assert.equal((await ask('GET', '/api/analysis/v1/platform/agents', session('admin'))).handled, false);
 });
+
+test('模拟来单的请求体九安不替我们读（它只读 /platform 下的）：来单接口自己读 JSON', async () => {
+  const { Readable } = await import('node:stream');
+  const routes = intakeRoutes({ fake });
+  const req = Object.assign(Readable.from([Buffer.from(JSON.stringify({ template: 'DGZF-V07-001' }))]), { method: 'POST', headers: { 'content-type': 'application/json' } });
+  const res = capture();
+  await routes.handle({ req, url: new URL('/api/analysis/v1/poc/intake', ORIGIN), path: '/api/analysis/v1/poc/intake', session: session('admin'), res, body: undefined });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.data.businessCode, 'DGZF-SIM-001');
+});

@@ -2,6 +2,7 @@
 const form = document.getElementById('intake');
 const select = document.getElementById('template');
 const message = document.getElementById('message');
+const say = (text, kind = '') => { message.textContent = text; message.className = `message ${kind}`.trim(); };
 let csrf = '';
 
 async function api(path, options = {}) {
@@ -19,9 +20,9 @@ async function load() {
     const { items } = await api('/poc/intake/templates');
     select.replaceChildren(...items.map(item => new Option(`${item.businessCode} · ${item.formName} · ${item.companyName} · ${item.title}`, item.businessCode)));
     form.hidden = false;
-    message.textContent = '';
+    say('');
   } catch (error) {
-    message.textContent = error.message;
+    say(error.message, 'error');
   }
 }
 
@@ -29,12 +30,12 @@ form.addEventListener('submit', async event => {
   event.preventDefault();
   const button = form.querySelector('button');
   button.disabled = true;
-  message.textContent = '正在来单……';
+  say('正在来单……');
   try {
     const result = await api('/poc/intake', { method: 'POST', body: JSON.stringify({ template: select.value }) });
-    message.textContent = `已来单 ${result.businessCode}。${result.note}`;
+    say(`已来单 ${result.businessCode}。${result.note}`, 'success');
   } catch (error) {
-    message.textContent = error.message;
+    say(error.message, 'error');
   } finally {
     button.disabled = false;
   }

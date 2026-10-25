@@ -1,17 +1,30 @@
-:root { color-scheme: light; --ink: #1f2937; --muted: #5b6474; --line: #d8dee8; --accent: #1f5fbf; --paper: #f5f7fa; }
+/* 测试台外壳的两页（登录、模拟来单）：沿用九安 workspace-theme.css 的颜色、圆角、阴影和字体，进九安前后看上去是同一个产品。 */
+:root { color-scheme: light; --ink: #111827; --muted: #6b7280; --line: #e5e7eb; --accent: #006ad0; --accent-hover: #0054a8;
+  --soft: #f0f7ff; --soft-line: #e0efff; --paper: #f9fafb; --focus: #93c5fd;
+  --shadow: 0 1px 2px rgba(17, 24, 39, .04), 0 1px 3px rgba(17, 24, 39, .03); }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
-  font: 15px/1.6 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif; }
-.sheet { width: min(440px, calc(100vw - 32px)); background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 28px 28px 20px; }
-h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
-.lead { margin: 0 0 20px; color: var(--muted); }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: var(--paper); color: var(--ink);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif; }
+.sheet { width: min(460px, 100%); background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 28px 28px 22px; box-shadow: var(--shadow); }
+h1 { margin: 0 0 6px; font-size: 20px; line-height: 28px; font-weight: 600; }
+.lead { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .form { display: grid; gap: 6px; }
-label { font-weight: 600; margin-top: 8px; }
-select, input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: inherit; }
-button { margin-top: 14px; font: inherit; font-weight: 600; padding: 9px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
-button:disabled { opacity: .6; cursor: progress; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.message { min-height: 1.6em; margin: 6px 0 0; color: #b42318; }
-#intake + .message, .message[role="status"] { color: var(--ink); }
-.note { margin: 18px 0 0; color: var(--muted); font-size: 13px; }
-a { color: var(--accent); }
+.form > * { min-width: 0; }
+label { margin-top: 8px; color: #374151; font-size: 13px; font-weight: 500; }
+select, input { width: 100%; min-height: 38px; font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #374151;
+  text-overflow: ellipsis; transition: border-color 150ms cubic-bezier(.4, 0, .2, 1), box-shadow 150ms cubic-bezier(.4, 0, .2, 1); }
+select:focus, input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--soft-line); }
+button { margin-top: 14px; min-height: 38px; font: inherit; font-weight: 500; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px;
+  background: var(--accent); color: #fff; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 106, 208, .18); }
+button:hover:not(:disabled) { background: var(--accent-hover); }
+button:disabled { opacity: .48; cursor: progress; }
+:is(a, button):focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+/* 结果和出错都是平台的消息：出错用琥珀色，成功用绿色，和九安「后台配置」里的提示一样 */
+.message { margin: 12px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--paper); color: #374151; font-size: 13px; }
+.message:empty { display: none; }
+.message.error { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
+.message.success { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+.note { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid #f3f4f6; color: var(--muted); font-size: 12px; line-height: 1.7; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { color: var(--accent-hover); }
+@media (prefers-reduced-motion: reduce) { select, input { transition: none; } }

@@ -87,17 +87,20 @@ test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联
   await shot('01-documents');
 });
 
-test('Agent 接入：页面上已经连了 Nexus、列出已发布的 Agent，其中有一个已启用、名片声明了 review_advice@1（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
+test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启用的 Agent 在一张表里；有一个已启用、接 review_advice@1（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
   const { records = [] } = (await api('/platform/agent-access')).json?.data ?? {};
   publication = records.find(record => record.status === 'active' && record.card?.tasks?.includes('review_advice@1')) ?? null;
-  assert.ok(publication, `还没有可用的审核 Agent：请到 ${BASE}/#adminConfig?tab=agentAccess 连一次 Nexus，在「Nexus 上已发布的 Agent」里点「启用」并贴调用密钥，再跑测试`);
+  assert.ok(publication, `还没有可用的审核 Agent：请到 ${BASE}/#adminConfig?tab=agentAccess 连一次 Nexus，在 Agent 列表里点「启用」并贴调用密钥，再跑测试`);
   await page.getByRole('link', { name: '后台配置' }).click();
   await page.getByRole('tab', { name: 'Agent 接入' }).click();
-  await page.getByRole('heading', { name: 'Nexus 上已发布的 Agent' }).waitFor();
-  const listed = page.locator('.platform-access-nexus').getByRole('row', { name: new RegExp(publication.publishId) });
-  await listed.getByText('已启用').waitFor({ timeout: 60_000 });
-  const enabled = page.locator('.platform-access-records').getByRole('row', { name: new RegExp(publication.publishId) });
-  await enabled.getByText('review_advice@1').waitFor({ timeout: 10_000 });
+  await page.locator('.platform-access-bar').getByText('已连接 Nexus').waitFor({ timeout: 60_000 });
+  const card = page.locator('.platform-access-agent').filter({ hasText: publication.publishId });
+  await card.getByText('已启用').waitFor({ timeout: 60_000 });
+  await card.getByText('review_advice@1').first().waitFor();
+  assert.equal(await page.locator('.platform-access-agent').filter({ hasText: publication.publishId }).count(), 1, '同一个发布只列一次');
+  assert.deepEqual(await card.getByRole('button').allTextContents(), ['测试', '停用', '复核']);
+  // 新发布的名片说明里没有契约 / 任务两行时，照样能启用（任务由平台指定），不再报「名片 description 不满足」
+  assert.doesNotMatch(await page.locator('.platform-access-page').innerText(), /description 不满足|hasLine/);
   await assert.rejects(page.getByRole('button', { name: '启用一个发布' }).waitFor({ timeout: 2000 }), '不再有手填发布编号的启用表单');
   await shot('02-agent-access');
 });
@@ -140,17 +143,44 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
     await dialog.getByRole('heading', { name: 'AI 独立建议', level: 2 }).waitFor({ timeout: 30_000 });
     // 建议的标题是「建议通过（时间）」「不建议通过（时间）」，和两档结论里的「建议通过——…」用全角括号区分
     await dialog.getByText(expected === 'pass' ? /^建议通过（/ : /^不建议通过（/).first().waitFor({ timeout: 30_000 });
-    await dialog.getByText(ruleIdsOf(advices.get(number))[0]).first().waitFor();
+    // 规则编号也出现在折叠起来的备注里：找看得见的那一处
+    await dialog.getByText(ruleIdsOf(advices.get(number))[0]).filter({ visible: true }).first().waitFor();
     await shot(`03-advice-${number}`);
     await dialog.getByRole('button', { name: '关闭' }).click();
   }
 });
 
-test('两档结论：AI 独立建议计入结论，不再显示「平台尚未完成 AI 独立建议」', async () => {
+test('调用记录与测试：每张对公付款单的这一轮都在调用记录里；在「Agent 接入」页测一张单，得到结论并记进调用记录（不改单据的结论）', { timeout: 8 * 60_000 }, async () => {
+  assert.ok(publication, '前面的用例没找到可用的审核 Agent');
+  const calls = (await api('/platform/agent-access/calls')).json?.data?.items ?? [];
   for (const [number, expected] of Object.entries(EXPECT)) {
-    const verdict = JSON.stringify((await byNumber(number)).verdict);
-    assert.doesNotMatch(verdict, /平台尚未完成 AI 独立建议/, number);
-    assert.match(verdict, expected === 'pass' ? /AI 独立建议：建议通过/ : /AI 独立建议：不建议通过/, number);
+    assert.ok(calls.some(call => call.number === number && call.status === 'completed' && call.result === expected && call.publishId === publication.publishId), `调用记录里缺 ${number} 的这一轮`);
+  }
+  const before = JSON.stringify((await byNumber('DGZF-F07-003')).verdict);
+  await page.getByRole('link', { name: '后台配置' }).click();
+  await page.getByRole('tab', { name: 'Agent 接入' }).click();
+  const card = page.locator('.platform-access-agent').filter({ hasText: publication.publishId });
+  await card.getByRole('button', { name: '测试' }).click();
+  const select = card.locator('select[name=documentId]');
+  await select.locator('option', { hasText: 'DGZF-F07-003' }).waitFor({ state: 'attached' });
+  await select.selectOption({ label: await select.locator('option', { hasText: 'DGZF-F07-003' }).textContent() });
+  await card.getByRole('button', { name: '开始测试' }).click();
+  await card.getByText(/测试完成|这次没有得到结论/).waitFor({ timeout: 6 * 60_000 });
+  await card.getByText('测试完成').waitFor({ timeout: 1000 });
+  await card.locator('.platform-access-feedback').getByText(EXPECT['DGZF-F07-003'] === 'pass' ? '建议通过' : '不建议通过', { exact: true }).waitFor();
+  await page.locator('.platform-access-calls').getByRole('row').filter({ hasText: 'DGZF-F07-003' }).filter({ hasText: '测试' }).first().waitFor({ timeout: 30_000 });
+  await shot('03b-agent-test');
+  assert.equal(JSON.stringify((await byNumber('DGZF-F07-003')).verdict), before, '测试不改单据的结论');
+});
+
+test('两档结论：AI 独立建议计入结论——不建议通过的列为风险，建议通过的结论是「建议通过」；没有一张显示「平台尚未完成 AI 独立建议」', async () => {
+  // 九安 analysis-verdict.mjs：fail 记成一条风险「AI 独立建议：不建议通过」；pass 记进结论的依据（列表接口不带依据），
+  // 没完成的记成技术风险「平台尚未完成 AI 独立建议」，结论就不会是 pass_suggested
+  for (const [number, expected] of Object.entries(EXPECT)) {
+    const { verdict } = await byNumber(number);
+    assert.doesNotMatch(JSON.stringify(verdict), /平台尚未完成 AI 独立建议/, number);
+    if (expected === 'fail') assert.ok(verdict.risks.some(item => item.title === 'AI 独立建议：不建议通过'), `${number}：${JSON.stringify(verdict).slice(0, 300)}`);
+    else assert.equal(verdict.verdict, 'pass_suggested', `${number}：${JSON.stringify(verdict).slice(0, 300)}`);
   }
 });
 

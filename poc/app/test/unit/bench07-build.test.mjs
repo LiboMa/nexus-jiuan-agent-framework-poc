@@ -192,3 +192,26 @@ test('补丁 0002：停用先确认再提交，换钥匙只在密钥失效时出
   assert.deepEqual(writes, [['disable', { publishId: 'pub_audit0001', reason: '在「Agent 接入」页停用' }], ['refresh', { publishId: 'pub_audit0001', reason: '在「Agent 接入」页复核' }],
     ['rotate', { publishId: 'pub_stale00001', key: 'nxa_' + 'r'.repeat(43), reason: '在「Agent 接入」页换钥匙' }]]);
 });
+
+test('补丁 0002：手动添加从 A2A 地址认出发布编号；地址认不出时不清空密钥框，真正提交时读出来马上清空', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  const enabled = [];
+  const page = renderPlatformOps('agentAccess', { records: [], audit: [] }, { platformAdmin: true, reload: async () => ({ records: [], audit: [] }),
+    onEnable: async input => { enabled.push(input); return {}; } });
+  await settle();
+  await page.all(node => node.tagName === 'BUTTON' && node.textContent === '手动添加 Agent')[0].click();
+  const [address, key] = page.all(node => node.tagName === 'INPUT');
+  const go = page.all(node => node.tagName === 'BUTTON' && node.textContent === '验证并添加')[0];
+  const pasted = 'nxa_' + 'm'.repeat(43);
+  address.value = 'https://example.invalid/whatever'; key.value = pasted;
+  await go.click();
+  assert.equal(key.value, pasted, '只是地址认不出，不清空密钥框');
+  assert.match(page.textContent, /认不出发布/);
+  address.value = 'https://nxs.example/a2a/pub_manual000001/.well-known/agent-card.json';
+  await go.click();
+  assert.equal(key.value, '');
+  assert.deepEqual(enabled, [{ publishId: 'pub_manual000001', key: pasted, reason: '在「Agent 接入」页手动添加（A2A 地址 + 调用密钥）' }]);
+});

@@ -3,8 +3,9 @@
  *   GET  /api/analysis/v1/poc/intake/templates  登录后可看模板；
  *   POST /api/analysis/v1/poc/intake {template}  管理员才能来单：假汇联易里多一张新单，九安下一轮同步（约 1 分钟）拉进单据池，
  *                                                读完详情后自动发起 AI 独立建议。每个账号每分钟最多 5 次。
+ * 九安只替 /platform 下的写请求读请求体（analysis-server.mjs 的 requestBody），这里的请求体自己读。
  */
-import { fail, onlyFields, sendError, sendJson } from '../app/http.mjs';
+import { fail, onlyFields, readJson, sendError, sendJson } from '../app/http.mjs';
 
 const BASE = '/api/analysis/v1/poc/intake';
 
@@ -29,6 +30,7 @@ export function intakeRoutes({ fake, perMinute = 5, now = Date.now }) {
         }
         if (req.method !== 'POST') fail('NOT_FOUND', 404);
         if (session.user.role !== 'admin') fail('POC_INTAKE_FORBIDDEN', 403);
+        if (body === undefined) body = await readJson(req, { maximum: 2_000 });
         if (!body || typeof body !== 'object' || Array.isArray(body)) fail('INVALID_REQUEST', 400);
         onlyFields(body, ['template']);
         if (typeof body.template !== 'string') fail('INVALID_REQUEST', 400);
