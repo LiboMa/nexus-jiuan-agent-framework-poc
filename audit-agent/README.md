@@ -1,0 +1,34 @@
+# 九安审核AI（PoC）提示词
+
+Nexus 测试环境 nxs-beine1013 上的 Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea`（A2A）。
+
+| 文件 | 内容 |
+|---|---|
+| `prompt.yaml` | 当前版本 v3（2026-10-25）：三段式请求照旧；第 4 条加知识库只读查询的例外；第 9 条信封模式，处理九安 v0.7.10 的 `review_advice@1` |
+| `prompt-owner-2026-10-25.yaml` | 项目负责人在网页上改过的上一版（加了第 7、8 条和连接器），回退用 |
+| `apply.py` | 下发：写提示词 → 原样重存发布的动态配置 → 发布描述写上契约和任务两行 → 只读核对 |
+
+## 知识库
+
+- 发布的动态配置绑着数据连接器 `conn-f0c7233959d9`，连到测试台上的 `nexus-pgvector`（10.0.1.38:5432，库 `nexus`）。
+- 表是 `approval_rules`：
+  - rule_type=matrix 是审批路径，89 行；
+  - general 是制度说明与图例，9 行；
+  - chapter_note 是章节说明，4 行。
+- 连接器交给模型的结果每格截到 80 字、最多 30 行、共 4000 字，所以提示词让 Agent 用 `substr` 分列取长文。
+- 连接器的库账号有读写权限。提示词只让初审做 SELECT，但更稳妥的是给它换一个只读账号。
+
+## 怎么改
+
+1. 先存底稿。网页上改过的话，先把线上版本存成新的底稿文件。
+2. 改 `prompt.yaml`，同时把 `agentVersion` 的日期和序号加一。
+3. 先演练，再下发：
+   ```
+   python3 audit-agent/apply.py --base <底稿> --dry-run
+   python3 audit-agent/apply.py --base <底稿>
+   ```
+4. 跑冒烟测试：`bash poc/app07/scripts/review-advice-smoke.sh`。它会核对名片、三张虚构用例的结论，以及引用的规则编号在库里都存在。
+
+只改提示词不重存动态配置，A2A 调用用的还是旧快照（Nexus `publication_gateway/executor.py:554-578`）。`apply.py` 每次都会重存。
+
+回退：`prompt-owner-2026-10-25.yaml` 复制成 `prompt.yaml`，再运行 `apply.py --base` 加上当前线上版本对应的文件。
