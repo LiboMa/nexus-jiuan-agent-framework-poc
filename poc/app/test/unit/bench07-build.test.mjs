@@ -215,3 +215,27 @@ test('补丁 0002：手动添加从 A2A 地址认出发布编号；地址认不�
   assert.equal(key.value, '');
   assert.deepEqual(enabled, [{ publishId: 'pub_manual000001', key: pasted, reason: '在「Agent 接入」页手动添加（A2A 地址 + 调用密钥）' }]);
 });
+
+test('补丁 0002：页面后台刷新（读 Nexus 上的发布）回来时，正在用的卡片（测试进行中、正在贴密钥）原样保留，不被重画', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  const active = { publishId: 'pub_audit0001', status: 'active', fingerprint: 'ab12cd34', card: { name: '审核', tasks: ['review_advice@1'] } };
+  let release;
+  const late = new Promise(resolve => { release = resolve; });
+  const page = renderPlatformOps('agentAccess', { records: [active], audit: [] }, { platformAdmin: true, reload: async () => ({ records: [active], audit: [] }),
+    agentTest: { documents: async () => ({ items: [{ id: 'd3', number: 'DGZF-F07-003', title: '税款' }] }), start: async () => ({}), view: async () => ({}) },
+    nexus: { status: async () => ({ connected: true, user: 'admin' }), publications: async () => { await late; return { items: [
+      { publishId: 'pub_audit0001', name: '审核', tasks: ['review_advice@1'], declaredBy: 'card', enableable: true, a2aReady: true, problems: [] },
+      { publishId: 'pub_newagent01', name: '新发布的 Agent', tasks: ['review_advice@1'], declaredBy: 'platform', enableable: true, a2aReady: true, problems: [] }] }; } } });
+  await settle();
+  const before = page.all(node => node.className === 'platform-access-agent')[0];
+  await before.all(node => node.tagName === 'BUTTON' && node.textContent === '测试')[0].click();
+  await settle();
+  release(); await settle(); await settle();
+  const cards = page.all(node => node.className === 'platform-access-agent');
+  assert.equal(cards.length, 2, '刷新后列出了 Nexus 上的发布');
+  assert.equal(cards[0], before, '打开着的卡片原样保留');
+  assert.equal(cards[0].all(node => node.tagName === 'SELECT').length, 1, '测试表单还在');
+});

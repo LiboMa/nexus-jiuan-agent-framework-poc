@@ -143,8 +143,10 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
     await dialog.getByRole('heading', { name: 'AI 独立建议', level: 2 }).waitFor({ timeout: 30_000 });
     // 建议的标题是「建议通过（时间）」「不建议通过（时间）」，和两档结论里的「建议通过——…」用全角括号区分
     await dialog.getByText(expected === 'pass' ? /^建议通过（/ : /^不建议通过（/).first().waitFor({ timeout: 30_000 });
-    // 规则编号也出现在折叠起来的备注里：找看得见的那一处
-    await dialog.getByText(ruleIdsOf(advices.get(number))[0]).filter({ visible: true }).first().waitFor();
+    // 九安把 Agent 的备注和依据收在折叠的「模型说明（模型自评，未核实）」里：像审核人一样展开，再找规则编号
+    const note = dialog.locator('details.analysis-advice-model-note').first();
+    await note.locator('summary').click();
+    await note.getByText(ruleIdsOf(advices.get(number))[0]).first().waitFor();
     await shot(`03-advice-${number}`);
     await dialog.getByRole('button', { name: '关闭' }).click();
   }

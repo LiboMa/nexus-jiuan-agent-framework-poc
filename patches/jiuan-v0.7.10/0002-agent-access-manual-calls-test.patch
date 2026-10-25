@@ -78,8 +78,8 @@
 +}
 +@media(prefers-reduced-motion:reduce){.platform-access-agent{transition:none}}
 --- a/public/platform-ops.js	2026-10-26 01:25:51
-+++ b/public/platform-ops.js	2026-10-26 02:06:28
-@@ -320,123 +320,240 @@
++++ b/public/platform-ops.js	2026-10-26 02:39:05
+@@ -320,123 +320,248 @@
    input.setAttribute?.('autocomplete', 'off'); input.setAttribute?.('spellcheck', 'false'); return input;
  }
  function textInput(name, placeholder) { const input = document.createElement('input'); input.name = name; input.placeholder = placeholder; input.setAttribute?.('autocomplete', 'off'); return input; }
@@ -284,7 +284,7 @@
 +      append(el('div', '', 'platform-access-head'), el('span', agent.name || agent.publishId, 'platform-access-name'), pill(status, color), el('span', agent.publishId, 'platform-access-id')),
 +      el('p', meta, 'platform-access-meta'), problem ? el('p', problem, 'platform-access-meta platform-access-problem') : null),
 +    append(el('div', '', 'platform-access-actions'), actions)), drawer);
-+  return card;
++  return Object.assign(card, { inUse: () => !drawer.hidden });
 +}
 +
 +function nexusBar(opts, state, refresh) {
@@ -329,7 +329,7 @@
 +  }
 +  append(bar, drawer, message);
 +  if (state.nexusError) say(state.nexusError, 'error');
-+  return bar;
++  return Object.assign(bar, { inUse: () => !drawer.hidden });
 +}
 +
 +function callsCard(opts, nameOf) {
@@ -382,16 +382,24 @@
 +  const state = { records: list(payload?.records), audit: list(payload?.audit), nexus: null, published: [], nexusError: '' };
 +  const bar = el('div'), agents = el('div', '', 'platform-access-agents'), audit = el('div');
 +  const names = new Map();
++  // 后台刷新（读 Nexus 上的发布要几秒）回来时重画整张表；正在用的卡片（测试进行中、正在贴密钥）和顶条原样保留
++  let cards = new Map(), current = null;
 +  const calls = opts.calls ? callsCard(opts, publishId => names.get(publishId) ?? null) : null;
 +  const agentOpts = { ...opts, onCallsChanged: () => calls?.reload?.() };
 +  const usable = payload.configured !== false;
 +  function paint() {
-+    bar.replaceChildren(usable ? nexusBar(opts, state, refresh) : '');
++    if (!current?.inUse?.()) { current = usable ? nexusBar(opts, state, refresh) : null; bar.replaceChildren(current ?? ''); }
 +    const merged = mergeAgents(state.records, state.published);
 +    for (const agent of merged) names.set(agent.publishId, agent.name);
-+    agents.replaceChildren(...(merged.length ? merged.map(agent => agentCard(agent, agentOpts, refresh))
++    const previous = cards;
++    cards = new Map(merged.map(agent => {
++      const kept = previous.get(agent.publishId);
++      return [agent.publishId, kept?.inUse?.() ? kept : agentCard(agent, agentOpts, refresh)];
++    }));
++    agents.replaceChildren(...(merged.length ? [...cards.values()]
 +      : [el('p', state.nexus?.connected ? '你在 Nexus 上还没有开了 A2A 的发布。' : '还没有 Agent：连接 Nexus 列出你发布的 Agent，或手动添加。', 'platform-access-empty')]));
-+    audit.replaceChildren(append(el('details', '', 'platform-access-audit'), el('summary', `操作记录（${state.audit.length} 条）`),
++    const auditOpen = audit.firstChild?.open === true;
++    audit.replaceChildren(append(Object.assign(el('details', '', 'platform-access-audit'), { open: auditOpen }), el('summary', `操作记录（${state.audit.length} 条）`),
 +      table(['时间', '操作人', '操作', '发布编号', '结果', '密钥指纹', '原因'], state.audit.slice().reverse().map(entry => [time(entry.at), dash(entry.actor), ACCESS_ACTIONS[entry.action] || '操作待核实',
 +        dash(entry.publishId), accessResult(entry.result), entry.fingerprint ? `指纹 ${entry.fingerprint}` : '—', dash(entry.reason)]), '还没有操作记录')));
 +  }
