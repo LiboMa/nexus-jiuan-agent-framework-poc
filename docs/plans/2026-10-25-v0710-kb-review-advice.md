@@ -86,7 +86,8 @@
 ### 任务 4：启动外壳
 
 - 新建 `poc/app07/`，照九安 `scripts/start-analysis.mjs` 的组装：
-  - 配置在代码里拼：`instance: test`，`agents.nexusOrigin` 指向测试 Nexus，`review_advice` 路由对公付款单到 `pub_5c53e70d8dc7ddea`，没有回写；
+  - 配置在代码里拼：`instance: test`，`agents.nexusOrigin` 指向测试 Nexus，`review_advice` 打开但不写死发布：路由由「Agent 接入」页上已启用、名片声明了 `review_advice@1` 的发布现算（`agent-routes.mjs`），没有回写；
+  - 「Agent 接入」页（补丁 0001）：管理员连一次 Nexus，列出已发布的 Agent，启用只贴调用密钥；后端是外壳里的 `nexus-access.mjs`；
   - 账号：两个 `local_owner`，管理员和分析员；
   - 登录：口令登录页签发本地票据，跳到 `/#access=…`，换票时强制按本机回环处理；
   - 汇联易连接器的传输换成假汇联易，钉钉为空；

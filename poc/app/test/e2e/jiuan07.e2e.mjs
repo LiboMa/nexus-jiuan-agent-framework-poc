@@ -18,14 +18,13 @@ import { chromium } from 'playwright';
 const run = promisify(execFile);
 const BASE = process.env.E2E07_BASE_URL || 'https://jiuan-v0710.tinyboat.blog';
 const INSTANCE = process.env.E2E07_INSTANCE;
-const PUBLISH_ID = 'pub_5c53e70d8dc7ddea';
 const SHOTS = new URL('../../../../evidence/round7/e2e/', import.meta.url);
 // fixtures.mjs 的四个场景：九安房租（合同、发票齐）、柯顿运维费（超合同、收款方不符）、O+O 税款（有缴款通知）、新零售推广费（无原件、事由带注入文字）
 const EXPECT = Object.freeze({ 'DGZF-F07-001': 'pass', 'DGZF-F07-002': 'fail', 'DGZF-F07-003': 'pass', 'DGZF-F07-004': 'fail' });
 const RULE_ID = /\b(C\d{2}-(?:\d+\.\d+|NOTE)|G-\d{2})\b/g;
 const ADVICE_TIMEOUT = 5 * 60_000;
 const startedAt = new Date();
-let browser, page;
+let browser, page, publication = null;
 const advices = new Map();
 
 before(async () => {
@@ -88,17 +87,23 @@ test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联
   await shot('01-documents');
 });
 
-test('Agent 接入：管理员在页面上启用的发布还在，状态「已启用」，名片声明的任务是 review_advice@1（密钥只在页面上粘贴，测试不碰）', async () => {
+test('Agent 接入：页面上已经连了 Nexus、列出已发布的 Agent，其中有一个已启用、名片声明了 review_advice@1（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
+  const { records = [] } = (await api('/platform/agent-access')).json?.data ?? {};
+  publication = records.find(record => record.status === 'active' && record.card?.tasks?.includes('review_advice@1')) ?? null;
+  assert.ok(publication, `还没有可用的审核 Agent：请到 ${BASE}/#adminConfig?tab=agentAccess 连一次 Nexus，在「Nexus 上已发布的 Agent」里点「启用」并贴调用密钥，再跑测试`);
   await page.getByRole('link', { name: '后台配置' }).click();
   await page.getByRole('tab', { name: 'Agent 接入' }).click();
-  const row = page.getByRole('row', { name: new RegExp(PUBLISH_ID) });
-  await row.waitFor({ timeout: 20_000 }).catch(() => assert.fail(`还没有启用 ${PUBLISH_ID}：请到 ${BASE}/#adminConfig?tab=agentAccess 用「启用一个发布」粘贴调用密钥，再跑测试`));
-  await row.getByText('已启用').waitFor({ timeout: 10_000 }).catch(() => assert.fail(`${PUBLISH_ID} 的启用记录不是「已启用」（可能已失效）：请到 Agent 接入页换一把密钥`));
-  await row.getByText('review_advice@1').waitFor({ timeout: 10_000 });
+  await page.getByRole('heading', { name: 'Nexus 上已发布的 Agent' }).waitFor();
+  const listed = page.locator('.platform-access-nexus').getByRole('row', { name: new RegExp(publication.publishId) });
+  await listed.getByText('已启用').waitFor({ timeout: 60_000 });
+  const enabled = page.locator('.platform-access-records').getByRole('row', { name: new RegExp(publication.publishId) });
+  await enabled.getByText('review_advice@1').waitFor({ timeout: 10_000 });
+  await assert.rejects(page.getByRole('button', { name: '启用一个发布' }).waitFor({ timeout: 2000 }), '不再有手填发布编号的启用表单');
   await shot('02-agent-access');
 });
 
-test('AI 独立建议：四张对公付款单各发起一轮，结论符合预期，依据里引用了知识库规则，编号都在库里', { timeout: ADVICE_TIMEOUT + 3 * 60_000 }, async () => {
+test('AI 独立建议：四张对公付款单都有结论（重置后九安自动发起；没发起的再手动发起），结论符合预期，依据里引用了知识库规则，编号都在库里', { timeout: ADVICE_TIMEOUT + 3 * 60_000 }, async () => {
+  assert.ok(publication, '上一条用例没找到可用的审核 Agent');
   for (const number of Object.keys(EXPECT)) {
     const document = await byNumber(number);
     // 九安页面上的顺序：先「读取原件」，再「运行一轮 AI 独立建议」（AI 独立建议只用已经读过的原件）。DGZF-F07-004 没有原件。
@@ -108,8 +113,10 @@ test('AI 独立建议：四张对公付款单各发起一轮，结论符合预�
       assert.ok([200, 202].includes(read.status), `${number} 读取原件没有受理：${JSON.stringify(read.json)?.slice(0, 300)}`);
       await until(evidence, value => ['completed', 'failed'].includes(value?.status), { timeout: 60_000, every: 2000, what: `${number} 读取原件` });
     }
+    const now = (await api(`/documents/${document.id}/advice`)).json.data;
+    if (now?.status === 'running' || now?.status === 'completed' && now.stale !== true) continue;   // 九安已经自动发起或跑完
     const started = await api(`/documents/${document.id}/advice`, { method: 'POST', body: { sourceVersion: document.version } });
-    assert.equal(started.status, 202, `${number} 发起失败：${JSON.stringify(started.json)?.slice(0, 300)}`);
+    assert.ok([202, 409].includes(started.status), `${number} 发起失败：${JSON.stringify(started.json)?.slice(0, 300)}`);   // 409 是自动那一轮正在跑
   }
   const cited = new Set();
   for (const [number, expected] of Object.entries(EXPECT)) {

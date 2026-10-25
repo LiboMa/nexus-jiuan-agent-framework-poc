@@ -74,3 +74,17 @@ test('构建不改 source/ 下的开发包', async t => {
   await build(out);
   assert.equal(await digestTree(SOURCE), before);
 });
+
+test('补丁：「Agent 接入」页改成连一次 Nexus、列出已发布的 Agent、启用只贴调用密钥（不再手填发布编号）', async t => {
+  const out = path.join(await mkdtemp(path.join(tmpdir(), 'jiuan07-')), 'jiuan07');
+  t.after(() => rm(path.dirname(out), { recursive: true, force: true }));
+  await build(out);
+  const ops = await readFile(path.join(out, 'public/platform-ops.js'), 'utf8');
+  const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
+  assert.match(ops, /function nexusPublications\(opts, currentRecords, enable\)/);
+  assert.match(ops, /'Nexus 上已发布的 Agent'/);
+  assert.doesNotMatch(ops, /'启用一个发布'/, '不再有手填发布编号的启用表单');
+  assert.match(analysis, /nexus: \{ status: \(\) => api\('\/platform\/agent-access\/nexus'\)/);
+  await run('node', ['--check', path.join(out, 'public/platform-ops.js')]);
+  await run('node', ['--check', path.join(out, 'public/analysis.js')]);
+});

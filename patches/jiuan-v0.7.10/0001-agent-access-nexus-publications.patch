@@ -1,0 +1,112 @@
+--- a/public/platform-ops.js	2026-10-26 00:16:35
++++ b/public/platform-ops.js	2026-10-26 00:16:35
+@@ -350,11 +350,73 @@
+   return [id, record.card?.name || '—', accessTasks(record.card?.tasks), status, record.fingerprint ? `指纹 ${record.fingerprint}` : '—',
+     `${dash(record.enabledBy)} · ${time(record.enabledAt)}`, time(record.verifiedAt), actions];
+ }
++// Bench patch 0001 (the corrected P3/P3b): connect Nexus once, list the Agents published there, enable one by pasting
++// only its call key. The publication id comes from the list; the reason is filled in. Enabling still goes through
++// the same POST /platform/agent-access, so the card and the key are verified on the spot exactly as before.
++const NEXUS_ENABLE_REASON = '在「Agent 接入」页从 Nexus 发布列表启用';
++function nexusPublications(opts, currentRecords, enable) {
++  const box = el('section', '', 'platform-ops-card platform-access-nexus');
++  const head = el('div', '', 'platform-access-nexus-head'), rows = el('div', '', 'platform-access-nexus-list');
++  const message = el('p', '', 'platform-ops-dialog-result'); message.setAttribute?.('role', 'status');
++  const say = (text, kind = '') => { message.textContent = text; message.className = `platform-ops-dialog-result ${kind}`; };
++  function paintConnect() {
++    const apiKey = secretInput('apiKey', 'Nexus API 密钥（nxc_ 开头，在 Nexus「个人设置 › API 密钥」新建，贴一次即可）');
++    const connect = button('连接 Nexus', async () => {
++      const value = String(apiKey.value || '').trim(); apiKey.value = '';
++      if (!value) { say('请贴上 Nexus API 密钥', 'error'); return; }
++      connect.disabled = true; say('正在连接 Nexus…');
++      try { await opts.nexus.connect(value); await load(); } catch (error) { say(error?.message || '没有连上，请稍后重试', 'error'); } finally { connect.disabled = false; }
++    }, opts.platformAdmin);
++    head.replaceChildren(el('p', '先连一次 Nexus：贴上你自己的 Nexus API 密钥，平台就能列出你在 Nexus 上已发布的 Agent；启用某个 Agent 时只需贴它的调用密钥。', 'platform-ops-note'),
++      append(el('div', '', 'platform-ops-dialog-field'), el('label', apiKey.placeholder), apiKey), append(el('div', '', 'platform-access-actions'), connect));
++    rows.replaceChildren();
++  }
++  function openKey(item, cell) {
++    const key = secretInput('key', '调用密钥（nxa_ 开头，粘贴后不会再显示）');
++    const go = button('验证并启用', async () => {
++      const value = String(key.value || '').trim(); key.value = '';
++      if (!value) { say('请贴上调用密钥', 'error'); return; }
++      go.disabled = true; say(`正在向 Nexus 当场验证「${item.name}」的名片与密钥，最长约三分钟…`);
++      try {
++        const result = await enable({ publishId: item.publishId, key: value, reason: NEXUS_ENABLE_REASON });
++        await load(); say(`已启用：${item.name}，密钥指纹 ${result?.fingerprint || '—'}。`, 'success');
++      } catch (error) { say(error?.message || '没有完成，请稍后重试', 'error'); go.disabled = false; }
++    }, opts.platformAdmin);
++    cell.replaceChildren(append(el('div', '', 'platform-ops-dialog-field platform-access-key'), el('label', key.placeholder), key), go);
++    key.focus?.();
++  }
++  function paintList(items) {
++    const enabled = new Map(list(currentRecords()).map(record => [String(record.publishId || ''), record]));
++    rows.replaceChildren(table(['名称', '名片声明的任务', '状态', '发布编号', '操作'], list(items).map(item => {
++      const record = enabled.get(item.publishId);
++      const state = record ? (ACCESS_STATUS[record.status] || '状态待核实') : item.cardOk && item.a2aReady ? '未启用'
++        : `不能启用：${list(item.problems).join('；') || (item.a2aReady ? '名片不合契约' : 'A2A 还没就绪')}`;
++      const cell = el('div', '', 'platform-access-actions');
++      if (!record && item.cardOk && item.a2aReady) append(cell, button('启用', () => openKey(item, cell), opts.platformAdmin));
++      return [item.name || item.publishId, accessTasks(item.tasks), state, item.publishId, cell];
++    }), '你在 Nexus 上还没有开了 A2A 的发布'));
++  }
++  async function load() {
++    let state;
++    try { state = await opts.nexus.status(); } catch (error) { say(error?.message || '读不到 Nexus 连接', 'error'); return; }
++    if (!state?.connected) { paintConnect(); return; }
++    head.replaceChildren(el('p', `已连接 Nexus（${state.user || '—'}）。下面是你在 Nexus 上已发布、开了 A2A 的 Agent；启用时只需贴它的调用密钥。`, 'platform-ops-note'),
++      append(el('div', '', 'platform-access-actions'), button('刷新发布列表', () => void load(), opts.platformAdmin),
++        button('断开 Nexus', async () => { try { await opts.nexus.disconnect(); } catch { /* 断开失败也照样重画 */ } await load(); }, opts.platformAdmin)));
++    say('正在读取 Nexus 上的发布…');
++    try { paintList((await opts.nexus.publications())?.items); say(''); } catch (error) { say(error?.message || '读不到发布列表', 'error'); }
++  }
++  append(box, el('h2', 'Nexus 上已发布的 Agent'), head, rows, message);
++  void load();
++  return box;
++}
+ function agentAccessPage(payload, opts) {
+   const root = el('section', '', 'platform-ops-page platform-access-page');
+   const records = el('div', '', 'platform-access-records'), audit = el('div', '', 'platform-access-audit'), panel = el('div', '', 'platform-access-panel');
+   // The list and the log are repainted in place after a write, so the form keeps saying what happened.
++  let current = list(payload?.records);
+   const paint = data => {
++    current = list(data?.records);
+     records.replaceChildren(table(['发布编号', '名片名称', '声明的任务', '状态', '调用密钥', '启用人 · 时间', '最近验证', '操作'], list(data?.records).map(record => accessRow(record, opts, show)), '还没有启用任何发布'));
+     audit.replaceChildren(table(['时间', '操作人', '操作', '发布编号', '结果', '密钥指纹', '原因'], list(data?.audit).slice().reverse().map(item => [time(item.at), dash(item.actor), ACCESS_ACTIONS[item.action] || '操作待核实', dash(item.publishId), accessResult(item.result), item.fingerprint ? `指纹 ${item.fingerprint}` : '—', dash(item.reason)]), '还没有操作记录'));
+   };
+@@ -362,7 +424,6 @@
+   const show = (kind, publishId) => {
+     const key = secretInput('key', '调用密钥（nxa_ 开头，粘贴后不会再显示）');
+     const forms = {
+-      enable: () => accessForm('启用一个发布', '验证并启用', [textInput('publishId', '发布编号（pub_ 开头）'), key], after(({ values, reason }) => opts.onEnable?.({ publishId: values.publishId, key: values.key, reason })), result => `已启用：${result?.publishId || ''}，密钥指纹 ${result?.fingerprint || '—'}。`),
+       rotate: () => accessForm(`换钥匙：${publishId}`, '验证并更换', [key], after(({ values, reason }) => opts.onRotate?.({ publishId, key: values.key, reason })), result => `已更换，新密钥指纹 ${result?.fingerprint || '—'}。`),
+       refresh: () => accessForm(`复核：${publishId}`, '用已存的密钥复核', [], after(({ reason }) => opts.onRefresh?.({ publishId, reason })), result => `复核完成：${ACCESS_STATUS[result?.status] || '状态待核实'}。`),
+       disable: () => accessForm(`停用：${publishId}`, '停用', [], after(({ reason }) => opts.onDisable?.({ publishId, reason })), () => '已停用，已存的密钥已清除。'),
+@@ -370,10 +431,10 @@
+     panel.replaceChildren(forms[kind]());
+   };
+   append(root, el('h2', 'Agent 接入', 'platform-ops-title'),
+-    el('p', '登记 Nexus 上的发布并粘贴它的调用密钥，平台当场验证名片与密钥后加密保存。只有管理员能操作，每次操作留痕；页面和接口都不显示密钥原文，只显示指纹与状态。密钥由发布者本人在 Nexus 网页签发，请直接粘贴到下面，不要经聊天或邮件转发。', 'platform-ops-note'),
++    el('p', '连一次 Nexus，列出你在 Nexus 上已发布的 Agent；启用时只贴它的调用密钥，平台当场验证名片与密钥后加密保存。只有管理员能操作，每次操作留痕；页面和接口都不显示密钥原文，只显示指纹与状态。密钥由发布者本人在 Nexus 网页签发，请直接粘贴到下面，不要经聊天或邮件转发。', 'platform-ops-note'),
+     payload.configured === false ? el('div', '部署配置里没有 Nexus 地址，暂不能启用 Agent。', 'platform-paused-reason') : null,
+-    records,
+-    opts.platformAdmin ? append(el('div', '', 'platform-access-actions'), button('启用一个发布', () => show('enable'), true)) : null, panel,
++    opts.nexus && payload.configured !== false ? nexusPublications(opts, () => current, after(input => opts.onEnable?.(input))) : null,
++    el('h2', '已启用的发布'), records, panel,
+     el('h2', '操作记录'), audit);
+   paint(payload);
+   return root;
+--- a/public/analysis.js	2026-10-26 00:16:35
++++ b/public/analysis.js	2026-10-26 00:16:35
+@@ -1782,6 +1782,11 @@
+     onRotate: ({ publishId, key, reason }) => write(`/${id(publishId)}/rotate`, { key, reason }),
+     onRefresh: ({ publishId, reason }) => write(`/${id(publishId)}/refresh`, { reason }),
+     onDisable: ({ publishId, reason }) => write(`/${id(publishId)}/disable`, { reason }),
++    // Bench patch 0001: the Nexus publication list (connect once with the admin's Nexus API key; enable with the call key only).
++    nexus: { status: () => api('/platform/agent-access/nexus'),
++      connect: apiKey => api('/platform/agent-access/nexus', { method: 'POST', body: { apiKey }, timeoutMs: 60000 }),
++      disconnect: () => api('/platform/agent-access/nexus/disconnect', { method: 'POST', body: {} }),
++      publications: () => api('/platform/agent-access/publications', { timeoutMs: 60000 }) },
+     reload: () => api('/platform/agent-access') };
+ }
+ 

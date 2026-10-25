@@ -16,15 +16,21 @@ import { readSettings, jiuanConfig } from './settings.mjs';
 import { installOutboundGuard } from './guard.mjs';
 import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
+import { nexusAccessRoutes } from './nexus-access.mjs';
+import { createOperatorCli } from '../app/nexus/cli.mjs';
+import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
 import { withOriginalsFirst } from './originals-first.mjs';
+import { createAgentRouting } from './agent-routes.mjs';
 import * as J from './jiuan.mjs';
 
 const log = code => console.error(code);
 const settings = readSettings();
 const config = jiuanConfig(settings, { tenantId: TENANT_ID, connectionId: CONNECTION_ID, companies: COMPANIES });
-const getConfig = () => config;
+// 发给哪个发布由「Agent 接入」的启用记录现算（agent-routes.mjs）；启用服务建好之前用初始配置（路由为空）
+let routing = null;
+const getConfig = () => (routing ? routing.getConfig() : config);
 installOutboundGuard({ allowHosts: [new URL(settings.nexusOrigin).hostname], onBlocked: host => console.error(`POC_EGRESS_BLOCKED ${host}`) });
 const secretText = name => readFileSync(path.join(settings.secretsDir, name), 'utf8').trim();
 
@@ -40,14 +46,16 @@ const secretSource = J.secretSource.createSecretSource({ config: { ...config, pr
 const agentClient = J.nexusA2a.createAgentClient({ nexusOrigin: config.agents.nexusOrigin, contract: J.contractChecks.loadContract(), getKey: async () => null });
 const agentEnablement = J.enablement.createAgentEnablement({ store, tenantId: config.scope.tenantId, client: agentClient });
 await agentEnablement.load();
+routing = await createAgentRouting({ enablement: agentEnablement, baseConfig: config, log });
+const enablement = routing.enablement;   // 包过的启用服务：页面上启用、换钥匙、停用、复核、标记失效之后刷新路由
 
 const fake = createFakeHuilianyi({ restampSeeds: true, onCall: call => { if (call.blocked) console.error(`POC_HLY_WRITE_BLOCKED ${call.method} ${call.path}`); } });
-const registry = J.connectors.createConnectorRegistry({ secretSource, huilianyiSource: config, agents: config.agents, agentKeys: agentEnablement,
+const registry = J.connectors.createConnectorRegistry({ secretSource, huilianyiSource: config, agents: config.agents, agentKeys: enablement,
   transports: { 'hly-prod': { fetchImpl: fake.fetchImpl, downloadFetchImpl: fake.downloadFetchImpl } } });
 const lockPool = database.lockPool();
 const gateway = J.callMiddleware.createCallGateway({ store: platformStore, registry, lockPool, processTag: 'analysis-server' });
 const agentAssemblers = { 'first_review@1': J.taskService.missingAssembler };
-const agentTasks = J.taskService.createAgentTaskService({ store, gateway, enablement: agentEnablement, getConfig, assemblers: agentAssemblers,
+const agentTasks = J.taskService.createAgentTaskService({ store, gateway, enablement, getConfig, assemblers: agentAssemblers,
   authorize: J.taskService.authorizePersonRun,
   listKeys: async () => {
     const [rows] = await pool.query('SELECT scope_key FROM analysis_sync_states WHERE connection_id=? AND scope_key LIKE ?', [config.connectionId, `${J.taskService.AGENT_TASK_KEY_PREFIX}%`]);
@@ -93,7 +101,7 @@ const runner = J.agentRunner.createAgentRunner({ pool, lockPool, platformStore, 
 const scheduler = J.scheduler.createScheduler({ runner, platformStore, getConfig, scope: config.scope, lanes: ['corporate', 'employee'], mode: 'incremental',
   chain: true, downstream: milestone?.downstream });
 const pipelineProgress = J.pipelineProgress.createPipelineProgress({ pool });
-const jiuanRoutes = J.platformRoutes.createPlatformRoutes({ pool, store, platformStore, pipelineProgress, scheduler, getConfig, gateway, connectors: registry, runner, agentEnablement });
+const jiuanRoutes = J.platformRoutes.createPlatformRoutes({ pool, store, platformStore, pipelineProgress, scheduler, getConfig, gateway, connectors: registry, runner, agentEnablement: enablement });
 const shanghai = options => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', ...options });
 const syncRange = () => {
   const end = new Date(Date.now() - 5 * 60 * 1000), start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
@@ -124,7 +132,14 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
   listAdviceSummaries: runtimeRegistry.listAdviceSummaries, close: runtimeRegistry.close };
 
 const intake = intakeRoutes({ fake });
-const platformRoutes = { ...jiuanRoutes, async handle(args) { return (await intake.handle(args)) || jiuanRoutes.handle(args); } };
+// 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
+const contract = J.contractChecks.loadContract();
+const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard: url => fetchAgentCard(url),
+  checkCard: card => J.contractChecks.checkCard(card, { contract }),
+  cli: createOperatorCli({ script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin }) });
+const platformRoutes = { ...jiuanRoutes, async handle(args) {
+  return (await nexusAccess.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
+} };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。
   auth: { ...auth, exchange: ticket => auth.exchange(ticket, { loopback: true }) },
@@ -162,12 +177,14 @@ void companyDirectory.start({ enabled: () => config.automaticSync === true });
 void departmentDirectory.start({ enabled: () => config.automaticSync === true });
 void approvalIdentity.start();
 ready = true;
-console.log(`九安 v0.7.10 测试台已启动：${config.origin}（端口 ${settings.port}；AI 独立建议 → ${settings.publishId}）`);
+const routed = getConfig().agents.tasks.review_advice.routes.map(route => route.publishId);
+console.log(`九安 v0.7.10 测试台已启动：${config.origin}（端口 ${settings.port}；AI 独立建议按「Agent 接入」的启用记录路由，当前 ${routed.length ? routed.join('、') : '无可用发布'}）`);
 
 let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
+  routing.close();
   await companyDirectory.close(); await scheduler.close(); await runner.close(); await sync.close(); await runtime.close(); await app.close();
   await gateway.close(); await approvalIdentity.close(); await departmentDirectory.close(); await store.close(); await pool.end(); await lockPool.end();
 }

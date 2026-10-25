@@ -51,6 +51,7 @@ test('配置脚本：服务以 jiuan07 用户跑（不进 andon 组，读不到 
   assert.match(script, /POC_FORWARD_HOST=\$DOMAIN/);
   assert.match(script, /EnvironmentFile=-\/etc\/andon-finance\/jiuan07-forward\.env/);
   assert.doesNotMatch(script, /echo[^\n]*\$(MYSQL_PASSWORD|DATA_KEY|value)\b/, '不打印密钥');
+  assert.doesNotMatch(script, /NEXUS_REVIEW_ADVICE_PUBLICATION|PUBLISH|pub_/, '不写死发布：用哪个发布由「Agent 接入」的启用记录决定');
 });
 
 test('配置脚本：实例上已有的库密码和数据密钥只认原值，和 secrets.env 不同就一个文件都不写', async () => {
@@ -86,4 +87,5 @@ test('deploy.sh：构建 v0.7.10 副本、把 app07 和副本打进发布包；�
   const order = ['bench-configure.sh', 'bench07-configure.sh', 'systemctl restart andon-finance-poc.service', 'systemctl restart andon-jiuan07.service'].map(text => install.indexOf(text));
   assert.ok(order.every(index => index > 0) && order.every((index, i) => i === 0 || index > order[i - 1]), `安装顺序不对：${order}`);
   assert.match(deploy, /\/poc\/healthz/);
+  assert.doesNotMatch(install.slice(install.indexOf('bench07-configure.sh'), install.indexOf('systemctl restart andon-finance-poc')), /AdvisoryPublicationId/, 'v0.7.10 不接收发布编号');
 });

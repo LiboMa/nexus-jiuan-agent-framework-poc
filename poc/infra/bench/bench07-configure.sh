@@ -6,17 +6,16 @@
 #   3. MySQL：在 jiuan-mysql 里建库 jiuan07 和只能看这个库的账号 jiuan07_app（密码只经标准输入进容器）；
 #   4. /etc/hosts 堵掉九安代码里写死的外部地址（整段带标记，可以整段删）；
 #   5. systemd 单元 andon-jiuan07.service；PoC 服务按 Host 转发的设置（jiuan07-forward.env + 补充配置）。
-# 用法：bench07-configure.sh <站点主机名> <Nexus 地址> <发布编号>。不打印任何密钥。
+# 用法：bench07-configure.sh <站点主机名> <Nexus 地址>。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
 set -euo pipefail
-DOMAIN="${1:-}"; NEXUS="${2:-}"; PUBLISH="${3:-}"
-[[ "$DOMAIN" =~ ^[a-z0-9.-]+$ && "$NEXUS" =~ ^https://[a-z0-9.-]+$ && "$PUBLISH" =~ ^pub_[A-Za-z0-9_-]{4,80}$ ]] \
-  || { echo "用法：bench07-configure.sh <站点主机名> <Nexus 地址> <发布编号>" >&2; exit 2; }
+DOMAIN="${1:-}"; NEXUS="${2:-}"
+[[ "$DOMAIN" =~ ^[a-z0-9.-]+$ && "$NEXUS" =~ ^https://[a-z0-9.-]+$ ]] || { echo "用法：bench07-configure.sh <站点主机名> <Nexus 地址>" >&2; exit 2; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECRETS=/etc/andon-finance/secrets.env
 DIR=/etc/andon-finance/jiuan07
 
 id jiuan07 >/dev/null 2>&1 || useradd --system --home-dir /var/lib/jiuan07 --create-home --shell /sbin/nologin jiuan07
-install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07
+install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07 /var/lib/jiuan07/nexus
 install -d -o root -g jiuan07 -m 0750 "$DIR"
 
 # >>> jiuan07-secret-files
@@ -50,8 +49,9 @@ POC07_PORT=4181
 POC07_BIND=127.0.0.1
 POC07_SECRETS_DIR=$DIR
 NEXUS_ORIGIN=$NEXUS
-NEXUS_REVIEW_ADVICE_PUBLICATION=$PUBLISH
 JIUAN07_DIR=/opt/andon-finance/current/jiuan07
+NEXUS_OPERATOR=/opt/andon-finance/current/operator/scripts/nexus.py
+POC07_NEXUS_HOME=/var/lib/jiuan07/nexus
 TZ=Asia/Shanghai
 NODE_ENV=production
 ENV
