@@ -8,6 +8,7 @@ const API_KEY = 'nxc_abcdefghijklmnopqrstuvwxyz012345';
 const card = tasks => ({ name: '九安审核AI（PoC）', description: `说明\n契约：jiuan.agent/v1\n任务：${tasks}`, capabilities: { streaming: true },
   defaultInputModes: ['application/json'], securitySchemes: { bearer: {} } });
 
+const descriptions = new Map();
 function fakeCli({ connected = true } = {}) {
   const calls = [];
   let online = connected;
@@ -15,18 +16,21 @@ function fakeCli({ connected = true } = {}) {
     whoami: async () => { calls.push('whoami'); return online ? { exitCode: 0, json: { user: { name: 'admin' } } } : { exitCode: 3, json: null }; },
     login: async key => { calls.push(`login ${key === API_KEY ? 'right' : 'wrong'}`); if (key !== API_KEY) return { exitCode: 3, json: null }; online = true; return { exitCode: 0, json: {} }; },
     logout: async () => { calls.push('logout'); online = false; return { exitCode: 0, json: {} }; },
+    patch: async (path, body) => { calls.push(`patch ${path} ${JSON.stringify(body)}`); descriptions.set(path.split('/').pop(), body.description); return { exitCode: 0, json: { data: {} } }; },
     get: async path => { calls.push(`get ${path}`); if (!online) return { exitCode: 3, json: null }; return { exitCode: 0, json: { data: { items: [
       { publish_id: 'pub_5c53e70d8dc7ddea', display_name: '九安审核AI（PoC）', status: 'active', channels: [{ channel: 'a2a', enabled: true, ready: true, rpc_url: `${ORIGIN}/a2a/pub_5c53e70d8dc7ddea` }] },
-      { publish_id: 'pub_2cc24c29d2e5b2c9', display_name: '九安知识Agent（PoC）', status: 'active', channels: [{ channel: 'a2a', enabled: true, ready: true }] },
+      { publish_id: 'pub_2cc24c29d2e5b2c9', display_name: '九安知识Agent（PoC）', description: descriptions.get('pub_2cc24c29d2e5b2c9') ?? '知识问答', status: 'active', channels: [{ channel: 'a2a', enabled: true, ready: true }] },
       { publish_id: 'pub_mcponly0001', display_name: '只开了 MCP', status: 'active', channels: [{ channel: 'mcp', enabled: true, ready: true }] },
     ] } } }; } };
 }
 // 九安的名片检查（agent-contract/checks.mjs 的 checkCard）由组合根注入；这里按「任务：」那一行认任务
 const checkCard = value => {
   const line = String(value?.description ?? '').split('\n').find(item => item.startsWith('任务：'));
-  return { ok: Boolean(line), problems: line ? [] : [{ message: '名片没有声明任务' }], tasks: line ? line.slice(3).split('、') : [] };
+  return { ok: Boolean(line), problems: line ? [] : [{ path: 'description', message: '名片没有声明任务' }], tasks: line ? line.slice(3).split('、') : [] };
 };
-const fetchCard = async url => (url.includes('pub_5c53e70d8dc7ddea') ? card('review_advice@1') : url.includes('pub_2cc24c29d2e5b2c9') ? { name: '知识', description: '没有任务行' } : null);
+// 名片的说明就是发布的说明（Nexus 只让改名称和说明）
+const fetchCard = async url => (url.includes('pub_5c53e70d8dc7ddea') ? card('review_advice@1')
+  : url.includes('pub_2cc24c29d2e5b2c9') ? { name: '知识', description: descriptions.get('pub_2cc24c29d2e5b2c9') ?? '没有任务行' } : null);
 
 async function call(routes, method, path, { role = 'admin', body } = {}) {
   let status = null, payload = null;
@@ -50,13 +54,31 @@ test('没连 Nexus：显示未连接；贴对 API 密钥就连上，贴错回能
 });
 
 test('发布列表：只列开了 A2A 的发布，带名片里的名称和声明的任务；名片不合契约的标出原因', async () => {
-  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard, checkCard });
+  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard, checkCard, declareTasks: ['review_advice@1'] });
   const { payload } = await call(routes, 'GET', `${BASE}/publications`);
+  assert.deepEqual(payload.data.declareTasks, ['review_advice@1']);
   assert.deepEqual(payload.data.items.map(item => [item.publishId, item.name, item.tasks, item.cardOk]), [
     ['pub_5c53e70d8dc7ddea', '九安审核AI（PoC）', ['review_advice@1'], true],
     ['pub_2cc24c29d2e5b2c9', '九安知识Agent（PoC）', [], false],
   ]);
-  assert.deepEqual(payload.data.items[1].problems, ['名片没有声明任务']);
+  assert.deepEqual(payload.data.items[1].problems, ['名片还没声明九安的契约和任务（说明里缺「契约：jiuan.agent/v1」「任务：…」两行）']);
+  assert.equal(payload.data.items[1].declarable, true, '只差说明里的契约和任务两行，可以在页面上声明');
+  assert.equal(payload.data.items[0].declarable, false);
+});
+
+test('在名片上声明：原有说明保留，旧的契约 / 任务行换掉，补上「契约：jiuan.agent/v1」「任务：review_advice@1」；改完就能启用', async () => {
+  const cli = fakeCli();
+  const routes = nexusAccessRoutes({ cli, origin: ORIGIN, fetchCard, checkCard, declareTasks: ['review_advice@1'] });
+  descriptions.set('pub_2cc24c29d2e5b2c9', '知识问答\n任务：knowledge_answer@1');
+  const done = await call(routes, 'POST', `${BASE}/publications/pub_2cc24c29d2e5b2c9/declare`, { body: {} });
+  assert.equal(done.status, 200);
+  assert.ok(cli.calls.some(item => item.startsWith('patch /api/v2/publications/pub_2cc24c29d2e5b2c9 ')));
+  assert.equal(descriptions.get('pub_2cc24c29d2e5b2c9'), '知识问答\n契约：jiuan.agent/v1\n任务：knowledge_answer@1、review_advice@1');
+  assert.deepEqual(done.payload.data.item.tasks, ['knowledge_answer@1', 'review_advice@1']);
+  assert.equal(done.payload.data.item.cardOk, true);
+  assert.equal((await call(routes, 'POST', `${BASE}/publications/pub_nosuch0001/declare`, { body: {} })).status, 404);
+  assert.equal((await call(routes, 'POST', `${BASE}/publications/pub_2cc24c29d2e5b2c9/declare`, { body: {}, role: 'analyst' })).status, 403);
+  descriptions.delete('pub_2cc24c29d2e5b2c9');
 });
 
 test('没连上就不能列发布；断开只删本机凭证；只有管理员能用；别的路径交还九安', async () => {

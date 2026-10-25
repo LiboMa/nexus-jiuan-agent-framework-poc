@@ -17,12 +17,13 @@ import { installOutboundGuard } from './guard.mjs';
 import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
 import { nexusAccessRoutes } from './nexus-access.mjs';
-import { createOperatorCli } from '../app/nexus/cli.mjs';
+import { createOperatorCli, execFileJson } from '../app/nexus/cli.mjs';
+import { agentCallRoutes } from './agent-calls.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
 import { withOriginalsFirst } from './originals-first.mjs';
-import { createAgentRouting } from './agent-routes.mjs';
+import { ROUTED_TASKS, createAgentRouting } from './agent-routes.mjs';
 import { loadSeedAnchor } from './seed-anchor.mjs';
 import * as J from './jiuan.mjs';
 
@@ -135,11 +136,18 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
 const intake = intakeRoutes({ fake });
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
 const contract = J.contractChecks.loadContract();
-const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard: url => fetchAgentCard(url),
-  checkCard: card => J.contractChecks.checkCard(card, { contract }),
-  cli: createOperatorCli({ script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin }) });
+const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
+const cli = { ...createOperatorCli(operator),
+  // 「在名片上声明」：改发布的说明（只改说明；Nexus 的名片说明就是发布的说明）
+  patch: (apiPath, body) => execFileJson('python3', ['-I', operator.script, '--profile', operator.profile, '--json', 'call', 'PATCH', apiPath, '--data', JSON.stringify(body), '--yes'],
+    { env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8', NEXUS_HOME: operator.nexusHome }, timeoutMs: 30_000 }) };
+const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard: url => fetchAgentCard(url), cli,
+  checkCard: card => J.contractChecks.checkCard(card, { contract }), declareTasks: Object.values(ROUTED_TASKS).map(task => task.contractTask) });
+// 「Agent 接入」页的调用记录：从单据池的单据反查九安存的每一轮
+const agentCalls = agentCallRoutes({ tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
+  listDocuments: async () => (await store.listDocuments({ companyIds: COMPANIES.map(company => company.id), limit: 200 })).items, readState: key => store.readState(key) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
-  return (await nexusAccess.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
+  return (await nexusAccess.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。

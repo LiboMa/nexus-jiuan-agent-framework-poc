@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -91,4 +91,25 @@ test('补丁：「Agent 接入」页改成连一次 Nexus、列出已发布的 A
   await run('node', ['--check', path.join(out, 'analysis-server.mjs')]);
   await run('node', ['--check', path.join(out, 'public/platform-ops.js')]);
   await run('node', ['--check', path.join(out, 'public/analysis.js')]);
+});
+
+test('补丁 0002：「Agent 接入」页加手动启用（A2A 地址 + 调用密钥）、在名片上声明、手动测试和调用记录', async t => {
+  const out = path.join(await mkdtemp(path.join(tmpdir(), 'jiuan07-')), 'jiuan07');
+  t.after(() => rm(path.dirname(out), { recursive: true, force: true }));
+  await build(out);
+  const ops = await readFile(path.join(out, 'public/platform-ops.js'), 'utf8');
+  for (const name of ['function manualEnable(', 'function callsPanel(', 'function testPanel(', "'在名片上声明'", "'调用记录'", "'手动测试'", "'手动启用（A2A 地址 + 调用密钥）'"]) {
+    assert.ok(ops.includes(name), `缺 ${name}`);
+  }
+  const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
+  assert.match(analysis, /calls: \(\) => api\('\/platform\/agent-access\/calls'\)/);
+  assert.match(analysis, /declare: publishId => api\(`\/platform\/agent-access\/publications\/\$\{id\(publishId\)\}\/declare`/);
+  const server = await readFile(path.join(out, 'analysis-server.mjs'), 'utf8');
+  assert.match(server, /platform\\\/agent-access\\\/publications\\\/\[\^\/\]\+\\\/declare\$/);
+  // 手动启用：粘贴 Nexus 上的 A2A 地址，从里面取出发布编号
+  const { publishIdFrom } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  assert.equal(publishIdFrom('https://nxs-beine1013.tinyboat.blog/a2a/pub_5c53e70d8dc7ddea'), 'pub_5c53e70d8dc7ddea');
+  assert.equal(publishIdFrom(' https://nxs-beine1013.tinyboat.blog/a2a/pub_5c53e70d8dc7ddea/.well-known/agent-card.json '), 'pub_5c53e70d8dc7ddea');
+  assert.equal(publishIdFrom('pub_5c53e70d8dc7ddea'), 'pub_5c53e70d8dc7ddea');
+  assert.equal(publishIdFrom('https://example.invalid/whatever'), '');
 });
