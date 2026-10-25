@@ -26,7 +26,8 @@ function rowOf(document, task, record) {
   };
 }
 
-export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, readState }) {
+/** extraRows：别处产生的调用（「Agent 接入」页的手动测试，agent-tests.mjs），和九安存的轮次合在一起按时间排。 */
+export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, readState, extraRows = () => [] }) {
   async function calls() {
     const rows = [];
     for (const document of await listDocuments()) {
@@ -35,6 +36,7 @@ export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, 
         for (const record of [state?.current, ...(Array.isArray(state?.history) ? state.history : [])]) if (record) rows.push(rowOf(document, task, record));
       }
     }
+    rows.push(...extraRows());
     rows.sort((left, right) => String(right.at ?? '').localeCompare(String(left.at ?? '')));
     return { items: rows.slice(0, LIMIT) };
   }

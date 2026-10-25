@@ -17,8 +17,9 @@ import { installOutboundGuard } from './guard.mjs';
 import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
 import { nexusAccessRoutes } from './nexus-access.mjs';
-import { createOperatorCli, execFileJson } from '../app/nexus/cli.mjs';
+import { createOperatorCli } from '../app/nexus/cli.mjs';
 import { agentCallRoutes } from './agent-calls.mjs';
+import { createAgentTests } from './agent-tests.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
@@ -46,7 +47,9 @@ const auth = J.auth.createAnalysisAuth({ getAccounts: () => config.accounts });
 const platformStore = J.platformStore.createPlatformStore({ pool });
 const secretSource = J.secretSource.createSecretSource({ config: { ...config, protectedSecrets: secrets }, env: {} });
 const agentClient = J.nexusA2a.createAgentClient({ nexusOrigin: config.agents.nexusOrigin, contract: J.contractChecks.loadContract(), getKey: async () => null });
-const agentEnablement = J.enablement.createAgentEnablement({ store, tenantId: config.scope.tenantId, client: agentClient });
+// 接受的任务按配置里打开的任务推出（补丁 0003：名片没声明任务的发布启用时，由平台指定这些任务）
+const acceptedTasks = Object.entries(config.agents.tasks).filter(([, value]) => value.enabled).map(([task]) => ROUTED_TASKS[task]?.contractTask).filter(Boolean);
+const agentEnablement = J.enablement.createAgentEnablement({ store, tenantId: config.scope.tenantId, client: agentClient, acceptedTasks });
 await agentEnablement.load();
 routing = await createAgentRouting({ enablement: agentEnablement, baseConfig: config, log });
 const enablement = routing.enablement;   // 包过的启用服务：页面上启用、换钥匙、停用、复核、标记失效之后刷新路由
@@ -137,17 +140,29 @@ const intake = intakeRoutes({ fake });
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
 const contract = J.contractChecks.loadContract();
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
-const cli = { ...createOperatorCli(operator),
-  // 「在名片上声明」：改发布的说明（只改说明；Nexus 的名片说明就是发布的说明）
-  patch: (apiPath, body) => execFileJson('python3', ['-I', operator.script, '--profile', operator.profile, '--json', 'call', 'PATCH', apiPath, '--data', JSON.stringify(body), '--yes'],
-    { env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8', NEXUS_HOME: operator.nexusHome }, timeoutMs: 30_000 }) };
+const cli = createOperatorCli(operator);
 const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard: url => fetchAgentCard(url), cli,
-  checkCard: card => J.contractChecks.checkCard(card, { contract }), declareTasks: Object.values(ROUTED_TASKS).map(task => task.contractTask) });
-// 「Agent 接入」页的调用记录：从单据池的单据反查九安存的每一轮
-const agentCalls = agentCallRoutes({ tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
-  listDocuments: async () => (await store.listDocuments({ companyIds: COMPANIES.map(company => company.id), limit: 200 })).items, readState: key => store.readState(key) });
+  checkCard: card => J.contractChecks.checkCard(card, { contract }), platformTasks: acceptedTasks });
+// 「Agent 接入」页的单个 Agent 测试：先读原件，照九安组装 review_advice@1，经九安的调用中间件发给选中的发布（专用会话分区）
+const companyIds = COMPANIES.map(company => company.id);
+const agentTests = createAgentTests({
+  readDocument: id => store.getDocument({ id, companyIds }),
+  listDocuments: async () => (await store.listDocuments({ companyIds, limit: 200, type: 'corporate_payment' })).items,
+  prepare: async document => {
+    try { await runtimeRegistry.evidenceService.enqueue({ actor: J.serviceIdentity.SYSTEM_PIPELINE, companyId: document.companyId, documentId: document.id, sourceVersion: document.version }); }
+    catch (error) { log(`POC_TEST_ORIGINALS_FAILED ${error?.code || ''}`); }
+    await runtimeRegistry.evidenceService.idle();
+  },
+  assemble: subject => agentAssemblers['review_advice@1'].assemble(subject),
+  callAgent: ({ publishId, tenantId, companyId, assembled, partition }) => J.callMiddleware.runWithAttribution({ agentId: 'audit.ai-advice', runId: null },
+    () => gateway.govern('nexus-a2a', { tenantId, companyIds: [companyId] }).agentTask({ publishId, request: assembled.request, attempt: 1, partition,
+      inputFingerprint: assembled.inputFingerprint, dataContext: { environment: 'prod', purpose: 'read_only_analysis', tenantId, companyId } })),
+});
+// 「Agent 接入」页的调用记录：从单据池的单据反查九安存的每一轮，加上手动测试
+const agentCalls = agentCallRoutes({ extraRows: () => agentTests.rows(), tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
+  listDocuments: async () => (await store.listDocuments({ companyIds, limit: 200 })).items, readState: key => store.readState(key) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
-  return (await nexusAccess.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
+  return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。

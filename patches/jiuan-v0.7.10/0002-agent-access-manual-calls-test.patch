@@ -1,190 +1,417 @@
---- a/analysis-server.mjs	2026-10-26 01:09:48
-+++ b/analysis-server.mjs	2026-10-26 01:09:48
+--- a/analysis-server.mjs	2026-10-26 01:25:51
++++ b/analysis-server.mjs	2026-10-26 01:34:01
 @@ -343,7 +343,9 @@
            // NX-2c Agent access: paste a key, then rotate / disable / refresh one publication (the route itself is 404 off the test instance).
            || path === PREFIX + '/platform/agent-access' || /^\/api\/analysis\/v1\/platform\/agent-access\/[^/]+\/(?:rotate|disable|refresh)$/u.test(path)
            // Bench patch 0001: connect / disconnect Nexus for the publication list on the Agent 接入 tab.
 -          || path === PREFIX + '/platform/agent-access/nexus' || path === PREFIX + '/platform/agent-access/nexus/disconnect'));
 +          || path === PREFIX + '/platform/agent-access/nexus' || path === PREFIX + '/platform/agent-access/nexus/disconnect'
-+          // Bench patch 0002: declare the contract and tasks on a publication's card (its Nexus description).
-+          || /^\/api\/analysis\/v1\/platform\/agent-access\/publications\/[^/]+\/declare$/u.test(path)));
++          // Bench patch 0002: test one enabled Agent on one corporate payment from the Agent 接入 tab.
++          || /^\/api\/analysis\/v1\/platform\/agent-access\/pub_[A-Za-z0-9_-]{4,80}\/test$/u.test(path)));
        if(path.startsWith(PREFIX+'/platform')&&req.method!=='GET'&&!platformWritePath) fail('NOT_FOUND',404);
        if(req.method!=='GET')auth.checkCsrf(session,req.headers['x-csrf-token']);
         if (milestone && await milestone.routes.handle(req, res, { session, path, url })) return;
---- a/public/platform-ops.js	2026-10-26 01:09:48
-+++ b/public/platform-ops.js	2026-10-26 01:10:47
-@@ -385,6 +385,16 @@
-     cell.replaceChildren(append(el('div', '', 'platform-ops-dialog-field platform-access-key'), el('label', key.placeholder), key), go);
-     key.focus?.();
-   }
-+  let declareTasks = [];
-+  function openDeclare(item, cell) {
-+    const go = button('确认声明', async () => {
-+      go.disabled = true; say(`正在修改「${item.name}」在 Nexus 上的说明…`);
-+      try { await opts.nexus.declare(item.publishId); await load(); say(`已在「${item.name}」的名片上声明，现在可以启用。`, 'success'); }
-+      catch (error) { say(error?.message || '没有改成功，请稍后重试', 'error'); go.disabled = false; }
-+    }, opts.platformAdmin);
-+    cell.replaceChildren(append(el('div', '', 'platform-access-declare'),
-+      el('p', `会在这个发布的说明里加上「契约：jiuan.agent/v1」和「任务：${list(declareTasks).join('、') || '—'}」两行（原有说明保留）。声明后九安会把对公付款单的 AI 独立建议交给它：请先确认它的提示词能处理这些任务。`, 'platform-ops-note'), go));
-+  }
-   function paintList(items) {
-     const enabled = new Map(list(currentRecords()).map(record => [String(record.publishId || ''), record]));
-     rows.replaceChildren(table(['名称', '名片声明的任务', '状态', '发布编号', '操作'], list(items).map(item => {
-@@ -393,6 +403,7 @@
-         : `不能启用：${list(item.problems).join('；') || (item.a2aReady ? '名片不合契约' : 'A2A 还没就绪')}`;
-       const cell = el('div', '', 'platform-access-actions');
-       if (!record && item.cardOk && item.a2aReady) append(cell, button('启用', () => openKey(item, cell), opts.platformAdmin));
-+      if (!record && item.declarable && opts.nexus.declare) append(cell, button('在名片上声明', () => openDeclare(item, cell), opts.platformAdmin));
-       return [item.name || item.publishId, accessTasks(item.tasks), state, item.publishId, cell];
-     }), '你在 Nexus 上还没有开了 A2A 的发布'));
-   }
-@@ -404,10 +415,110 @@
-       append(el('div', '', 'platform-access-actions'), button('刷新发布列表', () => void load(), opts.platformAdmin),
-         button('断开 Nexus', async () => { try { await opts.nexus.disconnect(); } catch { /* 断开失败也照样重画 */ } await load(); }, opts.platformAdmin)));
-     say('正在读取 Nexus 上的发布…');
--    try { paintList((await opts.nexus.publications())?.items); say(''); } catch (error) { say(error?.message || '读不到发布列表', 'error'); }
-+    try { const data = await opts.nexus.publications(); declareTasks = list(data?.declareTasks); paintList(data?.items); say(''); } catch (error) { say(error?.message || '读不到发布列表', 'error'); }
-   }
-   append(box, el('h2', 'Nexus 上已发布的 Agent'), head, rows, message);
-+  void load();
-+  return Object.assign(box, { reload: load });
+--- a/public/analysis.js	2026-10-26 01:25:51
++++ b/public/analysis.js	2026-10-26 01:34:01
+@@ -1787,6 +1787,11 @@
+       connect: apiKey => api('/platform/agent-access/nexus', { method: 'POST', body: { apiKey }, timeoutMs: 60000 }),
+       disconnect: () => api('/platform/agent-access/nexus/disconnect', { method: 'POST', body: {} }),
+       publications: () => api('/platform/agent-access/publications', { timeoutMs: 60000 }) },
++    // Bench patch 0002: the call log (every AI round, tests included) and a per-Agent test on one corporate payment.
++    calls: () => api('/platform/agent-access/calls'),
++    agentTest: { documents: () => api('/platform/agent-access/test-documents'),
++      start: (publishId, documentId) => api(`/platform/agent-access/${id(publishId)}/test`, { method: 'POST', body: { documentId } }),
++      view: testId => api(`/platform/agent-access/tests/${encodeURIComponent(String(testId || ''))}`) },
+     reload: () => api('/platform/agent-access') };
+ }
+ 
+--- a/public/platform-center.css	2026-10-26 01:25:51
++++ b/public/platform-center.css	2026-10-26 01:33:47
+@@ -157,3 +157,48 @@
+ .platform-ops-dialog-result.error{background:#fffbeb;border:1px solid #fcd34d;color:#92400e}
+ .platform-ops-dialog-result.success{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+ .platform-ops-run-buttons{display:flex;flex-wrap:wrap;gap:6px}
++
++/* Bench patch 0002: the Agent 接入 tab — one card per Agent, actions on the card, a drawer under it for the one form in use. */
++.platform-access-page{gap:12px}
++.platform-access-lede{margin:-6px 0 2px;max-width:72ch;color:var(--ui-muted);font-size:13px;line-height:1.7}
++.platform-access-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;background:var(--ui-soft);border-color:var(--ui-soft-line);box-shadow:none}
++.platform-access-bar-text{display:flex;flex-direction:column;gap:4px;min-width:0}
++.platform-access-bar-text strong{color:var(--ui-ink);font-size:14px}
++.platform-access-connect{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
++.platform-access-connect input{min-width:260px}
++.platform-access-bar .platform-access-drawer,.platform-access-bar .platform-ops-dialog-result{flex:1 1 100%}
++.platform-access-agents{display:flex;flex-direction:column;gap:10px}
++.platform-access-agent{background:#fff;border:1px solid var(--ui-line);border-radius:12px;box-shadow:var(--ui-shadow);transition:border-color var(--ui-fast) var(--ui-ease)}
++.platform-access-agent:focus-within{border-color:#bfdcf7}
++.platform-access-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px 16px;padding:14px 16px;flex-wrap:wrap}
++.platform-access-main{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1 1 320px}
++.platform-access-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
++.platform-access-name{color:var(--ui-ink);font-size:15px;font-weight:var(--ui-weight-semibold);overflow-wrap:anywhere}
++.platform-access-id{color:var(--ui-muted);font-size:12px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
++.platform-access-meta{margin:0;color:#4b5563;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
++.platform-access-problem{color:#a16207}
++.platform-access-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
++.platform-access-drawer{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-top:1px solid var(--ui-line);background:var(--ui-bg);border-radius:0 0 12px 12px}
++.platform-access-bar .platform-access-drawer{border:1px solid var(--ui-soft-line);border-radius:10px;background:#fff}
++.platform-access-drawer[hidden]{display:none}
++.platform-access-drawer>strong{color:var(--ui-ink);font-size:13px}
++.platform-access-field{display:flex;flex-direction:column;gap:4px;max-width:560px;color:#4b5563;font-size:12px}
++.platform-access-page input,.platform-access-page select{box-sizing:border-box;min-height:36px;padding:7px 10px;border:1px solid var(--ui-line);border-radius:8px;background:#fff;color:#374151;font-size:13px}
++.platform-access-page input:focus,.platform-access-page select:focus{border-color:var(--ui-accent);outline:none;box-shadow:0 0 0 3px var(--ui-soft-line)}
++.platform-access-empty{margin:0;padding:22px 16px;border:1px dashed var(--ui-line);border-radius:12px;background:#fff;color:var(--ui-muted);font-size:13px;text-align:center}
++.platform-access-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
++.platform-access-section-head h2{margin:0}
++.platform-access-calls{display:flex;flex-direction:column;gap:8px}
++.platform-access-calls .platform-ops-table td{vertical-align:middle}
++.platform-access-feedback{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--ui-line);border-left:3px solid var(--ui-accent);border-radius:10px;background:#fff}
++.platform-access-feedback .platform-access-head strong{color:var(--ui-ink);font-size:13px}
++.platform-access-note{padding:8px 10px;border-radius:8px;background:var(--ui-bg)}
++.platform-access-note span{color:var(--ui-muted);font-size:11px}
++.platform-access-note p{margin:3px 0 0;color:#374151;font-size:13px;line-height:1.7;white-space:pre-wrap}
++.platform-access-audit{padding:10px 14px;border:1px solid var(--ui-line);border-radius:12px;background:#fff}
++.platform-access-audit summary{cursor:pointer;color:#4b5563;font-size:13px}
++.platform-access-audit[open] summary{margin-bottom:8px}
++@media(max-width:640px){.platform-access-connect input{min-width:0;width:100%}
++.platform-access-row{padding:12px}
 +}
-+// Bench patch 0002: manual enable (A2A address or publication id + call key), the manual test and the call log.
-+const MANUAL_ENABLE_REASON = '在「Agent 接入」页手动启用（A2A 地址 + 调用密钥）';
-+const CALL_STATUS = Object.freeze({ completed: '已完成', failed: '未完成', declined: '未给出建议', running: '进行中', superseded: '被新一轮取代' });
-+const CALL_RESULT = Object.freeze({ pass: '建议通过', fail: '不建议通过' });
-+const CALL_TRIGGER = Object.freeze({ upstream: '自动（读完详情后）', manual: '手动', person: '手动' });
++@media(prefers-reduced-motion:reduce){.platform-access-agent{transition:none}}
+--- a/public/platform-ops.js	2026-10-26 01:25:51
++++ b/public/platform-ops.js	2026-10-26 01:33:47
+@@ -320,123 +320,234 @@
+   input.setAttribute?.('autocomplete', 'off'); input.setAttribute?.('spellcheck', 'false'); return input;
+ }
+ function textInput(name, placeholder) { const input = document.createElement('input'); input.name = name; input.placeholder = placeholder; input.setAttribute?.('autocomplete', 'off'); return input; }
+-function reasonInput() { const reason = document.createElement('textarea'); reason.name = 'reason'; reason.placeholder = '操作原因（必填，留痕）'; return reason; }
+-/** One form: the inputs, a reason, a result line. The key field is emptied on every submit, whatever the outcome. */
+-function accessForm(title, submitLabel, inputs, onSubmit, successText) {
+-  const form = el('section', '', 'platform-ops-card platform-access-form'); const reason = reasonInput();
+-  const message = el('p', '', 'platform-ops-dialog-result'); message.setAttribute?.('role', 'status');
+-  const show = (text, kind) => { message.textContent = text; message.className = `platform-ops-dialog-result ${kind}`; };
+-  const submit = button(submitLabel, async () => {
+-    const values = Object.fromEntries(inputs.map(input => [input.name, String(input.value || '').trim()]));
+-    for (const input of inputs) if (input.type === 'password') input.value = '';
+-    if (!String(reason.value || '').trim()) { show('请填写操作原因', 'error'); return; }
+-    if (inputs.some(input => !values[input.name])) { show('请把每一项都填上', 'error'); return; }
+-    submit.disabled = true; show('正在向 Nexus 当场验证名片与密钥，最长约三分钟…', '');
+-    try { const result = await onSubmit({ values, reason: reason.value.trim() }); show(successText(result), 'success'); reason.value = ''; }
+-    catch (error) { show(error?.message || '没有完成，请稍后重试', 'error'); }
+-    finally { submit.disabled = false; }
+-  }, true);
+-  append(form, el('h2', title), ...inputs.map(input => append(el('div', '', 'platform-ops-dialog-field'), el('label', input.placeholder), input)), el('label', '操作原因'), reason, message, submit);
+-  return form;
++// Bench patches 0001–0002 (the corrected P3/P3b): one list of Agents — those published on the admin's Nexus (connect once
++// with a Nexus API key) and those already enabled here. Each card shows only the actions that fit its state: 测试 · 停用 · 复核
++// when enabled, 启用 (paste only its call key) otherwise, 换钥匙 when Nexus no longer takes the key. Reasons are filled in.
++// Below: the call log (every round with the Agent's feedback, tests included) and, folded, the audit trail.
++// Enabling still goes through POST /platform/agent-access, so the card and the key are verified on the spot as before.
++const REASONS = Object.freeze({ enable: '在「Agent 接入」页启用', rotate: '在「Agent 接入」页换钥匙', disable: '在「Agent 接入」页停用',
++  refresh: '在「Agent 接入」页复核', manual: '在「Agent 接入」页手动添加（A2A 地址 + 调用密钥）' });
++const CALL_STATUS = Object.freeze({ completed: '已完成', failed: '没有完成', declined: '没有给出建议', running: '进行中', superseded: '被新一轮取代' });
++const CALL_RESULT = Object.freeze({ pass: ['建议通过', 'green'], fail: ['不建议通过', 'red'] });
++const CALL_TRIGGER = Object.freeze({ upstream: '自动初审', manual: '单据页发起', person: '单据页发起', test: '测试' });
 +const BASIS_KIND = Object.freeze({ rule: '规则', field: '字段', evidence: '原件' });
-+const seconds = ms => (Number.isFinite(ms) ? `${Math.round(ms / 100) / 10} 秒` : '—');
++const seconds = ms => (Number.isFinite(ms) ? `${Math.round(ms / 1000)} 秒` : '—');
++const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 +/** 「https://…/a2a/pub_x」「…/a2a/pub_x/.well-known/agent-card.json」或「pub_x」→ 发布编号；认不出返回空。 */
 +export function publishIdFrom(text) {
 +  const value = String(text || '').trim();
 +  const match = /\/a2a\/(pub_[A-Za-z0-9_-]{4,80})(?:[/?#]|$)/u.exec(value) || /^(pub_[A-Za-z0-9_-]{4,80})$/u.exec(value);
 +  return match ? match[1] : '';
+ }
+-function accessRow(record, opts, open) {
+-  const id = String(record.publishId || '');
+-  const status = `${ACCESS_STATUS[record.status] || '状态待核实'}${record.status === 'invalid' && record.invalidReason ? `（${accessResult(record.invalidReason)}）` : ''}`;
+-  const act = (label, run) => button(label, () => run(), opts.platformAdmin);
+-  const actions = append(el('div', '', 'platform-access-actions'),
+-    record.status !== 'disabled' ? act('复核', () => open('refresh', id)) : null,
+-    act('换钥匙', () => open('rotate', id)),
+-    record.status !== 'disabled' ? act('停用', () => open('disable', id)) : null);
+-  return [id, record.card?.name || '—', accessTasks(record.card?.tasks), status, record.fingerprint ? `指纹 ${record.fingerprint}` : '—',
+-    `${dash(record.enabledBy)} · ${time(record.enabledAt)}`, time(record.verifiedAt), actions];
++/** 启用记录和 Nexus 上的发布合成一张表：按发布编号，Nexus 上的按原顺序在前，只在这里启用过的（手动添加的）在后。 */
++export function mergeAgents(records, published) {
++  const byId = new Map();
++  for (const item of list(published)) byId.set(item.publishId, { publishId: item.publishId, name: item.name, item, record: null });
++  for (const record of list(records)) {
++    const id = String(record.publishId || ''), prior = byId.get(id);
++    byId.set(id, { publishId: id, name: prior?.name || record.card?.name || id, item: prior?.item ?? null, record });
++  }
++  return [...byId.values()];
+ }
+-// Bench patch 0001 (the corrected P3/P3b): connect Nexus once, list the Agents published there, enable one by pasting
+-// only its call key. The publication id comes from the list; the reason is filled in. Enabling still goes through
+-// the same POST /platform/agent-access, so the card and the key are verified on the spot exactly as before.
+-const NEXUS_ENABLE_REASON = '在「Agent 接入」页从 Nexus 发布列表启用';
+-function nexusPublications(opts, currentRecords, enable) {
+-  const box = el('section', '', 'platform-ops-card platform-access-nexus');
+-  const head = el('div', '', 'platform-access-nexus-head'), rows = el('div', '', 'platform-access-nexus-list');
+-  const message = el('p', '', 'platform-ops-dialog-result'); message.setAttribute?.('role', 'status');
+-  const say = (text, kind = '') => { message.textContent = text; message.className = `platform-ops-dialog-result ${kind}`; };
+-  function paintConnect() {
+-    const apiKey = secretInput('apiKey', 'Nexus API 密钥（nxc_ 开头，在 Nexus「个人设置 › API 密钥」新建，贴一次即可）');
+-    const connect = button('连接 Nexus', async () => {
+-      const value = String(apiKey.value || '').trim(); apiKey.value = '';
+-      if (!value) { say('请贴上 Nexus API 密钥', 'error'); return; }
+-      connect.disabled = true; say('正在连接 Nexus…');
+-      try { await opts.nexus.connect(value); await load(); } catch (error) { say(error?.message || '没有连上，请稍后重试', 'error'); } finally { connect.disabled = false; }
+-    }, opts.platformAdmin);
+-    head.replaceChildren(el('p', '先连一次 Nexus：贴上你自己的 Nexus API 密钥，平台就能列出你在 Nexus 上已发布的 Agent；启用某个 Agent 时只需贴它的调用密钥。', 'platform-ops-note'),
+-      append(el('div', '', 'platform-ops-dialog-field'), el('label', apiKey.placeholder), apiKey), append(el('div', '', 'platform-access-actions'), connect));
+-    rows.replaceChildren();
++function accessTone(agent) {
++  const status = agent.record?.status;
++  if (status === 'active') return ['已启用', 'green'];
++  if (status === 'invalid') return ['密钥失效', 'red'];
++  if (status === 'disabled') return ['已停用', ''];
++  return agent.item?.enableable ? ['未启用', 'blue'] : ['不能启用', 'amber'];
 +}
-+function manualEnable(opts, enable, onDone) {
-+  const box = el('div', '', 'platform-access-manual');
-+  const message = el('p', '', 'platform-ops-dialog-result'); message.setAttribute?.('role', 'status');
-+  const say = (text, kind = '') => { message.textContent = text; message.className = `platform-ops-dialog-result ${kind}`; };
-+  const open = () => {
-+    const address = textInput('address', 'A2A 地址（在 Nexus「互联中心 › 对外发布」里复制，形如 https://…/a2a/pub_…），或发布编号');
-+    const key = secretInput('key', 'A2A 调用密钥（nxa_ 开头，粘贴后不会再显示）');
-+    const go = button('验证并启用', async () => {
++const pill = (text, color) => el('span', text, `tag ${color}`.trim());
++function act(label, onClick, opts, primary = false) {
++  const value = button(label, onClick, opts.platformAdmin);
++  value?.classList?.add('small');
++  if (primary) value?.classList?.add('primary');
++  return value;
++}
++function labelled(text, input) { return append(el('label', '', 'platform-access-field'), el('span', text), input); }
++function sayer(node) { return (text, kind = '') => { node.textContent = text; node.className = `platform-ops-dialog-result ${kind}`.trim(); }; }
++function statusLine() { const node = el('p', '', 'platform-ops-dialog-result'); node.setAttribute?.('role', 'status'); return node; }
++/** 一轮的反馈：结论、备注（模型自评）、逐条依据、发给哪个发布、用时。调用记录和测试共用。 */
++function callFeedback(call) {
++  const [label, color] = CALL_RESULT[call.result] || [CALL_STATUS[call.status] || dash(call.status), call.status === 'failed' ? 'amber' : ''];
++  return append(el('div', '', 'platform-access-feedback'),
++    append(el('div', '', 'platform-access-head'), pill(label, color), el('strong', dash(call.number)),
++      el('span', `${CALL_TRIGGER[call.trigger] || dash(call.trigger)} · ${time(call.at || call.finishedAt || call.startedAt)} · 用时 ${seconds(call.latencyMs)}`, 'platform-access-id')),
++    call.errorCode ? el('p', `没有完成：${accessResult(call.errorCode)}`, 'platform-access-meta') : null,
++    call.declinedReason ? el('p', `Agent 没有给出建议：${call.declinedReason}`, 'platform-access-meta') : null,
++    call.note ? append(el('div', '', 'platform-access-note'), el('span', '备注（模型自评，未核实）'), el('p', call.note)) : null,
++    list(call.basis).length ? table(['类型', '依据', '页', '说明'], list(call.basis).map(item => [BASIS_KIND[item?.kind] || dash(item?.kind), dash(item?.ref),
++      item?.page ? String(item.page) : '—', dash(item?.note)])) : null,
++    el('p', `发给 ${dash(call.publishId)} · Agent 版本 ${dash(call.agentVersion)}${call.repaired ? ' · 修正过一次格式' : ''}`, 'platform-access-id'));
++}
++
++function agentCard(agent, opts, refresh) {
++  const card = el('article', '', 'platform-access-agent'), drawer = el('div', '', 'platform-access-drawer'), message = statusLine(), say = sayer(message);
++  drawer.hidden = true;
++  const close = () => { drawer.hidden = true; drawer.replaceChildren(); };
++  const open = (...children) => { drawer.replaceChildren(); append(drawer, ...children, message); drawer.hidden = false; say(''); };
++  const { record, item } = agent;
++  const tasks = record?.card?.tasks ?? item?.tasks ?? [];
++  const byPlatform = (record?.card?.declaredBy ?? item?.declaredBy) === 'platform';
++  const [status, color] = accessTone(agent);
++  async function write(run) {
++    try { await run(); close(); await refresh(); } catch (error) { say(error?.message || '没有完成，请稍后重试', 'error'); }
+   }
+-  function openKey(item, cell) {
+-    const key = secretInput('key', '调用密钥（nxa_ 开头，粘贴后不会再显示）');
+-    const go = button('验证并启用', async () => {
++  function keyForm(title, submit, run) {
++    const key = secretInput('key', 'nxa_ 开头，粘贴后不再显示');
++    const go = act(submit, async () => {
+       const value = String(key.value || '').trim(); key.value = '';
+       if (!value) { say('请贴上调用密钥', 'error'); return; }
+-      go.disabled = true; say(`正在向 Nexus 当场验证「${item.name}」的名片与密钥，最长约三分钟…`);
+-      try {
+-        const result = await enable({ publishId: item.publishId, key: value, reason: NEXUS_ENABLE_REASON });
+-        await load(); say(`已启用：${item.name}，密钥指纹 ${result?.fingerprint || '—'}。`, 'success');
+-      } catch (error) { say(error?.message || '没有完成，请稍后重试', 'error'); go.disabled = false; }
+-    }, opts.platformAdmin);
+-    cell.replaceChildren(append(el('div', '', 'platform-ops-dialog-field platform-access-key'), el('label', key.placeholder), key), go);
++      go.disabled = true; say('正在向 Nexus 当场验证名片与密钥…');
++      await write(() => run(value));
++      go.disabled = false;
++    }, opts, true);
++    open(el('strong', title), labelled('调用密钥（在 Nexus「互联中心 › 对外发布」签发）', key), append(el('div', '', 'platform-access-actions'), go, act('取消', close, opts)));
+     key.focus?.();
+   }
+-  function paintList(items) {
+-    const enabled = new Map(list(currentRecords()).map(record => [String(record.publishId || ''), record]));
+-    rows.replaceChildren(table(['名称', '名片声明的任务', '状态', '发布编号', '操作'], list(items).map(item => {
+-      const record = enabled.get(item.publishId);
+-      const state = record ? (ACCESS_STATUS[record.status] || '状态待核实') : item.cardOk && item.a2aReady ? '未启用'
+-        : `不能启用：${list(item.problems).join('；') || (item.a2aReady ? '名片不合契约' : 'A2A 还没就绪')}`;
+-      const cell = el('div', '', 'platform-access-actions');
+-      if (!record && item.cardOk && item.a2aReady) append(cell, button('启用', () => openKey(item, cell), opts.platformAdmin));
+-      return [item.name || item.publishId, accessTasks(item.tasks), state, item.publishId, cell];
+-    }), '你在 Nexus 上还没有开了 A2A 的发布'));
++  function testForm() {
++    const select = document.createElement('select'); select.name = 'documentId';
++    const result = el('div');
++    let documents = [];
++    const go = act('开始测试', async () => {
++      const picked = documents.find(entry => entry.id === select.value);
++      if (!picked) { say('请先选一张对公付款单', 'error'); return; }
++      go.disabled = true; result.replaceChildren(); say(`已发给「${agent.name}」，一般一到两分钟给出结论…`);
++      try {
++        let test = await opts.agentTest.start(agent.publishId, picked.id);
++        for (let waited = 0; test?.status === 'running' && waited < 300000; waited += 3000) { await sleep(3000); test = await opts.agentTest.view(test.testId); }
++        result.replaceChildren(callFeedback(test));
++        say(test?.status === 'completed' ? '测试完成，已记进下面的调用记录。' : '这次没有得到结论，原因见上。', test?.status === 'completed' ? 'success' : 'error');
++        opts.onCallsChanged?.();
++      } catch (error) { say(error?.message || '没有发起成功，请稍后重试', 'error'); }
++      finally { go.disabled = false; }
++    }, opts, true);
++    open(el('p', `选一张对公付款单，照九安自动初审的做法组装请求发给「${agent.name}」。结果只记进调用记录，不改单据上的结论。`, 'platform-access-meta'),
++      labelled('对公付款单', select), append(el('div', '', 'platform-access-actions'), go, act('收起', close, opts)), result);
++    void opts.agentTest.documents().then(data => {
++      documents = list(data?.items);
++      select.replaceChildren(...documents.map(entry => { const option = document.createElement('option'); option.value = entry.id; option.textContent = [entry.number, entry.title || entry.formName].filter(Boolean).join(' · '); return option; }));
++      if (!documents.length) say('单据池里还没有对公付款单', 'error');
++    }, error => say(error?.message || '读不到单据', 'error'));
+   }
++  function confirmDisable() {
++    open(el('p', `停用后九安不再把单据交给「${agent.name}」，已存的调用密钥一并清除；以后要用，重新贴一次密钥即可。`, 'platform-access-meta'),
++      append(el('div', '', 'platform-access-actions'), act('确认停用', () => void write(() => opts.onDisable({ publishId: agent.publishId, reason: REASONS.disable })), opts, true), act('取消', close, opts)));
++  }
++  const enableLabel = record?.status === 'disabled' ? '重新启用' : '启用';
++  const actions = record?.status === 'active'
++    ? [opts.agentTest ? act('测试', testForm, opts, true) : null, act('停用', confirmDisable, opts),
++      act('复核', () => { open(); say('正在用已存的密钥复核…'); void write(() => opts.onRefresh({ publishId: agent.publishId, reason: REASONS.refresh })); }, opts)]
++    : record?.status === 'invalid'
++      ? [act('换钥匙', () => keyForm(`给「${agent.name}」换一把调用密钥`, '验证并更换', key => opts.onRotate({ publishId: agent.publishId, key, reason: REASONS.rotate })), opts, true), act('停用', confirmDisable, opts)]
++      : record?.status === 'disabled' || item?.enableable
++        ? [act(enableLabel, () => keyForm(`${enableLabel}「${agent.name}」`, `验证并${enableLabel}`, key => opts.onEnable({ publishId: agent.publishId, key, reason: REASONS.enable })), opts, true)]
++        : [];
++  const meta = [`任务：${accessTasks(tasks)}${byPlatform ? '（名片没有声明，由平台指定）' : ''}`,
++    record?.fingerprint ? `密钥指纹 ${record.fingerprint}` : null, record?.verifiedAt ? `最近验证 ${time(record.verifiedAt)}` : null,
++    record?.status === 'invalid' && record.invalidReason ? `失效原因：${accessResult(record.invalidReason)}` : null].filter(Boolean).join(' · ');
++  const problem = !record && item && !item.enableable ? `不能启用：${list(item.problems).join('；') || (item.a2aReady ? '名片不合契约' : 'A2A 还没就绪')}` : null;
++  append(card, append(el('div', '', 'platform-access-row'),
++    append(el('div', '', 'platform-access-main'),
++      append(el('div', '', 'platform-access-head'), el('span', agent.name || agent.publishId, 'platform-access-name'), pill(status, color), el('span', agent.publishId, 'platform-access-id')),
++      el('p', meta, 'platform-access-meta'), problem ? el('p', problem, 'platform-access-meta platform-access-problem') : null),
++    append(el('div', '', 'platform-access-actions'), actions)), drawer);
++  return card;
++}
++
++function nexusBar(opts, state, refresh) {
++  const bar = el('section', '', 'platform-ops-card platform-access-bar'), drawer = el('div', '', 'platform-access-drawer'), message = statusLine(), say = sayer(message);
++  drawer.hidden = true;
++  function manualForm() {
++    const address = textInput('address', 'https://…/a2a/pub_…'), key = secretInput('key', 'nxa_ 开头，粘贴后不再显示');
++    const go = act('验证并添加', async () => {
 +      const publishId = publishIdFrom(address.value), value = String(key.value || '').trim(); key.value = '';
-+      if (!publishId) { say('认不出发布：请粘贴 Nexus 上这个发布的 A2A 地址（含 /a2a/pub_…）', 'error'); return; }
-+      if (!value) { say('请贴上 A2A 调用密钥', 'error'); return; }
-+      go.disabled = true; say(`正在向 Nexus 当场验证 ${publishId} 的名片与密钥，最长约三分钟…`);
-+      try { const result = await enable({ publishId, key: value, reason: MANUAL_ENABLE_REASON }); say(`已启用：${publishId}，密钥指纹 ${result?.fingerprint || '—'}。`, 'success'); address.value = ''; onDone?.(); }
++      if (!publishId) { say('认不出发布：请粘贴这个发布的 A2A 地址（含 /a2a/pub_…）', 'error'); return; }
++      if (!value) { say('请贴上调用密钥', 'error'); return; }
++      go.disabled = true; say(`正在向 Nexus 当场验证 ${publishId} 的名片与密钥…`);
++      try { await opts.onEnable({ publishId, key: value, reason: REASONS.manual }); drawer.hidden = true; await refresh(); }
 +      catch (error) { say(error?.message || '没有完成，请稍后重试', 'error'); }
 +      finally { go.disabled = false; }
-+    }, opts.platformAdmin);
-+    box.replaceChildren(append(el('section', '', 'platform-ops-card platform-access-form'), el('h2', '手动启用'),
-+      el('p', '没连 Nexus、或者列表里没有的发布，可以在这里启用：粘贴它的 A2A 地址和调用密钥，平台当场验证名片与密钥后加密保存。', 'platform-ops-note'),
-+      append(el('div', '', 'platform-ops-dialog-field'), el('label', address.placeholder), address),
-+      append(el('div', '', 'platform-ops-dialog-field'), el('label', key.placeholder), key), go, message));
-+  };
-+  append(box, append(el('div', '', 'platform-access-actions'), button('手动启用（A2A 地址 + 调用密钥）', open, opts.platformAdmin)));
-+  return box;
-+}
-+function basisTable(basis) {
-+  return table(['类型', '依据', '页', '说明'], list(basis).map(item => [BASIS_KIND[item?.kind] || dash(item?.kind), dash(item?.ref), item?.page ? String(item.page) : '—', dash(item?.note)]), '没有判断依据');
-+}
-+function feedbackBlock(title, call) {
-+  return append(el('div', '', 'platform-ops-card platform-access-feedback'), el('h3', title),
-+    el('p', `${CALL_STATUS[call.status] || dash(call.status)}${call.result ? ` · ${CALL_RESULT[call.result] || call.result}` : ''}${call.errorCode ? ` · ${accessResult(call.errorCode)}` : ''}${call.declinedReason ? ` · ${call.declinedReason}` : ''}`),
-+    call.note ? append(el('div', '', 'platform-ops-data-section'), el('h4', '备注（模型自评，未核实）'), el('p', call.note)) : null,
-+    list(call.basis).length ? append(el('div', '', 'platform-ops-data-section'), el('h4', '判断依据'), basisTable(call.basis)) : null,
-+    el('p', `发布 ${dash(call.publishId)} · 用时 ${seconds(call.latencyMs)} · Agent 版本 ${dash(call.agentVersion)}${call.repaired ? ' · 修正过一次' : ''}`, 'platform-ops-note'));
-+}
-+function callsPanel(opts) {
-+  const box = el('section', '', 'platform-access-calls'), rows = el('div'), detail = el('div');
-+  const message = el('p', '', 'platform-ops-dialog-result'); message.setAttribute?.('role', 'status');
-+  async function load() {
-+    message.textContent = '';
-+    let data;
-+    try { data = await opts.calls(); } catch (error) { message.textContent = error?.message || '调用记录暂时读不到'; return; }
-+    rows.replaceChildren(table(['时间', '单据', '任务', '发布', '触发', '状态', '结论', '用时', '操作'], list(data?.items).map(call => [
-+      time(call.at), dash(call.number), accessTasks([call.contractTask || call.task]), dash(call.publishId), CALL_TRIGGER[call.trigger] || dash(call.trigger),
-+      `${CALL_STATUS[call.status] || dash(call.status)}${call.errorCode ? `（${accessResult(call.errorCode)}）` : ''}`, CALL_RESULT[call.result] || '—', seconds(call.latencyMs),
-+      append(el('div', '', 'platform-access-actions'), button('查看反馈', () => detail.replaceChildren(feedbackBlock(`${dash(call.number)} · 第 ${dash(call.round)} 轮`, call)), true))]), '还没有调用记录'));
++    }, opts, true);
++    drawer.replaceChildren(el('p', '没连 Nexus，或列表里没有的发布：贴上它的 A2A 地址和调用密钥（都在 Nexus「互联中心 › 对外发布」）。', 'platform-access-meta'),
++      labelled('A2A 地址', address), labelled('调用密钥', key), append(el('div', '', 'platform-access-actions'), go, act('取消', () => { drawer.hidden = true; }, opts)));
++    drawer.hidden = false; say('');
++    address.focus?.();
 +  }
-+  append(box, el('h2', '调用记录'), el('p', '每一轮 AI 独立建议一行（新的在前）：发给哪个发布、结论和用时；点「查看反馈」看 Agent 返回的备注和逐条依据。', 'platform-ops-note'),
-+    append(el('div', '', 'platform-access-actions'), button('刷新调用记录', () => void load(), true)), rows, detail, message);
-   void load();
-+  return Object.assign(box, { reload: load });
++  const manual = act('手动添加 Agent', manualForm, opts);
++  if (!opts.nexus) append(bar, append(el('div', '', 'platform-access-bar-text'), el('strong', '登记 Nexus 上的发布'), el('span', '贴上它的 A2A 地址和调用密钥，平台当场验证后加密保存。', 'platform-access-id')), append(el('div', '', 'platform-access-actions'), manual));
++  else if (state.nexus?.connected) {
++    append(bar, append(el('div', '', 'platform-access-bar-text'), append(el('div', '', 'platform-access-head'), pill('已连接 Nexus', 'green'), el('strong', state.nexus.user || '')),
++      el('span', '下面列出你在 Nexus 上发布、开了 A2A 的 Agent。', 'platform-access-id')),
++      append(el('div', '', 'platform-access-actions'), act('刷新', () => void refresh(), opts),
++        act('断开 Nexus', async () => { try { await opts.nexus.disconnect(); } catch { /* 照样刷新 */ } await refresh(); }, opts), manual));
++  } else {
++    const apiKey = secretInput('apiKey', 'nxc_ 开头，贴一次即可');
++    const connect = act('连接 Nexus', async () => {
++      const value = String(apiKey.value || '').trim(); apiKey.value = '';
++      if (!value) { say('请贴上 Nexus API 密钥', 'error'); return; }
++      connect.disabled = true; say('正在连接 Nexus…');
++      try { await opts.nexus.connect(value); await refresh(); } catch (error) { say(error?.message || '没有连上，请稍后重试', 'error'); } finally { connect.disabled = false; }
++    }, opts, true);
++    append(bar, append(el('div', '', 'platform-access-bar-text'), el('strong', '连接 Nexus，列出你发布的 Agent'),
++      el('span', 'Nexus API 密钥在 Nexus「个人设置 › API 密钥」新建；不连也可以手动添加。', 'platform-access-id')),
++      append(el('div', '', 'platform-access-connect'), apiKey, connect, manual));
++  }
++  append(bar, drawer, message);
++  if (state.nexusError) say(state.nexusError, 'error');
++  return bar;
 +}
-+function testPanel(opts, onDone) {
-+  const box = el('section', '', 'platform-ops-card platform-access-test');
-+  const select = document.createElement('select'); select.name = 'document';
-+  const result = el('div'), message = el('p', '', 'platform-ops-dialog-result'); message.setAttribute?.('role', 'status');
-+  const say = (text, kind = '') => { message.textContent = text; message.className = `platform-ops-dialog-result ${kind}`; };
-+  let documents = [];
-+  const run = button('运行一轮 AI 独立建议', async () => {
-+    const document = documents.find(item => item.id === select.value);
-+    if (!document) { say('请先选一张对公付款单', 'error'); return; }
-+    run.disabled = true; result.replaceChildren(); say(`已发起：${document.number}，Nexus 上的审核 Agent 一般一到两分钟给出结论…`);
-+    try {
-+      try { await opts.test.run(document); } catch (error) { if (error?.status !== 409) throw error; }   // 409：这一轮已经在跑，接着等它
-+      const started = Date.now();
-+      for (;;) {
-+        const advice = await opts.test.view(document.id);
-+        if (['completed', 'failed', 'declined'].includes(advice?.status) && advice.stale !== true) {
-+          result.replaceChildren(feedbackBlock(`${document.number} 的审核结果`, { ...advice, latencyMs: Date.parse(advice.finishedAt) - Date.parse(advice.startedAt), declinedReason: advice.declinedReason }));
-+          say(advice.status === 'completed' ? '已完成，结果在下面，也已记进调用记录。' : '这一轮没有给出结论，原因在下面。', advice.status === 'completed' ? 'success' : 'error');
-+          break;
-+        }
-+        if (Date.now() - started > 300000) { say('五分钟内没有结果：稍后在调用记录里看', 'error'); break; }
-+        await new Promise(resolve => setTimeout(resolve, 3000));
-+      }
-+      onDone?.();
-+    } catch (error) { say(error?.message || '没有发起成功，请稍后重试', 'error'); }
-+    finally { run.disabled = false; }
-+  }, opts.platformAdmin);
-+  append(box, el('h2', '手动测试'), el('p', '选一张对公付款单，按当前的路由发起一轮 AI 独立建议（和自动初审同一条路），结果出来后显示在下面，也会记进调用记录。每次都会真实调用 Nexus。', 'platform-ops-note'),
-+    append(el('div', '', 'platform-ops-dialog-field'), el('label', '对公付款单'), select), run, message, result);
-+  void (async () => {
-+    try { documents = await opts.test.documents(); } catch (error) { say(error?.message || '读不到单据', 'error'); return; }
-+    select.replaceChildren(...documents.map(item => { const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.number} · ${item.title || item.formName || ''}`; return option; }));
-+    if (!documents.length) say('单据池里还没有对公付款单');
-+  })();
-   return box;
++
++function callsCard(opts) {
++  const box = el('section', '', 'platform-ops-card platform-access-calls'), rows = el('div'), detail = el('div'), message = statusLine(), say = sayer(message);
+   async function load() {
+-    let state;
+-    try { state = await opts.nexus.status(); } catch (error) { say(error?.message || '读不到 Nexus 连接', 'error'); return; }
+-    if (!state?.connected) { paintConnect(); return; }
+-    head.replaceChildren(el('p', `已连接 Nexus（${state.user || '—'}）。下面是你在 Nexus 上已发布、开了 A2A 的 Agent；启用时只需贴它的调用密钥。`, 'platform-ops-note'),
+-      append(el('div', '', 'platform-access-actions'), button('刷新发布列表', () => void load(), opts.platformAdmin),
+-        button('断开 Nexus', async () => { try { await opts.nexus.disconnect(); } catch { /* 断开失败也照样重画 */ } await load(); }, opts.platformAdmin)));
+-    say('正在读取 Nexus 上的发布…');
+-    try { paintList((await opts.nexus.publications())?.items); say(''); } catch (error) { say(error?.message || '读不到发布列表', 'error'); }
++    let data;
++    try { data = await opts.calls(); say(''); } catch (error) { say(error?.message || '调用记录暂时读不到', 'error'); return; }
++    rows.replaceChildren(table(['时间', '单据', '发给', '触发', '结论', '用时', ''], list(data?.items).map(call => {
++      const [label, color] = CALL_RESULT[call.result] || [`${CALL_STATUS[call.status] || dash(call.status)}${call.errorCode ? `：${accessResult(call.errorCode)}` : ''}`, call.status === 'failed' ? 'amber' : ''];
++      return [time(call.at), dash(call.number), dash(call.publishId), CALL_TRIGGER[call.trigger] || dash(call.trigger), pill(label, color), seconds(call.latencyMs),
++        act('查看反馈', () => { detail.replaceChildren(callFeedback(call)); detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, opts)];
++    }), '还没有调用记录：单据读完详情后九安会自动发起，也可以在上面「测试」'));
+   }
+-  append(box, el('h2', 'Nexus 上已发布的 Agent'), head, rows, message);
++  append(box, append(el('div', '', 'platform-access-section-head'), el('h2', '调用记录'), act('刷新', () => void load(), opts)),
++    el('p', '每一轮 AI 独立建议一行，新的在前：自动初审、单据页发起和这里的测试都在。点「查看反馈」看 Agent 返回的备注和逐条依据。', 'platform-access-meta'), rows, detail, message);
+   void load();
+-  return box;
++  return Object.assign(box, { reload: load });
  }
++
  function agentAccessPage(payload, opts) {
-@@ -421,6 +532,8 @@
-     audit.replaceChildren(table(['时间', '操作人', '操作', '发布编号', '结果', '密钥指纹', '原因'], list(data?.audit).slice().reverse().map(item => [time(item.at), dash(item.actor), ACCESS_ACTIONS[item.action] || '操作待核实', dash(item.publishId), accessResult(item.result), item.fingerprint ? `指纹 ${item.fingerprint}` : '—', dash(item.reason)]), '还没有操作记录'));
-   };
-   const after = run => async input => { try { return await run(input); } finally { try { if (opts.reload) paint(await opts.reload()); } catch { /* the form already says what happened */ } } };
-+  const nexusBox = opts.nexus && payload.configured !== false ? nexusPublications(opts, () => current, after(input => opts.onEnable?.(input))) : null;
-+  const callsBox = opts.calls ? callsPanel(opts) : null;
-   const show = (kind, publishId) => {
-     const key = secretInput('key', '调用密钥（nxa_ 开头，粘贴后不会再显示）');
-     const forms = {
-@@ -433,8 +546,9 @@
+   const root = el('section', '', 'platform-ops-page platform-access-page');
+-  const records = el('div', '', 'platform-access-records'), audit = el('div', '', 'platform-access-audit'), panel = el('div', '', 'platform-access-panel');
+-  // The list and the log are repainted in place after a write, so the form keeps saying what happened.
+-  let current = list(payload?.records);
+-  const paint = data => {
+-    current = list(data?.records);
+-    records.replaceChildren(table(['发布编号', '名片名称', '声明的任务', '状态', '调用密钥', '启用人 · 时间', '最近验证', '操作'], list(data?.records).map(record => accessRow(record, opts, show)), '还没有启用任何发布'));
+-    audit.replaceChildren(table(['时间', '操作人', '操作', '发布编号', '结果', '密钥指纹', '原因'], list(data?.audit).slice().reverse().map(item => [time(item.at), dash(item.actor), ACCESS_ACTIONS[item.action] || '操作待核实', dash(item.publishId), accessResult(item.result), item.fingerprint ? `指纹 ${item.fingerprint}` : '—', dash(item.reason)]), '还没有操作记录'));
+-  };
+-  const after = run => async input => { try { return await run(input); } finally { try { if (opts.reload) paint(await opts.reload()); } catch { /* the form already says what happened */ } } };
+-  const show = (kind, publishId) => {
+-    const key = secretInput('key', '调用密钥（nxa_ 开头，粘贴后不会再显示）');
+-    const forms = {
+-      rotate: () => accessForm(`换钥匙：${publishId}`, '验证并更换', [key], after(({ values, reason }) => opts.onRotate?.({ publishId, key: values.key, reason })), result => `已更换，新密钥指纹 ${result?.fingerprint || '—'}。`),
+-      refresh: () => accessForm(`复核：${publishId}`, '用已存的密钥复核', [], after(({ reason }) => opts.onRefresh?.({ publishId, reason })), result => `复核完成：${ACCESS_STATUS[result?.status] || '状态待核实'}。`),
+-      disable: () => accessForm(`停用：${publishId}`, '停用', [], after(({ reason }) => opts.onDisable?.({ publishId, reason })), () => '已停用，已存的密钥已清除。'),
+-    };
+-    panel.replaceChildren(forms[kind]());
+-  };
++  const state = { records: list(payload?.records), audit: list(payload?.audit), nexus: null, published: [], nexusError: '' };
++  const bar = el('div'), agents = el('div', '', 'platform-access-agents'), audit = el('div');
++  const calls = opts.calls ? callsCard(opts) : null;
++  const agentOpts = { ...opts, onCallsChanged: () => calls?.reload?.() };
++  const usable = payload.configured !== false;
++  function paint() {
++    bar.replaceChildren(usable ? nexusBar(opts, state, refresh) : '');
++    const merged = mergeAgents(state.records, state.published);
++    agents.replaceChildren(...(merged.length ? merged.map(agent => agentCard(agent, agentOpts, refresh))
++      : [el('p', state.nexus?.connected ? '你在 Nexus 上还没有开了 A2A 的发布。' : '还没有 Agent：连接 Nexus 列出你发布的 Agent，或手动添加。', 'platform-access-empty')]));
++    audit.replaceChildren(append(el('details', '', 'platform-access-audit'), el('summary', `操作记录（${state.audit.length} 条）`),
++      table(['时间', '操作人', '操作', '发布编号', '结果', '密钥指纹', '原因'], state.audit.slice().reverse().map(entry => [time(entry.at), dash(entry.actor), ACCESS_ACTIONS[entry.action] || '操作待核实',
++        dash(entry.publishId), accessResult(entry.result), entry.fingerprint ? `指纹 ${entry.fingerprint}` : '—', dash(entry.reason)]), '还没有操作记录')));
++  }
++  async function refresh() {
++    try { const data = opts.reload ? await opts.reload() : null; if (data) { state.records = list(data.records); state.audit = list(data.audit); } } catch { /* 留着上一份 */ }
++    state.nexusError = '';
++    if (opts.nexus && usable) {
++      try { state.nexus = await opts.nexus.status(); } catch (error) { state.nexus = null; state.nexusError = error?.message || '读不到 Nexus 连接'; }
++      if (state.nexus?.connected) {
++        try { state.published = list((await opts.nexus.publications())?.items); } catch (error) { state.published = []; state.nexusError = error?.message || '读不到 Nexus 上的发布'; }
++      } else state.published = [];
++    }
++    paint();
++    calls?.reload?.();
++  }
    append(root, el('h2', 'Agent 接入', 'platform-ops-title'),
-     el('p', '连一次 Nexus，列出你在 Nexus 上已发布的 Agent；启用时只贴它的调用密钥，平台当场验证名片与密钥后加密保存。只有管理员能操作，每次操作留痕；页面和接口都不显示密钥原文，只显示指纹与状态。密钥由发布者本人在 Nexus 网页签发，请直接粘贴到下面，不要经聊天或邮件转发。', 'platform-ops-note'),
-     payload.configured === false ? el('div', '部署配置里没有 Nexus 地址，暂不能启用 Agent。', 'platform-paused-reason') : null,
+-    el('p', '连一次 Nexus，列出你在 Nexus 上已发布的 Agent；启用时只贴它的调用密钥，平台当场验证名片与密钥后加密保存。只有管理员能操作，每次操作留痕；页面和接口都不显示密钥原文，只显示指纹与状态。密钥由发布者本人在 Nexus 网页签发，请直接粘贴到下面，不要经聊天或邮件转发。', 'platform-ops-note'),
+-    payload.configured === false ? el('div', '部署配置里没有 Nexus 地址，暂不能启用 Agent。', 'platform-paused-reason') : null,
 -    opts.nexus && payload.configured !== false ? nexusPublications(opts, () => current, after(input => opts.onEnable?.(input))) : null,
 -    el('h2', '已启用的发布'), records, panel,
-+    nexusBox, el('h2', '已启用的发布'), records,
-+    payload.configured !== false && opts.platformAdmin ? manualEnable(opts, after(input => opts.onEnable?.(input)), () => nexusBox?.reload?.()) : null, panel,
-+    opts.test ? testPanel(opts, () => callsBox?.reload?.()) : null, callsBox,
-     el('h2', '操作记录'), audit);
-   paint(payload);
+-    el('h2', '操作记录'), audit);
+-  paint(payload);
++    el('p', '把 Nexus 上的 Agent 接进九安。启用时只需贴它的调用密钥，平台当场验证名片与密钥后加密保存；页面和接口只显示密钥指纹，不显示原文。只有管理员能操作，每次操作留痕。', 'platform-access-lede'),
++    usable ? null : el('div', '部署配置里没有 Nexus 地址，暂不能启用 Agent。', 'platform-paused-reason'),
++    bar, agents, calls, audit);
++  paint();
++  if (usable) void refresh();
    return root;
---- a/public/analysis.js	2026-10-26 01:09:48
-+++ b/public/analysis.js	2026-10-26 01:09:48
-@@ -1786,7 +1786,13 @@
-     nexus: { status: () => api('/platform/agent-access/nexus'),
-       connect: apiKey => api('/platform/agent-access/nexus', { method: 'POST', body: { apiKey }, timeoutMs: 60000 }),
-       disconnect: () => api('/platform/agent-access/nexus/disconnect', { method: 'POST', body: {} }),
--      publications: () => api('/platform/agent-access/publications', { timeoutMs: 60000 }) },
-+      publications: () => api('/platform/agent-access/publications', { timeoutMs: 60000 }),
-+      declare: publishId => api(`/platform/agent-access/publications/${id(publishId)}/declare`, { method: 'POST', body: {}, timeoutMs: 60000 }) },
-+    // Bench patch 0002: the call log and the manual test (one AI 独立建议 round on a corporate payment, the same path as the automatic one).
-+    calls: () => api('/platform/agent-access/calls'),
-+    test: { documents: async () => { const data = await api('/documents?limit=50'); return (Array.isArray(data?.items) ? data.items : []).filter(item => item.type === 'corporate_payment'); },
-+      run: document => api(`/documents/${encodeURIComponent(String(document.id || ''))}/advice`, { method: 'POST', body: { sourceVersion: document.version } }),
-+      view: documentId => api(`/documents/${encodeURIComponent(String(documentId || ''))}/advice`) },
-     reload: () => api('/platform/agent-access') };
  }
  

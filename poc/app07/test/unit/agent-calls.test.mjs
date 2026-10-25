@@ -25,21 +25,24 @@ async function call(routes, { role = 'admin', path = PATH } = {}) {
   const handled = await routes.handle({ req: { method: 'GET' }, path, session: { user: { role } }, res });
   return { handled, status, payload };
 }
-const routes = agentCallRoutes({ tenantId: 't1', tasks: ['review_advice'], agentTaskKey, listDocuments: async () => DOCS, readState: async key => STATES.get(key) ?? null });
+const TEST_ROW = { at: '2026-10-26T02:03:00.000Z', trigger: 'test', number: 'DGZF-F07-001', status: 'completed', result: 'fail', publishId: 'pub_b' };
+const routes = agentCallRoutes({ tenantId: 't1', tasks: ['review_advice'], agentTaskKey, listDocuments: async () => DOCS, readState: async key => STATES.get(key) ?? null,
+  extraRows: () => [TEST_ROW] });
 
 test('调用记录：每张单的当前一轮和历史都列出来，新的在前；带单据号、发给哪个发布、结论、用时和 Agent 返回的备注与依据', async () => {
   const { status, payload } = await call(routes);
   assert.equal(status, 200);
   const items = payload.data.items;
-  assert.deepEqual(items.map(item => [item.number, item.round, item.status]), [['DGZF-F07-002', 1, 'running'], ['DGZF-F07-001', 2, 'completed'], ['DGZF-F07-001', 1, 'failed']]);
-  const done = items[1];
+  assert.deepEqual(items.map(item => [item.number, item.trigger, item.status]), [['DGZF-F07-002', 'upstream', 'running'], ['DGZF-F07-001', 'test', 'completed'],
+    ['DGZF-F07-001', 'upstream', 'completed'], ['DGZF-F07-001', 'upstream', 'failed']], '手动测试的结果也在调用记录里，按时间排');
+  const done = items[2];
   assert.equal(done.result, 'pass');
   assert.equal(done.latencyMs, 70_000);
   assert.equal(done.publishId, 'pub_a');
   assert.equal(done.agentVersion, 'jiuan-audit-ai-kb-2026-10-25.1');
   assert.equal(done.note, '核对一致');
   assert.deepEqual(done.basis, [{ kind: 'rule', ref: 'C05-3.4 费控报销特殊事项', page: null, note: '适用审批路径…' }]);
-  assert.equal(items[2].errorCode, 'AGENT_TASK_UNROUTED');
+  assert.equal(items[3].errorCode, 'AGENT_TASK_UNROUTED');
   assert.equal(items[0].latencyMs, null);
 });
 

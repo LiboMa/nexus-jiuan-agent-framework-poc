@@ -75,41 +75,86 @@ test('构建不改 source/ 下的开发包', async t => {
   assert.equal(await digestTree(SOURCE), before);
 });
 
-test('补丁：「Agent 接入」页改成连一次 Nexus、列出已发布的 Agent、启用只贴调用密钥（不再手填发布编号）', async t => {
+// 页面测试用的最小 DOM：只够 platform-ops.js 画「Agent 接入」页、点按钮
+class FakeNode {
+  constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], attributes: {}, listeners: {}, className: '', hidden: false, value: '', own: '' }); }
+  get classList() { return { add: (...names) => { this.className = [...new Set([...this.className.split(' ').filter(Boolean), ...names])].join(' '); } }; }
+  append(...nodes) { for (const node of nodes) this.children.push(typeof node === 'string' ? Object.assign(new FakeNode('#text'), { own: node }) : node); }
+  replaceChildren(...nodes) { this.children = []; this.own = ''; this.append(...nodes); }
+  set textContent(value) { this.children = []; this.own = String(value); }
+  get textContent() { return this.own + this.children.map(child => child.textContent).join(''); }
+  setAttribute(name, value) { this.attributes[name] = value; }
+  addEventListener(type, listener) { (this.listeners[type] ??= []).push(listener); }
+  async click() { for (const listener of this.listeners.click ?? []) await listener(); }
+  focus() {} scrollIntoView() {}
+  all(test, found = []) { if (test(this)) found.push(this); for (const child of this.children) child.all(test, found); return found; }
+}
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+async function builtPage(t) {
   const out = path.join(await mkdtemp(path.join(tmpdir(), 'jiuan07-')), 'jiuan07');
   t.after(() => rm(path.dirname(out), { recursive: true, force: true }));
   await build(out);
-  const ops = await readFile(path.join(out, 'public/platform-ops.js'), 'utf8');
+  return out;
+}
+
+test('补丁 0001–0002：「Agent 接入」页的接口都接上，九安的写请求白名单放行连接、断开 Nexus 和测试', async t => {
+  const out = await builtPage(t);
   const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
-  assert.match(ops, /function nexusPublications\(opts, currentRecords, enable\)/);
-  assert.match(ops, /'Nexus 上已发布的 Agent'/);
-  assert.doesNotMatch(ops, /'启用一个发布'/, '不再有手填发布编号的启用表单');
-  assert.match(analysis, /nexus: \{ status: \(\) => api\('\/platform\/agent-access\/nexus'\)/);
-  // 九安对 /platform 下的写请求有白名单（analysis-server.mjs），连接、断开 Nexus 的两个 POST 要在上面，否则回 404
+  for (const call of ["status: () => api('/platform/agent-access/nexus')", "publications: () => api('/platform/agent-access/publications'",
+    "calls: () => api('/platform/agent-access/calls')", "documents: () => api('/platform/agent-access/test-documents')",
+    'start: (publishId, documentId) => api(`/platform/agent-access/${id(publishId)}/test`']) assert.ok(analysis.includes(call), `缺 ${call}`);
+  // 九安对 /platform 下的写请求有白名单（analysis-server.mjs），不在上面的 POST 回 404（页面显示「这项内容当前不可用…」）
   const server = await readFile(path.join(out, 'analysis-server.mjs'), 'utf8');
   assert.match(server, /path === PREFIX \+ '\/platform\/agent-access\/nexus' \|\| path === PREFIX \+ '\/platform\/agent-access\/nexus\/disconnect'/);
-  await run('node', ['--check', path.join(out, 'analysis-server.mjs')]);
-  await run('node', ['--check', path.join(out, 'public/platform-ops.js')]);
-  await run('node', ['--check', path.join(out, 'public/analysis.js')]);
-});
-
-test('补丁 0002：「Agent 接入」页加手动启用（A2A 地址 + 调用密钥）、在名片上声明、手动测试和调用记录', async t => {
-  const out = path.join(await mkdtemp(path.join(tmpdir(), 'jiuan07-')), 'jiuan07');
-  t.after(() => rm(path.dirname(out), { recursive: true, force: true }));
-  await build(out);
+  assert.ok(server.includes(String.raw`/^\/api\/analysis\/v1\/platform\/agent-access\/pub_[A-Za-z0-9_-]{4,80}\/test$/u.test(path)`));
   const ops = await readFile(path.join(out, 'public/platform-ops.js'), 'utf8');
-  for (const name of ['function manualEnable(', 'function callsPanel(', 'function testPanel(', "'在名片上声明'", "'调用记录'", "'手动测试'", "'手动启用（A2A 地址 + 调用密钥）'"]) {
-    assert.ok(ops.includes(name), `缺 ${name}`);
-  }
-  const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
-  assert.match(analysis, /calls: \(\) => api\('\/platform\/agent-access\/calls'\)/);
-  assert.match(analysis, /declare: publishId => api\(`\/platform\/agent-access\/publications\/\$\{id\(publishId\)\}\/declare`/);
-  const server = await readFile(path.join(out, 'analysis-server.mjs'), 'utf8');
-  assert.match(server, /platform\\\/agent-access\\\/publications\\\/\[\^\/\]\+\\\/declare\$/);
-  // 手动启用：粘贴 Nexus 上的 A2A 地址，从里面取出发布编号
+  assert.doesNotMatch(ops, /'启用一个发布'/, '不再有手填发布编号的启用表单');
+  assert.match(await readFile(path.join(out, 'public/platform-center.css'), 'utf8'), /\.platform-access-agent\{/);
+  for (const file of ['analysis-server.mjs', 'public/platform-ops.js', 'public/analysis.js']) await run('node', ['--check', path.join(out, file)]);
   const { publishIdFrom } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
   assert.equal(publishIdFrom('https://nxs-beine1013.tinyboat.blog/a2a/pub_5c53e70d8dc7ddea'), 'pub_5c53e70d8dc7ddea');
   assert.equal(publishIdFrom(' https://nxs-beine1013.tinyboat.blog/a2a/pub_5c53e70d8dc7ddea/.well-known/agent-card.json '), 'pub_5c53e70d8dc7ddea');
   assert.equal(publishIdFrom('pub_5c53e70d8dc7ddea'), 'pub_5c53e70d8dc7ddea');
   assert.equal(publishIdFrom('https://example.invalid/whatever'), '');
+});
+
+test('补丁 0002：一张表列出 Nexus 上的发布和已启用的 Agent，每张卡只给合用的操作；启用只贴调用密钥，原因自动填', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  const enabled = [];
+  const active = { publishId: 'pub_audit0001', status: 'active', fingerprint: 'ab12cd34', verifiedAt: '2026-10-26T01:00:00Z', card: { name: '九安审核AI（PoC）', tasks: ['review_advice@1'], declaredBy: 'card' } };
+  const opts = { platformAdmin: true,
+    reload: async () => ({ records: [active], audit: [] }),
+    onEnable: async input => { enabled.push(input); return { fingerprint: 'ff00ff00' }; },
+    calls: async () => ({ items: [{ at: '2026-10-26T01:02:00Z', number: 'DGZF-F07-001', publishId: 'pub_audit0001', trigger: 'upstream', status: 'completed', result: 'pass', latencyMs: 61000,
+      note: '核对一致', basis: [{ kind: 'rule', ref: 'C05-3.4', page: null, note: '…' }] }] }),
+    agentTest: { documents: async () => ({ items: [] }), start: async () => ({}), view: async () => ({}) },
+    nexus: { status: async () => ({ connected: true, user: 'admin' }), publications: async () => ({ items: [
+      { publishId: 'pub_audit0001', name: '九安审核AI（PoC）', tasks: ['review_advice@1'], declaredBy: 'card', enableable: true, a2aReady: true, problems: [] },
+      { publishId: 'pub_newagent01', name: '新发布的 Agent', tasks: ['review_advice@1'], declaredBy: 'platform', enableable: true, a2aReady: true, problems: [] },
+      { publishId: 'pub_broken0001', name: '不合契约的', tasks: [], declaredBy: null, enableable: false, a2aReady: true, problems: ['不支持流式'] },
+    ] }) } };
+  const page = renderPlatformOps('agentAccess', { records: [active], audit: [] }, opts);
+  await settle(); await settle();
+  const cards = page.all(node => node.className === 'platform-access-agent');
+  assert.equal(cards.length, 3, '同一个发布只出现一次');
+  const shown = card => card.all(node => node.tagName === 'BUTTON').map(node => node.textContent);
+  assert.deepEqual(cards.map(shown), [['测试', '停用', '复核'], ['启用'], []]);
+  assert.match(cards[0].textContent, /已启用.*pub_audit0001.*密钥指纹 ab12cd34/s);
+  assert.match(cards[1].textContent, /未启用.*（名片没有声明，由平台指定）/s, '名片只差契约 / 任务两行的照样能启用');
+  assert.match(cards[2].textContent, /不能启用：不支持流式/);
+  assert.match(page.textContent, /已连接 Nexus.*admin/s);
+  assert.match(page.textContent, /调用记录.*DGZF-F07-001.*建议通过/s);
+  // 启用：只贴调用密钥，发布编号来自卡片，原因自动填；密钥框提交后清空
+  await cards[1].all(node => node.textContent === '启用' && node.tagName === 'BUTTON')[0].click();
+  const key = cards[1].all(node => node.tagName === 'INPUT')[0];
+  assert.equal(key.type, 'password');
+  const pasted = 'nxa_' + 'g'.repeat(43);
+  key.value = ` ${pasted} `;
+  await cards[1].all(node => node.textContent === '验证并启用')[0].click();
+  assert.deepEqual(enabled, [{ publishId: 'pub_newagent01', key: pasted, reason: '在「Agent 接入」页启用' }]);
+  assert.equal(key.value, '');
 });
