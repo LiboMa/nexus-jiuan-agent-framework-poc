@@ -18,6 +18,7 @@ import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
+import { withOriginalsFirst } from './originals-first.mjs';
 import * as J from './jiuan.mjs';
 
 const log = code => console.error(code);
@@ -83,7 +84,7 @@ const pipelineAdapters = {
   'hly.report-detail': J.reportDetail.createReportDetailAdapter({ pool, lockPool, analysisStore: store, key, connectionId: config.connectionId, companyIds: scope.companyIds }),
   'hly.detail-projection': J.detailProjection.createDetailProjectionAdapter({ pool: lockPool, key }),
   'hly.attachment-fetch': paused(), 'local.attachment-extract': paused(), 'sap.payment-snapshot': paused(), 'sap.procurement-production': paused(),
-  'audit.ai-advice': { ...reviewAdviceAdapter, async execute(ctx) { await readOriginalsFirst(); return reviewAdviceAdapter.execute(ctx); } },
+  'audit.ai-advice': withOriginalsFirst(reviewAdviceAdapter, { readOriginals: readOriginalsFirst, log }),
   'audit.element-check': J.elementCheck.createElementCheckAdapter({ ...scope, getTaskService: () => agentTasks }),
   'finance.expense-type-agents': paused(),
 };
