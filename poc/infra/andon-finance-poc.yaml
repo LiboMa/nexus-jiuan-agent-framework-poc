@@ -46,6 +46,10 @@ Parameters:
     Type: String
     Default: pub_5c53e70d8dc7ddea
     AllowedPattern: '^pub_[A-Za-z0-9_-]{4,80}$'
+  Jiuan07DomainName:
+    Type: String
+    Default: jiuan-v0710.tinyboat.blog
+    Description: Site for the Jiuan v0.7.10 test copy. Its own CloudFront distribution reaches the same instance port; the PoC process forwards this Host to v0.7.10 on 127.0.0.1:4181 (the security group stays one rule, see poc/app/host-proxy.mjs).
 
 Resources:
   ArtifactBucket:
@@ -291,9 +295,61 @@ Resources:
       Type: AAAA
       AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
 
+  Jiuan07Distribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: OriginRecord
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Jiuan v0.7.10 test copy on the andon-finance bench (fictitious data)
+        Aliases: [!Ref Jiuan07DomainName]
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: andon-finance-ec2
+            DomainName: !Ref OriginDomainName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: !Ref AppPort
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+        DefaultCacheBehavior:
+          TargetOriginId: andon-finance-ec2
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # Managed-CachingDisabled; Managed-AllViewer forwards Host (the PoC process forwards by it), Origin, Cookie and query strings.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  Jiuan07RecordA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref Jiuan07DomainName
+      Type: A
+      AliasTarget: { DNSName: !GetAtt Jiuan07Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
+  Jiuan07RecordAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref Jiuan07DomainName
+      Type: AAAA
+      AliasTarget: { DNSName: !GetAtt Jiuan07Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
 Outputs:
   SiteUrl:
     Value: !Sub 'https://${DomainName}'
+  Jiuan07Url:
+    Value: !Sub 'https://${Jiuan07DomainName}'
   InstanceId:
     Value: !Ref Instance
   ArtifactBucketName:

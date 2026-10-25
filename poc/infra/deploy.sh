@@ -9,7 +9,7 @@ set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
 STACK="andon-finance-poc"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SECRETS="$HERE/secrets.env"
 POC_DIR="$(cd "$HERE/.." && pwd)"
 APP_DIR="$POC_DIR/app"
@@ -40,6 +40,10 @@ say "生成前端副本"
 
 say "构建九安副本（开发包 + 补丁 + mysql2）"
 "$POC_DIR/bench/build-jiuan.sh"
+
+say "构建九安 v0.7.10 副本（按清单复制 + mysql2），跑测试台外壳的单元测试"
+"$POC_DIR/bench/build-jiuan07.sh"
+(cd "$POC_DIR/app07" && node --test "test/unit/**/*.test.mjs")
 
 if ! $CODE_ONLY; then
   say "建栈或更新栈 ${STACK}（第一次建 CloudFront 约需 5–15 分钟）"
@@ -77,9 +81,9 @@ if ! grep -q '^REGISTRY_KEY=' "$SECRETS"; then
 fi
 # >>> bench-secrets
 # 测试台（MySQL 与九安存储）的三项密钥：缺了才补，已有的永远不改。换了 BENCH_DATA_KEY，九安的库就打不开了。
-for name in BENCH_MYSQL_ROOT_PASSWORD BENCH_MYSQL_APP_PASSWORD BENCH_DATA_KEY; do
+for name in BENCH_MYSQL_ROOT_PASSWORD BENCH_MYSQL_APP_PASSWORD BENCH_DATA_KEY JIUAN07_MYSQL_APP_PASSWORD JIUAN07_DATA_KEY; do
   grep -q "^${name}=" "$SECRETS" && continue
-  if [[ "$name" == "BENCH_DATA_KEY" ]]; then value="$(openssl rand -base64 32)"; else value="$(openssl rand -hex 16)"; fi
+  if [[ "$name" == *_DATA_KEY ]]; then value="$(openssl rand -base64 32)"; else value="$(openssl rand -hex 16)"; fi
   printf '%s\n' "# 测试台：只补不换（${name}）" "${name}=${value}" >> "$SECRETS"
   echo "已在 ${SECRETS} 里补上 ${name}"
 done
@@ -89,11 +93,14 @@ chmod 600 "$SECRETS"
 say "打包并上传构件"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench"
+mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/jiuan07"
 rsync -a --exclude test --exclude node_modules --exclude .DS_Store "$APP_DIR/" "$STAGE/release/app/"
 # 九安取构建出来的副本：已经不含 tests、deploy，带着锁定版本的 node_modules（mysql2）。
 rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan/" "$STAGE/release/jiuan/"
 rsync -a --exclude .DS_Store "$HERE/bench/" "$STAGE/release/bench/"
+# 九安 v0.7.10：测试台外壳（不带测试和冒烟脚本）和按清单复制的副本（不含 seeds、database、tests、deploy、scripts）
+rsync -a --exclude test --exclude scripts --exclude node_modules --exclude .DS_Store "$POC_DIR/app07/" "$STAGE/release/app07/"
+rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan07/" "$STAGE/release/jiuan07/"
 cp "$OPERATOR_SCRIPT" "$STAGE/release/operator/scripts/nexus.py"
 # macOS 的 tar 默认会带上 AppleDouble（._*）和扩展属性，实例上解包会多出垃圾文件和告警。
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf "$STAGE/current.tgz" -C "$STAGE/release" .
@@ -130,9 +137,12 @@ POC_PUBLIC_DIR=/opt/andon-finance/current/app/public
 ENVFILE
 )"
 ENV_B64="$(printf '%s\n' "$ENV_FILE" | base64 | tr -d '\n')"
+# 九安 v0.7.10 的站点：栈还没更新到有这个参数时（先跑了 --code-only）用模板的默认值
+J07_DOMAIN="$(param Jiuan07DomainName)"
+[[ -n "$J07_DOMAIN" && "$J07_DOMAIN" != None ]] || J07_DOMAIN=jiuan-v0710.tinyboat.blog
 # 先装密钥配置文件（root:andon 0640），再写 env，最后重启；任何一步失败都不重启。
-INSTALL="aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors && chown root:andon /etc/andon-finance/secrets.env.new && chmod 0640 /etc/andon-finance/secrets.env.new && mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env && echo $ENV_B64 | base64 -d > /etc/andon-finance/env && chmod 0644 /etc/andon-finance/env && rm -rf /var/tmp/andon-bench-config && mkdir -p /var/tmp/andon-bench-config && aws s3 cp s3://$BUCKET/releases/current.tgz /var/tmp/andon-bench-config/release.tgz --region $REGION --only-show-errors && tar -xzf /var/tmp/andon-bench-config/release.tgz -C /var/tmp/andon-bench-config ./bench && bash /var/tmp/andon-bench-config/bench/bench-configure.sh $POC_STORE && systemctl restart andon-finance-poc.service"
-COMMANDS="$(printf '{"commands":["%s","sleep 5","systemctl is-active andon-finance-poc.service"]}' "$INSTALL")"
+INSTALL="aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors && chown root:andon /etc/andon-finance/secrets.env.new && chmod 0640 /etc/andon-finance/secrets.env.new && mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env && echo $ENV_B64 | base64 -d > /etc/andon-finance/env && chmod 0644 /etc/andon-finance/env && rm -rf /var/tmp/andon-bench-config && mkdir -p /var/tmp/andon-bench-config && aws s3 cp s3://$BUCKET/releases/current.tgz /var/tmp/andon-bench-config/release.tgz --region $REGION --only-show-errors && tar -xzf /var/tmp/andon-bench-config/release.tgz -C /var/tmp/andon-bench-config ./bench && bash /var/tmp/andon-bench-config/bench/bench-configure.sh $POC_STORE && bash /var/tmp/andon-bench-config/bench/bench07-configure.sh $J07_DOMAIN $(param NexusOrigin) $(param AdvisoryPublicationId) && systemctl restart andon-finance-poc.service && systemctl restart andon-jiuan07.service"
+COMMANDS="$(printf '{"commands":["%s","sleep 5","systemctl is-active andon-finance-poc.service","systemctl is-active andon-jiuan07.service"]}' "$INSTALL")"
 COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --comment 'andon-finance-poc deploy' \
   --parameters "$COMMANDS" --query Command.CommandId --output text)"
 aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" || true
@@ -141,14 +151,11 @@ aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --i
 [[ "$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query Status --output text)" == "Success" ]] \
   || { echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; }
 
-say "健康检查 $SITE/api/health"
-for attempt in $(seq 1 36); do
-  if curl -fsS "$SITE/api/health" >/dev/null 2>&1; then
-    echo "健康检查通过：$SITE"
-    echo "两个账号的口令在 ${SECRETS}（REVIEWER_PASSWORD / CHECKER_PASSWORD）"
-    exit 0
-  fi
-  sleep 10
-done
-echo "健康检查没有通过。查看日志：aws ssm start-session --region $REGION --target ${INSTANCE}，然后 sudo journalctl -u andon-finance-poc -n 200" >&2
-exit 1
+say "健康检查 $SITE/api/health 和 https://$J07_DOMAIN/poc/healthz"
+healthy() { for attempt in $(seq 1 36); do curl -fsS "$1" >/dev/null 2>&1 && return 0; sleep 10; done; return 1; }
+healthy "$SITE/api/health" || { echo "PoC 健康检查没有通过。查看日志：aws ssm start-session --region $REGION --target ${INSTANCE}，然后 sudo journalctl -u andon-finance-poc -n 200" >&2; exit 1; }
+echo "健康检查通过：$SITE"
+# v0.7.10 经 PoC 进程按 Host 转发；第一次建它的 CloudFront 分发后，DNS 生效要几分钟
+healthy "https://$J07_DOMAIN/poc/healthz" || { echo "九安 v0.7.10 健康检查没有通过。查看日志：sudo journalctl -u andon-jiuan07 -n 200（实例 ${INSTANCE}）" >&2; exit 1; }
+echo "健康检查通过：https://${J07_DOMAIN}（九安 v0.7.10）"
+echo "两个账号的口令在 ${SECRETS}（REVIEWER_PASSWORD / CHECKER_PASSWORD），两个站点相同"

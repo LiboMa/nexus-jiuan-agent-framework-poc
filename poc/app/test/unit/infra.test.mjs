@@ -15,7 +15,7 @@ test('模板里的 Fn::Sub 只引用模板自己的参数、资源与伪参数�
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   const tokens = [...new Set([...template.matchAll(/\$\{([^}]+)\}/g)].map(match => match[1]))].sort();
   assert.deepEqual(tokens, ['AWS::Partition', 'AWS::Region', 'AdvisoryPublicationId', 'AppPort', 'ArtifactBucket', 'ArtifactBucket.Arn',
-    'DomainName', 'NexusOrigin']);
+    'DomainName', 'Jiuan07DomainName', 'NexusOrigin']);
 });
 
 test('模板的关键约束：只放 CloudFront 回源、不开 22 端口、固定 node-24、TLS 1.2、私有构件桶、关缓存并转发观众请求头', async () => {
@@ -76,7 +76,9 @@ test('在 macOS 上打包时不带 AppleDouble 与扩展属性（否则实例上
 
 test('shell 脚本里变量名后面不能紧跟中文等非 ASCII 字符（bash 会把它们算进变量名，set -u 下直接报错）；要写成 ${VAR}', async () => {
   for (const file of [infra('deploy.sh'), infra('destroy.sh'), infra('backup.sh'), infra('upgrade-instance.sh'), infra('bench-test.sh'), infra('bench/mysql-install.sh'),
-    infra('bench/bench-reset.sh'), infra('bench/bench-configure.sh'), fileURLToPath(new URL('../e2e/run.sh', import.meta.url)),
+    infra('bench/bench-reset.sh'), infra('bench/bench-configure.sh'), infra('bench/bench07-configure.sh'), infra('bench/bench07-reset.sh'),
+    fileURLToPath(new URL('../../../bench/build-jiuan07.sh', import.meta.url)), fileURLToPath(new URL('../../../app07/scripts/review-advice-smoke.sh', import.meta.url)),
+    fileURLToPath(new URL('../e2e/run.sh', import.meta.url)),
     fileURLToPath(new URL('../../../../docs/delivery/make-package.sh', import.meta.url)), fileURLToPath(new URL('../../../../docs/build-html.sh', import.meta.url)),
     fileURLToPath(new URL('../../../../docs/delivery/patches/make-reference-patch.sh', import.meta.url)), fileURLToPath(new URL('../../../bench/build-jiuan.sh', import.meta.url))]) {
     const offenders = (await readFile(file, 'utf8')).split('\n').map((line, index) => [index + 1, line])
@@ -181,10 +183,11 @@ test('测试台脚本里没有写死的密码', async () => {
 });
 
 // ---------- 测试台（任务 6）：模板、部署、备份、换型、在测试台上跑测试
-test('模板允许 t3.large；Resources 一字不改（不会替换实例）', async () => {
+test('模板允许 t3.large；Resources 除了九安 v0.7.10 新增的分发、记录和输出，一字不改（不会替换实例）', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   assert.match(template, /InstanceType:\n\s+Type: String\n\s+Default: t3\.small\n\s+AllowedValues: \[t3\.small, t3\.medium, t3\.large\]/);
-  const resources = template.slice(template.indexOf('\nResources:'));
+  const resources = template.slice(template.indexOf('\nResources:')).replace(/\n  Jiuan07Distribution:\n[\s\S]*?\n(?=\nOutputs:)/, '')
+    .replace("\n  Jiuan07Url:\n    Value: !Sub 'https://${Jiuan07DomainName}'", '');
   assert.equal(createHash('sha256').update(resources).digest('hex'), '517e951151bb07d472fdba0263ece054bb3982fe85f619a1f8dc409b96053b1f');
 });
 
