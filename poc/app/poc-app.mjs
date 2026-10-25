@@ -14,6 +14,7 @@ import { nextIntakeSequence } from './bench/state.mjs';
 import { ACCOUNTS } from './accounts.mjs';
 import { createPasswordLogin } from './login.mjs';
 import { clientIp, createStaticFiles, fail, onlyFields, readJson, sendError, sendJson } from './http.mjs';
+import { createHostProxy } from './host-proxy.mjs';
 
 const LOGIN_PATH = '/api/analysis/v1/poc/login';
 export const STATIC_FILES = Object.freeze({
@@ -41,11 +42,14 @@ export function jiuanConfig({ extra = {} } = {}) {
 /**
  * 可注入（测试台用；不给就是内存模式的做法）：
  *   store：九安的存储；jiuanPlatformRoutes：九安的平台接口；config：jiuanConfig() 的结果；
- *   writeDocument({ raw }) → { document }：写入一张单据原文，返回九安存好的单据；rawLookup(number) → 原文或 null。
+ *   writeDocument({ raw }) → { document }：写入一张单据原文，返回九安存好的单据；rawLookup(number) → 原文或 null；
+ *   forward：{ host, port }，这个 Host 的请求整站转给本机端口（测试台上的九安 v0.7.10，见 host-proxy.mjs）。
  */
 export function createPocApp({ origin, publicDir, passwords, modelClient, plugins = [], onError = () => {},
-  store: injectedStore = null, jiuanPlatformRoutes = null, config: injectedConfig = null, writeDocument: injectedWrite = null, rawLookup: injectedLookup = null, dbHealth = null }) {
+  store: injectedStore = null, jiuanPlatformRoutes = null, config: injectedConfig = null, writeDocument: injectedWrite = null, rawLookup: injectedLookup = null, dbHealth = null,
+  forward = null }) {
   const host = new URL(origin).host;
+  const proxy = forward ? createHostProxy(forward) : null;
   const companyIds = COMPANIES.map(company => company.id);
   const config = injectedConfig ?? jiuanConfig();
   const { accounts } = config;
@@ -118,6 +122,7 @@ export function createPocApp({ origin, publicDir, passwords, modelClient, plugin
   app.server.on('request', (req, res) => { void dispatch(req, res); });
 
   async function dispatch(req, res) {
+    if (proxy?.matches(req)) { proxy.forward(req, res); return; }
     try {
       const url = new URL(req.url, origin);
       // 实例内部与部署脚本用的健康检查：不经 CloudFront，所以不校验主机名。

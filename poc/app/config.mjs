@@ -22,6 +22,18 @@ function storeConfig(env) {
   };
 }
 
+/** 按 Host 转发给本机另一个服务（测试台上的九安 v0.7.10，见 host-proxy.mjs）：主机名和端口一起给；都不给就不转发。 */
+function forwardConfig(env, origin) {
+  const host = String(env.POC_FORWARD_HOST ?? '').trim();
+  if (!host && !env.POC_FORWARD_PORT) return null;
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host) || host === new URL(origin).hostname) {
+    throw new Error('POC_FORWARD_HOST 应是另一个站点的主机名，例如 jiuan-v0710.tinyboat.blog');
+  }
+  const port = Number(env.POC_FORWARD_PORT);
+  if (!Number.isInteger(port) || port < 1024 || port > 65_535) throw new Error('POC_FORWARD_PORT 应是本机端口号，例如 4181');
+  return { host, port };
+}
+
 export function readEnvConfig(env = process.env) {
   const need = name => {
     const value = String(env[name] ?? '').trim();
@@ -35,7 +47,7 @@ export function readEnvConfig(env = process.env) {
   const port = Number(env.POC_PORT ?? 4180);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error('POC_PORT 应是端口号');
   return {
-    origin, port, bindHost: env.POC_BIND || '0.0.0.0', region: env.AWS_REGION || 'us-east-1',
+    origin, port, bindHost: env.POC_BIND || '0.0.0.0', region: env.AWS_REGION || 'us-east-1', forward: forwardConfig(env, origin),
     secretsFile: env.POC_SECRETS_FILE || '/etc/andon-finance/secrets.env', publicDir: env.POC_PUBLIC_DIR || path.join(here, 'public'),
     // 每个账号的目录（CLI 凭证、启用清单、留痕），见 access/store.mjs。
     usersDir: env.POC_USERS_DIR || '/var/lib/andon-finance/users',

@@ -1,0 +1,4 @@
+{
+  "_note": "PoC 虚构种子：九安 v0.7.10 的审核要素候选只读 audit_element_seed（这里为空，要素模板是九安代码里写死的那份）。不含任何真实配置表数据；九安开发包里的 seeds/hly-config-seed-v1.json 含未脱敏数据，不进测试台。",
+  "audit_element_seed": []
+}

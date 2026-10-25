@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · 九安自助审核平台 v0.7.10 测试台</title>
+  <link rel="stylesheet" href="/poc/poc.css">
+</head>
+<body>
+  <main class="sheet">
+    <h1>九安自助审核平台</h1>
+    <p class="lead">v0.7.10 测试台。单据、公司、人员全部虚构。</p>
+    <form id="login" class="form">
+      <label for="account">账号</label>
+      <select id="account" name="account">
+        <option value="poc-reviewer">审核员（虚构）· 管理员</option>
+        <option value="poc-checker">复核人（虚构）· 分析员</option>
+      </select>
+      <label for="password">口令</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="200">
+      <p id="message" class="message" role="alert"></p>
+      <button type="submit">登录</button>
+    </form>
+    <p class="note">口令由部署脚本生成，写在 infra/secrets.env。登录后进入九安原有的页面；要往单据池里加一张新单，打开 <a href="/poc/intake">模拟来单</a>。</p>
+  </main>
+  <script src="/poc/login.js" type="module"></script>
+</body>
+</html>

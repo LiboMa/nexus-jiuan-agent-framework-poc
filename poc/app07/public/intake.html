@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模拟来单 · 九安自助审核平台 v0.7.10 测试台</title>
+  <link rel="stylesheet" href="/poc/poc.css">
+</head>
+<body>
+  <main class="sheet">
+    <h1>模拟来单</h1>
+    <p class="lead">按模板在模拟汇联易里生成一张新的虚构单据。九安下一轮同步（约 1 分钟）把它拉进单据池，读完详情后自动发起 AI 独立建议。只有管理员能来单。</p>
+    <form id="intake" class="form" hidden>
+      <label for="template">模板</label>
+      <select id="template" name="template"></select>
+      <button type="submit">模拟来单</button>
+    </form>
+    <p id="message" class="message" role="status" aria-live="polite">正在读取……</p>
+    <p class="note"><a href="/">回到单据池</a></p>
+  </main>
+  <script src="/poc/intake.js" type="module"></script>
+</body>
+</html>

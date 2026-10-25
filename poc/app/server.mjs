@@ -59,7 +59,7 @@ export async function main({ env = process.env, log = console, fetchCard = url =
     nexusRoutes({ me, runLog, governanceEnv: governance, samples }),
   ];
   const onError = ({ code } = {}) => log.error(`APP_ERROR ${code ?? 'UNKNOWN'}`);
-  const common = { origin: settings.origin, publicDir: settings.publicDir, passwords, modelClient, plugins, onError };
+  const common = { origin: settings.origin, publicDir: settings.publicDir, passwords, modelClient, plugins, onError, forward: settings.forward };
   if (settings.store.kind === 'mysql') return startBench({ settings, common, log, me, keyStore, openStore, createPlatform, dbRetryMs, maxDbAttempts });
   const app = createPocApp(common);
   tuneServer(app.server);
