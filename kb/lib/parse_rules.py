@@ -16,6 +16,8 @@
 
 换一份结构不同的制度文档时，先跑本脚本看统计与 duplicate 行，再按 GUIDE.md「7.4 换文档」调整。
 
+输出的最后一行是「REPORT <JSON>」（各类条数、各章行数、重复编号、缺审批路径的行），失败时也有。
+
 退出码: 0 正常；2 参数错误；3 解析结果为空或有重复 rule_id（大概率是文档结构不匹配）。
 """
 import json
@@ -207,6 +209,12 @@ def main(argv):
     no_path = [r["rule_id"] for r in records if not r["approval_path"] and r["amount_tier"] != "不适用"]
     print("duplicate rule_ids:", dup or "none")
     print("matrix rows without approval path (excluding 不适用):", no_path or "none")
+    # 末行给程序读（「制度知识库」页的解析报告）；解析失败时也打，好让页面说清是哪里不对
+    chapters = [{"no": no, "title": ch, "rows": sum(1 for r in records if r["chapter_no"] == no)}
+                for no, ch in sorted({(r["chapter_no"], r["chapter"]) for r in records})]
+    print("REPORT " + json.dumps({"general": len(gen_records), "chapter_notes": len(note_records), "matrix": len(records),
+                                  "total": len(out), "chapters": chapters, "duplicates": dup, "without_path": no_path},
+                                 ensure_ascii=False))
     if not records or dup:
         print("解析结果为空或有重复 rule_id：文档结构与解析器不匹配，见 GUIDE.md「7.4 换文档」", file=sys.stderr)
         return 3
