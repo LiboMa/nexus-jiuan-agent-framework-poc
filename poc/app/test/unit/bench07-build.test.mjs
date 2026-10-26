@@ -345,7 +345,7 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
     if (url.endsWith('/documents/1')) { const now = status; status = 'ingested'; return reply({ id: 1, status: now, result: now === 'ingested' ? { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } : null, rules: [] }); }
     if (url.endsWith('/poc/kb/documents')) return reply({ items: [{ id: 1, file_name: '仿真办法.docx', status: 'ingested', uploaded_by: 'poc-reviewer', uploaded_at: '2026-10-26T08:00:00Z',
       report: { matrix: 12 }, result: { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } }] });
-    if (url.includes('/poc/kb/search?')) return reply({ items: [{ rule_id: 'C05-5.2', business_item: '供应商货款', segment: '甲板块', amount_tier: '单笔 ＞1 万', final_approver: '财务经理', score: 0.81 }] });
+    if (url.includes('/poc/kb/search?')) return reply({ items: [{ rule_id: 'C05-5.2', business_item: '供应商货款', segment: '甲板块', amount_tier: '单笔 ＞1 万', final_approver: '财务经理', score: 0.81, keyword_hits: 2 }] });
     if (url.endsWith('/poc/kb/search-log')) return reply({ items: [{ at: '2026-10-26T08:01:00Z', caller: 'agent', question: '房租 九安', hits: [{ rule_id: 'C05-3.4', score: 0.7 }], took_ms: 300 },
       { at: '2026-10-26T08:02:00Z', caller: 'page', question: '税款', hits: [], took_ms: 200 }, { at: '2026-10-26T08:03:00Z', caller: 'verify', question: 'ping', hits: [], took_ms: 100 }] });
     return reply({ message: '没有这个接口' }, 404);
@@ -389,4 +389,10 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
   await press('检索');
   await until(() => /C05-5\.2[\s\S]*供应商货款[\s\S]*0\.81/.test(root.textContent));
   assert.ok(calls.at(-1)[1].includes(`/poc/kb/search?q=${encodeURIComponent('供应商 货款 单笔 2 万')}`));
+  // 含问题里关键词的规则排在前面：说明里讲清楚，结果里显示命中了几个词
+  assert.match(root.textContent, /用空格隔开/);
+  const cells = root.all(node => node.tagName === 'TD').map(node => node.textContent);
+  const at = cells.indexOf('C05-5.2');
+  assert.deepEqual(cells.slice(at, at + 7), ['C05-5.2', '供应商货款', '甲板块', '单笔 ＞1 万', '财务经理', '2', '0.81']);
+  assert.ok(root.all(node => node.tagName === 'TH').some(node => node.textContent === '命中词数'));
 });

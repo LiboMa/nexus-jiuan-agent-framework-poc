@@ -21,10 +21,12 @@
    <body>
 --- a/public/analysis.js	2026-10-26 16:55:35
 +++ b/public/analysis.js	2026-10-26 17:00:24
-@@ -998,6 +998,16 @@
+@@ -996,6 +996,16 @@
+     element('div', { class: 'admin-tabs', role: 'tablist', 'aria-label': '后台配置页签' },
+       tabs.map(tab => element('a', { href: `#adminConfig?tab=${tab}`, role: 'tab', 'aria-selected': String(state.adminTab === tab), class: state.adminTab === tab ? 'active' : '' }, labels[tab]))),
      content);
- }
- 
++}
++
 +/** Bench patch 0004: the rule library's two tabs; 制度知识库 is for admins only (others see no tabs, as before). */
 +function rulesTabs(kbView) {
 +  if (state.session?.capabilities?.platformAdmin === true) {
@@ -33,11 +35,9 @@
 +      element('a', { href: '#rules?view=kb', role: 'tab', 'aria-selected': String(kbView), class: kbView ? 'active' : '' }, '制度知识库'));
 +  }
 +  return null;
-+}
-+
+ }
+ 
  // A page with unsaved edits (the rule library) may keep the user on it; the
- // address then goes back to the page still shown.  `retry` is what to do if the
- // user then discards the edits (signing out); without it the navigation is replayed.
 @@ -1052,6 +1062,16 @@
    if (state.route === 'compare') { main.append(upcomingPage(state.route)); return; }
    // The rule library is the element-family page (public/elements-page.js); only the test instance gets here.
@@ -56,7 +56,7 @@
      main.append(root);
      document.dispatchEvent(new CustomEvent('elements-page:mount', { detail: { root, csrfToken: () => state.session?.csrfToken || '', user: state.session.user, familyId: state.routeParams.family || null } }));
 --- a/public/kb-page.js	1970-01-01 08:00:00
-+++ b/public/kb-page.js	2026-10-26 17:00:24
++++ b/public/kb-page.js	2026-10-26 20:55:52
 @@ -0,0 +1,196 @@
 +// 规则库 · 制度知识库（测试台补丁 0004）。管理员上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库
 +// （向量在知识库的 PostgreSQL 里由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的
@@ -213,7 +213,7 @@
 +  const question = textInput('question', '', '例如：九安的一份采购合同，总金额 30 万，用印需要谁审批？');
 +  const results = h('div'), searchMessage = statusLine(), saySearch = sayer(searchMessage);
 +  const search = h('section', { class: 'platform-ops-card' }, h('h2', {}, '按问题检索'),
-+    h('p', { class: 'kb-muted' }, '和审核 Agent 经 Nexus 数据连接器用的是同一个检索（kb_search）：输入一个问题，看知识库按语义找出哪些规则。'),
++    h('p', { class: 'kb-muted' }, '和审核 Agent 经 Nexus 数据连接器用的是同一个检索（kb_search）。关键词用空格隔开更准，例如「房租 年度框架合同 九安」：含这些词越多的规则越靠前，同样多的再按语义相似度排。'),
 +    h('div', { class: 'kb-search' }, question, button('检索', async () => {
 +      const text = String(question.value || '').trim();
 +      if (!text) { saySearch('请写一个问题', 'error'); return; }
@@ -221,8 +221,8 @@
 +      try {
 +        const data = await api(`/poc/kb/search?q=${encodeURIComponent(text)}&k=8`);
 +        saySearch('');
-+        results.replaceChildren(table(['排名', '规则编号', '业务事项', '板块', '金额档 / 触发情形', '最终审批', '相似度'], (data?.items || []).map((rule, index) => [
-+          String(index + 1), rule.rule_id, dash(rule.business_item), dash(rule.segment), dash(rule.amount_tier), dash(rule.final_approver), Number(rule.score).toFixed(2)]), '没有找到规则'));
++        results.replaceChildren(table(['排名', '规则编号', '业务事项', '板块', '金额档 / 触发情形', '最终审批', '命中词数', '相似度'], (data?.items || []).map((rule, index) => [
++          String(index + 1), rule.rule_id, dash(rule.business_item), dash(rule.segment), dash(rule.amount_tier), dash(rule.final_approver), dash(rule.keyword_hits), Number(rule.score).toFixed(2)]), '没有找到规则'));
 +      } catch (error) { saySearch(error.message, 'error'); }
 +    }, true)), results, searchMessage);
 +

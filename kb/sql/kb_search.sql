@@ -70,12 +70,27 @@ if "get" not in SD:
 hit = plpy.execute(SD["get"], [key])
 if hit:
     return hit[0]["e"]
-if "bedrock" not in SD:
-    import boto3
-    SD["bedrock"] = boto3.client("bedrock-runtime", region_name="{region}")
-body = json.dumps({"inputText": input, "dimensions": {dim}, "normalize": True})
-resp = SD["bedrock"].invoke_model(modelId="{model}", body=body, contentType="application/json", accept="application/json")
-vector = json.loads(resp["body"].read())["embedding"]
+# 容器里 Debian 12 的 botocore（1.29）没有 bedrock-runtime 的服务定义：用它的 SigV4Auth 和实例角色凭证签名，经 HTTPS 直接调 InvokeModel
+import urllib.error
+import urllib.parse
+import urllib.request
+if "creds" not in SD:
+    import botocore.session
+    SD["creds"] = botocore.session.get_session().get_credentials()
+if SD["creds"] is None:
+    del SD["creds"]
+    plpy.error("kb_embed：拿不到实例角色的凭证")
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+url = "https://bedrock-runtime.{region}.amazonaws.com/model/" + urllib.parse.quote("{model}", safe="") + "/invoke"
+body = json.dumps({"inputText": input, "dimensions": {dim}, "normalize": True}).encode("utf-8")
+signed = AWSRequest(method="POST", url=url, data=body, headers={"Content-Type": "application/json", "Accept": "application/json"})
+SigV4Auth(SD["creds"].get_frozen_credentials(), "bedrock", "{region}").add_auth(signed)
+try:
+    with urllib.request.urlopen(urllib.request.Request(url, data=body, headers=dict(signed.headers.items()), method="POST"), timeout=20) as resp:
+        vector = json.loads(resp.read())["embedding"]
+except urllib.error.HTTPError as error:
+    plpy.error("kb_embed：Bedrock 返回 %s %s" % (error.code, error.read()[:300].decode("utf-8", "replace")))
 text = "[" + ",".join(repr(float(x)) for x in vector) + "]"
 # 只读事务里写不进缓存：照样返回向量
 try:
@@ -86,8 +101,12 @@ except plpy.spiexceptions.ReadOnlySqlTransaction:
 return text
 $$;
 
+-- 排序：问题里用空格、标点隔开的词（2–20 字，至多 8 个；审核 Agent 传的是关键词）在规则原文 content 里出现得越多越靠前，
+-- 同样多的再按语义（Titan v2 对长段中文的相似度区分度不大，关键词先把对口的行提上来）；整句问话没有可匹配的词就是纯语义。
+-- score 仍是语义相似度，keyword_hits 是命中的词数。返回的列变过：先删旧函数再建。
+DROP FUNCTION IF EXISTS kb_search(text, int, text, text);
 CREATE OR REPLACE FUNCTION kb_search(question text, k int DEFAULT 8, segment_filter text DEFAULT NULL, caller text DEFAULT 'agent')
-RETURNS TABLE (rule_id text, rule_type text, chapter text, business_item text, segment text, amount_tier text, approval_path_text text, final_approver text, scope_controls text, score numeric)
+RETURNS TABLE (rule_id text, rule_type text, chapter text, business_item text, segment text, amount_tier text, approval_path_text text, final_approver text, scope_controls text, score numeric, keyword_hits int)
 LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
@@ -96,6 +115,7 @@ DECLARE
   started timestamptz := clock_timestamp();
   recent int;
   rec record;
+  terms text[];
   hits jsonb := '[]'::jsonb;
 BEGIN
   IF question IS NULL OR btrim(question) = '' THEN
@@ -106,18 +126,21 @@ BEGIN
     RAISE EXCEPTION 'kb_search：每分钟最多 60 次，请稍后再查';
   END IF;
   q := kb_embed(question);
+  SELECT coalesce(array_agg(DISTINCT s.t), ARRAY[]::text[]) INTO terms
+    FROM (SELECT t FROM regexp_split_to_table(question, '[\s，。、；：,.;:？?！!（）()]+') AS t WHERE char_length(t) BETWEEN 2 AND 20 LIMIT 8) s;
   FOR rec IN
     SELECT r.rule_id AS rid, r.rule_type AS rtype, r.chapter AS rchapter, r.business_item AS ritem, r.segment AS rsegment, r.amount_tier AS rtier,
-           r.approval_path_text AS rpath, r.final_approver AS rfinal, r.scope_controls AS rscope, round((1 - (r.embedding <=> q))::numeric, 4) AS rscore
+           r.approval_path_text AS rpath, r.final_approver AS rfinal, r.scope_controls AS rscope, round((1 - (r.embedding <=> q))::numeric, 4) AS rscore,
+           (SELECT count(*) FROM unnest(terms) AS t WHERE position(t in coalesce(r.content, '')) > 0)::int AS rhits
       FROM {table} r
      WHERE r.embedding IS NOT NULL
        AND (segment_filter IS NULL OR position(segment_filter in coalesce(r.segment, '')) > 0)
-     ORDER BY r.embedding <=> q
+     ORDER BY rhits DESC, r.embedding <=> q
      LIMIT n
   LOOP
     rule_id := rec.rid; rule_type := rec.rtype; chapter := rec.rchapter; business_item := rec.ritem; segment := rec.rsegment;
-    amount_tier := rec.rtier; approval_path_text := rec.rpath; final_approver := rec.rfinal; scope_controls := rec.rscope; score := rec.rscore;
-    hits := hits || jsonb_build_array(jsonb_build_object('rule_id', rec.rid, 'score', rec.rscore));
+    amount_tier := rec.rtier; approval_path_text := rec.rpath; final_approver := rec.rfinal; scope_controls := rec.rscope; score := rec.rscore; keyword_hits := rec.rhits;
+    hits := hits || jsonb_build_array(jsonb_build_object('rule_id', rec.rid, 'score', rec.rscore, 'keyword_hits', rec.rhits));
     RETURN NEXT;
   END LOOP;
   -- 记日志；只读事务（连接器若改成只读）里写不进去，照样返回结果

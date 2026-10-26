@@ -21,22 +21,31 @@ test('kb_embed：plpython3u、SECURITY DEFINER、固定 search_path；Titan v2 1
   assert.match(embed, /SET search_path = public, pg_temp/);
   assert.match(embed, /"dimensions": 1024/);
   assert.match(embed, /"normalize": True/);
-  assert.match(embed, /modelId="amazon\.titan-embed-text-v2:0"/);
-  assert.match(embed, /region_name="us-east-1"/);
   assert.match(embed, /len\(input\) > 2000[\s\S]*plpy\.error/);
   assert.match(embed, /kb_embed_cache/);
   assert.match(sql, /REVOKE ALL ON FUNCTION kb_embed\(text\) FROM PUBLIC;/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_embed\(text\) TO nexus;/);
 });
 
+test('kb_embed 怎么调 Bedrock：容器里 Debian 12 的 botocore（1.29）没有 bedrock-runtime 的服务定义，不用 boto3.client；用它的 SigV4Auth（服务名 bedrock）和实例角色凭证签名，经 HTTPS 直接调 InvokeModel，模型编号在路径里转义', async () => {
+  const embed = fn(render(await readFile(kb('sql/kb_search.sql'), 'utf8')), 'kb_embed');
+  assert.doesNotMatch(embed, /boto3\.client\(/);
+  assert.match(embed, /from botocore\.auth import SigV4Auth/);
+  assert.match(embed, /SigV4Auth\(SD\["creds"\]\.get_frozen_credentials\(\), "bedrock", "us-east-1"\)/);
+  assert.match(embed, /"https:\/\/bedrock-runtime\.us-east-1\.amazonaws\.com\/model\/" \+ urllib\.parse\.quote\("amazon\.titan-embed-text-v2:0", safe=""\) \+ "\/invoke"/);
+  assert.match(embed, /get_frozen_credentials\(\)/);
+  assert.match(embed, /urlopen\([^\n]*timeout=\d+/);
+  assert.match(embed, /except urllib\.error\.HTTPError[\s\S]*plpy\.error/, 'Bedrock 拒绝时把状态码和原因报出来');
+});
+
 test('kb_search：先把问题向量算进变量再排序（不在 ORDER BY 里调易变函数）；k 夹在 1–20；每分钟 60 次；返回约定的列；缓存与日志写不进去（只读事务）也照样返回', async () => {
   const sql = render(await readFile(kb('sql/kb_search.sql'), 'utf8'));
   const search = fn(sql, 'kb_search');
   assert.match(search, /kb_search\(question text, k int DEFAULT 8, segment_filter text DEFAULT NULL, caller text DEFAULT 'agent'\)/);
-  assert.match(search, /RETURNS TABLE \(rule_id text, rule_type text, chapter text, business_item text, segment text, amount_tier text, approval_path_text text, final_approver text, scope_controls text, score numeric\)/);
+  assert.match(search, /RETURNS TABLE \(rule_id text, rule_type text, chapter text, business_item text, segment text, amount_tier text, approval_path_text text, final_approver text, scope_controls text, score numeric, keyword_hits int\)/);
   assert.match(search, /LANGUAGE plpgsql/);
   assert.match(search, /q := kb_embed\(question\)/);
-  assert.match(search, /ORDER BY r\.embedding <=> q/);
+  assert.match(search, /ORDER BY rhits DESC, r\.embedding <=> q/);
   assert.doesNotMatch(search, /ORDER BY[^;]*kb_embed\(/);
   assert.match(search, /least\(greatest\(coalesce\(k, 8\), 1\), 20\)/);
   assert.match(search, /round\(\(1 - \(r\.embedding <=> q\)\)::numeric, 4\)/);
@@ -46,6 +55,20 @@ test('kb_search：先把问题向量算进变量再排序（不在 ORDER BY 里�
   assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_search\(text, int, text, text\) TO nexus;/);
   const embed = fn(sql, 'kb_embed');
   assert.match(embed, /except plpy\.spiexceptions\.ReadOnlySqlTransaction/, '缓存写不进去也照样返回向量');
+});
+
+test('kb_search 的排序：问题里用空格、标点隔开的词（2–20 字，至多 8 个）在规则原文里出现得越多越靠前，同样多的再按语义；整句没有可匹配的词就是纯语义；分数仍是语义相似度', async () => {
+  const sql = render(await readFile(kb('sql/kb_search.sql'), 'utf8'));
+  const search = fn(sql, 'kb_search');
+  assert.ok(sql.indexOf('DROP FUNCTION IF EXISTS kb_search(text, int, text, text);') >= 0 && sql.indexOf('DROP FUNCTION IF EXISTS kb_search(text, int, text, text);') < sql.indexOf('CREATE OR REPLACE FUNCTION kb_search('),
+    '返回的列变了：先删旧函数再建');
+  assert.match(search, /regexp_split_to_table\(question, '\[\\s，。、；：,\.;:？\?！!（）\(\)\]\+'\)/);
+  assert.match(search, /char_length\(t\) BETWEEN 2 AND 20/);
+  assert.match(search, /LIMIT 8/);
+  assert.match(search, /position\(t in coalesce\(r\.content, ''\)\) > 0/);
+  assert.match(search, /keyword_hits := rec\.rhits/);
+  assert.match(search, /'keyword_hits', rec\.rhits/, '检索日志里也记下关键词命中数');
+  assert.match(search, /round\(\(1 - \(r\.embedding <=> q\)\)::numeric, 4\) AS rscore/);
 });
 
 test('上传历史 kb_documents、检索日志 kb_search_log：列和状态与设计一致，属主是应用用户；日志只留 90 天', async () => {
