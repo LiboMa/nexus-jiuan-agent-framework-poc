@@ -21,6 +21,8 @@ import { createOperatorCli } from '../app/nexus/cli.mjs';
 import { agentCallRoutes, everyDocument } from './agent-calls.mjs';
 import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
+import { createKbRoutes } from './kb-routes.mjs';
+import { createKbRunner } from './kb-runner.mjs';
 import { a2aCall } from '../app/nexus/a2a-client.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
@@ -142,6 +144,9 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
   listAdviceSummaries: runtimeRegistry.listAdviceSummaries, close: runtimeRegistry.close };
 
 const intake = intakeRoutes({ fake });
+// 「规则库 › 制度知识库」：上传审批矩阵 .docx → 解析 → 入库预览 → 确认入库；历史、检索、检索日志（知识库 kb/ 在同一台实例的 PG 容器里）
+const kb = settings.kb ? createKbRoutes({ runner: createKbRunner({ python: settings.kb.python, dir: settings.kb.dir, pg: settings.kb.pg }), uploadsDir: settings.kb.uploadsDir, log }) : null;
+if (kb) await kb.start();
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
 const contract = J.contractChecks.loadContract();
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
@@ -177,7 +182,8 @@ const agentTests = createAgentTests({ ...envelopeChecks, callRaw,
 const agentCalls = agentCallRoutes({ log, extraRows: () => agentTests.rows(), tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
   listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, ...page })), readState: key => store.readState(key) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
-  return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args)) || jiuanRoutes.handle(args);
+  return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args))
+    || (kb ? await kb.handle(args) : false) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。

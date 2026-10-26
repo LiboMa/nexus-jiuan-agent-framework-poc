@@ -41,7 +41,17 @@ export function readSettings(env = process.env) {
     stateDir: absolute(env, 'POC07_STATE_DIR', '/var/lib/jiuan07'),
     database: { host: env.POC07_MYSQL_HOST || '127.0.0.1', port: portOf(env, 'POC07_MYSQL_PORT', 3306),
       database: env.POC07_MYSQL_DATABASE || 'jiuan07', user: env.POC07_MYSQL_USER || 'jiuan07_app' },
+    kb: kbSettings(env),
   };
+}
+
+/** 「规则库 › 制度知识库」：知识库（kb/）在同一台实例的 PG 容器里；没配 POC07_KB_PG_HOST 就不开这个功能。 */
+function kbSettings(env) {
+  if (!env.POC07_KB_PG_HOST) return null;
+  const secretsDir = absolute(env, 'POC07_SECRETS_DIR', '/etc/andon-finance/jiuan07'), stateDir = absolute(env, 'POC07_STATE_DIR', '/var/lib/jiuan07');
+  return { dir: absolute(env, 'POC07_KB_DIR'), python: absolute(env, 'POC07_KB_PYTHON'), uploadsDir: path.join(stateDir, 'kb-uploads'),
+    pg: { host: String(env.POC07_KB_PG_HOST), port: portOf(env, 'POC07_KB_PG_PORT', 5432), db: env.POC07_KB_DB || 'nexus', user: env.POC07_KB_USER || 'nexus',
+      passwordFile: path.join(secretsDir, 'kb_pg_password') } };
 }
 
 const deepFreeze = value => {
