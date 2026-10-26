@@ -87,7 +87,7 @@ test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联
   await shot('01-documents');
 });
 
-test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启用的 Agent 在一张表里；有一个已启用、接 review_advice@1（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
+test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启用的 Agent 在一张表里；审批流只调一个审批 Agent（就绪、接 review_advice@1），其他就绪的只供前端工作流调用（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
   const { records = [] } = (await api('/platform/agent-access')).json?.data ?? {};
   // 审批流只调审批 Agent（补丁 0003）：就绪、被指定为审批 Agent 的那一个，它的 card.tasks 才带 review_advice@1
   publication = records.find(record => record.status === 'active' && record.approval === true && record.card?.tasks?.includes('review_advice@1')) ?? null;
@@ -160,7 +160,7 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
   }
 });
 
-test('调用记录与测试：每张对公付款单的这一轮都在调用记录里；在「Agent 接入」页测一张单，得到结论并记进调用记录（不改单据的结论）', { timeout: 8 * 60_000 }, async () => {
+test('调用记录与测试：每张对公付款单的这一轮都在调用记录里；在「Agent 接入」页测审批 Agent：单据（得到结论，不改单据的结论）、文本（有回复）、请求信封 describe@1（回答合契约），都记进调用记录', { timeout: 8 * 60_000 }, async () => {
   assert.ok(publication, '前面的用例没找到可用的审核 Agent');
   const calls = (await api('/platform/agent-access/calls')).json?.data?.items ?? [];
   for (const [number, expected] of Object.entries(EXPECT)) {

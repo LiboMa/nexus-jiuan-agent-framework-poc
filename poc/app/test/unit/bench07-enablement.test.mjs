@@ -112,3 +112,14 @@ test('迁移：以前的启用记录没有审批 Agent 这一项时，名片声�
   assert.equal(await enablement.adoptDeclaredApproval(), null, '迁移只做一次：取消之后不会再自动设回来');
   assert.equal((await enablement.list()).approval, null);
 });
+
+test('旧补丁 0003 由平台指定的任务（记录上 declaredBy: platform）不算名片声明的，也不参与迁移', async () => {
+  const at = '2026-10-26T00:28:18.819Z';
+  const legacy = (publishId, extra) => ({ publishId, status: 'active', key: KEY, fingerprint: 'd248619a', enabledBy: 'local:poc-reviewer', enabledAt: at, verifiedAt: at, invalidReason: null, updatedAt: at, ...extra });
+  const old = { revision: 5, version: 1, audit: [], records: {
+    pub_deepres0001: legacy('pub_deepres0001', { card: { name: 'Deep Research', tasks: ['review_advice@1'], declaredBy: 'platform' } }) } };
+  const enablement = service(memoryStore(old));
+  assert.equal(await enablement.adoptDeclaredApproval(), null, '平台指定的不算声明，不自动成为审批 Agent');
+  const shown = await enablement.publication('pub_deepres0001');
+  assert.deepEqual([shown.card.declaredTasks, shown.card.tasks, shown.approval], [[], [], false]);
+});

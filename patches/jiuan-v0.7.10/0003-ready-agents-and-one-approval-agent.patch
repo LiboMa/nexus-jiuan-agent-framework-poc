@@ -10,7 +10,7 @@
            || path === PREFIX + '/platform/agent-access/nexus' || path === PREFIX + '/platform/agent-access/nexus/disconnect'
            // Bench patch 0002: test one enabled Agent on one corporate payment from the Agent 接入 tab.
 --- a/src/agent-enablement.mjs	2026-10-26 10:12:41
-+++ b/src/agent-enablement.mjs	2026-10-26 10:15:48
++++ b/src/agent-enablement.mjs	2026-10-26 11:02:32
 @@ -5,8 +5,8 @@
   * - The key lives only inside the state value, which the analysis store seals (AES-256-GCM);
   *   views, lists, errors and the audit trail carry a fingerprint (sha256, 8 hex) instead.
@@ -52,13 +52,14 @@
    AGENT_TASK_NOT_DECLARED: 422, AGENT_KEY_REJECTED: 422, AGENT_KEY_WRONG_PUBLICATION: 422, AGENT_VERIFY_TIMEOUT: 504,
    ...Object.fromEntries(Object.entries(STATUS).map(([status, code]) => [code, Number(status)])) });
  
-@@ -58,10 +67,13 @@
+@@ -58,10 +67,14 @@
  
  export const fingerprintOf = key => createHash('sha256').update(key).digest('hex').slice(0, 8);
  
 -function view(record) {
 +function view(record, approvalId = null, flowTasks = []) {
-+  const declared = record.card ? [...record.card.tasks] : [];
++  // An earlier bench patch saved tasks the platform assigned (declaredBy 'platform'); those were never the card's.
++  const declared = record.card && record.card.declaredBy !== 'platform' ? [...record.card.tasks] : [];
 +  const approval = record.publishId === approvalId;
 +  const tasks = [...declared.filter(task => !flowTasks.includes(task)), ...(approval && record.status === 'active' ? flowTasks : [])];
    return {
@@ -69,7 +70,7 @@
      enabledBy: record.enabledBy, enabledAt: record.enabledAt, verifiedAt: record.verifiedAt,
      invalidReason: record.invalidReason, updatedAt: record.updatedAt,
    };
-@@ -80,6 +92,7 @@
+@@ -80,6 +93,7 @@
    const stamp = () => clock().toISOString();
  
    const empty = () => ({ revision: 0, version: 1, records: {}, audit: [] });
@@ -77,7 +78,7 @@
    async function read() {
      const state = await store.readState(scopeKey);
      const current = state && typeof state === 'object' ? state : empty();
-@@ -87,7 +100,7 @@
+@@ -87,7 +101,7 @@
      return current;
    }
    async function write(state, next) {
@@ -86,7 +87,7 @@
      try {
        await store.compareAndWriteState(scopeKey, { expectedRevision: state.revision, value });
      } catch (error) {
-@@ -129,8 +142,8 @@
+@@ -129,8 +143,8 @@
        if (signal.aborted) throw accessError('AGENT_VERIFY_TIMEOUT');
        throw accessError(error?.code === 'AI_NETWORK' ? 'AGENT_NEXUS_UNREACHABLE' : 'AGENT_PUBLICATION_NOT_FOUND');
      }
@@ -97,7 +98,7 @@
      let verdict;
      try { verdict = await client.verifyKey({ publishId, key, signal }); } catch { throw accessError(signal.aborted ? 'AGENT_VERIFY_TIMEOUT' : 'AGENT_NEXUS_UNREACHABLE'); }
      if (verdict === 'rejected') throw accessError('AGENT_KEY_REJECTED');
-@@ -158,7 +171,7 @@
+@@ -158,7 +172,7 @@
      const at = stamp();
      const record = { publishId, status: 'active', key, fingerprint: fingerprintOf(key), card, enabledBy: principal, enabledAt: at, verifiedAt: at, invalidReason: null, updatedAt: at };
      await write(state, { ...state, records: { ...state.records, [publishId]: record }, audit: [...state.audit, attempt('ok')] });
@@ -106,7 +107,7 @@
    }
  
    async function rotate({ actor, publishId, key, reason } = {}) {
-@@ -174,7 +187,7 @@
+@@ -174,7 +188,7 @@
      const at = stamp();
      const record = { ...prior, status: 'active', key, fingerprint: fingerprintOf(key), card, verifiedAt: at, invalidReason: null, updatedAt: at };
      await write(state, { ...state, records: { ...state.records, [publishId]: record }, audit: [...state.audit, attempt('ok')] });
@@ -115,7 +116,7 @@
    }
  
    async function disable({ actor, publishId, reason } = {}) {
-@@ -186,7 +199,7 @@
+@@ -186,7 +200,7 @@
      const record = { ...prior, status: 'disabled', key: null, updatedAt: stamp() };
      await write(state, { ...state, records: { ...state.records, [publishId]: record },
        audit: [...state.audit, entry(principal, 'disable', publishId, 'ok', { fingerprint: prior.fingerprint, reason: reason.trim() })] });
@@ -124,7 +125,7 @@
    }
  
    async function refresh({ actor, publishId, reason } = {}) {
-@@ -210,7 +223,7 @@
+@@ -210,7 +224,7 @@
      const at = stamp();
      const record = { ...prior, status: 'active', card, verifiedAt: at, invalidReason: null, updatedAt: at };
      await write(state, { ...state, records: { ...state.records, [publishId]: record }, audit: [...state.audit, attempt('ok')] });
@@ -133,7 +134,7 @@
    }
  
    async function markInvalid(publishId, reason) {
-@@ -230,6 +243,50 @@
+@@ -230,6 +244,50 @@
      throw accessError('AGENT_ACCESS_CONFLICT');
    }
  
@@ -173,7 +174,7 @@
 +    const state = await read();
 +    if (Object.hasOwn(state, 'approval') || !Object.keys(state.records).length) return state.approval?.publishId ?? null;
 +    const candidate = Object.values(state.records)
-+      .filter(record => record.status === 'active' && (record.card?.tasks ?? []).some(task => acceptedTasks.includes(task)))
++      .filter(record => record.status === 'active' && record.card?.declaredBy !== 'platform' && (record.card?.tasks ?? []).some(task => acceptedTasks.includes(task)))
 +      .sort((left, right) => String(right.enabledAt ?? '').localeCompare(String(left.enabledAt ?? '')))[0] ?? null;
 +    await write(state, { ...state, approval: candidate ? { publishId: candidate.publishId, setBy: SYSTEM_ACTOR, setAt: stamp() } : null,
 +      audit: candidate ? [...state.audit, entry(SYSTEM_ACTOR, 'approve', candidate.publishId, 'ok', { previousPublishId: null, fingerprint: candidate.fingerprint,
@@ -184,7 +185,7 @@
    async function credentialFor(publishId) {
      const state = await read();
      const record = Object.hasOwn(state.records, publishId) ? state.records[publishId] : null;
-@@ -239,14 +296,15 @@
+@@ -239,14 +297,15 @@
    /** The task service's routing check: the record's view (status, declared tasks), or null. */
    async function publication(publishId) {
      const state = await read();
@@ -202,7 +203,7 @@
        audit: state.audit.slice(-50).map(item => ({ ...item })),
      };
    }
-@@ -254,6 +312,6 @@
+@@ -254,6 +313,6 @@
    return Object.freeze({
      load: async () => { await read(); },
      presence: () => (active > 0 ? 'bound' : 'unbound'),
