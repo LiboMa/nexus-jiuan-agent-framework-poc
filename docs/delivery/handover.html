@@ -347,25 +347,40 @@ href="../architecture.html">架构文档</a>第 8 节）</td>
 接入」页的后端：<code>nexus-<wbr>access.<wbr>mjs</code>
 发布列表、<code>agent-<wbr>tests.<wbr>mjs</code>
 测试、<code>agent-<wbr>calls.<wbr>mjs</code>
-调用记录、<code>agent-<wbr>routes.<wbr>mjs</code>
-审批流路由）；<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>
+调用记录、<code>agent-<wbr>routes.<wbr>mjs</code> 审批流路由；「规则库 ›
+制度知识库」页的后端：<code>kb-<wbr>routes.<wbr>mjs</code> 上传 / 预览 /
+入库 / 历史 / 检索接口、<code>kb-<wbr>runner.<wbr>mjs</code> 调
+<code>kb/<wbr>lib</code> 的
+Python）；<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>
 构建九安 v0.7.10 副本到
 <code>.<wbr>build/<wbr>jiuan07/<wbr></code>（生成物，不要手改）</td>
 <td>应用开发</td>
 </tr>
 <tr>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
-<td>打进九安 v0.7.10 副本的补丁 0001–0003，按文件名顺序：连 Nexus
+<td>打进九安 v0.7.10 副本的补丁 0001–0004，按文件名顺序：连 Nexus
 列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批
-Agent</td>
+Agent；「规则库」分「审核要点」「制度知识库」两页（<code>public/<wbr>kb-<wbr>page.<wbr>js</code>）</td>
 <td>应用开发</td>
 </tr>
 <tr>
 <td><code>audit-<wbr>agent/<wbr></code></td>
 <td>审核
-Agent「九安审核AI」的提示词（v3：信封模式、<code>review_<wbr>advice@1</code>、只读查知识库）、下发脚本
+Agent「九安审核AI」的提示词（v3：信封模式、<code>review_<wbr>advice@1</code>、只读查知识库，第
+1 次查询用 <code>kb_<wbr>search</code>）、下发脚本
 <code>apply.<wbr>py</code>（写提示词并重存发布的动态配置）</td>
 <td>Agent 开发</td>
+</tr>
+<tr>
+<td><code>kb/<wbr></code></td>
+<td>知识库部署工具（原
+<code>pgvector-<wbr>rules-<wbr>kb</code>，2026-10-26 并入）：PG +
+pgvector 容器、库内语义检索 <code>kb_<wbr>search</code>、Nexus
+数据连接器、规则入库、Agent 提示词受管规则、核对。测试台上用
+<code>poc/<wbr>infra/<wbr>kb.<wbr>sh</code>
+驱动（从栈里取实例和网段）；完整说明在
+<code>kb/<wbr>GUIDE.<wbr>md</code></td>
+<td>运维、Agent 开发</td>
 </tr>
 <tr>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>5.<wbr>3/<wbr></code></td>
@@ -516,10 +531,16 @@ CloudFront 分发。库 <code>jiuan07</code>（同一个
 <td>同一台实例上的 Docker 容器
 <code>nexus-<wbr>pgvector</code>（<code>pgvector/<wbr>pgvector:pg17</code>，只绑实例私网
 IP 的 5432），库 <code>nexus</code>、表
-<code>approval_<wbr>rules</code>（制度原文不进仓库）；经 Nexus 的
-PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询。由
-pgvector-rules-kb 部署工具建，见
-<code>audit-<wbr>agent/<wbr>README.<wbr>md</code></td>
+<code>approval_<wbr>rules</code>（102 条，标签
+<code>finance-<wbr>approval-<wbr>v4</code>；制度原文不进仓库）；容器里装了
+PL/Python，库内语义检索 <code>kb_<wbr>search</code> 用实例角色调 Bedrock
+Titan v2（栈里的 <code>KbBedrockPolicy</code>
+只许这一个模型），另有上传历史 <code>kb_<wbr>documents</code>、检索日志
+<code>kb_<wbr>search_<wbr>log</code>。经 Nexus 的 PostgreSQL
+数据连接器接到「九安审核AI」，Agent 只读查询；PG
+端口的入站规则归测试台的栈（<code>KbAllowedCidr</code>）。部署与核对：<code>bash poc/<wbr>infra/<wbr>kb.<wbr>sh &lt;阶段&gt;</code>，说明见
+<code>kb/<wbr>GUIDE.<wbr>md</code>；九安 v0.7.10 的「规则库 ›
+制度知识库」页上传、检索</td>
 </tr>
 <tr>
 <td>公网 IP</td>

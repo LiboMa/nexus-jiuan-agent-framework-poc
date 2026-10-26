@@ -305,14 +305,15 @@ href="operations.html">运维</a>第 2.1 节</td>
 <td><code>poc/<wbr>app07/<wbr></code></td>
 <td>九安 v0.7.10
 测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent
-接入」页的后端）与单元测试</td>
+接入」页和「制度知识库」页的后端）与单元测试</td>
 <td><a href="../../poc/README.md">PoC 说明</a>「九安 v0.7.10」</td>
 </tr>
 <tr>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
 <td>打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent
 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批
-Agent</td>
+Agent，0004「规则库 ›
+制度知识库」页（上传、入库预览、历史、检索、检索日志）</td>
 <td><a href="developer-guide.html">开发者快速对接指南</a>第 7.2 节</td>
 </tr>
 <tr>
@@ -321,6 +322,17 @@ Agent</td>
 <code>prompt-<wbr>owner-<wbr>2026-<wbr>10-<wbr>25.<wbr>yaml</code>
 留作回退）、下发脚本 <code>apply.<wbr>py</code>、说明</td>
 <td><a href="../../audit-agent/README.md">审核 Agent 说明</a></td>
+</tr>
+<tr>
+<td><code>kb/<wbr></code></td>
+<td>知识库部署工具（PG + pgvector 容器、库内语义检索
+<code>kb_<wbr>search</code>、Nexus 数据连接器、规则入库、Agent
+提示词受管规则、核对）、单元测试；不带
+<code>deploy.<wbr>env</code>、<code>.<wbr>state/<wbr></code>、<code>.<wbr>build/<wbr></code>
+和制度原文（.docx 只带单元测试用的仿真文档
+<code>kb/<wbr>tests/<wbr>fixtures/<wbr>sample-<wbr>matrix.<wbr>docx</code>）</td>
+<td><a href="../../kb/README.md">kb/README.md</a>、<a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a></td>
 </tr>
 <tr>
 <td><code>poc/<wbr>infra/<wbr></code></td>

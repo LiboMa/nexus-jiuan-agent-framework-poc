@@ -163,3 +163,17 @@
 
 - [ ] **Step 1:** 逐条对照代码写（固定规则：文档的每条流程说法都要和代码一致）；`docs/build-html.sh`。
 - [ ] **Step 2:** 提交 `docs: knowledge-base upload and in-database semantic search`。
+
+## 执行记录（2026-10-26，Native 内联执行）
+
+| Task | 提交 | 结果 |
+|---|---|---|
+| 1 解析报告 + 仿真文档 | 20459df | `REPORT` 行；仿真矩阵 3 章 12 条 |
+| 2 `kb_search.sql` + 装 PL/Python | 57b1d4d | 参数名改 `segment_filter`（与输出列冲突） |
+| 3 `kb_admin.py`、`--embed sql` | de30ebd | |
+| 4 外壳接口 | d5e07bb | 加了 `POST /documents/<id>/preview`（换标签重新预览） |
+| 5 栈与测试台配置 | 50b5470 | `KbBedrockPolicy`；venv 钉 `psycopg[binary]==3.2.9` |
+| 6 页面（补丁 0004） | 71b2da1 | |
+| 7 测试台落地 | 8f9f680、657996e、712dd72 | 现场发现并修了四处：容器里 Debian 12 的 botocore 1.29 没有 `bedrock-runtime`（改为 SigV4 签名直接调）；纯语义排序区分度不够（改为关键词命中优先，加 `keyword_hits`）；接管的旧表没有 `source_tag`，上传一律 503（`tags` 容错）；仿真文档预览会覆盖 10 条真实规则（加编号冲突保护，页面红字、不能入库）。真实制度经页面入库：只更新说明 102、删除 0；「房租 年度框架合同 九安」第 1 名 C05-3.4 |
+| 8 审核 Agent 改用 `kb_search` | 618f46b、37b09d5 | 项目负责人同意后 `apply.py` 下发；`kb.sh verify --e2e` 通过；九安 v0.7.10 端到端 9/9。另修 create 模式主机（实例角色可调嵌入模型、IMDS 跳数 2）、`verify` 显示 `kb_search` 的报错 |
+| 9 文档 | 见本次提交 | `kb/GUIDE.md` 6.3、7.5、9.10 等；README、交接、交付包指南、CHANGELOG；导出时带上仿真文档 |

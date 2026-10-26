@@ -146,7 +146,8 @@ test('deploy.sh 建栈 / 更新栈时可以带上 KB_ALLOWED_CIDR；导出交接
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   assert.match(deploy, /KbAllowedCidr=\$KB_ALLOWED_CIDR/);
   const pack = await readFile(path.join(ROOT, 'docs/delivery/make-package.sh'), 'utf8');
-  assert.match(pack, /copy kb --exclude \/kb\/\.state --exclude \/kb\/\.build --exclude \/kb\/deploy\.env --exclude '\*\.docx' --exclude '\*\.doc'/);
+  // 仿真文档（单元测试用，虚构内容）要带上：rsync 先匹配的规则生效，所以 include 写在 '*.docx' 之前
+  assert.match(pack, /copy kb --exclude \/kb\/\.state --exclude \/kb\/\.build --exclude \/kb\/deploy\.env --include \/kb\/tests\/fixtures\/sample-matrix\.docx --exclude '\*\.docx' --exclude '\*\.doc'/);
   assert.match(pack, /--exclude kb\.env/);
   await run('bash', ['-n', KB_SH]);
 });

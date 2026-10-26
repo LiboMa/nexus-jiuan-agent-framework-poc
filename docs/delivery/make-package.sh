@@ -68,7 +68,7 @@ copy poc/app07
 copy poc/bench
 copy patches
 copy audit-agent
-copy kb --exclude /kb/.state --exclude /kb/.build --exclude /kb/deploy.env --exclude '*.docx' --exclude '*.doc'
+copy kb --exclude /kb/.state --exclude /kb/.build --exclude /kb/deploy.env --include /kb/tests/fixtures/sample-matrix.docx --exclude '*.docx' --exclude '*.doc'
 copy poc/infra --exclude secrets.env --exclude kb.env --exclude design-jiuan-nexus-integrate.md
 copy poc/tools
 copy poc/README.md

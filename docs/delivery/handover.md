@@ -57,9 +57,10 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `poc/app/scripts/build-public.mjs` | 用锚点补丁从九安原前端生成前端副本 | 应用开发 |
 | `poc/bench/` | `build-jiuan.sh`：从九安开发包复制 `code/` → 按顺序打补丁 → 装上锁定版本的 `mysql2` 3.14.3，输出到 `.build/jiuan/` | 应用开发 |
 | `.build/jiuan/` | 生成物（九安副本 + 补丁 + 依赖）；`deploy.sh` 每次重建，不要手改 | — |
-| `poc/app07/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，口令登录、进程内假汇联易、出网守卫，「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由）；`poc/bench/build-jiuan07.sh` 构建九安 v0.7.10 副本到 `.build/jiuan07/`（生成物，不要手改） | 应用开发 |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0003，按文件名顺序：连 Nexus 列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批 Agent | 应用开发 |
-| `audit-agent/` | 审核 Agent「九安审核AI」的提示词（v3：信封模式、`review_advice@1`、只读查知识库）、下发脚本 `apply.py`（写提示词并重存发布的动态配置） | Agent 开发 |
+| `poc/app07/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，口令登录、进程内假汇联易、出网守卫，「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由；「规则库 › 制度知识库」页的后端：`kb-routes.mjs` 上传 / 预览 / 入库 / 历史 / 检索接口、`kb-runner.mjs` 调 `kb/lib` 的 Python）；`poc/bench/build-jiuan07.sh` 构建九安 v0.7.10 副本到 `.build/jiuan07/`（生成物，不要手改） | 应用开发 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0004，按文件名顺序：连 Nexus 列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批 Agent；「规则库」分「审核要点」「制度知识库」两页（`public/kb-page.js`） | 应用开发 |
+| `audit-agent/` | 审核 Agent「九安审核AI」的提示词（v3：信封模式、`review_advice@1`、只读查知识库，第 1 次查询用 `kb_search`）、下发脚本 `apply.py`（写提示词并重存发布的动态配置） | Agent 开发 |
+| `kb/` | 知识库部署工具（原 `pgvector-rules-kb`，2026-10-26 并入）：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对。测试台上用 `poc/infra/kb.sh` 驱动（从栈里取实例和网段）；完整说明在 `kb/GUIDE.md` | 运维、Agent 开发 |
 | `patches/jiuan-v0.5.3/` | 打进九安副本的补丁，按文件名顺序。现在还没有这个目录，第二份计划写 0001–0006 | 应用开发 |
 | `contract/` | Agent 接入框架的契约：信封、名片要求、错误码、任务目录、审批流接口 | 应用开发、Agent 开发 |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`（升级前备份）、`upgrade-instance.sh`（换实例类型）、`bench-test.sh`（在测试台上跑要 MySQL 的测试）、`bench/`（实例上的 MySQL 安装、配置、重置脚本与 systemd 片段）、`secrets.env`（只在本机，0600） | 运维 |
@@ -86,7 +87,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 | EC2 | `i-01d753d48056fd423`，t3.large（2026-10-19 起是测试台），Amazon Linux 2023，Node 24，systemd 服务 `andon-finance-poc` |
 | MySQL | 实例上的 Docker 容器 `jiuan-mysql`（mysql:8.0，只听 127.0.0.1:3306），数据目录 `/var/lib/jiuan-mysql`，库 `jiuan_analysis`；端到端测试前用 `bench/bench-reset.sh` 重建这个库 |
 | 九安 v0.7.10 | 同一台实例：systemd 服务 `andon-jiuan07`（系统用户 `jiuan07`，只听 127.0.0.1:4181，屏蔽 IMDS），程序 `/opt/andon-finance/current/app07/server.mjs` + 九安副本；PoC 进程按 Host 把 `jiuan-v0710.tinyboat.blog` 的请求转过去（`poc/app/host-proxy.mjs`），安全组不变；第二个 CloudFront 分发。库 `jiuan07`（同一个 `jiuan-mysql` 容器，账号 `jiuan07_app`）；配置与密钥文件 `/etc/andon-finance/jiuan07/`；工作目录 `/var/lib/jiuan07/`（`nexus/` 是「Agent 接入」页连 Nexus 的凭证，`seed-anchor.json` 是种子单据的时间锚点）。端到端测试前 `bench/bench07-reset.sh` 重建 `jiuan07` 库，保留启用记录（含审批 Agent）和 Nexus 连接 |
-| 知识库 | 同一台实例上的 Docker 容器 `nexus-pgvector`（`pgvector/pgvector:pg17`，只绑实例私网 IP 的 5432），库 `nexus`、表 `approval_rules`（制度原文不进仓库）；经 Nexus 的 PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询。由 pgvector-rules-kb 部署工具建，见 `audit-agent/README.md` |
+| 知识库 | 同一台实例上的 Docker 容器 `nexus-pgvector`（`pgvector/pgvector:pg17`，只绑实例私网 IP 的 5432），库 `nexus`、表 `approval_rules`（102 条，标签 `finance-approval-v4`；制度原文不进仓库）；容器里装了 PL/Python，库内语义检索 `kb_search` 用实例角色调 Bedrock Titan v2（栈里的 `KbBedrockPolicy` 只许这一个模型），另有上传历史 `kb_documents`、检索日志 `kb_search_log`。经 Nexus 的 PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询；PG 端口的入站规则归测试台的栈（`KbAllowedCidr`）。部署与核对：`bash poc/infra/kb.sh <阶段>`，说明见 `kb/GUIDE.md`；九安 v0.7.10 的「规则库 › 制度知识库」页上传、检索 |
 | 公网 IP | EIP `13.223.152.186`；安全组只放 CloudFront 回源前缀列表 `pl-3b927c52` 访问 4180，不开 22 |
 | 构件桶 | `andon-finance-poc-artifactbucket-786tdeg4dqkb`：`releases/current.tgz`、`releases/archive/<时间>.tgz`、`secrets/secrets.env`（SSE） |
 | CloudFront | `E92MPQ217VIPX`，站点 `andon-finance.tinyboat.blog`，回源 `andon-finance-origin.tinyboat.blog` |

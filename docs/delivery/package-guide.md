@@ -65,9 +65,10 @@ open docs/delivery/README.html                                          # 从文
 | `docs/`（其余） | 架构文档、开发者工作流、`build-html.sh` 与 `html-kit/` | [架构](../architecture.md) |
 | `poc/app/` | PoC 服务端、测试台组合根（`bench/`、`jiuan-mysql.mjs`）、前端扩展（`public-src/`）、示例附件、单元测试与端到端测试、截图脚本 | [架构](../architecture.md)第 8、11 节 |
 | `poc/bench/` | `build-jiuan.sh`（九安 v0.5.3 副本 + 补丁 + 依赖）、`build-jiuan07.sh`（九安 v0.7.10 副本：按清单复制，不带 `seeds/`、`database/`、`tests/`，打 `patches/jiuan-v0.7.10/`）与锁定的依赖清单（`mysql2` 3.14.3；不带 `node_modules`，构建时 `npm ci --ignore-scripts`） | [交接文档](handover.md)第 2.1 节 |
-| `poc/app07/` | 九安 v0.7.10 测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent 接入」页的后端）与单元测试 | [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent | [开发者快速对接指南](developer-guide.md)第 7.2 节 |
+| `poc/app07/` | 九安 v0.7.10 测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent 接入」页和「制度知识库」页的后端）与单元测试 | [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent，0004「规则库 › 制度知识库」页（上传、入库预览、历史、检索、检索日志） | [开发者快速对接指南](developer-guide.md)第 7.2 节 |
 | `audit-agent/` | 审核 Agent 的提示词（`prompt.yaml` v3，改前的 `prompt-owner-2026-10-25.yaml` 留作回退）、下发脚本 `apply.py`、说明 | [审核 Agent 说明](../../audit-agent/README.md) |
+| `kb/` | 知识库部署工具（PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对）、单元测试；不带 `deploy.env`、`.state/`、`.build/` 和制度原文（.docx 只带单元测试用的仿真文档 `kb/tests/fixtures/sample-matrix.docx`） | [kb/README.md](../../kb/README.md)、[kb/GUIDE.md](../../kb/GUIDE.md) |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`、`upgrade-instance.sh`、`bench-test.sh`、`bench/`（实例上的 MySQL 脚本与 systemd 片段）、部署说明（**不含 `secrets.env`**） | [部署与迭代规范](deploy-iteration.md)、[运维](operations.md)第 2.7 节 |
 | `poc/tools/`、`poc/README.md` | 示例附件生成脚本；PoC 使用说明 | [PoC 说明](../../poc/README.md) |
 | `skills/nexus-ai-operator/` | Nexus 一侧的 Skill（1.1.0，不带任何密钥）：在 Nexus 上建 Agent、发布 | [Skills 配置指南](skills-guide.md)第 3 节 |
