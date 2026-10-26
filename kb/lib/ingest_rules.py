@@ -4,7 +4,11 @@
     python -I ingest_rules.py --rules rules.json --port 15432 --db nexus --user nexus --password-file <600 文件> \
         --table approval_rules --ddl ../sql/approval_rules.sql --source-tag finance-approval-v4 \
         --source-doc <文件名> --source-version <版本说明> --model amazon.titan-embed-text-v2:0 --dim 1024 \
-        --region us-east-1 [--prune] [--dry-run] [--smoke-question "..."]
+        --region us-east-1 [--embed bedrock|sql] [--prune] [--dry-run] [--smoke-question "..."]
+
+  --embed sql：向量在库里由 kb_embed()（sql/kb_search.sql，PL/Python 调 Bedrock）生成，本进程不需要 AWS 凭证、不 import boto3；
+               「制度知识库」页的入库走这条（测试台上的外壳没有 AWS 凭证）。默认 bedrock：本机经 boto3 调 Bedrock。
+               两种参数一样（同一模型、维度、normalize），所以来回换着入库不会造成改动。
 
 幂等:
   - 每条规则存 record_sha256 = 除向量外全部列（含 source_tag / source_doc / source_version）的 SHA-256。
@@ -22,9 +26,6 @@ import hashlib
 import json
 import re
 import sys
-
-import boto3
-import psycopg
 
 COLUMNS = ("rule_id", "rule_type", "chapter_no", "chapter", "seq_no", "business_item", "segment", "amount_tier",
            "approval_path", "approval_path_text", "final_approver", "post_actions", "not_applicable", "extra",
@@ -67,7 +68,9 @@ def main():
     ap.add_argument("--prune", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--smoke-question", default="")
+    ap.add_argument("--embed", choices=["bedrock", "sql"], default="bedrock")
     a = ap.parse_args()
+    import psycopg
 
     if not re.fullmatch(r"[a-z_][a-z0-9_]*", a.table):
         sys.exit(f"非法表名 {a.table}")
@@ -135,7 +138,16 @@ def main():
                 print(json.dumps(summary, ensure_ascii=False))
                 return
 
-            bedrock = boto3.client("bedrock-runtime", region_name=a.region)
+            if a.embed == "sql":
+                def vector_of(text):
+                    cur.execute("SELECT kb_embed(%s)::text", (text,))
+                    return cur.fetchone()[0]
+            else:
+                import boto3
+                bedrock = boto3.client("bedrock-runtime", region_name=a.region)
+
+                def vector_of(text):
+                    return embed(bedrock, a.model, a.dim, text)
             placeholders = ", ".join(f"%({c})s::jsonb" if c in JSONB else ("%(embedding)s::vector" if c == "embedding" else f"%({c})s")
                                      for c in COLUMNS)
             updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS if c != "rule_id")
@@ -149,7 +161,7 @@ def main():
                     cur.execute(retag, row)
                     summary["retagged"] += 1
                 else:
-                    row["embedding"] = embed(bedrock, a.model, a.dim, row["content"])
+                    row["embedding"] = vector_of(row["content"])
                     cur.execute(upsert, row)
                     summary["inserted" if kind == "insert" else "updated"] += 1
                 if i % 20 == 0:
@@ -164,7 +176,10 @@ def main():
             summary["rows_by_type"] = {k: v for k, v in cur.fetchall()}
             cur.execute(f"SELECT count(*) FROM {t} WHERE embedding IS NULL")
             summary["rows_without_embedding"] = cur.fetchone()[0]
-            if a.smoke_question:
+            if a.smoke_question and a.embed == "sql":
+                cur.execute("SELECT rule_id, score FROM kb_search(%s, 3, NULL, 'ingest')", (a.smoke_question,))
+                summary["smoke_top3"] = [f"{rid}:{sim}" for rid, sim in cur.fetchall()]
+            elif a.smoke_question:
                 q = embed(bedrock, a.model, a.dim, a.smoke_question)
                 cur.execute(f"SELECT rule_id, round((1 - (embedding <=> %s::vector))::numeric, 4) "
                             f"FROM {t} ORDER BY embedding <=> %s::vector LIMIT 3", (q, q))
