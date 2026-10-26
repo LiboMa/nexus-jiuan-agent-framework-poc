@@ -183,14 +183,15 @@ test('测试台脚本里没有写死的密码', async () => {
 });
 
 // ---------- 测试台（任务 6）：模板、部署、备份、换型、在测试台上跑测试
-test('模板允许 t3.large；Resources 除了九安 v0.7.10 新增的分发、记录和输出、知识库的入站规则 KbIngress，一字不改（不会替换实例）', async () => {
+test('模板允许 t3.large；Resources 除了九安 v0.7.10 新增的分发、记录和输出、知识库的入站规则 KbIngress 和 Bedrock 策略 KbBedrockPolicy，一字不改（不会替换实例）', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   assert.match(template, /InstanceType:\n\s+Type: String\n\s+Default: t3\.small\n\s+AllowedValues: \[t3\.small, t3\.medium, t3\.large\]/);
   const resources = template.slice(template.indexOf('\nResources:')).replace(/\n  Jiuan07Distribution:\n[\s\S]*?\n(?=\nOutputs:)/, '')
     .replace("\n  Jiuan07Url:\n    Value: !Sub 'https://${Jiuan07DomainName}'", '')
     .replace(['\n\n  KbIngress:', "    # The knowledge base's PostgreSQL (kb/, container nexus-pgvector on this instance) from the Nexus VPC only.", '    Type: AWS::EC2::SecurityGroupIngress',
       '    Condition: KbEnabled', '    Properties:', '      GroupId: !GetAtt AppSecurityGroup.GroupId', '      IpProtocol: tcp', '      FromPort: !Ref KbPort', '      ToPort: !Ref KbPort',
-      '      CidrIp: !Ref KbAllowedCidr', "      Description: 'nexus-pgvector: Nexus server + sandbox VMs (private only)'"].join('\n'), '');
+      '      CidrIp: !Ref KbAllowedCidr', "      Description: 'nexus-pgvector: Nexus server + sandbox VMs (private only)'"].join('\n'), '')
+    .replace(/\n\n  KbBedrockPolicy:\n[\s\S]*?(?=\n\n  Instance:)/, '');
   assert.equal(createHash('sha256').update(resources).digest('hex'), '517e951151bb07d472fdba0263ece054bb3982fe85f619a1f8dc409b96053b1f');
 });
 

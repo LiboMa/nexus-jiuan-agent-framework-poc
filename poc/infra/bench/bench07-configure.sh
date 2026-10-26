@@ -43,6 +43,35 @@ write_secret hly_app_id fake-hly-app-id-jiuan07
 write_secret hly_app_secret fake-hly-app-secret-jiuan07
 # <<< jiuan07-secret-files
 
+# >>> jiuan07-kb
+# 「规则库 › 制度知识库」：知识库（kb/）的 PG 容器在本机，由 infra/kb.sh 部署。只有它已部署（PG 主机的 .env 在）才开这个功能：
+#   连库密码从 PG 主机的 .env 复制成 kb_pg_password（root:jiuan07 0640），不打印；上传文件目录 /var/lib/jiuan07/kb-uploads（0700）；
+#   入库进程用的 Python venv（钉 psycopg 版本，Bedrock 由库里的 kb_embed 调，这里不需要 boto3）。
+KB_ENV=/opt/nexus-pgvector/.env
+KB_LINES=""
+if [[ -s "$KB_ENV" ]]; then
+  kb_pw="$(sed -n 's/^NEXUS_DB_PASSWORD=//p' "$KB_ENV" | head -1)"
+  kb_user="$(sed -n 's/^NEXUS_DB_USER=//p' "$KB_ENV" | head -1)"
+  kb_db="$(sed -n 's/^NEXUS_DB_NAME=//p' "$KB_ENV" | head -1)"
+  [[ -n "$kb_pw" && -n "$kb_user" && -n "$kb_db" ]] || { echo "$KB_ENV 缺 NEXUS_DB_USER / NEXUS_DB_PASSWORD / NEXUS_DB_NAME" >&2; exit 1; }
+  write_secret kb_pg_password "$kb_pw"
+  unset kb_pw
+  install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads
+  if ! /opt/andon-finance/kb-venv/bin/python -c 'import psycopg' >/dev/null 2>&1; then
+    python3 -m venv /opt/andon-finance/kb-venv
+    /opt/andon-finance/kb-venv/bin/pip install -q --disable-pip-version-check 'psycopg[binary]==3.2.9'
+  fi
+  kb_token="$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')"
+  kb_host="$(curl -sf -H "X-aws-ec2-metadata-token: $kb_token" http://169.254.169.254/latest/meta-data/local-ipv4)"
+  [[ -n "$kb_host" ]] || { echo "从 IMDS 取不到私网 IP（知识库的 PG 只绑这个地址）" >&2; exit 1; }
+  KB_LINES="POC07_KB_PG_HOST=$kb_host
+POC07_KB_USER=$kb_user
+POC07_KB_DB=$kb_db
+POC07_KB_DIR=/opt/andon-finance/current/kb
+POC07_KB_PYTHON=/opt/andon-finance/kb-venv/bin/python"
+fi
+# <<< jiuan07-kb
+
 cat > "$DIR/env.new" <<ENV
 POC07_ORIGIN=https://$DOMAIN
 POC07_PORT=4181
@@ -54,6 +83,7 @@ NEXUS_OPERATOR=/opt/andon-finance/current/operator/scripts/nexus.py
 POC07_NEXUS_HOME=/var/lib/jiuan07/nexus
 TZ=Asia/Shanghai
 NODE_ENV=production
+${KB_LINES}
 ENV
 chown root:jiuan07 "$DIR/env.new"; chmod 0640 "$DIR/env.new"; mv "$DIR/env.new" "$DIR/env"
 

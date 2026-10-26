@@ -99,7 +99,7 @@ chmod 600 "$SECRETS"
 say "打包并上传构件"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/jiuan07"
+mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/jiuan07" "$STAGE/release/kb"
 rsync -a --exclude test --exclude node_modules --exclude .DS_Store "$APP_DIR/" "$STAGE/release/app/"
 # 九安取构建出来的副本：已经不含 tests、deploy，带着锁定版本的 node_modules（mysql2）。
 rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan/" "$STAGE/release/jiuan/"
@@ -107,6 +107,8 @@ rsync -a --exclude .DS_Store "$HERE/bench/" "$STAGE/release/bench/"
 # 九安 v0.7.10：测试台外壳（不带测试和冒烟脚本）和按清单复制的副本（不含 seeds、database、tests、deploy、scripts）
 rsync -a --exclude test --exclude scripts --exclude node_modules --exclude .DS_Store "$POC_DIR/app07/" "$STAGE/release/app07/"
 rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan07/" "$STAGE/release/jiuan07/"
+# 知识库的入库代码与 SQL（「制度知识库」页在测试台上起的子进程用）：只带 kb/lib、kb/sql，不带 kb 的配置、状态和生成物
+rsync -a --exclude __pycache__ --exclude .DS_Store "$POC_DIR/../kb/lib" "$POC_DIR/../kb/sql" "$STAGE/release/kb/"
 cp "$OPERATOR_SCRIPT" "$STAGE/release/operator/scripts/nexus.py"
 # macOS 的 tar 默认会带上 AppleDouble（._*）和扩展属性，实例上解包会多出垃圾文件和告警。
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf "$STAGE/current.tgz" -C "$STAGE/release" .

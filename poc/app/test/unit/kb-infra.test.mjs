@@ -150,3 +150,36 @@ test('deploy.sh 建栈 / 更新栈时可以带上 KB_ALLOWED_CIDR；导出交接
   assert.match(pack, /--exclude kb\.env/);
   await run('bash', ['-n', KB_SH]);
 });
+
+test('模板：知识库在库里生成向量（PG 容器经实例角色调 Bedrock）——KbEnabled 时实例角色多一条策略，只许调 Titan v2 这一个嵌入模型', async () => {
+  const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
+  const policy = block(template, 'KbBedrockPolicy');
+  for (const line of [/Type: AWS::IAM::Policy/, /Condition: KbEnabled/, /Roles: \[!Ref InstanceRole\]/, /Action: bedrock:InvokeModel/,
+    /Resource: !Sub 'arn:\$\{AWS::Partition\}:bedrock:\$\{AWS::Region\}::foundation-model\/amazon\.titan-embed-text-v2:0'/]) assert.match(policy, line);
+  assert.equal((policy.match(/Effect:/g) || []).length, 1, '只有一条声明');
+  assert.doesNotMatch(policy, /bedrock:\*|Resource: '\*'/);
+});
+
+test('测试台配置：知识库在本机时，入库进程的密码文件、上传目录、Python venv（钉 psycopg 版本）和 POC07_KB_* 都写好；密码不打印', async () => {
+  const configure = await readFile(infra('bench/bench07-configure.sh'), 'utf8');
+  const kb = configure.slice(configure.indexOf('# >>> jiuan07-kb'), configure.indexOf('# <<< jiuan07-kb'));
+  assert.ok(kb.length > 100, 'bench07-configure.sh 里要有 jiuan07-kb 段');
+  assert.match(kb, /KB_ENV=\/opt\/nexus-pgvector\/\.env/);
+  assert.match(kb, /if \[\[ -s "\$KB_ENV" \]\]/);
+  assert.match(kb, /sed -n 's\/\^NEXUS_DB_PASSWORD=\/\/p' "\$KB_ENV"/);
+  assert.match(kb, /write_secret kb_pg_password "\$kb_pw"/);
+  assert.doesNotMatch(kb, /echo[^\n]*\$kb_pw|printf[^\n]*\$kb_pw/);
+  assert.match(kb, /install -d -o jiuan07 -g jiuan07 -m 0700 \/var\/lib\/jiuan07\/kb-uploads/);
+  assert.match(kb, /python3 -m venv \/opt\/andon-finance\/kb-venv/);
+  assert.match(kb, /'psycopg\[binary\]==3\.2\.9'/);
+  assert.match(kb, /latest\/meta-data\/local-ipv4/);
+  for (const name of ['POC07_KB_PG_HOST', 'POC07_KB_DIR=/opt/andon-finance/current/kb', 'POC07_KB_PYTHON=/opt/andon-finance/kb-venv/bin/python', 'POC07_KB_USER', 'POC07_KB_DB']) assert.ok(kb.includes(name), name);
+  assert.ok(configure.indexOf('# <<< jiuan07-kb') < configure.indexOf('cat > "$DIR/env.new" <<ENV'), '先算出知识库的设置再写 env');
+  assert.match(configure.slice(configure.indexOf('cat > "$DIR/env.new" <<ENV')), /\$\{KB_LINES\}\nENV/);
+});
+
+test('部署：构件里带上知识库的入库代码与 SQL（kb/lib、kb/sql），不带状态、生成物和文档原文', async () => {
+  const deploy = await readFile(infra('deploy.sh'), 'utf8');
+  assert.match(deploy, /rsync -a --exclude __pycache__ --exclude \.DS_Store "\$POC_DIR\/\.\.\/kb\/lib" "\$POC_DIR\/\.\.\/kb\/sql" "\$STAGE\/release\/kb\/"/);
+  assert.match(deploy, /mkdir -p [^\n]*"\$STAGE\/release\/kb"/);
+});
