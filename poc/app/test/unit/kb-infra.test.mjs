@@ -202,3 +202,11 @@ test('kb 的 create 模式：新建的 PG 主机也能做库内语义检索—�
   const deploy = await readFile(path.join(ROOT, 'kb/deploy.sh'), 'utf8');
   assert.match(deploy, /"ImageId=\$ami" "EmbedModelId=\$EMBED_MODEL_ID"/);
 });
+
+test('仿真文档进仓库：kb/.gitignore 忽略所有 .docx（制度原文），只把单元测试用的仿真文档放出来', async () => {
+  const ignore = (await readFile(path.join(ROOT, 'kb/.gitignore'), 'utf8')).split('\n').map(line => line.trim());
+  const docx = ignore.indexOf('*.docx'), fixture = ignore.indexOf('!tests/fixtures/sample-matrix.docx');
+  assert.ok(docx >= 0 && fixture > docx, 'git 按顺序看规则：放行要写在 *.docx 之后');
+  const { stdout } = await run('git', ['-C', ROOT, 'check-ignore', '-v', '--no-index', 'kb/tests/fixtures/sample-matrix.docx']).catch(error => ({ stdout: error.stdout }));
+  assert.match(stdout, /!tests\/fixtures\/sample-matrix\.docx/, '仿真文档不被忽略');
+});

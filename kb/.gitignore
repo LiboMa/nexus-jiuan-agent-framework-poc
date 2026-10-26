@@ -7,9 +7,10 @@ deploy.env
 .state/
 .build/
 
-# 规则原文档属于客户资料，不进仓库
+# 规则原文档属于客户资料，不进仓库；只放行单元测试用的仿真文档（虚构内容，tests/make_sample_docx.py 生成）
 *.docx
 *.doc
+!tests/fixtures/sample-matrix.docx
 
 # Python 缓存
 __pycache__/
