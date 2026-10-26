@@ -4,7 +4,8 @@
  * 「后台配置 › Agent 接入」页上粘贴一次，九安加密存库，之后的调用都用这条启用记录。
  * 流程：口令登录 → 页面上的启用记录在、可用 → 四张虚构对公付款单先读取原件、再手动发起 AI 独立建议（重置后启用记录写回之前的那一轮九安不自动重排）
  * → 结论和依据核对，Agent 引用的规则编号到测试台的知识库（nexus-pgvector 的 approval_rules）里逐个核对 → 计入两档结论 → 没有回写
- * → 模拟来单一张，等九安同步、读详情后自动发起并完成 → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
+ * → 模拟来单一张，等九安同步、读详情后自动发起并完成 → 给了 KB_E2E_DOCX（本机的制度原文）时，在「规则库 › 制度知识库」上传、预览、入库、检索、看检索日志
+ * → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
  * 真实调用 Nexus：五次 AI 独立建议，每次约 0.1–0.3 美元。
  */
 import test, { after, before } from 'node:test';
@@ -227,6 +228,43 @@ test('模拟来单：管理员来一张新单，九安下一轮同步进单据�
   assert.equal(advice.status, 'completed', `${number}：${advice.errorCode ?? advice.declinedReason}`);
   assert.equal(advice.result, 'pass', `${number}（模板 DGZF-F07-001）的结论应为 pass：${advice.note}`);
   assert.ok(ruleIdsOf(advice).length, '自动发起的这一轮也要引用知识库规则');
+});
+
+// 制度原文只在本机（不进仓库、页面不截图）；没给就跳过。标签沿用知识库工具的默认值（kb/lib/common.sh 的 RULES_SOURCE_TAG），
+// 这样页面和 kb.sh ingest 认的是同一套规则
+const KB_DOCX = process.env.KB_E2E_DOCX;
+const KB_TAG = process.env.KB_E2E_TAG || 'finance-approval-v4';
+const KB_QUESTION = process.env.KB_E2E_QUESTION || '房租 年度框架合同 九安';
+const KB_EXPECT = process.env.KB_E2E_EXPECT || 'C05-3.4';
+
+test('制度知识库：管理员上传本机的制度原文——预览不删、不和别的文档冲突，确认入库后历史里是「已入库」；按问题检索前 3 名有预期规则；检索日志里有这次测试期间审核 Agent 的调用', { skip: KB_DOCX ? false : '没给 KB_E2E_DOCX（本机的制度原文）', timeout: 20 * 60_000 }, async () => {
+  const card = title => page.locator('section.platform-ops-card').filter({ has: page.getByRole('heading', { name: title }) });
+  await page.goto(`${BASE}/#rules?view=kb`);
+  await page.locator('input[type=file][name=file]').setInputFiles(KB_DOCX);
+  const preview = page.locator('.kb-preview').first();
+  await preview.waitFor({ timeout: 3 * 60_000 });
+  await page.locator('input[name=sourceTag]').fill(KB_TAG);
+  await Promise.all([page.waitForResponse(response => /\/poc\/kb\/documents\/\d+\/preview$/.test(new URL(response.url()).pathname), { timeout: 3 * 60_000 }),
+    page.getByRole('button', { name: '重新预览' }).click()]);
+  await sleep(500);
+  assert.match(await preview.innerText(), /删除 0$/, '同一份制度重新入库不该删规则');
+  assert.equal(await page.locator('.kb-block').count(), 0, '规则编号不该和库里另一份文档冲突');
+  await page.getByRole('button', { name: '确认入库' }).click();
+  const outcome = await card('上传制度文档').getByText(/入库完成|入库没有完成/).first().innerText({ timeout: 15 * 60_000 });
+  assert.match(outcome, /^入库完成/, outcome);
+  const [latest] = (await api('/poc/kb/documents')).json.data.items;
+  assert.deepEqual([latest.status, latest.source_tag, latest.result?.pruned], ['ingested', KB_TAG, 0]);
+
+  await card('按问题检索').locator('input[name=question]').fill(KB_QUESTION);
+  await card('按问题检索').getByRole('button', { name: '检索' }).click();
+  await card('按问题检索').locator('tbody tr td').first().waitFor();
+  await sleep(1000);
+  const top3 = (await card('按问题检索').locator('tbody tr').evaluateAll(rows => rows.map(row => row.cells[1]?.innerText))).slice(0, 3);
+  assert.ok(top3.includes(KB_EXPECT), `「${KB_QUESTION}」前 3 名应有 ${KB_EXPECT}：${top3}`);
+
+  const log = (await api('/poc/kb/search-log')).json.data.items;
+  assert.ok(log.some(entry => entry.caller === 'page' && entry.question === KB_QUESTION), '页面检索记进检索日志');
+  assert.ok(log.some(entry => entry.caller === 'agent' && new Date(entry.at) >= startedAt), '这次测试里审核 Agent 审单时经连接器调了 kb_search');
 });
 
 test('出网与写回：测试期间九安没有调汇联易的审批写入；被拦下的出网只有写死的外部地址，没有 Nexus', async () => {
