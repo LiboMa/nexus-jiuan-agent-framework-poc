@@ -11,7 +11,7 @@
  * 原文件存 <uploadsDir>/<sha256>.docx（0600），解析结果存 <id>.rules.json；数据库的读写都经 runner（kb-runner.mjs）。
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const BASE = '/api/analysis/v1/poc/kb';
@@ -105,6 +105,7 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
       fail('KB_PARSE_FAILED', 422, parsed.message);
     }
     await rename(parsedFile, rulesFile(id));
+    await chmod(rulesFile(id), 0o600);
     const tags = (await runner.admin(['tags'])).items ?? [];
     const suggestedTag = tags.find(tag => tag.source_doc === name)?.source_tag ?? `doc-${sha256.slice(0, 8)}`;
     const preview = await runner.preview(rulesFile(id), { sourceTag: suggestedTag, sourceDoc: name, sourceVersion: '' });

@@ -97,7 +97,7 @@ test('上传成功：原文件存成 <sha256>.docx（0600），解析报告和�
   assert.deepEqual(data.preview, PREVIEW);
   const sha = (await import('node:crypto')).createHash('sha256').update(FIXTURE).digest('hex');
   assert.equal((await stat(path.join(h.uploadsDir, `${sha}.docx`))).mode & 0o777, 0o600);
-  await stat(path.join(h.uploadsDir, '1.rules.json'));
+  assert.equal((await stat(path.join(h.uploadsDir, '1.rules.json'))).mode & 0o777, 0o600, '解析结果出自制度原文，和原文件一样只给服务自己读');
   assert.deepEqual(h.runner.calls.find(call => call[0] === 'preview'), ['preview', 'sample-matrix']);
   const other = await harness({ tags: [] });
   t.after(other.done);

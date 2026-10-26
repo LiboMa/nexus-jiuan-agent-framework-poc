@@ -91,6 +91,10 @@ def cmd_show(cur, a):
 
 
 def cmd_tags(cur, a):
+    # 接管的旧表还没有 source_tag 列（第一次经本工具入库时由 approval_rules.sql 补上）：没有标签可选
+    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = %s AND column_name = 'source_tag'", (a.table,))
+    if cur.fetchone() is None:
+        return {"items": []}
     cur.execute(f"SELECT source_tag, source_doc, count(*) AS rows FROM {a.table} WHERE source_tag IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2")
     return {"items": rows(cur)}
 

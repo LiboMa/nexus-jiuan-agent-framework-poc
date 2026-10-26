@@ -131,12 +131,24 @@ class KbAdminTest(unittest.TestCase):
         self.assertEqual(params, ("供应商 货款 单笔 2 万", 5, None))
 
     def test_tags_and_bad_table_name(self):
-        conn = FakeConn([("FROM approval_rules", (["source_tag", "source_doc", "rows"], [("finance-approval-v4", "x.docx", 102)]))])
+        conn = FakeConn([("FROM information_schema.columns", (["one"], [(1,)])),
+                         ("FROM approval_rules", (["source_tag", "source_doc", "rows"], [("finance-approval-v4", "x.docx", 102)]))])
         code, text = admin(["tags"], conn)
         self.assertEqual(json.loads(text)["items"][0]["rows"], 102)
         code, text = admin(["--table", "rules; drop", "tags"], conn)
         self.assertNotEqual(code, 0)
         self.assertIn("error", json.loads(text))
+
+
+    def test_tags_on_a_table_from_before_source_tag(self):
+        # 接管的旧表（手工入库、或本工具更早的版本）还没有 source_tag 列：没有标签可选，不报错
+        conn = FakeConn([("FROM information_schema.columns", (["one"], []))])
+        code, text = admin(["tags"], conn)
+        self.assertEqual((code, json.loads(text)), (0, {"items": []}))
+        self.assertFalse(any("SELECT source_tag" in sql for sql, _ in conn.executed))
+        sql, params = conn.executed[0]
+        self.assertIn("table_schema = current_schema() AND table_name = %s AND column_name = 'source_tag'", sql)
+        self.assertEqual(params, ("approval_rules",))
 
 
 class IngestSqlEmbedTest(unittest.TestCase):
