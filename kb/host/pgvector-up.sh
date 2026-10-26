@@ -5,6 +5,8 @@
 # 输入（由 deploy.sh 以环境变量传入）：
 #   PG_IMAGE PG_CONTAINER_NAME PG_PORT PG_BIND_IP PG_DATA_VOLUME PG_MEMORY_LIMIT PG_BASE_DIR
 #   PG_DB_NAME PG_DB_USER PG_INSTALL_DOCKER
+#   可选：KB_SEARCH_SQL_B64（sql/kb_search.sql 的 base64）+ EMBED_MODEL_ID EMBED_DIM AWS_REGION RULES_TABLE：
+#         装 PL/Python（容器里就地装，不重启）并建库内语义检索 kb_embed / kb_search、上传历史、检索日志
 #
 # 行为：
 #   - 新建的主机（create 模式）先等 cloud-init（user data 装 Docker）结束。
@@ -131,6 +133,25 @@ CREATE EXTENSION IF NOT EXISTS vector;
 SQL
 } | docker exec -i -e APP_USER="$PG_DB_USER" -e APP_DB="$PG_DB_NAME" "$PG_CONTAINER_NAME" sh -c \
   'psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -v app_user="$APP_USER" -v app_db="$APP_DB"'
+
+# ---- 6b. 库内语义检索（sql/kb_search.sql）：给了 KB_SEARCH_SQL_B64 才做 ----
+# 官方镜像不带 PL/Python：没有就在运行中的容器里用 apt 装（PGDG 源镜像里已配好）。PG 在 CREATE EXTENSION 时才加载它，
+# 不重启、不停机，数据卷和端口绑定都不动。装的东西在容器的可写层里：容器被重建后，下一次 db 阶段会再装。
+if [ -n "${KB_SEARCH_SQL_B64:-}" ]; then
+  : "${EMBED_MODEL_ID:?}" "${EMBED_DIM:?}" "${AWS_REGION:?}" "${RULES_TABLE:?}"
+  avail="$(docker exec "$PG_CONTAINER_NAME" psql -X -At -U postgres -d "$PG_DB_NAME" -c "SELECT count(*) FROM pg_available_extensions WHERE name = 'plpython3u'")"
+  if [ "$avail" = "0" ]; then
+    say "在容器里装 PL/Python（postgresql-plpython3-17、python3-boto3；不重启 PostgreSQL）"
+    docker exec -u 0 "$PG_CONTAINER_NAME" sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-plpython3-17 python3-boto3' >/dev/null
+    result plpython installed
+  else
+    result plpython present
+  fi
+  printf '%s' "$KB_SEARCH_SQL_B64" | base64 -d \
+    | sed -e "s/{table}/$RULES_TABLE/g" -e "s/{dim}/$EMBED_DIM/g" -e "s|{model}|$EMBED_MODEL_ID|g" -e "s/{region}/$AWS_REGION/g" -e "s/{app_user}/$PG_DB_USER/g" \
+    | docker exec -i "$PG_CONTAINER_NAME" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$PG_DB_NAME" >/dev/null
+  result kb_search ready
+fi
 
 # ---- 7. 自检：用应用用户经 TCP（SCRAM）登录，密码取自 .env，经 stdin 传入 ----
 printf '%s\n' "$APP_PW" | docker exec -i -e APP_USER="$PG_DB_USER" -e APP_DB="$PG_DB_NAME" "$PG_CONTAINER_NAME" sh -c \

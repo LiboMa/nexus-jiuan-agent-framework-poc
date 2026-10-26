@@ -262,13 +262,19 @@ phase_db() {
       absent|"") plan "在 $TGT_ID 上启动 $PG_IMAGE，绑定 $TGT_BIND_IP:$PG_PORT，库 $PG_DB_NAME / 用户 $PG_DB_USER" ;;
       *) plan "容器 $PG_CONTAINER_NAME 当前 $cs，实跑时 docker start" ;;
     esac
+    case "$(printf '%s\n' "$st" | result_of kb_search)" in
+      ready) skip "库内语义检索 kb_search 已可用；实跑时照 sql/kb_search.sql 幂等重建函数" ;;
+      *) plan "在容器 $PG_CONTAINER_NAME 里装 PL/Python（不重启）并建 kb_embed / kb_search、上传历史、检索日志" ;;
+    esac
     return 0
   fi
   local outp
   outp="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-up.sh" 900 \
     "PG_IMAGE=$PG_IMAGE" "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_PORT=$PG_PORT" "PG_BIND_IP=$TGT_BIND_IP" \
     "PG_DATA_VOLUME=$PG_DATA_VOLUME" "PG_MEMORY_LIMIT=$PG_MEMORY_LIMIT" "PG_BASE_DIR=$PG_BASE_DIR" \
-    "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "PG_INSTALL_DOCKER=$PG_INSTALL_DOCKER")" || { printf '%s\n' "$outp"; die "db 阶段在 $TGT_ID 上失败（原因见上方远端输出）"; }
+    "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "PG_INSTALL_DOCKER=$PG_INSTALL_DOCKER" \
+    "KB_SEARCH_SQL_B64=$(base64 < "$PKG_DIR/sql/kb_search.sql" | tr -d '\n')" "EMBED_MODEL_ID=$EMBED_MODEL_ID" "EMBED_DIM=$EMBED_DIM" \
+    "AWS_REGION=$AWS_REGION" "RULES_TABLE=$RULES_TABLE")" || { printf '%s\n' "$outp"; die "db 阶段在 $TGT_ID 上失败（原因见上方远端输出）"; }
   printf '%s\n' "$outp" | grep -E '^\[host\]' || true
   local action; action="$(printf '%s\n' "$outp" | result_of container_action)"
   case "$action" in unchanged) skip "容器 $PG_CONTAINER_NAME 已在运行" ;; *) ok "容器 $PG_CONTAINER_NAME：$action" ;; esac
@@ -277,6 +283,7 @@ phase_db() {
   [ "$(printf '%s\n' "$outp" | result_of volume_action)" = "created" ] && state_set DB_VOLUME_CREATED 1
   [ "$(printf '%s\n' "$outp" | result_of env_file)" = "created" ] && state_set DB_BASEDIR_CREATED 1
   ok "PostgreSQL $(printf '%s\n' "$outp" | result_of pg_version) + vector $(printf '%s\n' "$outp" | result_of vector_version)，监听 $(printf '%s\n' "$outp" | result_of listen)，密码文件 $(printf '%s\n' "$outp" | result_of env_file)"
+  ok "库内语义检索：PL/Python $(printf '%s\n' "$outp" | result_of plpython)，kb_search $(printf '%s\n' "$outp" | result_of kb_search)"
   state_set PG_HOST_IP "$TGT_IP"; state_set PG_BIND "$TGT_BIND_IP:$PG_PORT"
 }
 
@@ -448,13 +455,23 @@ phase_verify() {
   log "verify：逐层核对（只读$($E2E && ! $DRY_RUN && printf '；--e2e 会建测试会话')）"
   local fails=0 st aid r nodes n set miss
   need_target verify || return 0
-  st="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" || true)"
+  st="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" \
+    "E2E_QUESTION_B64=$(printf '%s' "$E2E_QUESTION" | base64 | tr -d '\n')" || true)"
   if [ "$(printf '%s\n' "$st" | result_of container_state)" = "running" ]; then
     ok "[db] 容器 running，$(printf '%s\n' "$st" | result_of port_binding)，PG $(printf '%s\n' "$st" | result_of pg_version)，vector $(printf '%s\n' "$st" | result_of vector_version)"
   else warn "[db] 容器状态：$(printf '%s\n' "$st" | result_of container_state)"; fails=$((fails+1)); fi
   if [ "$(printf '%s\n' "$st" | result_of rules_table)" = "present" ]; then
     ok "[ingest] $RULES_TABLE：$(printf '%s\n' "$st" | result_of rules_rows) 行（$(printf '%s\n' "$st" | result_of rules_by_type)），无向量 $(printf '%s\n' "$st" | result_of rules_rows_without_embedding)，来源 $(printf '%s\n' "$st" | result_of rules_sources)"
   else warn "[ingest] 规则表 $RULES_TABLE 不存在"; fails=$((fails+1)); fi
+  case "$(printf '%s\n' "$st" | result_of kb_search)" in
+    ready) ok "[search] kb_search 可用（库内语义检索，PL/Python 已装）" ;;
+    *) warn "[search] kb_search 不可用（$(printf '%s\n' "$st" | result_of kb_search)）：跑 ./deploy.sh db 装 PL/Python 并建函数"; fails=$((fails+1)) ;;
+  esac
+  local top3; top3="$(printf '%s\n' "$st" | result_of kb_search_top3)"
+  if [ -n "$E2E_EXPECT" ] && [ "$(printf '%s\n' "$st" | result_of kb_search)" = "ready" ]; then
+    if printf ',%s,' "$top3" | grep -q ",$E2E_EXPECT,"; then ok "[search] E2E_QUESTION 前 3 名：$top3（含 $E2E_EXPECT）"
+    else warn "[search] E2E_QUESTION 前 3 名：${top3:-（空）}，里面没有 $E2E_EXPECT"; fails=$((fails+1)); fi
+  fi
 
   if [ "$PG_HOST_MODE" = "existing" ]; then
     local sg hit=""
