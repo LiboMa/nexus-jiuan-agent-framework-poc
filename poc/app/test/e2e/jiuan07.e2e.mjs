@@ -62,11 +62,11 @@ async function until(read, done, { timeout, every = 5000, what }) {
 const finished = advice => ['completed', 'failed', 'declined'].includes(advice?.status);
 const ruleIdsOf = advice => [...new Set((advice?.basis ?? []).filter(item => item.kind === 'rule').flatMap(item => [...String(item.ref).matchAll(RULE_ID)].map(match => match[1])))];
 
-/** 经 SSM 到测试台的知识库里查这些规则编号，返回查到的那些。 */
+/** 经 SSM 到测试台的知识库里查这些规则编号，返回查到的那些（以应用用户查：规则表归它，不在超级用户会话里读）。 */
 async function knownRuleIds(ids) {
   if (!ids.every(id => /^[A-Z0-9.-]+$/.test(id))) throw new Error(`规则编号格式不对：${ids}`);
   const sql = `SELECT string_agg(rule_id, ',' ORDER BY rule_id) FROM approval_rules WHERE rule_id IN (${ids.map(id => `'${id}'`).join(',')});`;
-  const params = JSON.stringify({ commands: [`docker exec nexus-pgvector psql -U postgres -d nexus -X -tAc "${sql}"`] });
+  const params = JSON.stringify({ commands: [`docker exec nexus-pgvector psql -U nexus -d nexus -X -tAc "${sql}"`] });
   const aws = async args => (await run('aws', ['--region', 'us-east-1', ...args, '--output', 'text'])).stdout.trim();
   const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', 'e2e kb rule-id check (read-only)', '--parameters', params, '--query', 'Command.CommandId']);
   await run('aws', ['--region', 'us-east-1', 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});

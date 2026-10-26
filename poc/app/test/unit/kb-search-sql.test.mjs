@@ -21,7 +21,7 @@ test('kb_embed：plpython3u、SECURITY DEFINER、固定 search_path；Titan v2 1
   assert.match(embed, /SET search_path = public, pg_temp/);
   assert.match(embed, /"dimensions": 1024/);
   assert.match(embed, /"normalize": True/);
-  assert.match(embed, /len\(input\) > 2000[\s\S]*plpy\.error/);
+  assert.match(embed, /len\(input\) > 8000[\s\S]*plpy\.error/, '入库时规则全文也经它：上限按模型给，问题的 2000 字在 kb_search 里管');
   assert.match(embed, /kb_embed_cache/);
   assert.match(sql, /REVOKE ALL ON FUNCTION kb_embed\(text\) FROM PUBLIC;/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_embed\(text\) TO nexus;/);
@@ -82,7 +82,10 @@ test('上传历史 kb_documents、检索日志 kb_search_log：列和状态与�
     assert.ok(sql.includes(column), `kb_search_log 缺 ${column}`);
   }
   assert.match(sql, /ALTER TABLE kb_documents OWNER TO nexus;/);
-  assert.match(sql, /ALTER TABLE kb_search_log OWNER TO nexus;/);
+  // 检索日志只追加：属主是建它的超级用户，应用用户（连接器）只能读；写日志经 SECURITY DEFINER 的 kb_log_search
+  assert.match(sql, /ALTER TABLE kb_search_log OWNER TO CURRENT_USER;/);
+  assert.match(sql, /REVOKE ALL ON kb_search_log FROM nexus;\s*GRANT SELECT ON kb_search_log TO nexus;/);
+  assert.match(sql, /ALTER TABLE kb_embed_cache OWNER TO CURRENT_USER;/);
   assert.match(sql, /interval '90 days'/);
 });
 
@@ -105,4 +108,34 @@ test('pgvector-up.sh：给了 KB_SEARCH_SQL_B64 才装 PL/Python 和建函数；
   assert.match(deploy, /\[search\] kb_search 可用/);
   assert.match(deploy, /result_of kb_search_error/);
   assert.match(deploy, /\[search\] E2E_QUESTION 前 3 名/);
+});
+
+test('权限：public 模式归超级用户（应用用户只留 USAGE、CREATE），连接器用户删不掉、改不了超级用户的表；写日志只经 kb_log_search；kb_embed 限流、重试、错误里不带账号和 ARN', async () => {
+  const sql = render(await readFile(kb('sql/kb_search.sql'), 'utf8'));
+  // 库的属主是应用用户时，PG 15+ 的 public 模式归 pg_database_owner＝应用用户：它能删掉超级用户建的表、换成带触发器的同名表
+  assert.match(sql, /ALTER SCHEMA public OWNER TO CURRENT_USER;\s*GRANT USAGE, CREATE ON SCHEMA public TO nexus;/);
+  const log = fn(sql, 'kb_log_search');
+  for (const line of [/LANGUAGE plpgsql/, /SECURITY DEFINER/, /SET search_path = public, pg_temp/, /INSERT INTO kb_search_log/, /session_user/, /interval '90 days'/]) assert.match(log, line);
+  assert.match(sql, /REVOKE ALL ON FUNCTION kb_log_search\(text, text, int, text, jsonb, int\) FROM PUBLIC;\s*GRANT EXECUTE ON FUNCTION kb_log_search\(text, text, int, text, jsonb, int\) TO nexus;/);
+  const search = fn(sql, 'kb_search');
+  assert.match(search, /PERFORM kb_log_search\(/);
+  assert.doesNotMatch(search, /INSERT INTO kb_search_log|DELETE FROM kb_search_log/);
+  assert.match(search, /char_length\(question\) > 2000/);
+  const embed = fn(sql, 'kb_embed');
+  assert.match(embed, /clock_timestamp\(\) - interval '1 minute'[\s\S]*>= 300/, '每分钟最多 300 次缓存未命中（真去调 Bedrock 的）');
+  assert.match(embed, /INSERT INTO kb_embed_cache \(sha256, embedding, created_at\) VALUES \(\$1, \$2::vector, clock_timestamp\(\)\)/);
+  assert.match(embed, /for attempt in range\(3\)/);
+  assert.match(embed, /error\.code (in|==) [^\n]*429/);
+  assert.match(embed, /re\.sub\(r"arn:aws/, '错误里的 ARN 去掉');
+  assert.match(embed, /re\.sub\(r"\\b\\d\{12\}\\b"/, '错误里的账号去掉');
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS kb_embed_cache_created_idx ON kb_embed_cache \(created_at\);/);
+});
+
+test('pgvector-status.sh：以应用用户（不是超级用户）查；kb_search 的探测放在只读事务里：verify / dry-run 不写日志和缓存，也顺带核对只读事务能检索', async () => {
+  const status = await readFile(kb('host/pgvector-status.sh'), 'utf8');
+  assert.doesNotMatch(status, /-U postgres/, '超级用户会话里跑应用用户能改的表和函数，等于把超级用户交出去');
+  assert.match(status, /psql -X -At -U "\$PG_DB_USER"/);
+  assert.match(status, /BEGIN READ ONLY;[^\n]*kb_search\('ping', 1, NULL, 'verify'\)[^\n]*ROLLBACK;/);
+  assert.match(status, /BEGIN READ ONLY;[^\n]*kb_search\(:'question', 3, NULL, 'verify'\)[^\n]*ROLLBACK;/);
+  assert.match(status, /: "\$\{PG_CONTAINER_NAME:\?\}" "\$\{PG_DB_NAME:\?\}" "\$\{PG_DB_USER:\?\}" "\$\{RULES_TABLE:\?\}"/);
 });
