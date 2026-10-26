@@ -35,6 +35,10 @@ Parameters:
       Concrete AMI ID, resolved once by deploy.sh (from the AL2023 SSM public parameter) and pinned in the state file.
       Do not use an SSM parameter type here: CloudFormation re-resolves it on every update and a newer AMI would
       replace the instance - the data lives on the root volume.
+  EmbedModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+    Description: Bedrock embedding model that kb_embed() in the PG container may invoke (the instance role allows only this one).
 
 Resources:
   HostSecurityGroup:
@@ -67,6 +71,15 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      # 库内语义检索：PG 容器里的 kb_embed()（sql/kb_search.sql）用实例角色调 Bedrock，只许这一个嵌入模型
+      Policies:
+        - PolicyName: kb-embeddings
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbedModelId}'
       Tags:
         - { Key: managed-by, Value: pgvector-rules-kb }
 
@@ -85,7 +98,7 @@ Resources:
       IamInstanceProfile: !Ref HostInstanceProfile
       MetadataOptions:
         HttpTokens: required
-        HttpPutResponseHopLimit: 1
+        HttpPutResponseHopLimit: 2   # PG 容器经 Docker 网桥多一跳，kb_embed() 才取得到实例角色凭证
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:

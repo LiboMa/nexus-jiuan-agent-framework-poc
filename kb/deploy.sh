@@ -242,7 +242,7 @@ phase_host() {
   aws_cli cloudformation deploy --stack-name "$stack" --template-file "$PKG_DIR/cfn/pgvector-host.yaml" \
     --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags "managed-by=pgvector-rules-kb" "deploy-name=$DEPLOY_NAME" \
     --parameter-overrides "DeployName=$DEPLOY_NAME" "SubnetId=$PG_CREATE_SUBNET_ID" "VpcId=$vpc" "AllowedCidr=$cidr" \
-      "Port=$PG_PORT" "InstanceType=$PG_CREATE_INSTANCE_TYPE" "VolumeSizeGb=$PG_CREATE_VOLUME_GB" "ImageId=$ami"
+      "Port=$PG_PORT" "InstanceType=$PG_CREATE_INSTANCE_TYPE" "VolumeSizeGb=$PG_CREATE_VOLUME_GB" "ImageId=$ami" "EmbedModelId=$EMBED_MODEL_ID"
   local iid; iid="$(aws_cli cloudformation describe-stacks --stack-name "$stack" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)"
   state_set PG_HOST_INSTANCE_ID "$iid"
   log "等待 $iid 的 SSM 上线（最长 10 分钟）"
@@ -467,6 +467,7 @@ phase_verify() {
   else warn "[ingest] 规则表 $RULES_TABLE 不存在"; fails=$((fails+1)); fi
   case "$(printf '%s\n' "$st" | result_of kb_search)" in
     ready) ok "[search] kb_search 可用（库内语义检索，PL/Python 已装）" ;;
+    error) warn "[search] kb_search 报错：$(printf '%s\n' "$st" | result_of kb_search_error)（排错见 GUIDE.md 9.10）"; fails=$((fails+1)) ;;
     *) warn "[search] kb_search 不可用（$(printf '%s\n' "$st" | result_of kb_search)）：跑 ./deploy.sh db 装 PL/Python 并建函数"; fails=$((fails+1)) ;;
   esac
   local top3; top3="$(printf '%s\n' "$st" | result_of kb_search_top3)"

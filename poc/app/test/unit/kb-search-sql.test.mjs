@@ -99,8 +99,10 @@ test('pgvector-up.sh：给了 KB_SEARCH_SQL_B64 才装 PL/Python 和建函数；
   assert.match(status, /RESULT plpython=/);
   assert.match(status, /RESULT kb_search=/);
   assert.match(status, /kb_search\('ping', 1, NULL, 'verify'\)/);
+  assert.match(status, /RESULT kb_search_error=/, '用不了时带上 PG 报的那一行（权限、凭证、模型），不只说 error');
   const deploy = await readFile(kb('deploy.sh'), 'utf8');
   assert.match(deploy, /KB_SEARCH_SQL_B64=\$\(base64 < "\$PKG_DIR\/sql\/kb_search\.sql" \| tr -d '\\n'\)/);
   assert.match(deploy, /\[search\] kb_search 可用/);
+  assert.match(deploy, /result_of kb_search_error/);
   assert.match(deploy, /\[search\] E2E_QUESTION 前 3 名/);
 });

@@ -190,3 +190,14 @@ test('kb/deploy.sh ingest --dry-run：规则编号已属于库里另一份文档
   assert.match(dry, /jget conflicts/);
   assert.match(dry, /已属于库里另一份文档/);
 });
+
+test('kb 的 create 模式：新建的 PG 主机也能做库内语义检索——实例角色只许调配置的嵌入模型，IMDS 跳数 2（PG 容器经 Docker 网桥取实例角色凭证）', async () => {
+  const host = await readFile(path.join(ROOT, 'kb/cfn/pgvector-host.yaml'), 'utf8');
+  assert.match(block(host, 'EmbedModelId'), /Type: String\n\s+Default: amazon\.titan-embed-text-v2:0/);
+  const role = block(host, 'HostRole');
+  for (const line of [/Action: bedrock:InvokeModel/, /Resource: !Sub 'arn:\$\{AWS::Partition\}:bedrock:\$\{AWS::Region\}::foundation-model\/\$\{EmbedModelId\}'/]) assert.match(role, line);
+  assert.equal((role.match(/Effect: Allow/g) || []).length, 2, '信任策略一条 + 调模型一条');
+  assert.match(block(host, 'Host'), /HttpPutResponseHopLimit: 2/);
+  const deploy = await readFile(path.join(ROOT, 'kb/deploy.sh'), 'utf8');
+  assert.match(deploy, /"ImageId=\$ami" "EmbedModelId=\$EMBED_MODEL_ID"/);
+});

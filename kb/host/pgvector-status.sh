@@ -26,7 +26,13 @@ fi
 # 库内语义检索：PL/Python 装了没有、kb_search 能不能用；给了 E2E_QUESTION_B64 就取这个问题的前 3 名
 echo "RESULT plpython=$(q "select count(*) from pg_extension where extname='plpython3u'")"
 if [ "$(q "select to_regprocedure('kb_search(text,integer,text,text)') is not null")" = "t" ]; then
-  if q "select count(*) from kb_search('ping', 1, NULL, 'verify')" >/dev/null; then echo "RESULT kb_search=ready"; else echo "RESULT kb_search=error"; fi
+  # 用不了时把 PG 报的第一行 ERROR 带回来（常见：实例角色没有 bedrock:InvokeModel、容器取不到凭证、模型没开通）
+  if err="$(docker exec "$PG_CONTAINER_NAME" psql -X -At -U postgres -d "$PG_DB_NAME" -v ON_ERROR_STOP=1 -c "select count(*) from kb_search('ping', 1, NULL, 'verify')" 2>&1 >/dev/null)"; then
+    echo "RESULT kb_search=ready"
+  else
+    echo "RESULT kb_search=error"
+    echo "RESULT kb_search_error=$(printf '%s\n' "$err" | grep -m1 'ERROR' | tr -d '\r' | cut -c1-300)"
+  fi
   if [ -n "${E2E_QUESTION_B64:-}" ]; then
     question="$(printf '%s' "$E2E_QUESTION_B64" | base64 -d)"
     echo "RESULT kb_search_top3=$(printf '%s\n' "select string_agg(rule_id, ',') from kb_search(:'question', 3, NULL, 'verify');" \
