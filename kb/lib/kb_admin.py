@@ -8,7 +8,7 @@
                                                                      改状态 → {"ok": true}；ingested 时同标签之前入库的记成 superseded
     recover                                                          服务重启时：入库中的改成失败 → {"recovered": int}
     history [--limit 50] / show ID                                   历史列表 / 一条详情
-    tags                                                             规则表里现有的 source_tag 与来源文档、行数
+    tags                                                             规则表里现有的 source_tag 与来源文档、版本说明、行数
     search Q [--k 8] [--segment S]                                   调 kb_search（caller=page）
     search-log [--limit 50]                                          最近的检索（审核 Agent、页面、verify）
 
@@ -95,7 +95,7 @@ def cmd_tags(cur, a):
     cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = %s AND column_name = 'source_tag'", (a.table,))
     if cur.fetchone() is None:
         return {"items": []}
-    cur.execute(f"SELECT source_tag, source_doc, count(*) AS rows FROM {a.table} WHERE source_tag IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2")
+    cur.execute(f"SELECT source_tag, source_doc, source_version, count(*) AS rows FROM {a.table} WHERE source_tag IS NOT NULL GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
     return {"items": rows(cur)}
 
 

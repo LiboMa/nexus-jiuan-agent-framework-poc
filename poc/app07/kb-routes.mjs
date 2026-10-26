@@ -2,8 +2,9 @@
  * 「规则库 › 制度知识库」页的接口（挂在九安的 platformRoutes 钩子上；只给管理员）：
  *   POST /api/analysis/v1/poc/kb/documents                 请求体是 .docx 原文（X-File-Name 为 encodeURIComponent 后的文件名）：
  *                                                         校验 → 存原文件 → 解析 → 记历史 → 入库预览 → 201
- *   POST …/documents/<id>/preview {sourceTag}              换标签后重新预览（入库前要看会新增 / 删除多少）
- *   POST …/documents/<id>/ingest {sourceTag, docTitle, sourceVersion}   确认入库：先回 202，后台跑；同一时间只跑一个
+ *   POST …/documents/<id>/preview {sourceTag, sourceVersion}   换标签 / 版本后重新预览（入库前要看会新增 / 删除多少）
+ *   POST …/documents/<id>/ingest {sourceTag, docTitle, sourceVersion}   确认入库：先回 202，后台跑；同一时间只跑一个。
+ *                                                         只认这份文档最近一次预览过的标签和版本，且那次预览没有规则编号冲突
  *   GET  …/documents、…/documents/<id>                     上传历史；一条详情（带这一版解析出的规则）
  *   GET  …/search?q=&k=&segment=                           语义检索（库里的 kb_search，和审核 Agent 用的同一个）
  *   GET  …/search-log                                      检索日志：审核 Agent、页面、verify 查了什么、命中了哪些
@@ -25,6 +26,8 @@ const MESSAGES = Object.freeze({
   KB_REQUEST_INVALID: '请求不完整：标签只能用小写字母、数字和连字符（2–63 位），文档名和版本说明不超过 200 字。',
   KB_NOT_FOUND: '找不到这条上传记录，刷新后再试。',
   KB_INGEST_BUSY: '已经有一份文档在入库，等它完成再试。',
+  KB_PREVIEW_STALE: '标签或版本说明和最近一次预览的不一样：先点「重新预览」，看过预览再入库。',
+  KB_RULE_CONFLICT: '有规则编号已属于库里另一份文档，入库会覆盖那份文档的规则，所以不能入库。',
   KB_QUESTION_INVALID: '请写一个问题（不超过 2000 字）。',
   KB_UNAVAILABLE: '知识库暂时连不上，稍后再试。',
 });
@@ -63,6 +66,13 @@ export function checkDocx(buffer, { entries = 2000, uncompressed = 100 * 1024 * 
 
 export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024, log = () => {} }) {
   let busy = false;
+  // 每份上传最近一次预览过的标签、版本和有没有冲突（服务重启后要重新预览）
+  const previewed = new Map();
+  async function preview(id, meta) {
+    const result = await runner.preview(rulesFile(id), meta);
+    previewed.set(id, { sourceTag: meta.sourceTag, sourceVersion: meta.sourceVersion ?? '', conflicts: Number(result?.conflicts) || 0 });
+    return result;
+  }
   const scratch = suffix => path.join(uploadsDir, `.tmp-${randomBytes(6).toString('hex')}${suffix}`);
   const rulesFile = id => path.join(uploadsDir, `${id}.rules.json`);
   async function writeJson(file, value) { await writeFile(file, JSON.stringify(value ?? {}), { mode: 0o600 }); return file; }
@@ -106,14 +116,18 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
     }
     await rename(parsedFile, rulesFile(id));
     await chmod(rulesFile(id), 0o600);
-    const tags = (await runner.admin(['tags'])).items ?? [];
-    const suggestedTag = tags.find(tag => tag.source_doc === name)?.source_tag ?? `doc-${sha256.slice(0, 8)}`;
-    const preview = await runner.preview(rulesFile(id), { sourceTag: suggestedTag, sourceDoc: name, sourceVersion: '' });
-    return { id, fileName: name, sha256, size: bytes.length, report: parsed.report, preview, suggestedTag, docTitle: name.replace(/\.docx$/iu, ''), sourceVersion: '' };
+    // 同一份文件再传：标签和版本说明都取库里现有的（它们也算进规则的哈希），预览才会是「不变」
+    const known = ((await runner.admin(['tags'])).items ?? []).find(tag => tag.source_doc === name);
+    const suggestedTag = known?.source_tag ?? `doc-${sha256.slice(0, 8)}`, sourceVersion = known?.source_version ?? '';
+    const first = await preview(id, { sourceTag: suggestedTag, sourceDoc: name, sourceVersion });
+    return { id, fileName: name, sha256, size: bytes.length, report: parsed.report, preview: first, suggestedTag, docTitle: name.replace(/\.docx$/iu, ''), sourceVersion };
   }
 
   async function startIngest(id, body) {
     const input = meta(body, { needTitle: true });
+    const seen = previewed.get(id);
+    if (!seen || seen.sourceTag !== input.sourceTag || seen.sourceVersion !== input.sourceVersion) fail('KB_PREVIEW_STALE', 409);
+    if (seen.conflicts) fail('KB_RULE_CONFLICT', 409);
     if (busy) fail('KB_INGEST_BUSY', 409);
     busy = true;
     let item;
@@ -155,7 +169,7 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
     if (one && method === 'POST' && one[2] === 'preview') {
       const input = meta(await json(req), { needTitle: false });
       const item = await existing(Number(one[1]));
-      return [200, { preview: await runner.preview(rulesFile(Number(one[1])), { sourceTag: input.sourceTag, sourceDoc: item.file_name, sourceVersion: item.source_version ?? '' }) }];
+      return [200, { preview: await preview(Number(one[1]), { sourceTag: input.sourceTag, sourceDoc: item.file_name, sourceVersion: input.sourceVersion }) }];
     }
     if (one && method === 'POST' && one[2] === 'ingest') return [202, await startIngest(Number(one[1]), await json(req))];
     if (method === 'GET' && route === '/search') {

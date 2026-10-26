@@ -24,13 +24,13 @@ async function until(check, ms = 3000) {
 }
 
 function fakeRunner({ parse = async () => ({ code: 0, report: REPORT, message: '' }), ingest = async () => ({ inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 }),
-  tags = [{ source_tag: 'sample-matrix', source_doc: '仿真办法.docx', rows: 12 }] } = {}) {
-  const calls = [];
+  tags = [{ source_tag: 'sample-matrix', source_doc: '仿真办法.docx', source_version: '', rows: 12 }], preview = async () => PREVIEW } = {}) {
+  const calls = [], previews = [];
   let nextId = 1;
   const rows = new Map();
-  return { calls, rows,
+  return { calls, rows, previews,
     parse: async (file, out) => { calls.push(['parse', path.basename(file)]); const result = await parse(file, out); if (!result.code) await import('node:fs/promises').then(fs => fs.writeFile(out, JSON.stringify([{ rule_id: 'C01-1.1', business_item: '新产品立项', segment: '甲板块', amount_tier: '总投资≤50 万' }]))); return result; },
-    preview: async (rules, meta) => { calls.push(['preview', meta.sourceTag]); return PREVIEW; },
+    preview: async (rules, meta) => { calls.push(['preview', meta.sourceTag]); previews.push(meta); return preview(rules, meta); },
     ingest: async (rules, meta) => { calls.push(['ingest', meta.sourceTag, meta.sourceDoc]); return ingest(rules, meta); },
     admin: async args => {
       calls.push(['admin', ...args.filter(arg => !String(arg).startsWith('/'))]);
@@ -122,6 +122,11 @@ test('换标签重新预览；确认入库先回 202，跑完记成已入库；�
   assert.equal(preview.status, 200);
   assert.deepEqual(h.runner.calls.filter(call => call[0] === 'preview').at(-1), ['preview', 'other-tag']);
   assert.equal((await h.ask('POST', '/documents/1/ingest', { json: { sourceTag: 'Bad Tag!', docTitle: 'x', sourceVersion: '' } })).status, 400);
+  // 入库只认最近一次预览过的标签和版本：没看过预览就入库，可能按新标签删掉另一份文档的规则
+  const stale = await h.ask('POST', '/documents/1/ingest', { json: { sourceTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: 'V1' } });
+  assert.deepEqual([stale.status, stale.payload.error.code], [409, 'KB_PREVIEW_STALE']);
+  await h.ask('POST', '/documents/1/preview', { json: { sourceTag: 'sample-matrix', sourceVersion: 'V1' } });
+  assert.deepEqual([h.runner.previews.at(-1).sourceTag, h.runner.previews.at(-1).sourceVersion], ['sample-matrix', 'V1'], '预览用页面上填的版本');
   const started = await h.ask('POST', '/documents/1/ingest', { json: { sourceTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: 'V1' } });
   assert.equal(started.status, 202);
   assert.equal((await h.ask('POST', '/documents/1/ingest', { json: { sourceTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: 'V1' } })).status, 409);
@@ -133,6 +138,19 @@ test('换标签重新预览；确认入库先回 202，跑完记成已入库；�
   await failing.ask('POST', '/documents/1/ingest', { json: { sourceTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: '' } });
   await until(() => failing.runner.rows.get(1).status === 'failed');
   assert.deepEqual([failing.runner.rows.get(1).status, failing.runner.rows.get(1).error], ['failed', 'Bedrock 拒绝']);
+});
+
+test('预览里规则编号和另一份文档冲突就不能入库（409）；同一份文件再传：标签和版本说明都取库里现有的，预览才会是「不变」', async t => {
+  const h = await harness({ preview: async (rules, meta) => (meta.sourceTag === 'other-doc' ? { ...PREVIEW, conflicts: 3, conflict_ids: ['C01-1.1'] } : PREVIEW),
+    tags: [{ source_tag: 'sample-matrix', source_doc: '仿真办法.docx', source_version: 'V4.0 正式签批版', rows: 12 }] });
+  t.after(h.done);
+  const data = (await h.upload()).payload.data;
+  assert.deepEqual([data.suggestedTag, data.sourceVersion], ['sample-matrix', 'V4.0 正式签批版']);
+  assert.equal(h.runner.previews[0].sourceVersion, 'V4.0 正式签批版');
+  await h.ask('POST', '/documents/1/preview', { json: { sourceTag: 'other-doc', sourceVersion: '' } });
+  const refused = await h.ask('POST', '/documents/1/ingest', { json: { sourceTag: 'other-doc', docTitle: '仿真办法', sourceVersion: '' } });
+  assert.deepEqual([refused.status, refused.payload.error.code], [409, 'KB_RULE_CONFLICT']);
+  assert.ok(!h.runner.calls.some(call => call[0] === 'ingest'));
 });
 
 test('历史、详情（带这一版的规则）、检索、检索日志；启动时把中断的入库改成失败；空问题 400；别的路径交还九安', async t => {

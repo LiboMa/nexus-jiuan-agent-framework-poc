@@ -132,9 +132,11 @@ class KbAdminTest(unittest.TestCase):
 
     def test_tags_and_bad_table_name(self):
         conn = FakeConn([("FROM information_schema.columns", (["one"], [(1,)])),
-                         ("FROM approval_rules", (["source_tag", "source_doc", "rows"], [("finance-approval-v4", "x.docx", 102)]))])
+                         ("FROM approval_rules", (["source_tag", "source_doc", "source_version", "rows"], [("finance-approval-v4", "x.docx", "V4.0", 102)]))])
         code, text = admin(["tags"], conn)
-        self.assertEqual(json.loads(text)["items"][0]["rows"], 102)
+        self.assertEqual(json.loads(text)["items"][0], {"source_tag": "finance-approval-v4", "source_doc": "x.docx", "source_version": "V4.0", "rows": 102})
+        # 页面拿它预填版本说明：同一份文件再传一次，预览才是「不变」
+        self.assertIn("SELECT source_tag, source_doc, source_version, count(*) AS rows", conn.executed[-1][0])
         code, text = admin(["--table", "rules; drop", "tags"], conn)
         self.assertNotEqual(code, 0)
         self.assertIn("error", json.loads(text))

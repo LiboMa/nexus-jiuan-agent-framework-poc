@@ -374,7 +374,12 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
   assert.equal(tag.value, 'sample-matrix');
   // 规则编号已属于库里另一份文档：入库会覆盖它的规则——红字说明，确认入库按钮不可用
   const confirmButton = () => root.all(node => node.tagName === 'BUTTON' && node.textContent === '确认入库')[0];
+  // 改了标签或版本还没重新预览：不能入库（入库只认看过预览的标签和版本）
   tag.value = 'other-doc';
+  for (const listener of tag.listeners.input ?? []) listener();
+  assert.equal(confirmButton().disabled, true, '改了标签就要先重新预览');
+  const staleNote = () => root.all(node => node.tagName === 'P' && /先点「重新预览」/.test(node.textContent))[0];
+  assert.equal(staleNote().hidden, false);
   await press('重新预览');
   await until(() => /10 条规则编号已属于库里另一份文档/.test(root.textContent));
   assert.equal(confirmButton().disabled, true);
@@ -383,6 +388,9 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
   await until(() => /将删除 2 条/.test(root.textContent));
   assert.equal(confirmButton().disabled, false);
   assert.doesNotMatch(root.textContent, /已属于库里另一份文档/);
+  assert.equal(staleNote().hidden, true, '重新预览后提示收起');
+  const lastPreview = calls.filter(call => call[1].endsWith('/documents/1/preview')).at(-1);
+  assert.deepEqual(JSON.parse(lastPreview[3]), { sourceTag: 'other-tag', sourceVersion: '' }, '预览带上页面上填的版本说明');
   assert.ok(root.all(node => /kb-warn/.test(node.className)).length > 0, '要删除的规则用琥珀色提醒');
   await press('确认入库');
   await until(() => /入库完成/.test(root.textContent));

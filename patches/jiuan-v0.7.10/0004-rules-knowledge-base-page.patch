@@ -56,8 +56,8 @@
      main.append(root);
      document.dispatchEvent(new CustomEvent('elements-page:mount', { detail: { root, csrfToken: () => state.session?.csrfToken || '', user: state.session.user, familyId: state.routeParams.family || null } }));
 --- a/public/kb-page.js	1970-01-01 08:00:00
-+++ b/public/kb-page.js	2026-10-26 21:09:31
-@@ -0,0 +1,200 @@
++++ b/public/kb-page.js	2026-10-26 23:00:28
+@@ -0,0 +1,205 @@
 +// 规则库 · 制度知识库（测试台补丁 0004）。管理员上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库
 +// （向量在知识库的 PostgreSQL 里由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的
 +// 是同一个）；检索日志（审核 Agent、页面、部署核对都查了什么）。接口在测试台外壳 /api/analysis/v1/poc/kb/*。
@@ -151,10 +151,15 @@
 +    const report = data.report || {};
 +    const tag = textInput('sourceTag', data.suggestedTag), title = textInput('docTitle', data.docTitle), version = textInput('sourceVersion', data.sourceVersion, '例如 V4.0 正式签批版');
 +    const previewBox = h('div', { class: 'kb-report' });
-+    // 规则编号和库里另一份文档冲突时不让入库（入库会覆盖那份文档的规则）
-+    const showPreview = preview => { previewBox.replaceChildren(...previewView(preview).filter(Boolean)); confirm.disabled = Boolean(preview?.conflicts); };
++    const stale = h('p', { class: 'kb-warn', hidden: true }, '改了标签或版本说明：先点「重新预览」，看过预览再入库。');
++    // 规则编号和库里另一份文档冲突时不让入库（入库会覆盖那份文档的规则）；改了标签或版本也要先重新预览（接口只认看过预览的）
++    let blocked = false;
++    const showPreview = preview => { previewBox.replaceChildren(...previewView(preview).filter(Boolean)); stale.hidden = true; blocked = Boolean(preview?.conflicts); confirm.disabled = blocked; };
++    const edited = () => { stale.hidden = false; blocked = true; confirm.disabled = true; };
++    tag.addEventListener('input', edited);
++    version.addEventListener('input', edited);
 +    const repreview = button('重新预览', async () => {
-+      try { const answer = await api(`/poc/kb/documents/${data.id}/preview`, { method: 'POST', ...json({ sourceTag: tag.value.trim() }) }); showPreview(answer.preview); say(''); }
++      try { const answer = await api(`/poc/kb/documents/${data.id}/preview`, { method: 'POST', ...json({ sourceTag: tag.value.trim(), sourceVersion: version.value.trim() }) }); showPreview(answer.preview); say(''); }
 +      catch (error) { say(error.message, 'error'); }
 +    });
 +    const confirm = button('确认入库', async () => {
@@ -171,7 +176,7 @@
 +        if (item?.status === 'ingested') say(`入库完成：${resultText(item.result)}。审核 Agent 下一次检索就用上新规则。`, 'success');
 +        else say(`入库没有完成：${item?.error || '还在进行，稍后在上传历史里看结果'}`, 'error');
 +      } catch (error) { say(error.message, 'error'); }
-+      finally { confirm.disabled = false; void loadHistory(); }
++      finally { confirm.disabled = blocked; void loadHistory(); }
 +    }, true);
 +    showPreview(data.preview);
 +    const chapters = table(['章', '章名', '规则数'], (report.chapters || []).map(chapter => [String(chapter.no), dash(chapter.title), String(chapter.rows)]), '没有章节');
@@ -181,7 +186,7 @@
 +        chapters,
 +        (report.without_path || []).length ? h('p', { class: 'kb-warn' }, `没有审批路径的行：${report.without_path.join('、')}`) : null),
 +      h('div', { class: 'kb-fields' }, field('标签（同一份制度用同一个标签；重新入库时替换这个标签下的旧版本）', tag), field('文档名', title), field('版本说明', version)),
-+      previewBox,
++      previewBox, stale,
 +      h('div', { class: 'kb-actions' }, confirm, repreview));
 +  }
 +  const upload = h('section', { class: 'platform-ops-card' }, h('h2', {}, '上传制度文档'),
