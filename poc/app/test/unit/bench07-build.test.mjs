@@ -308,3 +308,85 @@ test('补丁 0002：测试分三种——文本（原样发一段话看回复）
   assert.deepEqual(started[1], ['pub_knowledge1', { mode: 'envelope', request }]);
   assert.match(card.textContent, /不合格.*requestId 必须与请求一致.*原始回答/s);
 });
+
+const KB_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+test('补丁 0004：「规则库」顶上分「审核要点」「制度知识库」两个页签（制度知识库只给管理员）；kb-page.js 登记进静态文件白名单和页面', async t => {
+  const out = await builtPage(t);
+  const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
+  const tabs = analysis.slice(analysis.indexOf('function rulesTabs('), analysis.indexOf('function rulesTabs(') + 900);
+  assert.ok(tabs.length > 100, 'analysis.js 里要有 rulesTabs');
+  assert.match(tabs, /platformAdmin === true/);
+  assert.match(tabs, /#rules\?view=kb/);
+  assert.match(analysis, /new CustomEvent\('kb-page:mount'/);
+  assert.match(await readFile(path.join(out, 'public/route-model.js'), 'utf8'), /rules: \['family', 'view'\]/);
+  assert.ok((await readFile(path.join(out, 'analysis-server.mjs'), 'utf8')).includes("'/kb-page.js':'kb-page.js'"));
+  assert.ok((await readFile(path.join(out, 'public/analysis.html'), 'utf8')).includes('<script type="module" src="/kb-page.js"></script>'));
+  assert.match(await readFile(path.join(out, 'public/platform-center.css'), 'utf8'), /\.kb-drop\{/);
+  for (const file of ['public/kb-page.js', 'public/analysis.js', 'public/route-model.js', 'analysis-server.mjs']) await run('node', ['--check', path.join(out, file)]);
+});
+
+test('补丁 0004：制度知识库页——上传后显示解析报告和入库预览，标签可改并重新预览（要删除的用琥珀色提醒），确认入库后轮询到结果并刷新历史；检索、检索日志', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { mountKbPage } = await import(pathToFileURL(path.join(out, 'public/kb-page.js')).href);
+  const calls = [];
+  let status = 'ingesting';
+  const reply = (data, code = 200) => ({ ok: code < 400, status: code, json: async () => (code < 400 ? { data } : { error: data }) });
+  const fetcher = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push([method, url, init.headers || {}, init.body]);
+    if (method === 'POST' && url.endsWith('/poc/kb/documents')) return reply({ id: 1, fileName: '仿真办法.docx', suggestedTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: '',
+      report: { general: 3, chapter_notes: 3, matrix: 12, total: 18, chapters: [{ no: 1, title: '一、立项审批', rows: 4 }], duplicates: [], without_path: [] },
+      preview: { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0, pruned_ids: [] } }, 201);
+    if (url.endsWith('/documents/1/preview')) return reply({ preview: { inserted: 12, updated: 0, retagged: 0, unchanged: 0, pruned: 2, pruned_ids: ['C01-1.1', 'C01-1.2'] } });
+    if (url.endsWith('/documents/1/ingest')) return reply({ id: 1, status: 'ingesting' }, 202);
+    if (url.endsWith('/documents/1')) { const now = status; status = 'ingested'; return reply({ id: 1, status: now, result: now === 'ingested' ? { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } : null, rules: [] }); }
+    if (url.endsWith('/poc/kb/documents')) return reply({ items: [{ id: 1, file_name: '仿真办法.docx', status: 'ingested', uploaded_by: 'poc-reviewer', uploaded_at: '2026-10-26T08:00:00Z',
+      report: { matrix: 12 }, result: { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } }] });
+    if (url.includes('/poc/kb/search?')) return reply({ items: [{ rule_id: 'C05-5.2', business_item: '供应商货款', segment: '甲板块', amount_tier: '单笔 ＞1 万', final_approver: '财务经理', score: 0.81 }] });
+    if (url.endsWith('/poc/kb/search-log')) return reply({ items: [{ at: '2026-10-26T08:01:00Z', caller: 'agent', question: '房租 九安', hits: [{ rule_id: 'C05-3.4', score: 0.7 }], took_ms: 300 },
+      { at: '2026-10-26T08:02:00Z', caller: 'page', question: '税款', hits: [], took_ms: 200 }, { at: '2026-10-26T08:03:00Z', caller: 'verify', question: 'ping', hits: [], took_ms: 100 }] });
+    return reply({ message: '没有这个接口' }, 404);
+  };
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', fetcher, pollMs: 0 });
+  const until = async check => { for (let index = 0; index < 50 && !check(); index += 1) await settle(); assert.ok(check(), root.textContent.slice(0, 400)); };
+  const press = async label => root.all(node => node.tagName === 'BUTTON' && node.textContent === label)[0].click();
+  // 等数据（日志里的问题、历史里的文件名）出来再看，不能只看卡片上固定的说明文字
+  await until(() => root.textContent.includes('房租 九安') && root.textContent.includes('仿真办法.docx'));
+  assert.match(root.textContent, /上传历史[\s\S]*仿真办法\.docx[\s\S]*已入库/);
+  assert.match(root.textContent, /房租 九安[\s\S]*C05-3\.4（0\.70）/);
+  const log = root.textContent.slice(root.textContent.indexOf('房租 九安') - 40);
+  assert.match(log, /审核 Agent[\s\S]*页面检索[\s\S]*部署核对/, '检索日志把 caller 显示成中文');
+
+  const input = root.all(node => node.tagName === 'INPUT' && node.type === 'file')[0];
+  input.files = [new File([new Uint8Array([0x50, 0x4b, 3, 4])], '仿真办法.docx', { type: KB_DOCX })];
+  await input.listeners.change[0]();
+  await until(() => /不变 12/.test(root.textContent));
+  const upload = calls.find(call => call[0] === 'POST' && call[1].endsWith('/poc/kb/documents'));
+  assert.deepEqual([upload[2]['X-File-Name'], upload[2]['X-CSRF-Token'], upload[2]['Content-Type']], [encodeURIComponent('仿真办法.docx'), 'tok', KB_DOCX]);
+  assert.match(root.textContent, /规则 12 条[\s\S]*一、立项审批/);
+  assert.match(root.textContent, /新增 0[\s\S]*重算向量 0[\s\S]*只更新说明 0[\s\S]*不变 12[\s\S]*删除 0/);
+  const tag = root.all(node => node.tagName === 'INPUT' && node.name === 'sourceTag')[0];
+  assert.equal(tag.value, 'sample-matrix');
+  tag.value = 'other-tag';
+  await press('重新预览');
+  await until(() => /将删除 2 条/.test(root.textContent));
+  assert.ok(root.all(node => /kb-warn/.test(node.className)).length > 0, '要删除的规则用琥珀色提醒');
+  await press('确认入库');
+  await until(() => /入库完成/.test(root.textContent));
+  const ingest = calls.find(call => call[1].endsWith('/documents/1/ingest'));
+  assert.deepEqual(JSON.parse(ingest[3]), { sourceTag: 'other-tag', docTitle: '仿真办法', sourceVersion: '' });
+  assert.equal(ingest[2]['X-CSRF-Token'], 'tok');
+  assert.ok(calls.filter(call => call[0] === 'GET' && call[1].endsWith('/poc/kb/documents')).length >= 2, '入库完成后刷新历史');
+
+  const before = calls.length;
+  await press('检索');
+  assert.equal(calls.length, before, '问题是空的不发请求');
+  root.all(node => node.tagName === 'INPUT' && node.name === 'question')[0].value = '供应商 货款 单笔 2 万';
+  await press('检索');
+  await until(() => /C05-5\.2[\s\S]*供应商货款[\s\S]*0\.81/.test(root.textContent));
+  assert.ok(calls.at(-1)[1].includes(`/poc/kb/search?q=${encodeURIComponent('供应商 货款 单笔 2 万')}`));
+});

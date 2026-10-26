@@ -1,0 +1,297 @@
+--- a/analysis-server.mjs	2026-10-26 16:55:35
++++ b/analysis-server.mjs	2026-10-26 17:00:24
+@@ -16,7 +16,7 @@
+ 
+ const PREFIX='/api/analysis/v1';
+ const BUILD_INFO=appVersion();
+-const assets={'/':'analysis.html','/analysis.html':'analysis.html','/analysis.js':'analysis.js','/analysis.css':'analysis.css','/platform-center.js':'platform-center.js','/platform-ops.js':'platform-ops.js','/platform-center.css':'platform-center.css','/workspace-ui.js':'workspace-ui.js','/workspace-theme.css':'workspace-theme.css','/favicon.svg':'favicon.svg','/date-format.js':'date-format.js','/audit-terms.js':'audit-terms.js','/route-model.js':'route-model.js','/ui-terms.js':'ui-terms.js','/vendor/dingtalk.js':'vendor/dingtalk.js','/elements-page.js':'elements-page.js','/elements.css':'elements.css','/decision-three-way.js':'decision-three-way.js','/document-page.js':'document-page.js','/document-page.css':'document-page.css','/document-list.js':'document-list.js','/document-list.css':'document-list.css','/workbench-page.js':'workbench-page.js','/workbench.css':'workbench.css'};
++const assets={'/':'analysis.html','/analysis.html':'analysis.html','/analysis.js':'analysis.js','/analysis.css':'analysis.css','/platform-center.js':'platform-center.js','/platform-ops.js':'platform-ops.js','/platform-center.css':'platform-center.css','/workspace-ui.js':'workspace-ui.js','/workspace-theme.css':'workspace-theme.css','/favicon.svg':'favicon.svg','/date-format.js':'date-format.js','/audit-terms.js':'audit-terms.js','/route-model.js':'route-model.js','/ui-terms.js':'ui-terms.js','/vendor/dingtalk.js':'vendor/dingtalk.js','/elements-page.js':'elements-page.js','/elements.css':'elements.css','/kb-page.js':'kb-page.js','/decision-three-way.js':'decision-three-way.js','/document-page.js':'document-page.js','/document-page.css':'document-page.css','/document-list.js':'document-list.js','/document-list.css':'document-list.css','/workbench-page.js':'workbench-page.js','/workbench.css':'workbench.css'};
+ // DingTalk opens the configured homepage with its own launch parameters; the entry pages ignore the query.
+ const entryPages=new Set(['/','/analysis.html']);
+ const mime={html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',svg:'image/svg+xml'};
+--- a/public/analysis.html	2026-10-26 16:55:35
++++ b/public/analysis.html	2026-10-26 17:00:24
+@@ -17,6 +17,7 @@
+     <script type="module" src="/analysis.js"></script>
+     <script type="module" src="/workspace-ui.js"></script>
+     <script type="module" src="/elements-page.js"></script>
++    <script type="module" src="/kb-page.js"></script>
+     <script type="module" src="/decision-three-way.js"></script>
+   </head>
+   <body>
+--- a/public/analysis.js	2026-10-26 16:55:35
++++ b/public/analysis.js	2026-10-26 17:00:24
+@@ -998,6 +998,16 @@
+     content);
+ }
+ 
++/** Bench patch 0004: the rule library's two tabs; 制度知识库 is for admins only (others see no tabs, as before). */
++function rulesTabs(kbView) {
++  if (state.session?.capabilities?.platformAdmin === true) {
++    return element('div', { class: 'admin-tabs rules-tabs', role: 'tablist', 'aria-label': '规则库页签' },
++      element('a', { href: '#rules', role: 'tab', 'aria-selected': String(!kbView), class: kbView ? '' : 'active' }, '审核要点'),
++      element('a', { href: '#rules?view=kb', role: 'tab', 'aria-selected': String(kbView), class: kbView ? 'active' : '' }, '制度知识库'));
++  }
++  return null;
++}
++
+ // A page with unsaved edits (the rule library) may keep the user on it; the
+ // address then goes back to the page still shown.  `retry` is what to do if the
+ // user then discards the edits (signing out); without it the navigation is replayed.
+@@ -1052,6 +1062,16 @@
+   if (state.route === 'compare') { main.append(upcomingPage(state.route)); return; }
+   // The rule library is the element-family page (public/elements-page.js); only the test instance gets here.
+   if (state.route === 'rules') {
++    // Bench patch 0004: admins get a second tab, 制度知识库 (public/kb-page.js): upload the policy, ingest, search, the search log.
++    const kbView = state.routeParams.view === 'kb' && state.session.capabilities?.platformAdmin === true;
++    const tabs = rulesTabs(kbView);
++    if (tabs) main.append(tabs);
++    if (kbView) {
++      const kbRoot = element('div', { class: 'kb-page-root', 'data-kb-page': '' });
++      main.append(kbRoot);
++      document.dispatchEvent(new CustomEvent('kb-page:mount', { detail: { root: kbRoot, csrfToken: () => state.session?.csrfToken || '', user: state.session.user } }));
++      return;
++    }
+     const root = element('div', { class: 'elements-page-root', 'data-elements-page': '' });
+     main.append(root);
+     document.dispatchEvent(new CustomEvent('elements-page:mount', { detail: { root, csrfToken: () => state.session?.csrfToken || '', user: state.session.user, familyId: state.routeParams.family || null } }));
+--- a/public/kb-page.js	1970-01-01 08:00:00
++++ b/public/kb-page.js	2026-10-26 17:00:24
+@@ -0,0 +1,196 @@
++// 规则库 · 制度知识库（测试台补丁 0004）。管理员上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库
++// （向量在知识库的 PostgreSQL 里由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的
++// 是同一个）；检索日志（审核 Agent、页面、部署核对都查了什么）。接口在测试台外壳 /api/analysis/v1/poc/kb/*。
++// analysis.js 在 #rules?view=kb 上发 kb-page:mount（只给管理员）；样式沿用平台页的卡片、表格、标签和按钮。
++const API = '/api/analysis/v1';
++const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
++const MAX_BYTES = 20 * 1024 * 1024;
++const STATUS = Object.freeze({ parsed: ['已解析，待入库', 'blue'], ingesting: ['入库中', 'amber'], ingested: ['已入库', 'green'], failed: ['失败', 'red'], superseded: ['已被新版本取代', ''] });
++const CALLER = Object.freeze({ agent: '审核 Agent', page: '页面检索', verify: '部署核对', ingest: '入库冒烟' });
++const PROPS = new Set(['type', 'name', 'value', 'placeholder', 'accept', 'hidden', 'disabled', 'href', 'tabIndex']);
++
++function append(node, ...children) {
++  for (const child of children.flat(Infinity)) if (child !== null && child !== undefined && child !== false) node.append(child);
++  return node;
++}
++function h(tag, attrs = {}, ...children) {
++  const node = document.createElement(tag);
++  for (const [key, value] of Object.entries(attrs || {})) {
++    if (value === null || value === undefined || value === false) continue;
++    if (key === 'class') node.className = value;
++    else if (key === 'on') for (const [type, listener] of Object.entries(value)) node.addEventListener(type, listener);
++    else if (PROPS.has(key)) node[key] = value;
++    else node.setAttribute?.(key, String(value));
++  }
++  return append(node, ...children.map(child => (typeof child === 'number' ? String(child) : child)));
++}
++const dash = value => (value === null || value === undefined || value === '' ? '—' : String(value));
++const time = value => { const date = new Date(value); return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false }); };
++const pill = ([text, color]) => h('span', { class: `tag ${color}`.trim() }, text);
++const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
++function button(label, onClick, primary = false) {
++  return h('button', { type: 'button', class: `button small${primary ? ' primary' : ''}`, on: { click: onClick } }, label);
++}
++function table(headers, rows, empty) {
++  const body = rows.length ? rows.map(row => h('tr', {}, row.map(cell => h('td', {}, cell)))) : [h('tr', {}, h('td', { colspan: String(headers.length), class: 'platform-ops-table-empty' }, empty))];
++  return h('table', { class: 'platform-ops-table' }, h('thead', {}, h('tr', {}, headers.map(text => h('th', {}, text)))), h('tbody', {}, body));
++}
++function statusLine() { const node = h('p', { class: 'platform-ops-dialog-result', role: 'status' }); return node; }
++function sayer(node) { return (text, kind = '') => { node.textContent = text; node.className = `platform-ops-dialog-result ${kind}`.trim(); }; }
++function field(label, input) { return h('label', { class: 'kb-field' }, h('span', {}, label), input); }
++const textInput = (name, value = '', placeholder = '') => h('input', { type: 'text', name, value, placeholder, autocomplete: 'off', spellcheck: 'false' });
++const resultText = result => (result ? `新增 ${result.inserted ?? 0} · 重算向量 ${result.updated ?? 0} · 只更新说明 ${result.retagged ?? 0} · 不变 ${result.unchanged ?? 0} · 删除 ${result.pruned ?? 0}` : '—');
++const seconds = (from, to) => { const ms = Date.parse(to) - Date.parse(from); return Number.isFinite(ms) && ms >= 0 ? `${Math.round(ms / 1000)} 秒` : '—'; };
++
++export function mountKbPage({ root, csrfToken = () => '', fetcher = (...args) => fetch(...args), pollMs = 3000 }) {
++  let disposed = false;
++  async function api(path, { method = 'GET', body, headers = {} } = {}) {
++    const response = await fetcher(`${API}${path}`, { method, credentials: 'same-origin', cache: 'no-store',
++      headers: { Accept: 'application/json', ...(method === 'GET' ? {} : { 'X-CSRF-Token': csrfToken() }), ...headers }, ...(body === undefined ? {} : { body }) });
++    let payload = null;
++    try { payload = await response.json(); } catch { payload = null; }
++    if (!response.ok) throw Object.assign(new Error(payload?.error?.message || `没有成功（${response.status}）`), { code: payload?.error?.code, status: response.status });
++    return payload?.data;
++  }
++  const json = value => ({ body: JSON.stringify(value), headers: { 'Content-Type': 'application/json' } });
++
++  // ---- 上传与入库 ----
++  const message = statusLine(), say = sayer(message), work = h('div', { class: 'kb-work' });
++  const fileInput = h('input', { type: 'file', name: 'file', accept: `.docx,${DOCX}`, hidden: true });
++  fileInput.addEventListener('change', () => pick(fileInput.files?.[0]));
++  const drop = h('div', { class: 'kb-drop', on: {
++    dragover: event => { event.preventDefault?.(); drop.classList?.add('dragging'); },
++    dragleave: () => drop.classList?.remove?.('dragging'),
++    drop: event => { event.preventDefault?.(); drop.classList?.remove?.('dragging'); void pick(event.dataTransfer?.files?.[0]); },
++  } }, h('strong', {}, '把制度 .docx 拖到这里，或'), button('选择文件', () => fileInput.click?.(), true),
++  h('span', { class: 'kb-muted' }, '审批矩阵格式：每章一张表，表头第一列是「序号」；20 MB 以内'), fileInput);
++
++  async function pick(file) {
++    if (!file) return;
++    if (!/\.docx$/iu.test(file.name || '')) { say('只收 .docx 文件（审批矩阵格式的 Word 文档）', 'error'); return; }
++    if (file.size > MAX_BYTES) { say('文件超过 20 MB', 'error'); return; }
++    work.replaceChildren();
++    say(`正在上传并解析「${file.name}」…`);
++    try {
++      const data = await api('/poc/kb/documents', { method: 'POST', body: file, headers: { 'Content-Type': DOCX, 'X-File-Name': encodeURIComponent(file.name) } });
++      say('');
++      showParsed(data);
++    } catch (error) { say(error.message, 'error'); }
++    finally { fileInput.value = ''; void loadHistory(); }
++  }
++
++  function previewView(preview) {
++    const p = preview || {};
++    return [h('p', { class: 'kb-preview' }, `入库预览：${resultText(p)}`),
++      p.pruned ? h('p', { class: 'kb-warn' }, `将删除 ${p.pruned} 条：${(p.pruned_ids || []).slice(0, 12).join('、')}${(p.pruned_ids || []).length > 12 ? '…' : ''}（同一标签下、新版本里已经没有的规则）。确认这是同一份制度的新版本再入库。`) : null,
++      p.inserted && !p.unchanged && !p.retagged && !p.updated ? h('p', { class: 'kb-muted' }, '这个标签下还没有规则：会新增一套。若这是库里已有制度的新版本，请把标签改成它原来的标签。') : null];
++  }
++
++  function showParsed(data) {
++    const report = data.report || {};
++    const tag = textInput('sourceTag', data.suggestedTag), title = textInput('docTitle', data.docTitle), version = textInput('sourceVersion', data.sourceVersion, '例如 V4.0 正式签批版');
++    const previewBox = h('div', { class: 'kb-report' }, previewView(data.preview));
++    const repreview = button('重新预览', async () => {
++      try { const answer = await api(`/poc/kb/documents/${data.id}/preview`, { method: 'POST', ...json({ sourceTag: tag.value.trim() }) }); previewBox.replaceChildren(...previewView(answer.preview).filter(Boolean)); say(''); }
++      catch (error) { say(error.message, 'error'); }
++    });
++    const confirm = button('确认入库', async () => {
++      confirm.disabled = true;
++      say('正在入库：向量在知识库里逐条生成（约 100 条规则一分钟左右），可以离开这个页面，结果会记在上传历史里。');
++      try {
++        await api(`/poc/kb/documents/${data.id}/ingest`, { method: 'POST', ...json({ sourceTag: tag.value.trim(), docTitle: title.value.trim(), sourceVersion: version.value.trim() }) });
++        let item = null;
++        for (let round = 0; round < 400 && !disposed; round += 1) {
++          await sleep(pollMs);
++          item = await api(`/poc/kb/documents/${data.id}`);
++          if (item?.status !== 'ingesting') break;
++        }
++        if (item?.status === 'ingested') say(`入库完成：${resultText(item.result)}。审核 Agent 下一次检索就用上新规则。`, 'success');
++        else say(`入库没有完成：${item?.error || '还在进行，稍后在上传历史里看结果'}`, 'error');
++      } catch (error) { say(error.message, 'error'); }
++      finally { confirm.disabled = false; void loadHistory(); }
++    }, true);
++    const chapters = table(['章', '章名', '规则数'], (report.chapters || []).map(chapter => [String(chapter.no), dash(chapter.title), String(chapter.rows)]), '没有章节');
++    work.replaceChildren(
++      h('div', { class: 'kb-report' },
++        h('strong', {}, `「${data.fileName}」：规则 ${report.matrix ?? 0} 条（制度说明 ${report.general ?? 0} 条、章节说明 ${report.chapter_notes ?? 0} 条）`),
++        chapters,
++        (report.without_path || []).length ? h('p', { class: 'kb-warn' }, `没有审批路径的行：${report.without_path.join('、')}`) : null),
++      h('div', { class: 'kb-fields' }, field('标签（同一份制度用同一个标签；重新入库时替换这个标签下的旧版本）', tag), field('文档名', title), field('版本说明', version)),
++      previewBox,
++      h('div', { class: 'kb-actions' }, confirm, repreview));
++  }
++  const upload = h('section', { class: 'platform-ops-card' }, h('h2', {}, '上传制度文档'),
++    h('p', { class: 'kb-muted' }, '平台先解析、给出入库预览（会新增、更新、删除多少条），核对无误再确认入库。'), drop, message, work);
++
++  // ---- 上传历史 ----
++  const historyRows = h('div'), detail = h('div'), historyMessage = statusLine(), sayHistory = sayer(historyMessage);
++  async function showDetail(id) {
++    try {
++      const item = await api(`/poc/kb/documents/${id}`);
++      detail.replaceChildren(h('div', { class: 'kb-detail' },
++        h('strong', {}, `${dash(item.file_name)} · ${(STATUS[item.status] || [item.status])[0]}`),
++        h('p', { class: 'kb-muted' }, `标签 ${dash(item.source_tag)} · 文档名 ${dash(item.doc_title)} · 版本 ${dash(item.source_version)} · sha256 ${String(item.sha256 || '').slice(0, 12)}…`),
++        item.result ? h('p', { class: 'kb-preview' }, `入库结果：${resultText(item.result)}`) : null,
++        item.error ? h('p', { class: 'kb-warn' }, `原因：${item.error}`) : null,
++        table(['规则编号', '业务事项', '板块', '金额档 / 触发情形'], (item.rules || []).slice(0, 300).map(rule => [rule.rule_id, dash(rule.business_item), dash(rule.segment), dash(rule.amount_tier)]), '这一版没有解析出规则')));
++      detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
++    } catch (error) { sayHistory(error.message, 'error'); }
++  }
++  async function loadHistory() {
++    try {
++      const data = await api('/poc/kb/documents');
++      sayHistory('');
++      historyRows.replaceChildren(table(['时间', '文件', '上传人', '状态', '规则数', '入库结果', '用时', ''], (data?.items || []).map(item => [
++        time(item.uploaded_at), dash(item.file_name), dash(item.uploaded_by), pill(STATUS[item.status] || [dash(item.status), '']), dash(item.report?.matrix),
++        item.result ? `新增 ${item.result.inserted ?? 0} / 更新 ${(item.result.updated ?? 0) + (item.result.retagged ?? 0)} / 删除 ${item.result.pruned ?? 0}` : '—',
++        seconds(item.started_at, item.finished_at), button('查看', () => showDetail(item.id))]), '还没有上传过文档'));
++    } catch (error) { sayHistory(error.message, 'error'); }
++  }
++  const history = h('section', { class: 'platform-ops-card' }, h('div', { class: 'kb-section-head' }, h('h2', {}, '上传历史'), button('刷新', () => loadHistory())), historyRows, detail, historyMessage);
++
++  // ---- 按问题检索 ----
++  const question = textInput('question', '', '例如：九安的一份采购合同，总金额 30 万，用印需要谁审批？');
++  const results = h('div'), searchMessage = statusLine(), saySearch = sayer(searchMessage);
++  const search = h('section', { class: 'platform-ops-card' }, h('h2', {}, '按问题检索'),
++    h('p', { class: 'kb-muted' }, '和审核 Agent 经 Nexus 数据连接器用的是同一个检索（kb_search）：输入一个问题，看知识库按语义找出哪些规则。'),
++    h('div', { class: 'kb-search' }, question, button('检索', async () => {
++      const text = String(question.value || '').trim();
++      if (!text) { saySearch('请写一个问题', 'error'); return; }
++      saySearch('正在检索…');
++      try {
++        const data = await api(`/poc/kb/search?q=${encodeURIComponent(text)}&k=8`);
++        saySearch('');
++        results.replaceChildren(table(['排名', '规则编号', '业务事项', '板块', '金额档 / 触发情形', '最终审批', '相似度'], (data?.items || []).map((rule, index) => [
++          String(index + 1), rule.rule_id, dash(rule.business_item), dash(rule.segment), dash(rule.amount_tier), dash(rule.final_approver), Number(rule.score).toFixed(2)]), '没有找到规则'));
++      } catch (error) { saySearch(error.message, 'error'); }
++    }, true)), results, searchMessage);
++
++  // ---- 检索日志 ----
++  const logRows = h('div'), logMessage = statusLine(), sayLog = sayer(logMessage);
++  async function loadLog() {
++    try {
++      const data = await api('/poc/kb/search-log');
++      sayLog('');
++      logRows.replaceChildren(table(['时间', '来自', '问题', '命中（前 3 条）', '用时'], (data?.items || []).map(entry => [
++        time(entry.at), CALLER[entry.caller] || dash(entry.caller), dash(entry.question),
++        (entry.hits || []).slice(0, 3).map(hit => `${hit.rule_id}（${Number(hit.score).toFixed(2)}）`).join('、') || '—', Number.isFinite(entry.took_ms) ? `${entry.took_ms} ms` : '—']), '还没有检索记录'));
++    } catch (error) { sayLog(error.message, 'error'); }
++  }
++  const log = h('section', { class: 'platform-ops-card' }, h('div', { class: 'kb-section-head' }, h('h2', {}, '检索日志'), button('刷新', () => loadLog())),
++    h('p', { class: 'kb-muted' }, '最近 50 次检索：审核 Agent 审单时查了什么、命中了哪些规则；页面检索和部署核对也在这里。'), logRows, logMessage);
++
++  root.replaceChildren(h('div', { class: 'platform-ops-page kb-page' },
++    h('h2', { class: 'platform-ops-title' }, '制度知识库'),
++    h('p', { class: 'kb-lede' }, '把审批矩阵格式的制度上传进知识库：一行一条审批路径，规则编号和原文序号对应。审核 Agent 经 Nexus 数据连接器检索这里的规则，审单时引用规则编号。'),
++    upload, history, search, log));
++  void loadHistory();
++  void loadLog();
++  return { dispose() { disposed = true; } };
++}
++
++let current = null;
++globalThis.document?.addEventListener?.('kb-page:mount', event => {
++  current?.dispose();
++  current = mountKbPage(event.detail || {});
++});
+--- a/public/platform-center.css	2026-10-26 16:55:35
++++ b/public/platform-center.css	2026-10-26 17:00:24
+@@ -222,3 +222,27 @@
+ .platform-access-row{padding:12px}
+ }
+ @media(prefers-reduced-motion:reduce){.platform-access-agent{transition:none}}
++
++/* Bench patch 0004: 规则库 › 制度知识库 — the same cards, tables, tags and buttons as Agent 接入. */
++.rules-tabs{margin-bottom:12px}
++.kb-page{gap:12px}
++.kb-page .platform-ops-card{display:flex;flex-direction:column;gap:10px}
++.kb-lede{margin:-4px 0 0;max-width:72ch;color:var(--ui-muted);font-size:13px;line-height:1.7}
++.kb-drop{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:18px;border:1px dashed #bfdcf7;border-radius:10px;background:var(--ui-soft);color:#374151;font-size:13px;transition:border-color var(--ui-fast) var(--ui-ease),background var(--ui-fast) var(--ui-ease)}
++.kb-drop.dragging{border-color:var(--ui-accent);background:#e6f1ff}
++.kb-muted{margin:0;color:var(--ui-muted);font-size:12px;line-height:1.7}
++.kb-report{display:flex;flex-direction:column;gap:8px}
++.kb-report>strong{color:var(--ui-ink);font-size:14px}
++.kb-fields{display:flex;flex-wrap:wrap;gap:10px 14px}
++.kb-field{display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1 1 220px;color:#4b5563;font-size:12px}
++.kb-page input[type="text"]{box-sizing:border-box;min-height:36px;padding:7px 10px;border:1px solid var(--ui-line);border-radius:8px;background:#fff;color:#374151;font:inherit;font-size:13px}
++.kb-page input[type="text"]:focus{border-color:var(--ui-accent);outline:none;box-shadow:0 0 0 3px var(--ui-soft-line)}
++.kb-preview{margin:0;padding:8px 12px;border-radius:8px;background:var(--ui-bg);color:#374151;font-size:13px}
++.kb-warn{margin:0;padding:8px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;color:#92400e;font-size:13px;line-height:1.6}
++.kb-actions{display:flex;flex-wrap:wrap;gap:8px}
++.kb-search{display:flex;flex-wrap:wrap;gap:8px}
++.kb-search input[type="text"]{flex:1 1 320px}
++.kb-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
++.kb-section-head h2{margin:0}
++.kb-detail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--ui-line);border-left:3px solid var(--ui-accent);border-radius:10px;background:#fff}
++@media(prefers-reduced-motion:reduce){.kb-drop{transition:none}}
+--- a/public/route-model.js	2026-10-26 16:55:35
++++ b/public/route-model.js	2026-10-26 17:00:24
+@@ -41,7 +41,7 @@
+     platformAgent: ['id', 'tab', 'window'],
+     adminConfig: ['tab', 'from', 'to', 'actor', 'action'],
+     approvalSummary: ['window'],
+-    rules: ['family'],
++    rules: ['family', 'view'],
+   }[route] || [];
+   return Object.fromEntries(allowed.filter(key => params[key] !== undefined && params[key] !== null && params[key] !== '').map(key => [key, params[key]]));
+ }
