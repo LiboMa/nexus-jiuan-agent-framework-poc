@@ -35,6 +35,9 @@ if $CHECKS; then
   (cd "$ROOT/poc/app" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "单元测试通过"
   # 九安 v0.7.10 测试台的外壳：先构建九安副本（打补丁），外壳的测试要用到副本里的契约
   bash "$ROOT/poc/bench/build-jiuan07.sh" >/dev/null && (cd "$ROOT/poc/app07" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "九安 v0.7.10 外壳的单元测试通过"
+  # 知识库工具：脚本语法与 Python 编译检查（它的部署和验证要线上环境，见 kb/GUIDE.md）
+  for f in "$ROOT"/kb/deploy.sh "$ROOT"/kb/lib/common.sh "$ROOT"/kb/host/*.sh "$ROOT"/poc/infra/kb.sh; do bash -n "$f"; done
+  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$ROOT"/kb/lib/*.py && echo "知识库工具的语法检查通过"
   (cd "$ROOT" && python3 -B -m unittest discover -s skills/agent-access/tests >/dev/null 2>&1) && echo "命令行测试通过"
   say "图和 HTML 是不是最新的"
   "$ROOT/docs/build-html.sh" --check
@@ -65,7 +68,8 @@ copy poc/app07
 copy poc/bench
 copy patches
 copy audit-agent
-copy poc/infra --exclude secrets.env --exclude design-jiuan-nexus-integrate.md
+copy kb --exclude /kb/.state --exclude /kb/.build --exclude /kb/deploy.env --exclude '*.docx' --exclude '*.doc'
+copy poc/infra --exclude secrets.env --exclude kb.env --exclude design-jiuan-nexus-integrate.md
 copy poc/tools
 copy poc/README.md
 copy skills
@@ -77,6 +81,11 @@ cat > "$stage/.gitignore" <<'EOF'
 poc/infra/secrets.env
 poc/infra/secrets.env.*
 !poc/infra/secrets.env.example
+# 知识库：部署人的设置、生成的配置与状态（实例、网段等环境信息）
+poc/infra/kb.env
+kb/deploy.env
+kb/.state/
+kb/.build/
 # 九安开发包：第三方代码，按版本号另行存放
 source/
 # 生成物与依赖

@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  pgvector-rules-kb (existing mode): add one ingress rule on the existing PG host's security group
+  to allow PostgreSQL from private ranges only. Kept as a separate stack so it does not drift the
+  host's own stack; deleting this stack removes the rule.
+
+Parameters:
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group attached to the PG host (an instance can have several; pick the one to extend).
+  AllowedCidr:
+    Type: String
+    Description: Source CIDR allowed to reach PostgreSQL. Must be a private range (10/8, 172.16/12, 192.168/16).
+    AllowedPattern: '^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})/(\d|[12]\d|3[0-2])$'
+    ConstraintDescription: must be an IPv4 CIDR inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16
+  Port:
+    Type: Number
+    Default: 5432
+    MinValue: 1
+    MaxValue: 65535
+  RuleDescription:
+    Type: String
+    Default: 'pgvector-rules-kb: Nexus server + sandbox VMs (private only)'
+    MaxLength: 255
+
+Resources:
+  PgIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref Port
+      ToPort: !Ref Port
+      CidrIp: !Ref AllowedCidr
+      Description: !Ref RuleDescription
+
+Outputs:
+  IngressRuleId:
+    Value: !GetAtt PgIngress.Id
+  SecurityGroupId:
+    Value: !Ref SecurityGroupId

@@ -1,0 +1,16 @@
+# 真实环境配置（含实例 ID、URL 等环境信息）——只提交 deploy.env.example
+deploy.env
+*.env
+!deploy.env.example
+
+# 运行时产物：状态文件、提示词备份、解析结果、端口转发日志、临时密钥文件
+.state/
+.build/
+
+# 规则原文档属于客户资料，不进仓库
+*.docx
+*.doc
+
+# Python 缓存
+__pycache__/
+*.pyc

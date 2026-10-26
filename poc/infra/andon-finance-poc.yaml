@@ -50,6 +50,22 @@ Parameters:
     Type: String
     Default: jiuan-v0710.tinyboat.blog
     Description: Site for the Jiuan v0.7.10 test copy. Its own CloudFront distribution reaches the same instance port; the PoC process forwards this Host to v0.7.10 on 127.0.0.1:4181 (the security group stays one rule, see poc/app/host-proxy.mjs).
+  KbAllowedCidr:
+    Type: String
+    Default: ''
+    Description: >-
+      Knowledge base (kb/, PostgreSQL + pgvector on this instance, bound to its private IP): source range allowed to reach
+      KbPort - the Nexus API server and its sandbox VMs. Private ranges only; empty = no rule. Set with poc/infra/kb.sh sg.
+    AllowedPattern: '^$|^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})/(\d|[12]\d|3[0-2])$'
+    ConstraintDescription: empty, or an IPv4 CIDR inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16
+  KbPort:
+    Type: Number
+    Default: 5432
+    MinValue: 1
+    MaxValue: 65535
+
+Conditions:
+  KbEnabled: !Not [!Equals [!Ref KbAllowedCidr, '']]
 
 Resources:
   ArtifactBucket:
@@ -124,6 +140,18 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: Nexus, SSM, S3 and package repositories
       Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  KbIngress:
+    # The knowledge base's PostgreSQL (kb/, container nexus-pgvector on this instance) from the Nexus VPC only.
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: KbEnabled
+    Properties:
+      GroupId: !GetAtt AppSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: !Ref KbPort
+      ToPort: !Ref KbPort
+      CidrIp: !Ref KbAllowedCidr
+      Description: 'nexus-pgvector: Nexus server + sandbox VMs (private only)'
 
   Instance:
     Type: AWS::EC2::Instance

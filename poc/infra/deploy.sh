@@ -3,6 +3,7 @@
 #   infra/deploy.sh             单元测试 → 生成前端副本 → 建栈或更新栈 → 生成口令（只在没有时）→ 打包上传 → 让 EC2 拉取并重启 → 健康检查
 #   infra/deploy.sh --code-only 跳过建栈，只打包上传、重启、健康检查
 # 测试台：构件里的九安是构建出来的副本（poc/bench/build-jiuan.sh：开发包 + 补丁 + mysql2）；重启前在实例上配置测试台（bench/bench-configure.sh）。
+#   KB_ALLOWED_CIDR=<私网段> deploy.sh  建栈时一起放行知识库的 PG 端口（栈已在时用 infra/kb.sh sg）；知识库本身用 infra/kb.sh 部署，见 kb/README.md
 #   POC_STORE=memory|mysql 决定服务用内存存储还是本机 MySQL（默认 mysql；回到内存存储：POC_STORE=memory deploy.sh --code-only）。
 # 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
 set -euo pipefail
@@ -50,10 +51,15 @@ if ! $CODE_ONLY; then
   aws cloudformation validate-template --region "$REGION" --template-body "file://$HERE/andon-finance-poc.yaml" >/dev/null
   args=(--region "$REGION" --stack-name "$STACK" --template-file "$HERE/andon-finance-poc.yaml" --capabilities CAPABILITY_IAM
     --no-fail-on-empty-changeset --tags project=andon-finance-poc)
+  overrides=()
   if ! aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then
     AMI="$(aws ssm get-parameter --region "$REGION" --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)"
-    args+=(--parameter-overrides "ImageId=$AMI")
+    overrides+=("ImageId=$AMI")
   fi
+  # 知识库的 PG 端口入站规则（模板里的 KbIngress）：第一次建栈时可以一起开；栈已在时用 infra/kb.sh sg（它会接管手工加的同样规则）。
+  # 没给就沿用栈上的值（aws cloudformation deploy 对没写的参数用现值）。
+  [[ -n "${KB_ALLOWED_CIDR:-}" ]] && overrides+=("KbAllowedCidr=$KB_ALLOWED_CIDR")
+  [[ ${#overrides[@]} -gt 0 ]] && args+=(--parameter-overrides "${overrides[@]}")
   aws cloudformation deploy "${args[@]}"
 fi
 
