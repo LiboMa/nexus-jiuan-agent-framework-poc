@@ -89,16 +89,24 @@ test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联
 
 test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启用的 Agent 在一张表里；有一个已启用、接 review_advice@1（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
   const { records = [] } = (await api('/platform/agent-access')).json?.data ?? {};
-  publication = records.find(record => record.status === 'active' && record.card?.tasks?.includes('review_advice@1')) ?? null;
-  assert.ok(publication, `还没有可用的审核 Agent：请到 ${BASE}/#adminConfig?tab=agentAccess 连一次 Nexus，在 Agent 列表里点「启用」并贴调用密钥，再跑测试`);
+  // 审批流只调审批 Agent（补丁 0003）：就绪、被指定为审批 Agent 的那一个，它的 card.tasks 才带 review_advice@1
+  publication = records.find(record => record.status === 'active' && record.approval === true && record.card?.tasks?.includes('review_advice@1')) ?? null;
+  assert.ok(publication, `还没有可用的审批 Agent：请到 ${BASE}/#adminConfig?tab=agentAccess 启用审核 Agent（贴调用密钥），再点「设为审批 Agent」，然后跑测试`);
+  assert.equal(records.filter(record => record.approval === true).length, 1, '审批 Agent 只有一个');
   await page.getByRole('link', { name: '后台配置' }).click();
   await page.getByRole('tab', { name: 'Agent 接入' }).click();
   await page.locator('.platform-access-bar').getByText('已连接 Nexus').waitFor({ timeout: 60_000 });
   const card = page.locator('.platform-access-agent').filter({ hasText: publication.publishId });
-  await card.getByText('已启用').waitFor({ timeout: 60_000 });
-  await card.getByText('review_advice@1').first().waitFor();
+  await card.getByText('就绪', { exact: true }).waitFor({ timeout: 60_000 });
+  await card.getByText('审批 Agent', { exact: true }).waitFor();
+  await card.getByText(/审批流调用它：.*review_advice@1/).waitFor();
+  await page.locator('.platform-access-approval').getByText(/审批流调用「/).waitFor();
   assert.equal(await page.locator('.platform-access-agent').filter({ hasText: publication.publishId }).count(), 1, '同一个发布只列一次');
-  assert.deepEqual(await card.getByRole('button').allTextContents(), ['测试', '停用', '复核']);
+  assert.deepEqual(await card.getByRole('button').allTextContents(), ['测试', '取消审批 Agent', '停用', '复核']);
+  // 其他已启用的 Agent 只是就绪，不进审批流
+  for (const other of records.filter(record => record.status === 'active' && record.publishId !== publication.publishId)) {
+    await page.locator('.platform-access-agent').filter({ hasText: other.publishId }).getByText('供前端工作流调用（不进审批流）').waitFor();
+  }
   // 新发布的名片说明里没有契约 / 任务两行时，照样能启用（任务由平台指定），不再报「名片 description 不满足」
   assert.doesNotMatch(await page.locator('.platform-access-page').innerText(), /description 不满足|hasLine/);
   await assert.rejects(page.getByRole('button', { name: '启用一个发布' }).waitFor({ timeout: 2000 }), '不再有手填发布编号的启用表单');
@@ -163,14 +171,29 @@ test('调用记录与测试：每张对公付款单的这一轮都在调用记�
   await page.getByRole('tab', { name: 'Agent 接入' }).click();
   const card = page.locator('.platform-access-agent').filter({ hasText: publication.publishId });
   await card.getByRole('button', { name: '测试' }).click();
+  // 审批 Agent 的测试默认是「单据」
   const select = card.locator('select[name=documentId]');
   await select.locator('option', { hasText: 'DGZF-F07-003' }).waitFor({ state: 'attached' });
   await select.selectOption({ label: await select.locator('option', { hasText: 'DGZF-F07-003' }).textContent() });
   await card.getByRole('button', { name: '开始测试' }).click();
-  await card.getByText(/测试完成|这次没有得到结论/).waitFor({ timeout: 6 * 60_000 });
-  await card.getByText('测试完成').waitFor({ timeout: 1000 });
+  await card.getByText(/测试完成|这次没有完成/).waitFor({ timeout: 6 * 60_000 });
+  await card.getByText('测试完成，已记进下面的调用记录。').waitFor({ timeout: 1000 });
   await card.locator('.platform-access-feedback').getByText(EXPECT['DGZF-F07-003'] === 'pass' ? '建议通过' : '不建议通过', { exact: true }).waitFor();
-  await page.locator('.platform-access-calls').getByRole('row').filter({ hasText: 'DGZF-F07-003' }).filter({ hasText: '测试' }).first().waitFor({ timeout: 30_000 });
+  await page.locator('.platform-access-calls').getByRole('row').filter({ hasText: 'DGZF-F07-003' }).filter({ hasText: '测试 · 单据' }).first().waitFor({ timeout: 30_000 });
+  // 文本：一段话原样发过去，有回复
+  await card.getByRole('tab', { name: '文本' }).click();
+  await card.locator('textarea[name=text]').fill('你好，请用一句话说明你能做什么。');
+  await card.getByRole('button', { name: '发送' }).click();
+  await card.getByText(/测试完成|这次没有完成/).waitFor({ timeout: 3 * 60_000 });
+  await card.getByText('测试完成，已记进下面的调用记录。').waitFor({ timeout: 1000 });
+  assert.ok((await card.locator('.platform-access-feedback').innerText()).includes('Agent 的回复'));
+  // 请求信封：describe@1 的示例（按契约预填），回答要合契约
+  await card.getByRole('tab', { name: '请求信封' }).click();
+  await card.locator('select[name=task]').selectOption('describe@1');
+  await card.getByRole('button', { name: '发送' }).click();
+  await card.getByText(/测试完成|这次没有完成/).waitFor({ timeout: 3 * 60_000 });
+  const verdict = await card.locator('.platform-access-feedback').innerText();
+  assert.match(verdict, /^合格/, `describe@1 的回答应合契约：${verdict.slice(0, 400)}`);
   await shot('03b-agent-test');
   assert.equal(JSON.stringify((await byNumber('DGZF-F07-003')).verdict), before, '测试不改单据的结论');
 });

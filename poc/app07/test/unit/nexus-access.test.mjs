@@ -51,32 +51,26 @@ test('没连 Nexus：显示未连接；贴对 API 密钥就连上，贴错回能
   assert.doesNotMatch(JSON.stringify([wrong.payload, ok.payload]), /nxc_/);
 });
 
-test('发布列表：只列开了 A2A 的发布，带名称和任务；名片只差说明里的契约 / 任务两行的照样能启用，任务由平台指定', async () => {
-  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard, checkCard, platformTasks: ['review_advice@1'] });
+test('发布列表：只列开了 A2A 的发布，带名称和名片声明的任务；名片说明里没有契约 / 任务两行、或声明了别的任务，都能启用（启用后就绪，不进审批流）', async () => {
+  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard, checkCard });
   const { payload } = await call(routes, 'GET', `${BASE}/publications`);
-  assert.deepEqual(payload.data.items.map(item => [item.publishId, item.name, item.tasks, item.declaredBy, item.enableable]), [
-    ['pub_5c53e70d8dc7ddea', '九安审核AI（PoC）', ['review_advice@1'], 'card', true],
-    ['pub_2cc24c29d2e5b2c9', '九安知识Agent（PoC）', ['review_advice@1'], 'platform', true],
+  assert.deepEqual(payload.data.items.map(item => [item.publishId, item.name, item.tasks, item.enableable, item.problems]), [
+    ['pub_5c53e70d8dc7ddea', '九安审核AI（PoC）', ['review_advice@1'], true, []],
+    ['pub_2cc24c29d2e5b2c9', '九安知识Agent（PoC）', [], true, []],
   ]);
-  assert.deepEqual(payload.data.items.map(item => item.problems), [[], []], '只差那两行不算问题（补丁 0003）');
+  const other = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard, checkCard: () => ({ ok: true, problems: [], tasks: ['knowledge_answer@1'] }) });
+  assert.deepEqual((await call(other, 'GET', `${BASE}/publications`)).payload.data.items.map(item => item.enableable), [true, true]);
 });
 
 test('名片还有别的问题、或读不到名片：不能启用，标出原因', async () => {
   const broken = async url => (url.includes('pub_5c53e70d8dc7ddea') ? null : { name: '知识', description: '没有任务行' });
-  const strict = value => ({ ok: false, problems: [{ path: 'description', message: '名片没有声明任务' }, { path: 'capabilities.streaming', message: '不支持流式' }], tasks: [] });
-  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard: broken, checkCard: strict, platformTasks: ['review_advice@1'] });
+  const strict = () => ({ ok: false, problems: [{ path: 'description', message: '名片没有声明任务' }, { path: 'capabilities.streaming', message: '不支持流式' }], tasks: [] });
+  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard: broken, checkCard: strict });
   const { payload } = await call(routes, 'GET', `${BASE}/publications`);
-  assert.deepEqual(payload.data.items.map(item => [item.enableable, item.declaredBy, item.problems]), [
-    [false, null, ['读不到名片：发布可能暂停了，或者 A2A 没打开']],
-    [false, null, ['名片没有声明任务', '不支持流式']],
+  assert.deepEqual(payload.data.items.map(item => [item.enableable, item.problems]), [
+    [false, ['读不到名片：发布可能暂停了，或者 A2A 没打开']],
+    [false, ['不支持流式']],
   ]);
-});
-
-test('名片声明的任务九安这里都不接：不能启用，写明是哪些任务', async () => {
-  const other = () => ({ ok: true, problems: [], tasks: ['knowledge_answer@1'] });
-  const routes = nexusAccessRoutes({ cli: fakeCli(), origin: ORIGIN, fetchCard, checkCard: other, platformTasks: ['review_advice@1'] });
-  const { payload } = await call(routes, 'GET', `${BASE}/publications`);
-  assert.deepEqual([payload.data.items[0].enableable, payload.data.items[0].problems], [false, ['名片声明的任务（knowledge_answer@1）九安这里不接']]);
 });
 
 test('没连上就不能列发布；断开只删本机凭证；只有管理员能用；别的路径交还九安', async () => {

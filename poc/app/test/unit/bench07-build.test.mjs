@@ -103,11 +103,13 @@ test('补丁 0001–0002：「Agent 接入」页的接口都接上，九安的�
   const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
   for (const call of ["status: () => api('/platform/agent-access/nexus')", "publications: () => api('/platform/agent-access/publications'",
     "calls: () => api('/platform/agent-access/calls')", "documents: () => api('/platform/agent-access/test-documents')",
-    'start: (publishId, documentId) => api(`/platform/agent-access/${id(publishId)}/test`']) assert.ok(analysis.includes(call), `缺 ${call}`);
+    'start: (publishId, body) => api(`/platform/agent-access/${id(publishId)}/test`', "templates: () => api('/platform/agent-access/test-templates')",
+    'onApprove: ({ publishId, reason }) => write(`/${id(publishId)}/approve`', 'onUnapprove: ({ publishId, reason }) => write(`/${id(publishId)}/unapprove`']) assert.ok(analysis.includes(call), `缺 ${call}`);
   // 九安对 /platform 下的写请求有白名单（analysis-server.mjs），不在上面的 POST 回 404（页面显示「这项内容当前不可用…」）
   const server = await readFile(path.join(out, 'analysis-server.mjs'), 'utf8');
   assert.match(server, /path === PREFIX \+ '\/platform\/agent-access\/nexus' \|\| path === PREFIX \+ '\/platform\/agent-access\/nexus\/disconnect'/);
   assert.ok(server.includes(String.raw`/^\/api\/analysis\/v1\/platform\/agent-access\/pub_[A-Za-z0-9_-]{4,80}\/test$/u.test(path)`));
+  assert.ok(server.includes('(?:rotate|disable|refresh|approve|unapprove)'), '设为 / 取消审批 Agent 也在白名单里（补丁 0003）');
   const ops = await readFile(path.join(out, 'public/platform-ops.js'), 'utf8');
   assert.doesNotMatch(ops, /'启用一个发布'/, '不再有手填发布编号的启用表单');
   assert.match(await readFile(path.join(out, 'public/platform-center.css'), 'utf8'), /\.platform-access-agent\{/);
@@ -125,26 +127,29 @@ test('补丁 0002：一张表列出 Nexus 上的发布和已启用的 Agent，�
   t.after(() => { delete globalThis.document; });
   const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
   const enabled = [];
-  const active = { publishId: 'pub_audit0001', status: 'active', fingerprint: 'ab12cd34', verifiedAt: '2026-10-26T01:00:00Z', card: { name: '九安审核AI（PoC）', tasks: ['review_advice@1'], declaredBy: 'card' } };
+  const active = { publishId: 'pub_audit0001', status: 'active', approval: true, fingerprint: 'ab12cd34', verifiedAt: '2026-10-26T01:00:00Z',
+    card: { name: '九安审核AI（PoC）', tasks: ['review_advice@1'], declaredTasks: ['review_advice@1'] } };
+  const approval = { publishId: 'pub_audit0001' };
   const opts = { platformAdmin: true,
-    reload: async () => ({ records: [active], audit: [] }),
-    onEnable: async input => { enabled.push(input); return { fingerprint: 'ff00ff00' }; },
+    reload: async () => ({ records: [active], audit: [], approval }),
+    onEnable: async input => { enabled.push(input); return { fingerprint: 'ff00ff00' }; }, onApprove: async () => ({}), onUnapprove: async () => ({}),
     calls: async () => ({ items: [{ at: '2026-10-26T01:02:00Z', number: 'DGZF-F07-001', publishId: 'pub_audit0001', trigger: 'upstream', status: 'completed', result: 'pass', latencyMs: 61000,
       note: '核对一致', basis: [{ kind: 'rule', ref: 'C05-3.4', page: null, note: '…' }, { kind: 'evidence', ref: 'c5921eaca9973a799e6d05941907dae167127694165eb1f153033b7bde5a6f41', page: 1, note: '税务事项通知书' }] }] }),
     agentTest: { documents: async () => ({ items: [] }), start: async () => ({}), view: async () => ({}) },
     nexus: { status: async () => ({ connected: true, user: 'admin' }), publications: async () => ({ items: [
-      { publishId: 'pub_audit0001', name: '九安审核AI（PoC）', tasks: ['review_advice@1'], declaredBy: 'card', enableable: true, a2aReady: true, problems: [] },
-      { publishId: 'pub_newagent01', name: '新发布的 Agent', tasks: ['review_advice@1'], declaredBy: 'platform', enableable: true, a2aReady: true, problems: [] },
-      { publishId: 'pub_broken0001', name: '不合契约的', tasks: [], declaredBy: null, enableable: false, a2aReady: true, problems: ['不支持流式'] },
+      { publishId: 'pub_audit0001', name: '九安审核AI（PoC）', tasks: ['review_advice@1'], enableable: true, a2aReady: true, problems: [] },
+      { publishId: 'pub_newagent01', name: '新发布的 Agent', tasks: [], enableable: true, a2aReady: true, problems: [] },
+      { publishId: 'pub_broken0001', name: '不合契约的', tasks: [], enableable: false, a2aReady: true, problems: ['不支持流式'] },
     ] }) } };
-  const page = renderPlatformOps('agentAccess', { records: [active], audit: [] }, opts);
+  const page = renderPlatformOps('agentAccess', { records: [active], audit: [], approval }, opts);
   await settle(); await settle();
   const cards = page.all(node => node.className === 'platform-access-agent');
   assert.equal(cards.length, 3, '同一个发布只出现一次');
   const shown = card => card.all(node => node.tagName === 'BUTTON').map(node => node.textContent);
-  assert.deepEqual(cards.map(shown), [['测试', '停用', '复核'], ['启用'], []]);
-  assert.match(cards[0].textContent, /已启用.*pub_audit0001.*密钥指纹 ab12cd34/s);
-  assert.match(cards[1].textContent, /未启用.*（名片没有声明，由平台指定）/s, '名片只差契约 / 任务两行的照样能启用');
+  assert.deepEqual(cards.map(shown), [['测试', '取消审批 Agent', '停用', '复核'], ['启用'], []]);
+  assert.match(cards[0].textContent, /九安审核AI（PoC）就绪审批 Agentpub_audit0001.*审批流调用它.*密钥指纹 ab12cd34/s);
+  assert.match(cards[1].textContent, /未启用.*名片没有声明任务/s, '名片只差契约 / 任务两行的照样能启用');
+  assert.match(page.textContent, /审批流调用「九安审核AI（PoC）」/);
   assert.match(cards[2].textContent, /不能启用：不支持流式/);
   assert.match(page.textContent, /已连接 Nexus.*admin/s);
   assert.match(page.textContent, /调用记录.*DGZF-F07-001.*九安审核AI（PoC）.*建议通过/s, '调用记录里「发给」写 Agent 的名称');
@@ -169,7 +174,7 @@ test('补丁 0002：停用先确认再提交，换钥匙只在密钥失效时出
   t.after(() => { delete globalThis.document; });
   const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
   const writes = [];
-  const records = [{ publishId: 'pub_audit0001', status: 'active', fingerprint: 'ab12cd34', card: { name: '审核', tasks: ['review_advice@1'] } },
+  const records = [{ publishId: 'pub_audit0001', status: 'active', approval: false, fingerprint: 'ab12cd34', card: { name: '审核', tasks: [], declaredTasks: ['review_advice@1'] } },
     { publishId: 'pub_stale00001', status: 'invalid', invalidReason: 'AGENT_KEY_REJECTED', fingerprint: '0badc0de', card: { name: '过期的', tasks: ['review_advice@1'] } }];
   const record = kind => async input => { writes.push([kind, input]); return {}; };
   const page = renderPlatformOps('agentAccess', { records, audit: [] }, { platformAdmin: true, reload: async () => ({ records, audit: [] }),
@@ -181,7 +186,7 @@ test('补丁 0002：停用先确认再提交，换钥匙只在密钥失效时出
   assert.match(stale.textContent, /密钥失效.*失效原因：Nexus 不认这把密钥/s);
   await press(active, '停用');
   assert.equal(writes.length, 0, '点「停用」只打开确认');
-  assert.match(active.textContent, /停用后九安不再把单据交给「审核」/);
+  assert.match(active.textContent, /停用后九安不再调用「审核」/);
   await press(active, '确认停用');
   await press(active, '复核');
   await settle();
@@ -227,8 +232,8 @@ test('补丁 0002：页面后台刷新（读 Nexus 上的发布）回来时，�
   const page = renderPlatformOps('agentAccess', { records: [active], audit: [] }, { platformAdmin: true, reload: async () => ({ records: [active], audit: [] }),
     agentTest: { documents: async () => ({ items: [{ id: 'd3', number: 'DGZF-F07-003', title: '税款' }] }), start: async () => ({}), view: async () => ({}) },
     nexus: { status: async () => ({ connected: true, user: 'admin' }), publications: async () => { await late; return { items: [
-      { publishId: 'pub_audit0001', name: '审核', tasks: ['review_advice@1'], declaredBy: 'card', enableable: true, a2aReady: true, problems: [] },
-      { publishId: 'pub_newagent01', name: '新发布的 Agent', tasks: ['review_advice@1'], declaredBy: 'platform', enableable: true, a2aReady: true, problems: [] }] }; } } });
+      { publishId: 'pub_audit0001', name: '审核', tasks: ['review_advice@1'], enableable: true, a2aReady: true, problems: [] },
+      { publishId: 'pub_newagent01', name: '新发布的 Agent', tasks: [], enableable: true, a2aReady: true, problems: [] }] }; } } });
   await settle();
   const before = page.all(node => node.className === 'platform-access-agent')[0];
   await before.all(node => node.tagName === 'BUTTON' && node.textContent === '测试')[0].click();
@@ -237,5 +242,69 @@ test('补丁 0002：页面后台刷新（读 Nexus 上的发布）回来时，�
   const cards = page.all(node => node.className === 'platform-access-agent');
   assert.equal(cards.length, 2, '刷新后列出了 Nexus 上的发布');
   assert.equal(cards[0], before, '打开着的卡片原样保留');
-  assert.equal(cards[0].all(node => node.tagName === 'SELECT').length, 1, '测试表单还在');
+  assert.equal(cards[0].all(node => node.tagName === 'TEXTAREA').length, 1, '测试表单还在');
+});
+
+test('补丁 0002：审批流只调审批 Agent——就绪的卡上「设为审批 Agent」（替换旧的要先确认，写明换掉谁）、「取消审批 Agent」；没有审批 Agent 时页面上说清', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  const writes = [];
+  const records = [{ publishId: 'pub_audit0001', status: 'active', approval: true, card: { name: '审核AI', tasks: ['review_advice@1'], declaredTasks: [] } },
+    { publishId: 'pub_knowledge1', status: 'active', approval: false, card: { name: '知识Agent', tasks: [], declaredTasks: [] } }];
+  const page = renderPlatformOps('agentAccess', { records, audit: [], approval: { publishId: 'pub_audit0001' } }, { platformAdmin: true,
+    reload: async () => ({ records, audit: [], approval: { publishId: 'pub_audit0001' } }),
+    onApprove: async input => { writes.push(['approve', input]); return {}; }, onUnapprove: async input => { writes.push(['unapprove', input]); return {}; } });
+  await settle();
+  const [audit, knowledge] = page.all(node => node.className === 'platform-access-agent');
+  assert.match(knowledge.textContent, /就绪.*供前端工作流调用（不进审批流）/s);
+  const press = async (card, label) => card.all(node => node.tagName === 'BUTTON' && node.textContent === label)[0].click();
+  await press(knowledge, '设为审批 Agent');
+  assert.equal(writes.length, 0, '先确认');
+  assert.match(knowledge.textContent, /审批流以后只调「知识Agent」，不再调「审核AI」/);
+  await press(knowledge, '确认设为审批 Agent');
+  await press(audit, '取消审批 Agent');
+  assert.match(audit.textContent, /取消后审批流没有 Agent/);
+  await press(audit, '确认取消');
+  assert.deepEqual(writes, [['approve', { publishId: 'pub_knowledge1', reason: '在「Agent 接入」页设为审批 Agent' }],
+    ['unapprove', { publishId: 'pub_audit0001', reason: '在「Agent 接入」页取消审批 Agent' }]]);
+  const none = renderPlatformOps('agentAccess', { records: [records[1]], audit: [], approval: null }, { platformAdmin: true });
+  await settle();
+  assert.match(none.textContent, /审批流还没有审批 Agent/);
+});
+
+test('补丁 0002：测试分三种——文本（原样发一段话看回复）、请求信封（按契约预填示例，JSON 写错不发，合格 / 不合格和原始回答都看得到）、单据', async t => {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  const { renderPlatformOps } = await import(pathToFileURL(path.join(out, 'public/platform-ops.js')).href);
+  const started = [];
+  const request = { envelope: 'jiuan.agent/v1', task: 'describe', taskVersion: 1, requestId: 'r-1', context: { subject: null }, input: {} };
+  const answers = { text: { status: 'completed', mode: 'text', input: '你好', reply: '你好，我能回答制度问题。', publishId: 'pub_knowledge1', trigger: 'test', latencyMs: 3000 },
+    envelope: { status: 'completed', mode: 'envelope', task: 'describe@1', conforms: false, problems: [{ path: '/requestId', message: 'requestId 必须与请求一致' }], reply: '{"status":"completed"}', publishId: 'pub_knowledge1', trigger: 'test' } };
+  const records = [{ publishId: 'pub_knowledge1', status: 'active', approval: false, card: { name: '知识Agent', tasks: [], declaredTasks: [] } }];
+  const page = renderPlatformOps('agentAccess', { records, audit: [], approval: null }, { platformAdmin: true, reload: async () => ({ records, audit: [], approval: null }),
+    agentTest: { documents: async () => ({ items: [] }), templates: async () => ({ items: [{ task: 'describe@1', title: '能力清单', request }] }),
+      start: async (publishId, body) => { started.push([publishId, body]); return answers[body.mode]; }, view: async () => ({}) } });
+  await settle();
+  const card = page.all(node => node.className === 'platform-access-agent')[0];
+  const press = async label => card.all(node => node.tagName === 'BUTTON' && node.textContent === label)[0].click();
+  await press('测试');
+  assert.deepEqual(card.all(node => node.attributes.role === 'tab').map(node => node.textContent), ['文本', '请求信封', '单据']);
+  card.all(node => node.tagName === 'TEXTAREA')[0].value = '  你好 ';
+  await press('发送');
+  assert.deepEqual(started[0], ['pub_knowledge1', { mode: 'text', text: '你好' }]);
+  assert.match(card.textContent, /已回复.*你好，我能回答制度问题。/s);
+  await press('请求信封'); await settle();
+  const json = card.all(node => node.tagName === 'TEXTAREA')[0];
+  assert.deepEqual(JSON.parse(json.value), request, '按契约预填示例');
+  json.value = '{ 不是 JSON';
+  await press('发送');
+  assert.equal(started.length, 1, 'JSON 写错不发');
+  assert.match(card.textContent, /不是合法的 JSON/);
+  json.value = JSON.stringify(request);
+  await press('发送');
+  assert.deepEqual(started[1], ['pub_knowledge1', { mode: 'envelope', request }]);
+  assert.match(card.textContent, /不合格.*requestId 必须与请求一致.*原始回答/s);
 });

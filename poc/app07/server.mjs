@@ -20,6 +20,8 @@ import { nexusAccessRoutes } from './nexus-access.mjs';
 import { createOperatorCli } from '../app/nexus/cli.mjs';
 import { agentCallRoutes, everyDocument } from './agent-calls.mjs';
 import { createAgentTests } from './agent-tests.mjs';
+import { createEnvelopeChecks } from './envelope-tests.mjs';
+import { a2aCall } from '../app/nexus/a2a-client.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
@@ -51,6 +53,9 @@ const agentClient = J.nexusA2a.createAgentClient({ nexusOrigin: config.agents.ne
 const acceptedTasks = Object.entries(config.agents.tasks).filter(([, value]) => value.enabled).map(([task]) => ROUTED_TASKS[task]?.contractTask).filter(Boolean);
 const agentEnablement = J.enablement.createAgentEnablement({ store, tenantId: config.scope.tenantId, client: agentClient, acceptedTasks });
 await agentEnablement.load();
+// 补丁 0003 之前的启用记录没有「审批 Agent」这一项：一次性把名片声明了审批流任务、正在就绪的那个设为审批 Agent（以前就是它在接审批流）
+const adopted = await agentEnablement.adoptDeclaredApproval();
+if (adopted) log(`POC_APPROVAL_AGENT ${adopted}`);
 routing = await createAgentRouting({ enablement: agentEnablement, baseConfig: config, log });
 const enablement = routing.enablement;   // 包过的启用服务：页面上启用、换钥匙、停用、复核、标记失效之后刷新路由
 
@@ -142,10 +147,20 @@ const contract = J.contractChecks.loadContract();
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
 const cli = createOperatorCli(operator);
 const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard: url => fetchAgentCard(url), cli,
-  checkCard: card => J.contractChecks.checkCard(card, { contract }), platformTasks: acceptedTasks });
+  checkCard: card => J.contractChecks.checkCard(card, { contract }) });
 // 「Agent 接入」页的单个 Agent 测试：先读原件，照九安组装 review_advice@1，经九安的调用中间件发给选中的发布（专用会话分区）
 const companyIds = COMPANIES.map(company => company.id);
-const agentTests = createAgentTests({
+// 文本和请求信封两种测法要看 Agent 的原始回答：用这个发布已启用的调用密钥直接发（九安的适配层只给检查过的结果）
+const envelopeChecks = createEnvelopeChecks({ contract, contractDir: path.join(J.JIUAN07_DIR, 'src/agent-contract'),
+  extractResultObject: J.contractChecks.extractResultObject, checkResultEnvelope: J.contractChecks.checkResultEnvelope,
+  scope: { tenantId: config.scope.tenantId, companyId: config.scope.companyId }, firstTasks: acceptedTasks });
+async function callRaw({ publishId, parts, timeoutMs }) {
+  const key = await enablement.credentialFor(publishId);
+  if (!key) throw Object.assign(new Error('AGENT_NOT_READY'), { code: 'AGENT_NOT_READY' });
+  const [first, ...rest] = parts;
+  return a2aCall({ url: `${config.agents.nexusOrigin}/a2a/${publishId}`, key, text: first.text, data: rest.filter(part => part.kind === 'data').map(part => part.data), timeoutMs });
+}
+const agentTests = createAgentTests({ ...envelopeChecks, callRaw,
   readDocument: id => store.getDocument({ id, companyIds }),
   listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, type: 'corporate_payment', ...page })),
   prepare: async document => {

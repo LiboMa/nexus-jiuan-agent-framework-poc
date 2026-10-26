@@ -1,0 +1,224 @@
+--- a/analysis-server.mjs	2026-10-26 10:12:41
++++ b/analysis-server.mjs	2026-10-26 10:15:48
+@@ -341,7 +341,7 @@
+           || /^\/api\/analysis\/v1\/platform\/agents\/[^/]+\/runs\/[^/]+\/cancel$/u.test(path)
+           || /^\/api\/analysis\/v1\/platform\/connectors\/[^/]+\/probe$/u.test(path)
+           // NX-2c Agent access: paste a key, then rotate / disable / refresh one publication (the route itself is 404 off the test instance).
+-          || path === PREFIX + '/platform/agent-access' || /^\/api\/analysis\/v1\/platform\/agent-access\/[^/]+\/(?:rotate|disable|refresh)$/u.test(path)
++          || path === PREFIX + '/platform/agent-access' || /^\/api\/analysis\/v1\/platform\/agent-access\/[^/]+\/(?:rotate|disable|refresh|approve|unapprove)$/u.test(path)
+           // Bench patch 0001: connect / disconnect Nexus for the publication list on the Agent 接入 tab.
+           || path === PREFIX + '/platform/agent-access/nexus' || path === PREFIX + '/platform/agent-access/nexus/disconnect'
+           // Bench patch 0002: test one enabled Agent on one corporate payment from the Agent 接入 tab.
+--- a/src/agent-enablement.mjs	2026-10-26 10:12:41
++++ b/src/agent-enablement.mjs	2026-10-26 10:15:48
+@@ -5,8 +5,8 @@
+  * - The key lives only inside the state value, which the analysis store seals (AES-256-GCM);
+  *   views, lists, errors and the audit trail carry a fingerprint (sha256, 8 hex) instead.
+  * - A key is saved only after it is verified on the spot: the publication's card passes the
+- *   contract checks and declares a task the platform runs (first_review@1 or review_advice@1;
+- *   the task service still routes a task only to a card declaring it), and a free tasks/get with the key answers
++ *   contract checks (bench patch 0003: the description lines and the declared tasks no longer
++ *   decide it, see below), and a free tasks/get with the key answers
+  *   「任务不存在」. Both run under the call middleware's Nexus timeout; past it the check did not
+  *   finish and nothing is saved.
+  *   Those two calls go straight to Nexus, not through the gateway: the gateway hands out a
+@@ -17,6 +17,13 @@
+  *
+  * It is also the connector registry's `agentKeys` provider: presence() / credentialFor() / markInvalid(),
+  * and the task service's routing check: publication().
++ *
++ * Bench patch 0003 (ready Agents, one approval Agent): enabling makes an Agent ready, to be called by front-end
++ * workflows. Nexus cards can only carry a name and a free-text description, so a card whose only gap is the
++ * 「契约：…」「任务：…」 description lines is accepted; a card that declares other tasks, or none, is accepted too.
++ * Only the one approval Agent an admin picks (approve / unapprove) takes the approval-flow tasks (acceptedTasks):
++ * publication().card.tasks, which the task service routes on, carries them for that Agent while it is active and
++ * never for any other, whatever its card declares. card.declaredTasks is what the card itself says.
+  */
+ import { createHash } from 'node:crypto';
+ 
+@@ -43,12 +50,14 @@
+   AGENT_PUBLICATION_NOT_FOUND: '读不到这个发布的名片：发布编号不对，或发布已停用。',
+   AGENT_CARD_INVALID: '这个发布的名片不符合九安接入契约。',
+   AGENT_TASK_NOT_DECLARED: '这个发布的名片没有声明本平台接入的任务（单据初审 first_review@1 或单据审核建议 review_advice@1）。',
++  AGENT_ACCESS_NOT_ACTIVE: '这个 Agent 现在不是「就绪」：先启用（或换好钥匙），再设为审批 Agent。',
++  AGENT_ACCESS_NOT_APPROVAL: '这个 Agent 不是审批 Agent。',
+   AGENT_KEY_REJECTED: 'Nexus 不认这把调用密钥。',
+   AGENT_KEY_WRONG_PUBLICATION: '这把调用密钥属于别的发布，或这个发布已暂停。',
+   AGENT_NEXUS_UNREACHABLE: '连不上 Nexus，稍后再试。',
+   AGENT_VERIFY_TIMEOUT: '验证未完成：Nexus 没有在规定时间内回应，这次没有保存，请稍后再试。',
+ });
+-const HTTP = Object.freeze({ AGENT_ACCESS_EXISTS: 409, AGENT_ACCESS_NO_KEY: 409, AGENT_PUBLICATION_NOT_FOUND: 422, AGENT_CARD_INVALID: 422,
++const HTTP = Object.freeze({ AGENT_ACCESS_EXISTS: 409, AGENT_ACCESS_NO_KEY: 409, AGENT_ACCESS_NOT_ACTIVE: 409, AGENT_ACCESS_NOT_APPROVAL: 409, AGENT_PUBLICATION_NOT_FOUND: 422, AGENT_CARD_INVALID: 422,
+   AGENT_TASK_NOT_DECLARED: 422, AGENT_KEY_REJECTED: 422, AGENT_KEY_WRONG_PUBLICATION: 422, AGENT_VERIFY_TIMEOUT: 504,
+   ...Object.fromEntries(Object.entries(STATUS).map(([status, code]) => [code, Number(status)])) });
+ 
+@@ -58,10 +67,13 @@
+ 
+ export const fingerprintOf = key => createHash('sha256').update(key).digest('hex').slice(0, 8);
+ 
+-function view(record) {
++function view(record, approvalId = null, flowTasks = []) {
++  const declared = record.card ? [...record.card.tasks] : [];
++  const approval = record.publishId === approvalId;
++  const tasks = [...declared.filter(task => !flowTasks.includes(task)), ...(approval && record.status === 'active' ? flowTasks : [])];
+   return {
+-    publishId: record.publishId, status: record.status, fingerprint: record.fingerprint,
+-    card: record.card ? { name: record.card.name, tasks: [...record.card.tasks] } : null,
++    publishId: record.publishId, status: record.status, fingerprint: record.fingerprint, approval,
++    card: record.card ? { name: record.card.name, tasks, declaredTasks: declared } : null,
+     enabledBy: record.enabledBy, enabledAt: record.enabledAt, verifiedAt: record.verifiedAt,
+     invalidReason: record.invalidReason, updatedAt: record.updatedAt,
+   };
+@@ -80,6 +92,7 @@
+   const stamp = () => clock().toISOString();
+ 
+   const empty = () => ({ revision: 0, version: 1, records: {}, audit: [] });
++  const show = (state, record) => view(record, state.approval?.publishId ?? null, acceptedTasks);
+   async function read() {
+     const state = await store.readState(scopeKey);
+     const current = state && typeof state === 'object' ? state : empty();
+@@ -87,7 +100,7 @@
+     return current;
+   }
+   async function write(state, next) {
+-    const value = { ...next, revision: state.revision + 1, version: 1, audit: next.audit.slice(-AUDIT_LIMIT) };
++    const value = { ...next, approval: next.approval ?? null, revision: state.revision + 1, version: 1, audit: next.audit.slice(-AUDIT_LIMIT) };
+     try {
+       await store.compareAndWriteState(scopeKey, { expectedRevision: state.revision, value });
+     } catch (error) {
+@@ -129,8 +142,8 @@
+       if (signal.aborted) throw accessError('AGENT_VERIFY_TIMEOUT');
+       throw accessError(error?.code === 'AI_NETWORK' ? 'AGENT_NEXUS_UNREACHABLE' : 'AGENT_PUBLICATION_NOT_FOUND');
+     }
+-    if (!probe.ok) throw accessError('AGENT_CARD_INVALID', { problems: probe.problems.map(problem => problem.path) });
+-    if (!probe.tasks.some(task => acceptedTasks.includes(task))) throw accessError('AGENT_TASK_NOT_DECLARED', { tasks: [...probe.tasks] });
++    const blocking = probe.ok ? [] : probe.problems.filter(problem => problem.path !== 'description');
++    if (!probe.ok && (blocking.length || !probe.problems.length)) throw accessError('AGENT_CARD_INVALID', { problems: blocking.map(problem => problem.path) });
+     let verdict;
+     try { verdict = await client.verifyKey({ publishId, key, signal }); } catch { throw accessError(signal.aborted ? 'AGENT_VERIFY_TIMEOUT' : 'AGENT_NEXUS_UNREACHABLE'); }
+     if (verdict === 'rejected') throw accessError('AGENT_KEY_REJECTED');
+@@ -158,7 +171,7 @@
+     const at = stamp();
+     const record = { publishId, status: 'active', key, fingerprint: fingerprintOf(key), card, enabledBy: principal, enabledAt: at, verifiedAt: at, invalidReason: null, updatedAt: at };
+     await write(state, { ...state, records: { ...state.records, [publishId]: record }, audit: [...state.audit, attempt('ok')] });
+-    return view(record);
++    return show(state, record);
+   }
+ 
+   async function rotate({ actor, publishId, key, reason } = {}) {
+@@ -174,7 +187,7 @@
+     const at = stamp();
+     const record = { ...prior, status: 'active', key, fingerprint: fingerprintOf(key), card, verifiedAt: at, invalidReason: null, updatedAt: at };
+     await write(state, { ...state, records: { ...state.records, [publishId]: record }, audit: [...state.audit, attempt('ok')] });
+-    return view(record);
++    return show(state, record);
+   }
+ 
+   async function disable({ actor, publishId, reason } = {}) {
+@@ -186,7 +199,7 @@
+     const record = { ...prior, status: 'disabled', key: null, updatedAt: stamp() };
+     await write(state, { ...state, records: { ...state.records, [publishId]: record },
+       audit: [...state.audit, entry(principal, 'disable', publishId, 'ok', { fingerprint: prior.fingerprint, reason: reason.trim() })] });
+-    return view(record);
++    return show(state, record);
+   }
+ 
+   async function refresh({ actor, publishId, reason } = {}) {
+@@ -210,7 +223,7 @@
+     const at = stamp();
+     const record = { ...prior, status: 'active', card, verifiedAt: at, invalidReason: null, updatedAt: at };
+     await write(state, { ...state, records: { ...state.records, [publishId]: record }, audit: [...state.audit, attempt('ok')] });
+-    return view(record);
++    return show(state, record);
+   }
+ 
+   async function markInvalid(publishId, reason) {
+@@ -230,6 +243,50 @@
+     throw accessError('AGENT_ACCESS_CONFLICT');
+   }
+ 
++  /** Bench patch 0003: pick the one approval Agent (it must be ready); the one before it, if any, stops taking approval-flow tasks. */
++  async function approve({ actor, publishId, reason } = {}) {
++    const principal = assertAdmin(actor);
++    assertInput({ publishId, reason, needsKey: false });
++    const state = await read();
++    const record = Object.hasOwn(state.records, publishId) ? state.records[publishId] : null;
++    if (!record) throw accessError('AGENT_ACCESS_NOT_FOUND');
++    if (record.status !== 'active') throw accessError('AGENT_ACCESS_NOT_ACTIVE');
++    const previousPublishId = state.approval?.publishId ?? null;
++    const next = await write(state, { ...state, approval: { publishId, setBy: principal, setAt: stamp() },
++      audit: [...state.audit, entry(principal, 'approve', publishId, 'ok', { previousPublishId, fingerprint: record.fingerprint, reason: reason.trim() })] });
++    return show(next, record);
++  }
++
++  /** Bench patch 0003: the approval flow has no Agent until an admin picks one again. */
++  async function unapprove({ actor, publishId, reason } = {}) {
++    const principal = assertAdmin(actor);
++    assertInput({ publishId, reason, needsKey: false });
++    const state = await read();
++    const record = Object.hasOwn(state.records, publishId) ? state.records[publishId] : null;
++    if (!record) throw accessError('AGENT_ACCESS_NOT_FOUND');
++    if ((state.approval?.publishId ?? null) !== publishId) throw accessError('AGENT_ACCESS_NOT_APPROVAL');
++    const next = await write(state, { ...state, approval: null,
++      audit: [...state.audit, entry(principal, 'unapprove', publishId, 'ok', { fingerprint: record.fingerprint, reason: reason.trim() })] });
++    return show(next, record);
++  }
++
++  /**
++   * Bench patch 0003, once: records written before this patch have no approval Agent. The most recently enabled ready
++   * Agent whose card declares an approval-flow task becomes it (that is what routed the approval flow before); none → none.
++   * Every write since stores the choice (null included), so this never runs again.
++   */
++  async function adoptDeclaredApproval() {
++    const state = await read();
++    if (Object.hasOwn(state, 'approval') || !Object.keys(state.records).length) return state.approval?.publishId ?? null;
++    const candidate = Object.values(state.records)
++      .filter(record => record.status === 'active' && (record.card?.tasks ?? []).some(task => acceptedTasks.includes(task)))
++      .sort((left, right) => String(right.enabledAt ?? '').localeCompare(String(left.enabledAt ?? '')))[0] ?? null;
++    await write(state, { ...state, approval: candidate ? { publishId: candidate.publishId, setBy: SYSTEM_ACTOR, setAt: stamp() } : null,
++      audit: candidate ? [...state.audit, entry(SYSTEM_ACTOR, 'approve', candidate.publishId, 'ok', { previousPublishId: null, fingerprint: candidate.fingerprint,
++        reason: '迁移：名片声明了审批流的任务，设为审批 Agent' })] : state.audit });
++    return candidate?.publishId ?? null;
++  }
++
+   async function credentialFor(publishId) {
+     const state = await read();
+     const record = Object.hasOwn(state.records, publishId) ? state.records[publishId] : null;
+@@ -239,14 +296,15 @@
+   /** The task service's routing check: the record's view (status, declared tasks), or null. */
+   async function publication(publishId) {
+     const state = await read();
+-    return Object.hasOwn(state.records, publishId) ? view(state.records[publishId]) : null;
++    return Object.hasOwn(state.records, publishId) ? show(state, state.records[publishId]) : null;
+   }
+ 
+   async function list() {
+     const state = await read();
+     return {
+       configured: Boolean(client),
+-      records: Object.values(state.records).map(view).sort((a, b) => a.publishId.localeCompare(b.publishId)),
++      records: Object.values(state.records).map(record => show(state, record)).sort((a, b) => a.publishId.localeCompare(b.publishId)),
++      approval: state.approval ? { ...state.approval } : null,
+       audit: state.audit.slice(-50).map(item => ({ ...item })),
+     };
+   }
+@@ -254,6 +312,6 @@
+   return Object.freeze({
+     load: async () => { await read(); },
+     presence: () => (active > 0 ? 'bound' : 'unbound'),
+-    credentialFor, markInvalid, publication, list, enable, rotate, disable, refresh,
++    credentialFor, markInvalid, publication, list, enable, rotate, disable, refresh, approve, unapprove, adoptDeclaredApproval,
+   });
+ }
+--- a/src/platform/platform-routes.mjs	2026-10-26 10:12:41
++++ b/src/platform/platform-routes.mjs	2026-10-26 10:15:48
+@@ -690,7 +690,8 @@
+     const actor = auditActor(session);
+     return platformStore.writeSettings({ scopeKind: 'platform', scopeId: 'global', expectedRevision: body.revision, value, actorPrincipal: actor.principal, actorRole: actor.role, reason });
+   }
+-  const ACCESS_ACTIONS = new Set(['rotate', 'disable', 'refresh']);
++  // Bench patch 0003: approve / unapprove pick the one approval Agent (the enablement service checks the rest).
++  const ACCESS_ACTIONS = new Set(['rotate', 'disable', 'refresh', 'approve', 'unapprove']);
+   async function agentAccess(parts, ctx) {
+     const { req, url, session, body } = ctx;
+     // Terms 61: pasting a key is part of opening Nexus, which production has not done.

@@ -138,3 +138,11 @@ test('Nexus 拒绝附件（0.3 预检的 JSON 应答，或流里的 -32005 / -32
     await assert.rejects(a2aStream({ url: fake.url, key: 'k', text: 'x' }), error => error.code === 'AI_REQUEST_INVALID' && error.detail?.code === expected, expected);
   }
 });
+
+test('可以带 DataPart：顺序是文字、数据、文件（九安的请求信封就是这样发的）', async t => {
+  const fake = await startFakeA2a(({ res }) => writeEvents(res, answerEvents('{"ok":true}')));
+  t.after(() => fake.close());
+  const envelope = { envelope: 'jiuan.agent/v1', task: 'describe' };
+  await a2aCall({ url: fake.url, key: 'k', text: '说明', data: [envelope], timeoutMs: 5000 });
+  assert.deepEqual(fake.requests[0].body.params.message.parts, [{ kind: 'text', text: '说明' }, { kind: 'data', data: envelope }]);
+});

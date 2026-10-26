@@ -3,9 +3,9 @@
  *   GET  /api/analysis/v1/platform/agent-access/nexus             连接状态
  *   POST /api/analysis/v1/platform/agent-access/nexus {apiKey}    管理员贴一次自己的 Nexus API 密钥连上 Nexus
  *   POST /api/analysis/v1/platform/agent-access/nexus/disconnect   断开（只删本机凭证；网页上那把 API 密钥由本人停用）
- *   GET  /api/analysis/v1/platform/agent-access/publications       Nexus 上开了 A2A 的发布：名称、任务、能不能启用（不能的写明原因）
- *        新发布的名片说明里常常没有「契约：jiuan.agent/v1」「任务：…」两行。名片其余都合要求时照样能启用，任务由平台按九安这个实例
- *        要接的任务指定（platformTasks，九安的启用服务按补丁 0003 同样处理），declaredBy 标明任务是名片声明的还是平台指定的。
+ *   GET  /api/analysis/v1/platform/agent-access/publications       Nexus 上开了 A2A 的发布：名称、名片声明的任务、能不能启用（不能的写明原因）
+ *        新发布的名片说明里常常没有「契约：jiuan.agent/v1」「任务：…」两行，这不挡启用（九安的启用服务按补丁 0003 同样处理）：
+ *        启用后 Agent 就绪，供前端工作流调用；进不进审批流由管理员在卡片上「设为审批 Agent」决定。
  * 启用仍走九安原有的 POST /api/analysis/v1/platform/agent-access（页面从列表带上发布编号，管理员只贴调用密钥）。
  * 连接经 nexus-ai-operator 命令行（和 PoC 的「我的 Nexus 连接」同一做法）：API 密钥只经环境变量交给 login，CLI 自己保存、续期、轮换。
  * 错误码都用 AGENT_ 开头：九安的前端只把这类错误的服务端说明原样显示。
@@ -29,7 +29,7 @@ function send(res, status, payload) {
 }
 const failWith = (code, status) => { throw Object.assign(new Error(code), { code, status }); };
 
-export function nexusAccessRoutes({ cli, origin, fetchCard, checkCard, platformTasks = [] }) {
+export function nexusAccessRoutes({ cli, origin, fetchCard, checkCard }) {
   async function status() {
     const who = await cli.whoami();
     if (who.exitCode === 0) return { connected: true, user: who.json?.user?.name ?? who.json?.user?.username ?? null };
@@ -57,14 +57,12 @@ export function nexusAccessRoutes({ cli, origin, fetchCard, checkCard, platformT
     let card = null;
     try { card = await fetchCard(`${view.a2a.rpcUrl}/.well-known/agent-card.json`); } catch { card = null; }
     const checked = card ? checkCard(card) : { ok: false, problems: [{ message: '读不到名片：发布可能暂停了，或者 A2A 没打开' }], tasks: [] };
-    // 只差说明里的契约 / 任务两行（名片其余都合要求）：任务由平台指定
-    const platform = Boolean(card) && !checked.ok && checked.problems.length > 0 && checked.problems.every(problem => problem.path === 'description');
-    const foreign = checked.ok && platformTasks.length > 0 && !checked.tasks.some(task => platformTasks.includes(task));
-    const usable = (checked.ok && !foreign) || platform;
-    const problems = foreign ? [`名片声明的任务（${checked.tasks.join('、')}）九安这里不接`] : usable ? [] : checked.problems.map(problem => problem.message);
+    // 名片说明里的契约 / 任务两行不挡启用（补丁 0003）：启用后就绪，进不进审批流由管理员在页面上指定；别的问题照旧挡住
+    const blocking = checked.ok ? [] : checked.problems.filter(problem => problem.path !== 'description');
+    const usable = Boolean(card) && (checked.ok || (checked.problems.length > 0 && blocking.length === 0));
     return { publishId: view.publishId, name: view.displayName || (typeof card?.name === 'string' && card.name) || view.publishId, description: view.description,
-      status: view.status, a2aReady: view.a2a.ready, tasks: platform ? [...platformTasks] : checked.tasks, declaredBy: checked.ok ? 'card' : platform ? 'platform' : null,
-      enableable: view.a2a.ready && usable, problems };
+      status: view.status, a2aReady: view.a2a.ready, tasks: checked.tasks, enableable: view.a2a.ready && usable,
+      problems: usable ? [] : (blocking.length ? blocking : checked.problems).map(problem => problem.message) };
   }
   const publications = async () => ({ items: await Promise.all((await listed()).map(itemOf)) });
   return {

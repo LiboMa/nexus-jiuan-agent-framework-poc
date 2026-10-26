@@ -1,6 +1,6 @@
 /**
  * A2A 0.3 客户端（沿用第四轮 PoC 已实测的实现）：JSON-RPC `message/stream`（SSE），Authorization: Bearer <发布的调用密钥>，
- * 每次调用用新的 contextId（不复用会话），回答取名为 answer 的产出物的最终全文。附件作为文件 Part（base64）跟在文字后面。
+ * 每次调用用新的 contextId（不复用会话），回答取名为 answer 的产出物的最终全文。数据 Part（data，例如九安的请求信封）和附件（文件 Part，base64）依次跟在文字后面。
  * 中止时尽力发 tasks/cancel：调用方断开后，Nexus 上的这一轮仍会跑完并计费。
  */
 import { randomUUID } from 'node:crypto';
@@ -60,13 +60,14 @@ async function* sseEvents(body) {
  * 一次 A2A 流式调用。返回 { text, taskId, timings }；失败抛带 code 的 ModelError。
  * timings（毫秒，自发起请求起算）：headers 收到响应头、firstEvent 首个事件、firstText 首段文字、done 结束。
  */
-export async function a2aStream({ url, key, text, files = [], signal }) {
+export async function a2aStream({ url, key, text, files = [], data = [], signal }) {
   const t0 = performance.now();
   const ms = () => Math.round(performance.now() - t0);
   const timings = {};
   const body = {
     jsonrpc: '2.0', id: randomUUID(), method: 'message/stream',
     params: { message: { kind: 'message', messageId: randomUUID(), contextId: randomUUID(), role: 'user', parts: [{ kind: 'text', text },
+      ...data.map(value => ({ kind: 'data', data: value })),
       ...files.map(file => ({ kind: 'file', file: { name: file.name, mimeType: file.mimeType, bytes: file.bytes.toString('base64') } }))] } },
   };
   let res;
@@ -133,11 +134,11 @@ export async function a2aStream({ url, key, text, files = [], signal }) {
 }
 
 /** a2aStream 加上总时限：时限到了算 AI_UNAVAILABLE（Nexus 没在限定时间内答完）；调用方自己中止仍是 AI_CANCELLED。 */
-export async function a2aCall({ url, key, text, files, signal, timeoutMs = 180_000 }) {
+export async function a2aCall({ url, key, text, files, data, signal, timeoutMs = 180_000 }) {
   const timeout = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
-    return await a2aStream({ url, key, text, files, signal: combined });
+    return await a2aStream({ url, key, text, files, data, signal: combined });
   } catch (error) {
     if (error?.code === 'AI_CANCELLED' && timeout.aborted && !signal?.aborted) {
       throw err('AI_UNAVAILABLE', 'Nexus 在限定时间内没有答完。', { reason: 'timeout', timeoutMs });
