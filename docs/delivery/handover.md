@@ -28,7 +28,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | Agent 接入框架（契约 `jiuan.agent/v1`） | 设计稿 v2，待批准。契约文件 `contract/` 已写好、已校验；第一个任务是单据初审 `first_review@1`。九安补丁 0001–0006 还没写（第二份计划），审批流现在仍由 PoC 插件调用「九安审核AI」 |
 | 测试 | 单元测试 280 个：本机 269 个通过，11 个要 MySQL 的跳过（这 11 个用 `poc/infra/bench-test.sh` 在测试台上跑，2026-10-19 11/11 通过，之后这部分没改）。Skill 与命令行测试 13 个通过。2026-10-21 完整端到端测试 15 个全部通过（0 失败、0 跳过；测试只用审核员本人在前端的连接和启用）。v0.1 封板前有两次各 1 项失败，都是第 6 节第 12 条那个 Agent 输出问题，已处理 |
 | 交付前评审 | 作为 PoC 可以交接维护；上生产前有 2 个 Critical、11 个 Important 要改，见第 6.1 节（I1 已在 2026-10-19 修好） |
-| 代码托管 | **交接仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>：只有交接内容（代码、两个 Skill、契约、交接文档），给客户用；由 `docs/delivery/make-package.sh --export` 从开发目录同步。**开发仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>：另外还有设计稿、实现计划、进度看板、历次评估和评审记录。两个都是私有仓库。交接仓库的封板标签是 `v0.1`（2026-10-19）和 `v0.1.0`（2026-10-21，本版）；开发仓库停在 `v0.1` |
+| 代码托管 | **交接仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>：只有交接内容（代码、两个 Skill、契约、交接文档），给客户用；由 `docs/delivery/make-package.sh --export` 从开发目录同步。**开发仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>：另外还有设计稿、实现计划、进度看板、历次评估和评审记录。两个都是私有仓库。交接仓库的封板标签是 `v0.1`（2026-10-19）、`v0.1.0`（2026-10-21）和 `v0.7.10`（2026-10-26，分支 `release/v0.7.10`，本版）；开发仓库停在 `v0.1` |
 
 **页面长这样**（2026-10-17 截自线上，数据都是虚构的）：
 
@@ -57,6 +57,9 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `poc/app/scripts/build-public.mjs` | 用锚点补丁从九安原前端生成前端副本 | 应用开发 |
 | `poc/bench/` | `build-jiuan.sh`：从九安开发包复制 `code/` → 按顺序打补丁 → 装上锁定版本的 `mysql2` 3.14.3，输出到 `.build/jiuan/` | 应用开发 |
 | `.build/jiuan/` | 生成物（九安副本 + 补丁 + 依赖）；`deploy.sh` 每次重建，不要手改 | — |
+| `poc/app07/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，口令登录、进程内假汇联易、出网守卫，「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由）；`poc/bench/build-jiuan07.sh` 构建九安 v0.7.10 副本到 `.build/jiuan07/`（生成物，不要手改） | 应用开发 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0003，按文件名顺序：连 Nexus 列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批 Agent | 应用开发 |
+| `audit-agent/` | 审核 Agent「九安审核AI」的提示词（v3：信封模式、`review_advice@1`、只读查知识库）、下发脚本 `apply.py`（写提示词并重存发布的动态配置） | Agent 开发 |
 | `patches/jiuan-v0.5.3/` | 打进九安副本的补丁，按文件名顺序。现在还没有这个目录，第二份计划写 0001–0006 | 应用开发 |
 | `contract/` | Agent 接入框架的契约：信封、名片要求、错误码、任务目录、审批流接口 | 应用开发、Agent 开发 |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`（升级前备份）、`upgrade-instance.sh`（换实例类型）、`bench-test.sh`（在测试台上跑要 MySQL 的测试）、`bench/`（实例上的 MySQL 安装、配置、重置脚本与 systemd 片段）、`secrets.env`（只在本机，0600） | 运维 |
@@ -66,8 +69,8 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `docs/` | 交接文档：`docs/delivery/` 是交付文档，另有架构文档和开发者工作流；`docs/build-html.sh` 生成 HTML。设计稿、实现计划、进度看板、历次评估和评审记录只在开发仓库 | 全员 |
 | `evidence/` | 各轮的截图与测试证据；`bench/` 是 2026-10-19 测试台升级的记录与日志；`e2e/last-run.jsonl` 是最近一次端到端测试的结果 | — |
 | `archive/` | 不再使用、只留作记录的旧证据、旧包、建 Agent 时的调用记录、测试台升级的执行记录（说明见 `archive/README.md`）；不进交付包 | — |
-| `VERSION`、`CHANGELOG.md`、`README.md`（根目录） | 版本号 `Finance-Audit-Nexus-PoC v0.1`、每个版本改了什么、包的入口说明 | 应用开发 |
-| `source/审核平台-测试环境开发包-v0.5.3/` | 九安原开发包。**只读，不改，不执行其中脚本** | 九安 |
+| `VERSION`、`CHANGELOG.md`、`README.md`（根目录） | 版本号 `Finance-Audit-Nexus-PoC v0.7.10`、每个版本改了什么、包的入口说明 | 应用开发 |
+| `source/审核平台-测试环境开发包-v0.5.3/`、`source/九安自助审核平台-测试环境开发包-v0.7.10/` | 九安原开发包。**只读，不改，不执行其中脚本**；v0.7.10 的 `seeds/`、`database/` 含真实数据，不打开、不复制 | 九安 |
 
 另外两处本机依赖：
 - nexus-ai-operator：用仓库里的 `skills/nexus-ai-operator/`（1.1.0），`deploy.sh` 只打包其中的 `scripts/nexus.py`；要换版本用环境变量 `NEXUS_OPERATOR_SCRIPT`；
@@ -82,6 +85,8 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 | CloudFormation 栈 | `andon-finance-poc`（模板 `poc/infra/andon-finance-poc.yaml`） |
 | EC2 | `i-01d753d48056fd423`，t3.large（2026-10-19 起是测试台），Amazon Linux 2023，Node 24，systemd 服务 `andon-finance-poc` |
 | MySQL | 实例上的 Docker 容器 `jiuan-mysql`（mysql:8.0，只听 127.0.0.1:3306），数据目录 `/var/lib/jiuan-mysql`，库 `jiuan_analysis`；端到端测试前用 `bench/bench-reset.sh` 重建这个库 |
+| 九安 v0.7.10 | 同一台实例：systemd 服务 `andon-jiuan07`（系统用户 `jiuan07`，只听 127.0.0.1:4181，屏蔽 IMDS），程序 `/opt/andon-finance/current/app07/server.mjs` + 九安副本；PoC 进程按 Host 把 `jiuan-v0710.tinyboat.blog` 的请求转过去（`poc/app/host-proxy.mjs`），安全组不变；第二个 CloudFront 分发。库 `jiuan07`（同一个 `jiuan-mysql` 容器，账号 `jiuan07_app`）；配置与密钥文件 `/etc/andon-finance/jiuan07/`；工作目录 `/var/lib/jiuan07/`（`nexus/` 是「Agent 接入」页连 Nexus 的凭证，`seed-anchor.json` 是种子单据的时间锚点）。端到端测试前 `bench/bench07-reset.sh` 重建 `jiuan07` 库，保留启用记录（含审批 Agent）和 Nexus 连接 |
+| 知识库 | 同一台实例上的 Docker 容器 `nexus-pgvector`（`pgvector/pgvector:pg17`，只绑实例私网 IP 的 5432），库 `nexus`、表 `approval_rules`（制度原文不进仓库）；经 Nexus 的 PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询。由 pgvector-rules-kb 部署工具建，见 `audit-agent/README.md` |
 | 公网 IP | EIP `13.223.152.186`；安全组只放 CloudFront 回源前缀列表 `pl-3b927c52` 访问 4180，不开 22 |
 | 构件桶 | `andon-finance-poc-artifactbucket-786tdeg4dqkb`：`releases/current.tgz`、`releases/archive/<时间>.tgz`、`secrets/secrets.env`（SSE） |
 | CloudFront | `E92MPQ217VIPX`，站点 `andon-finance.tinyboat.blog`，回源 `andon-finance-origin.tinyboat.blog` |

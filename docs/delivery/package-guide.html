@@ -292,11 +292,35 @@ href="operations.html">运维</a>第 2.1 节</td>
 </tr>
 <tr>
 <td><code>poc/<wbr>bench/<wbr></code></td>
-<td><code>build-<wbr>jiuan.<wbr>sh</code>（九安副本 + 补丁 +
-依赖）与锁定的依赖清单（<code>mysql2</code> 3.14.3；不带
-<code>node_<wbr>modules</code>，构建时
+<td><code>build-<wbr>jiuan.<wbr>sh</code>（九安 v0.5.3 副本 + 补丁 +
+依赖）、<code>build-<wbr>jiuan07.<wbr>sh</code>（九安 v0.7.10
+副本：按清单复制，不带
+<code>seeds/<wbr></code>、<code>database/<wbr></code>、<code>tests/<wbr></code>，打
+<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>）与锁定的依赖清单（<code>mysql2</code>
+3.14.3；不带 <code>node_<wbr>modules</code>，构建时
 <code>npm ci -<wbr>-<wbr>ignore-<wbr>scripts</code>）</td>
 <td><a href="handover.html">交接文档</a>第 2.1 节</td>
+</tr>
+<tr>
+<td><code>poc/<wbr>app07/<wbr></code></td>
+<td>九安 v0.7.10
+测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent
+接入」页的后端）与单元测试</td>
+<td><a href="../../poc/README.md">PoC 说明</a>「九安 v0.7.10」</td>
+</tr>
+<tr>
+<td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
+<td>打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent
+接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批
+Agent</td>
+<td><a href="developer-guide.html">开发者快速对接指南</a>第 7.2 节</td>
+</tr>
+<tr>
+<td><code>audit-<wbr>agent/<wbr></code></td>
+<td>审核 Agent 的提示词（<code>prompt.<wbr>yaml</code> v3，改前的
+<code>prompt-<wbr>owner-<wbr>2026-<wbr>10-<wbr>25.<wbr>yaml</code>
+留作回退）、下发脚本 <code>apply.<wbr>py</code>、说明</td>
+<td><a href="../../audit-agent/README.md">审核 Agent 说明</a></td>
 </tr>
 <tr>
 <td><code>poc/<wbr>infra/<wbr></code></td>
@@ -358,10 +382,12 @@ v2，<code>prompt-<wbr>v1.<wbr>yaml</code>）与说明</td>
 </table>
 </div>
 <p><strong>特意不放进包的</strong>：<code>node_modules/</code>、生成的
-<code>poc/app/public/</code> 和
-<code>.build/</code>（九安副本，<code>deploy.sh</code>
-每次重建）、<code>dist/</code>、<code>archive/</code>（旧证据、旧包）、<code>__pycache__/</code>、<code>.DS_Store</code>；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；和这个
-PoC 无关或已过时的
+<code>poc/app/public/</code> 和 <code>.build/</code>（九安副本
+<code>.build/jiuan/</code>、<code>.build/jiuan07/</code>，<code>deploy.sh</code>
+每次重建）、<code>dist/</code>、<code>archive/</code>（旧证据、旧包）、<code>__pycache__/</code>、<code>.DS_Store</code>；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；客户的制度原文（知识库的来源文档，例如
+<code>docs/sample-docs/</code> 里的
+.docx；导出时还会按文件名再查一遍，查到就不出包）；和这个 PoC
+无关或已过时的
 <code>get_passwd.sh</code>、<code>poc/a2a-entry/</code>（第四轮的旧验证，不再部署）、<code>poc/infra/design-jiuan-nexus-integrate.md</code>（原始笔记）。这些都还留在维护人的电脑上。</p>
 <h1 id="5-不在包里另行交接的">5. 不在包里、另行交接的</h1>
 <div class="table-wrap">

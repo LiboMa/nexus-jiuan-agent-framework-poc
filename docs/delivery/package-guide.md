@@ -64,7 +64,10 @@ open docs/delivery/README.html                                          # 从文
 | `docs/assets/` | `diagrams/`：图（`.mmd` 是源，`.svg` 由 `build-html.sh` 生成；`arch-overview.svg` 是手工画的）；`screens/`：线上截图 | 第 7 节 |
 | `docs/`（其余） | 架构文档、开发者工作流、`build-html.sh` 与 `html-kit/` | [架构](../architecture.md) |
 | `poc/app/` | PoC 服务端、测试台组合根（`bench/`、`jiuan-mysql.mjs`）、前端扩展（`public-src/`）、示例附件、单元测试与端到端测试、截图脚本 | [架构](../architecture.md)第 8、11 节 |
-| `poc/bench/` | `build-jiuan.sh`（九安副本 + 补丁 + 依赖）与锁定的依赖清单（`mysql2` 3.14.3；不带 `node_modules`，构建时 `npm ci --ignore-scripts`） | [交接文档](handover.md)第 2.1 节 |
+| `poc/bench/` | `build-jiuan.sh`（九安 v0.5.3 副本 + 补丁 + 依赖）、`build-jiuan07.sh`（九安 v0.7.10 副本：按清单复制，不带 `seeds/`、`database/`、`tests/`，打 `patches/jiuan-v0.7.10/`）与锁定的依赖清单（`mysql2` 3.14.3；不带 `node_modules`，构建时 `npm ci --ignore-scripts`） | [交接文档](handover.md)第 2.1 节 |
+| `poc/app07/` | 九安 v0.7.10 测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent 接入」页的后端）与单元测试 | [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent | [开发者快速对接指南](developer-guide.md)第 7.2 节 |
+| `audit-agent/` | 审核 Agent 的提示词（`prompt.yaml` v3，改前的 `prompt-owner-2026-10-25.yaml` 留作回退）、下发脚本 `apply.py`、说明 | [审核 Agent 说明](../../audit-agent/README.md) |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`、`upgrade-instance.sh`、`bench-test.sh`、`bench/`（实例上的 MySQL 脚本与 systemd 片段）、部署说明（**不含 `secrets.env`**） | [部署与迭代规范](deploy-iteration.md)、[运维](operations.md)第 2.7 节 |
 | `poc/tools/`、`poc/README.md` | 示例附件生成脚本；PoC 使用说明 | [PoC 说明](../../poc/README.md) |
 | `skills/nexus-ai-operator/` | Nexus 一侧的 Skill（1.1.0，不带任何密钥）：在 Nexus 上建 Agent、发布 | [Skills 配置指南](skills-guide.md)第 3 节 |
@@ -75,7 +78,7 @@ open docs/delivery/README.html                                          # 从文
 | `evidence/` | 各轮的测试证据与截图；`evidence/e2e/last-run.jsonl` 是最近一次端到端测试的结果；`evidence/bench/` 是测试台升级的记录与日志 | — |
 | `MANIFEST.txt`、`PACKAGE-INFO.txt` | 每个文件的 sha256；生成时间与检查结果 | 第 2 节 |
 
-**特意不放进包的**：`node_modules/`、生成的 `poc/app/public/` 和 `.build/`（九安副本，`deploy.sh` 每次重建）、`dist/`、`archive/`（旧证据、旧包）、`__pycache__/`、`.DS_Store`；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；和这个 PoC 无关或已过时的 `get_passwd.sh`、`poc/a2a-entry/`（第四轮的旧验证，不再部署）、`poc/infra/design-jiuan-nexus-integrate.md`（原始笔记）。这些都还留在维护人的电脑上。
+**特意不放进包的**：`node_modules/`、生成的 `poc/app/public/` 和 `.build/`（九安副本 `.build/jiuan/`、`.build/jiuan07/`，`deploy.sh` 每次重建）、`dist/`、`archive/`（旧证据、旧包）、`__pycache__/`、`.DS_Store`；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；客户的制度原文（知识库的来源文档，例如 `docs/sample-docs/` 里的 .docx；导出时还会按文件名再查一遍，查到就不出包）；和这个 PoC 无关或已过时的 `get_passwd.sh`、`poc/a2a-entry/`（第四轮的旧验证，不再部署）、`poc/infra/design-jiuan-nexus-integrate.md`（原始笔记）。这些都还留在维护人的电脑上。
 
 ## 5. 不在包里、另行交接的
 

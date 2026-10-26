@@ -233,8 +233,9 @@ Skill、契约、交接文档），给客户用；由
 <code>docs/<wbr>delivery/<wbr>make-<wbr>package.<wbr>sh -<wbr>-<wbr>export</code>
 从开发目录同步。<strong>开发仓库</strong> <a
 href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc">https://github.com/LiboMa/nexus-jiuan-agent-framework-poc</a>：另外还有设计稿、实现计划、进度看板、历次评估和评审记录。两个都是私有仓库。交接仓库的封板标签是
-<code>v0.<wbr>1</code>（2026-10-19）和
-<code>v0.<wbr>1.<wbr>0</code>（2026-10-21，本版）；开发仓库停在
+<code>v0.<wbr>1</code>（2026-10-19）、<code>v0.<wbr>1.<wbr>0</code>（2026-10-21）和
+<code>v0.<wbr>7.<wbr>10</code>（2026-10-26，分支
+<code>release/<wbr>v0.<wbr>7.<wbr>10</code>，本版）；开发仓库停在
 <code>v0.<wbr>1</code></td>
 </tr>
 </tbody>
@@ -340,6 +341,33 @@ href="../architecture.html">架构文档</a>第 8 节）</td>
 <td>—</td>
 </tr>
 <tr>
+<td><code>poc/<wbr>app07/<wbr></code></td>
+<td>九安 v0.7.10 测试台的外壳（<code>server.<wbr>mjs</code>
+组合根，口令登录、进程内假汇联易、出网守卫，「Agent
+接入」页的后端：<code>nexus-<wbr>access.<wbr>mjs</code>
+发布列表、<code>agent-<wbr>tests.<wbr>mjs</code>
+测试、<code>agent-<wbr>calls.<wbr>mjs</code>
+调用记录、<code>agent-<wbr>routes.<wbr>mjs</code>
+审批流路由）；<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>
+构建九安 v0.7.10 副本到
+<code>.<wbr>build/<wbr>jiuan07/<wbr></code>（生成物，不要手改）</td>
+<td>应用开发</td>
+</tr>
+<tr>
+<td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
+<td>打进九安 v0.7.10 副本的补丁 0001–0003，按文件名顺序：连 Nexus
+列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批
+Agent</td>
+<td>应用开发</td>
+</tr>
+<tr>
+<td><code>audit-<wbr>agent/<wbr></code></td>
+<td>审核
+Agent「九安审核AI」的提示词（v3：信封模式、<code>review_<wbr>advice@1</code>、只读查知识库）、下发脚本
+<code>apply.<wbr>py</code>（写提示词并重存发布的动态配置）</td>
+<td>Agent 开发</td>
+</tr>
+<tr>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>5.<wbr>3/<wbr></code></td>
 <td>打进九安副本的补丁，按文件名顺序。现在还没有这个目录，第二份计划写
 0001–0006</td>
@@ -408,12 +436,14 @@ HTML。设计稿、实现计划、进度看板、历次评估和评审记录只�
 <tr>
 <td><code>VERSION</code>、<code>CHANGELOG.<wbr>md</code>、<code>README.<wbr>md</code>（根目录）</td>
 <td>版本号
-<code>Finance-<wbr>Audit-<wbr>Nexus-<wbr>PoC v0.<wbr>1</code>、每个版本改了什么、包的入口说明</td>
+<code>Finance-<wbr>Audit-<wbr>Nexus-<wbr>PoC v0.<wbr>7.<wbr>10</code>、每个版本改了什么、包的入口说明</td>
 <td>应用开发</td>
 </tr>
 <tr>
-<td><code>source/<wbr>审核平台-<wbr>测试环境开发包-<wbr>v0.<wbr>5.<wbr>3/<wbr></code></td>
-<td>九安原开发包。<strong>只读，不改，不执行其中脚本</strong></td>
+<td><code>source/<wbr>审核平台-<wbr>测试环境开发包-<wbr>v0.<wbr>5.<wbr>3/<wbr></code>、<code>source/<wbr>九安自助审核平台-<wbr>测试环境开发包-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
+<td>九安原开发包。<strong>只读，不改，不执行其中脚本</strong>；v0.7.10
+的 <code>seeds/<wbr></code>、<code>database/<wbr></code>
+含真实数据，不打开、不复制</td>
 <td>九安</td>
 </tr>
 </tbody>
@@ -461,6 +491,35 @@ us-east-1。交接仓库和交付包里，本节和全文的 AWS 账号与 EC2
 <code>/<wbr>var/<wbr>lib/<wbr>jiuan-<wbr>mysql</code>，库
 <code>jiuan_<wbr>analysis</code>；端到端测试前用
 <code>bench/<wbr>bench-<wbr>reset.<wbr>sh</code> 重建这个库</td>
+</tr>
+<tr>
+<td>九安 v0.7.10</td>
+<td>同一台实例：systemd 服务 <code>andon-<wbr>jiuan07</code>（系统用户
+<code>jiuan07</code>，只听 127.0.0.1:4181，屏蔽 IMDS），程序
+<code>/<wbr>opt/<wbr>andon-<wbr>finance/<wbr>current/<wbr>app07/<wbr>server.<wbr>mjs</code>
++ 九安副本；PoC 进程按 Host 把
+<code>jiuan-<wbr>v0710.<wbr>tinyboat.<wbr>blog</code>
+的请求转过去（<code>poc/<wbr>app/<wbr>host-<wbr>proxy.<wbr>mjs</code>），安全组不变；第二个
+CloudFront 分发。库 <code>jiuan07</code>（同一个
+<code>jiuan-<wbr>mysql</code> 容器，账号
+<code>jiuan07_<wbr>app</code>）；配置与密钥文件
+<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>jiuan07/<wbr></code>；工作目录
+<code>/<wbr>var/<wbr>lib/<wbr>jiuan07/<wbr></code>（<code>nexus/<wbr></code>
+是「Agent 接入」页连 Nexus
+的凭证，<code>seed-<wbr>anchor.<wbr>json</code>
+是种子单据的时间锚点）。端到端测试前
+<code>bench/<wbr>bench07-<wbr>reset.<wbr>sh</code> 重建
+<code>jiuan07</code> 库，保留启用记录（含审批 Agent）和 Nexus 连接</td>
+</tr>
+<tr>
+<td>知识库</td>
+<td>同一台实例上的 Docker 容器
+<code>nexus-<wbr>pgvector</code>（<code>pgvector/<wbr>pgvector:pg17</code>，只绑实例私网
+IP 的 5432），库 <code>nexus</code>、表
+<code>approval_<wbr>rules</code>（制度原文不进仓库）；经 Nexus 的
+PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询。由
+pgvector-rules-kb 部署工具建，见
+<code>audit-<wbr>agent/<wbr>README.<wbr>md</code></td>
 </tr>
 <tr>
 <td>公网 IP</td>
