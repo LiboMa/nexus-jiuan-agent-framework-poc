@@ -180,5 +180,48 @@ class IngestSqlEmbedTest(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue().strip().splitlines()[-1])["inserted"], 1)
 
 
+    def run_ingest(self, conn, rules, extra=()):
+        fake = types.ModuleType("psycopg")
+        fake.connect = lambda **kw: conn
+        sys.modules["psycopg"] = fake
+        sys.modules.pop("ingest_rules", None)
+        import ingest_rules
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rules.json"
+            path.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
+            pw = Path(tmp) / "pw"
+            pw.write_text("x", encoding="utf-8")
+            ddl = Path(tmp) / "ddl.sql"
+            ddl.write_text("CREATE TABLE IF NOT EXISTS {table} (rule_id text)", encoding="utf-8")
+            sys.argv = ["ingest_rules.py", "--rules", str(path), "--port", "5432", "--db", "nexus", "--user", "nexus", "--password-file", str(pw),
+                        "--table", "approval_rules", "--ddl", str(ddl), "--source-tag", "sample-matrix", "--source-doc", "仿真.docx",
+                        "--model", "amazon.titan-embed-text-v2:0", "--dim", "1024", "--region", "us-east-1", "--embed", "sql", "--prune", *extra]
+            out = io.StringIO()
+            with redirect_stdout(out):
+                ingest_rules.main()
+        return json.loads(out.getvalue().strip().splitlines()[-1])
+
+    def test_rule_ids_owned_by_another_document_are_reported_and_never_overwritten(self):
+        # rule_id 是表的主键：另一份制度（别的标签；或旧表里没有标签、来源文档不同的行）用了同样的编号，入库就会覆盖它的规则
+        existing = [("C01-1.1", "s1", True, "finance-approval-v4", "真实 1.1", "真实办法.docx"),
+                    ("C01-1.2", "s2", True, None, "真实 1.2", "真实办法.docx"),
+                    ("C05-5.1", "s3", True, None, "手工 5.1", None),
+                    ("C02-1.1", "s4", True, "sample-matrix", "仿真 旧", "仿真.docx")]
+        answers = [("SELECT to_regclass", (["exists"], [(True,)])), ("SELECT tableowner", (["owner", "me"], [("nexus", "nexus")])),
+                   ("FROM information_schema.columns", (["column_name"], [(c,) for c in ("rule_id", "record_sha256", "embedding", "source_tag", "content", "source_doc")])),
+                   ("SELECT rule_id, record_sha256", (["rule_id", "sha", "has", "tag", "content", "doc"], existing)),
+                   ("SELECT kb_embed(%s)::text", (["e"], [("[0.1,0.2]",)])), ("GROUP BY 1", (["rule_type", "n"], [("matrix", 1)])), ("embedding IS NULL", (["n"], [(0,)]))]
+        rules = [{"rule_id": rid, "rule_type": "matrix", "content": f"仿真 {rid}"} for rid in ("C01-1.1", "C01-1.2", "C05-5.1", "C09-9.9")]
+        preview = self.run_ingest(FakeConn(answers), rules, ["--dry-run"])
+        self.assertEqual((preview["conflicts"], preview["conflict_ids"]), (2, ["C01-1.1", "C01-1.2"]))
+        self.assertEqual(preview["pruned_ids"], ["C02-1.1"], "同一标签下、新版本里没有的照常清理")
+        conn = FakeConn(answers)
+        with self.assertRaises(SystemExit) as stop:
+            self.run_ingest(conn, rules)
+        self.assertIn("2 条规则编号已属于库里另一份文档", str(stop.exception.code))
+        self.assertIn("C01-1.1", str(stop.exception.code))
+        self.assertFalse(any(sql.startswith(("INSERT", "UPDATE", "DELETE")) for sql, _ in conn.executed), "一条都不写")
+
+
 if __name__ == "__main__":
     unittest.main()

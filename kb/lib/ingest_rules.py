@@ -96,7 +96,8 @@ def main():
                 cols = {r[0] for r in cur.fetchall()}
                 sha_expr = "record_sha256" if "record_sha256" in cols else "NULL"
                 tag_expr = "source_tag" if "source_tag" in cols else "NULL"
-                cur.execute(f"SELECT rule_id, {sha_expr}, embedding IS NOT NULL, {tag_expr}, content FROM {t}")
+                doc_expr = "source_doc" if "source_doc" in cols else "NULL"
+                cur.execute(f"SELECT rule_id, {sha_expr}, embedding IS NOT NULL, {tag_expr}, content, {doc_expr} FROM {t}")
                 existing = {r[0]: r[1:] for r in cur.fetchall()}
             if a.dry_run:
                 print(f"[dry-run] 表 {t} {'已存在' if table_exists else '不存在（将创建）'}，现有 {len(existing)} 行", file=sys.stderr)
@@ -105,7 +106,8 @@ def main():
 
             # 分三类：unchanged（不写）；retag（正文没变、已有向量，只更新元数据列，不调 Bedrock）；
             # embed（新规则或正文变了，重新生成向量后 upsert）
-            todo = []
+            # rule_id 是主键：库里同编号的行属于另一份文档（别的标签；没有标签时看来源文档）就不能覆盖，记进 conflicts
+            todo, conflict_ids = [], []
             for r in rules:
                 row = {c: r.get(c) for c in COLUMNS}
                 row["approval_path"] = json.dumps(r.get("approval_path") or [], ensure_ascii=False)
@@ -116,7 +118,10 @@ def main():
                 if cur_row is None:
                     todo.append((row, "insert"))
                     continue
-                c_sha, has_emb, _c_tag, c_content = cur_row
+                c_sha, has_emb, c_tag, c_content, c_doc = cur_row
+                if (c_tag is not None and c_tag != a.source_tag) or (c_tag is None and c_doc not in (None, a.source_doc)):
+                    conflict_ids.append(r["rule_id"])
+                    continue
                 if has_emb and c_sha == h:
                     summary["unchanged"] += 1
                 else:
@@ -128,6 +133,7 @@ def main():
                                if rid not in doc_ids and row[2] == a.source_tag) if a.prune else []
             summary["untagged_not_in_doc"] = sum(1 for rid, row in existing.items()
                                                  if rid not in doc_ids and row[2] is None)
+            summary["conflicts"], summary["conflict_ids"] = len(conflict_ids), sorted(conflict_ids)
 
             if a.dry_run:
                 summary["inserted"] = sum(1 for _, k in todo if k == "insert")
@@ -137,6 +143,10 @@ def main():
                 summary["pruned_ids"] = prune_ids
                 print(json.dumps(summary, ensure_ascii=False))
                 return
+            if conflict_ids:
+                owners = sorted({str(existing[rid][2] or existing[rid][4]) for rid in conflict_ids})
+                sys.exit(f"{len(conflict_ids)} 条规则编号已属于库里另一份文档（{'、'.join(owners)}）：{'、'.join(sorted(conflict_ids)[:12])}"
+                         f"{'…' if len(conflict_ids) > 12 else ''}。同一份制度的新版本请用它原来的标签；另一份制度不能和它共用规则编号，没有写库")
 
             if a.embed == "sql":
                 def vector_of(text):

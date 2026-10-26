@@ -183,3 +183,10 @@ test('部署：构件里带上知识库的入库代码与 SQL（kb/lib、kb/sql�
   assert.match(deploy, /rsync -a --exclude __pycache__ --exclude \.DS_Store "\$POC_DIR\/\.\.\/kb\/lib" "\$POC_DIR\/\.\.\/kb\/sql" "\$STAGE\/release\/kb\/"/);
   assert.match(deploy, /mkdir -p [^\n]*"\$STAGE\/release\/kb"/);
 });
+
+test('kb/deploy.sh ingest --dry-run：规则编号已属于库里另一份文档时先警告（实跑时 ingest_rules.py 拒绝入库，一条不写）', async () => {
+  const deploy = await readFile(path.join(ROOT, 'kb/deploy.sh'), 'utf8');
+  const dry = deploy.slice(deploy.indexOf('if $DRY_RUN; then\n    plan "新增 $ins'), deploy.indexOf('if [ "$ins$upd$ret$prn" = "0000" ]'));
+  assert.match(dry, /jget conflicts/);
+  assert.match(dry, /已属于库里另一份文档/);
+});

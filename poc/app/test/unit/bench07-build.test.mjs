@@ -340,7 +340,8 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
     if (method === 'POST' && url.endsWith('/poc/kb/documents')) return reply({ id: 1, fileName: '仿真办法.docx', suggestedTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: '',
       report: { general: 3, chapter_notes: 3, matrix: 12, total: 18, chapters: [{ no: 1, title: '一、立项审批', rows: 4 }], duplicates: [], without_path: [] },
       preview: { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0, pruned_ids: [] } }, 201);
-    if (url.endsWith('/documents/1/preview')) return reply({ preview: { inserted: 12, updated: 0, retagged: 0, unchanged: 0, pruned: 2, pruned_ids: ['C01-1.1', 'C01-1.2'] } });
+    if (url.endsWith('/documents/1/preview') && JSON.parse(init.body).sourceTag === 'other-doc') return reply({ preview: { inserted: 2, updated: 0, retagged: 0, unchanged: 0, pruned: 0, pruned_ids: [], conflicts: 10, conflict_ids: ['C01-1.1', 'C01-1.2'] } });
+    if (url.endsWith('/documents/1/preview')) return reply({ preview: { inserted: 12, updated: 0, retagged: 0, unchanged: 0, pruned: 2, pruned_ids: ['C01-1.1', 'C01-1.2'], conflicts: 0, conflict_ids: [] } });
     if (url.endsWith('/documents/1/ingest')) return reply({ id: 1, status: 'ingesting' }, 202);
     if (url.endsWith('/documents/1')) { const now = status; status = 'ingested'; return reply({ id: 1, status: now, result: now === 'ingested' ? { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } : null, rules: [] }); }
     if (url.endsWith('/poc/kb/documents')) return reply({ items: [{ id: 1, file_name: '仿真办法.docx', status: 'ingested', uploaded_by: 'poc-reviewer', uploaded_at: '2026-10-26T08:00:00Z',
@@ -371,9 +372,17 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
   assert.match(root.textContent, /新增 0[\s\S]*重算向量 0[\s\S]*只更新说明 0[\s\S]*不变 12[\s\S]*删除 0/);
   const tag = root.all(node => node.tagName === 'INPUT' && node.name === 'sourceTag')[0];
   assert.equal(tag.value, 'sample-matrix');
+  // 规则编号已属于库里另一份文档：入库会覆盖它的规则——红字说明，确认入库按钮不可用
+  const confirmButton = () => root.all(node => node.tagName === 'BUTTON' && node.textContent === '确认入库')[0];
+  tag.value = 'other-doc';
+  await press('重新预览');
+  await until(() => /10 条规则编号已属于库里另一份文档/.test(root.textContent));
+  assert.equal(confirmButton().disabled, true);
   tag.value = 'other-tag';
   await press('重新预览');
   await until(() => /将删除 2 条/.test(root.textContent));
+  assert.equal(confirmButton().disabled, false);
+  assert.doesNotMatch(root.textContent, /已属于库里另一份文档/);
   assert.ok(root.all(node => /kb-warn/.test(node.className)).length > 0, '要删除的规则用琥珀色提醒');
   await press('确认入库');
   await until(() => /入库完成/.test(root.textContent));

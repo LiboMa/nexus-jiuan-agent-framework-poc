@@ -56,8 +56,8 @@
      main.append(root);
      document.dispatchEvent(new CustomEvent('elements-page:mount', { detail: { root, csrfToken: () => state.session?.csrfToken || '', user: state.session.user, familyId: state.routeParams.family || null } }));
 --- a/public/kb-page.js	1970-01-01 08:00:00
-+++ b/public/kb-page.js	2026-10-26 20:55:52
-@@ -0,0 +1,196 @@
++++ b/public/kb-page.js	2026-10-26 21:09:31
+@@ -0,0 +1,200 @@
 +// 规则库 · 制度知识库（测试台补丁 0004）。管理员上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库
 +// （向量在知识库的 PostgreSQL 里由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的
 +// 是同一个）；检索日志（审核 Agent、页面、部署核对都查了什么）。接口在测试台外壳 /api/analysis/v1/poc/kb/*。
@@ -142,6 +142,7 @@
 +  function previewView(preview) {
 +    const p = preview || {};
 +    return [h('p', { class: 'kb-preview' }, `入库预览：${resultText(p)}`),
++      p.conflicts ? h('p', { class: 'kb-warn kb-block' }, `${p.conflicts} 条规则编号已属于库里另一份文档：${(p.conflict_ids || []).slice(0, 12).join('、')}${(p.conflict_ids || []).length > 12 ? '…' : ''}。入库会覆盖那份文档的规则，所以不能入库。若这是同一份制度的新版本，把标签改成它原来的标签再预览。`) : null,
 +      p.pruned ? h('p', { class: 'kb-warn' }, `将删除 ${p.pruned} 条：${(p.pruned_ids || []).slice(0, 12).join('、')}${(p.pruned_ids || []).length > 12 ? '…' : ''}（同一标签下、新版本里已经没有的规则）。确认这是同一份制度的新版本再入库。`) : null,
 +      p.inserted && !p.unchanged && !p.retagged && !p.updated ? h('p', { class: 'kb-muted' }, '这个标签下还没有规则：会新增一套。若这是库里已有制度的新版本，请把标签改成它原来的标签。') : null];
 +  }
@@ -149,9 +150,11 @@
 +  function showParsed(data) {
 +    const report = data.report || {};
 +    const tag = textInput('sourceTag', data.suggestedTag), title = textInput('docTitle', data.docTitle), version = textInput('sourceVersion', data.sourceVersion, '例如 V4.0 正式签批版');
-+    const previewBox = h('div', { class: 'kb-report' }, previewView(data.preview));
++    const previewBox = h('div', { class: 'kb-report' });
++    // 规则编号和库里另一份文档冲突时不让入库（入库会覆盖那份文档的规则）
++    const showPreview = preview => { previewBox.replaceChildren(...previewView(preview).filter(Boolean)); confirm.disabled = Boolean(preview?.conflicts); };
 +    const repreview = button('重新预览', async () => {
-+      try { const answer = await api(`/poc/kb/documents/${data.id}/preview`, { method: 'POST', ...json({ sourceTag: tag.value.trim() }) }); previewBox.replaceChildren(...previewView(answer.preview).filter(Boolean)); say(''); }
++      try { const answer = await api(`/poc/kb/documents/${data.id}/preview`, { method: 'POST', ...json({ sourceTag: tag.value.trim() }) }); showPreview(answer.preview); say(''); }
 +      catch (error) { say(error.message, 'error'); }
 +    });
 +    const confirm = button('确认入库', async () => {
@@ -170,6 +173,7 @@
 +      } catch (error) { say(error.message, 'error'); }
 +      finally { confirm.disabled = false; void loadHistory(); }
 +    }, true);
++    showPreview(data.preview);
 +    const chapters = table(['章', '章名', '规则数'], (report.chapters || []).map(chapter => [String(chapter.no), dash(chapter.title), String(chapter.rows)]), '没有章节');
 +    work.replaceChildren(
 +      h('div', { class: 'kb-report' },
@@ -255,8 +259,8 @@
 +  current = mountKbPage(event.detail || {});
 +});
 --- a/public/platform-center.css	2026-10-26 16:55:35
-+++ b/public/platform-center.css	2026-10-26 17:00:24
-@@ -222,3 +222,27 @@
++++ b/public/platform-center.css	2026-10-26 21:09:41
+@@ -222,3 +222,28 @@
  .platform-access-row{padding:12px}
  }
  @media(prefers-reduced-motion:reduce){.platform-access-agent{transition:none}}
@@ -277,6 +281,7 @@
 +.kb-page input[type="text"]:focus{border-color:var(--ui-accent);outline:none;box-shadow:0 0 0 3px var(--ui-soft-line)}
 +.kb-preview{margin:0;padding:8px 12px;border-radius:8px;background:var(--ui-bg);color:#374151;font-size:13px}
 +.kb-warn{margin:0;padding:8px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;color:#92400e;font-size:13px;line-height:1.6}
++.kb-warn.kb-block{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
 +.kb-actions{display:flex;flex-wrap:wrap;gap:8px}
 +.kb-search{display:flex;flex-wrap:wrap;gap:8px}
 +.kb-search input[type="text"]{flex:1 1 320px}

@@ -409,6 +409,8 @@ phase_ingest() {
   if $DRY_RUN; then
     plan "新增 $ins / 重算向量 $upd / 仅更新其他列 $ret / 不变 $unc / 删除 $prn"
     [ "$prn" = "0" ] || warn "将删除的 rule_id（新版文档里已没有）：$(printf '%s' "$r" | jget pruned_ids)"
+    local cfl; cfl="$(printf '%s' "$r" | jget conflicts)"
+    [ "${cfl:-0}" = "0" ] || warn "$cfl 条 rule_id 已属于库里另一份文档：$(printf '%s' "$r" | jget conflict_ids)；实跑会拒绝入库、一条不写（同一份制度的新版本请用它原来的 RULES_SOURCE_TAG）"
     return 0
   fi
   if [ "$ins$upd$ret$prn" = "0000" ]; then skip "规则全部未变（$unc 条）"; else ok "新增 $ins / 重算向量 $upd / 仅更新其他列 $ret / 不变 $unc / 删除 $prn"; fi
