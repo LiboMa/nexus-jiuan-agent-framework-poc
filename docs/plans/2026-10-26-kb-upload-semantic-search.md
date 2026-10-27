@@ -205,7 +205,7 @@
 - 400-rejected uploads get no history row; non-3 parser exit codes show a raw Python line.
 - startIngest doesn't check record status; rules files keyed by DB id survive a kb DB reset; .tmp files left if record fails.
 - file names / questions starting with "-" break argparse → misleading 503.
-- kb_search.sql not applied with psql -1 (DROP+CREATE kb_search not atomic).
+- ~~kb_search.sql not applied with psql -1~~ — 已修（落地时半截执行导致检索中断，改为 psql -1）。
 - no opt-out for in-database search in db/verify for deployments without apt egress or Bedrock.
 - 413 response lost (socket destroyed before send).
 - spec §4 local PG container test for SQL replaced by static tests + bench runs.
