@@ -177,3 +177,36 @@
 | 7 测试台落地 | 8f9f680、657996e、712dd72 | 现场发现并修了四处：容器里 Debian 12 的 botocore 1.29 没有 `bedrock-runtime`（改为 SigV4 签名直接调）；纯语义排序区分度不够（改为关键词命中优先，加 `keyword_hits`）；接管的旧表没有 `source_tag`，上传一律 503（`tags` 容错）；仿真文档预览会覆盖 10 条真实规则（加编号冲突保护，页面红字、不能入库）。真实制度经页面入库：只更新说明 102、删除 0；「房租 年度框架合同 九安」第 1 名 C05-3.4 |
 | 8 审核 Agent 改用 `kb_search` | 618f46b、37b09d5 | 项目负责人同意后 `apply.py` 下发；`kb.sh verify --e2e` 通过；九安 v0.7.10 端到端 9/9。另修 create 模式主机（实例角色可调嵌入模型、IMDS 跳数 2）、`verify` 显示 `kb_search` 的报错 |
 | 9 文档 | 见本次提交 | `kb/GUIDE.md` 6.3、7.5、9.10 等；README、交接、交付包指南、CHANGELOG；导出时带上仿真文档 |
+
+### 终审与修复（2026-10-27）
+
+独立评审（Opus）：1 Critical、5 Important，其余为 Minor；一轮修复，每项先写失败的测试。修复后单元测试 poc/app 318 通过 / 11 跳过、app07 44/44、kb 12/12；`kb.sh verify --e2e` 通过；九安 v0.7.10 端到端 9/9（四张对公付款单都经 `kb_search` 查规则，结论不变）。
+
+落地时又发现一处：`kb_log_search` 的参数名 `found` 被 plpgsql 的 FOUND 盖住，检索日志写不进去，09:02–09:08 之间审核 Agent 的 `kb_search` 都失败；已修，`kb_search.sql` 改为单事务执行。
+
+**裁定**
+
+- Task 2: Ruling: kb_search's parameter 'segment' collides with its output column 'segment' (PG: parameter name used more than once) — renamed the parameter to segment_filter; positional calls unchanged — cost if wrong: one rename in docs/prompt
+- Task 4: Ruling: added POST /api/analysis/v1/poc/kb/documents/<id>/preview {sourceTag} (not in the plan's interface) — Review Focus 4 needs the dry-run preview for the tag the admin actually confirms, and the tag is editable on the page — cost if wrong: one extra endpoint
+- Task 7: Ruling: kb_embed no longer calls boto3.client("bedrock-runtime") — the PG container's Debian 12 botocore 1.29.27 has no bedrock-runtime model (UnknownServiceError on the bench); it signs with botocore SigV4Auth + instance-role creds and posts via urllib — keeps the apt package, no pip — cost if wrong: our own request code to maintain (~15 lines).
+- Task 7: Ruling: kb_search orders by keyword hits (terms split on spaces/punctuation, 2–20 chars, ≤8) then vector distance; adds keyword_hits column (DROP FUNCTION first) — measured on bench: pure semantic scores flat 0.20–0.26 and 「房租 年度框架合同 九安」 put C05-3.4 ~10th, which would endanger the spec's regression gate (four 对公付款单 unchanged) once the Agent queries kb_search first; now C05-3.4 is 1st, verify question still C03-1.2 first — cost if wrong: ranking explained as "keywords first", page shows 命中词数; revert = one ORDER BY line.
+- Task 7: Ruling: ingest refuses rule_ids owned by another document (other tag, or untagged row with a different source_doc) — found on bench: the fixture preview planned to overwrite 10 real rules because rule_id is the PK and all matrices use C<chapter>-<seq> — cost if wrong: a second, different policy cannot be ingested into the same table until rule ids are namespaced (design change for later).
+- Task 8: Ruling: kb create mode fixed in this branch (host role may invoke EmbedModelId only; HttpPutResponseHopLimit 2) — found while writing docs: a from-zero host could never run kb_search — cost if wrong: hop limit 2 lets any container on that host read instance-role creds (role = SSM core + one model).
+- Task 8: Ruling: task-done gate uses kb.sh verify instead of re-running the 25-minute paid E2E — the E2E ran once in this task on the final prompt/code (9/9, log t8-e2e.log) — cost if wrong: none for code; the paid run is not repeated.
+- Final: Ruling: reviewer's "declined to judge" items (prompt-built kb_search literal, no CLI/page shared lock, gridSpan memory, connector read-only mode semantics, generic-token ranking, 403 not in 九安 audit, docTitle unused by Agent, uploads never cleaned, untagged-no-doc rows adoptable) — all stand as-is for a PoC bench; connector read-only semantics to be checked once on the bench if read-only mode is ever turned on — cost if wrong: small, documented.
+
+**遗留（Minor，未做）**
+
+- page shows the grey 「这个标签下还没有规则：会新增一套」 hint under a conflict block; should hide when conflicts > 0.
+- page sourceVersion defaults to '' instead of the version already stored for that tag; page and kb.sh ingest with different versions retag metadata back and forth (no re-embedding).
+- two fixture uploads from the 503 attempts stay in history as 「已解析，待入库」 (ids 1, 2).
+- startup recover runs once; rows stay 「入库中」 if PG not ready at boot.
+- conflict preview doesn't name the owning tag/document; untagged legacy conflicts can't be fixed by changing the tag.
+- 400-rejected uploads get no history row; non-3 parser exit codes show a raw Python line.
+- startIngest doesn't check record status; rules files keyed by DB id survive a kb DB reset; .tmp files left if record fails.
+- file names / questions starting with "-" break argparse → misleading 503.
+- kb_search.sql not applied with psql -1 (DROP+CREATE kb_search not atomic).
+- no opt-out for in-database search in db/verify for deployments without apt egress or Bedrock.
+- 413 response lost (socket destroyed before send).
+- spec §4 local PG container test for SQL replaced by static tests + bench runs.
+- shared 60/min limit (page can starve Agent); term subquery LIMIT 8 without ORDER BY.
