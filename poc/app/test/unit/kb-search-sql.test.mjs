@@ -97,6 +97,8 @@ test('pgvector-up.sh：给了 KB_SEARCH_SQL_B64 才装 PL/Python 和建函数；
   assert.match(up, /result plpython installed/);
   assert.match(up, /result plpython present/);
   assert.match(up, /result kb_search ready/);
+  // 整份 kb_search.sql 一个事务：中途出错就全部回滚，不会留下「新函数调旧函数」的半截状态（测试台上出过）
+  assert.match(up, /psql -X -q -1 -U postgres -d "\$PG_DB_NAME" -v ON_ERROR_STOP=1/);
   assert.doesNotMatch(up, /docker (restart|rm|stop)/, '装语言不重启、不重建容器');
   const status = await readFile(kb('host/pgvector-status.sh'), 'utf8');
   assert.match(status, /RESULT plpython=/);
@@ -116,6 +118,10 @@ test('权限：public 模式归超级用户（应用用户只留 USAGE、CREATE�
   assert.match(sql, /ALTER SCHEMA public OWNER TO CURRENT_USER;\s*GRANT USAGE, CREATE ON SCHEMA public TO nexus;/);
   const log = fn(sql, 'kb_log_search');
   for (const line of [/LANGUAGE plpgsql/, /SECURITY DEFINER/, /SET search_path = public, pg_temp/, /INSERT INTO kb_search_log/, /session_user/, /interval '90 days'/]) assert.match(log, line);
+  // plpgsql 自带布尔变量 FOUND，会盖过同名参数（测试台上 kb_search 因此报「hits 是 jsonb、表达式是 boolean」）
+  assert.doesNotMatch(log.slice(0, log.indexOf('RETURNS')), /\bfound\b/i);
+  const dropLog = sql.indexOf('DROP FUNCTION IF EXISTS kb_log_search(text, text, int, text, jsonb, int);');
+  assert.ok(dropLog >= 0 && dropLog < sql.indexOf('CREATE OR REPLACE FUNCTION kb_log_search('), '参数改过名：CREATE OR REPLACE 改不了，先删再建');
   assert.match(sql, /REVOKE ALL ON FUNCTION kb_log_search\(text, text, int, text, jsonb, int\) FROM PUBLIC;\s*GRANT EXECUTE ON FUNCTION kb_log_search\(text, text, int, text, jsonb, int\) TO nexus;/);
   const search = fn(sql, 'kb_search');
   assert.match(search, /PERFORM kb_log_search\(/);

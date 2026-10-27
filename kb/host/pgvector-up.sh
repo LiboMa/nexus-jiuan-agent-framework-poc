@@ -149,7 +149,7 @@ if [ -n "${KB_SEARCH_SQL_B64:-}" ]; then
   fi
   printf '%s' "$KB_SEARCH_SQL_B64" | base64 -d \
     | sed -e "s/{table}/$RULES_TABLE/g" -e "s/{dim}/$EMBED_DIM/g" -e "s|{model}|$EMBED_MODEL_ID|g" -e "s/{region}/$AWS_REGION/g" -e "s/{app_user}/$PG_DB_USER/g" \
-    | docker exec -i "$PG_CONTAINER_NAME" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$PG_DB_NAME" >/dev/null
+    | docker exec -i "$PG_CONTAINER_NAME" psql -X -q -1 -U postgres -d "$PG_DB_NAME" -v ON_ERROR_STOP=1 >/dev/null
   result kb_search ready
 fi
 

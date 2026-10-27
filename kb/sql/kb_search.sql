@@ -139,11 +139,12 @@ return text
 $$;
 
 -- 写检索日志：kb_search 调；以超级用户写进只追加的 kb_search_log（应用用户自己写不进、删不掉），顺带清掉 90 天前的
-CREATE OR REPLACE FUNCTION kb_log_search(who text, asked text, n int, seg text, found jsonb, ms int) RETURNS void
+DROP FUNCTION IF EXISTS kb_log_search(text, text, int, text, jsonb, int);
+CREATE OR REPLACE FUNCTION kb_log_search(who text, asked text, n int, seg text, top jsonb, ms int) RETURNS void
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
   INSERT INTO kb_search_log (caller, db_user, question, k, segment, hits, took_ms)
-  VALUES (left(who, 40), session_user, left(asked, 2000), n, left(seg, 40), found, ms);
+  VALUES (left(who, 40), session_user, left(asked, 2000), n, left(seg, 40), top, ms);
   DELETE FROM kb_search_log l WHERE l.at < now() - interval '90 days';
 END
 $$;
