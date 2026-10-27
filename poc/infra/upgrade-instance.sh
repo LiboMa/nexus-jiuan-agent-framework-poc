@@ -3,9 +3,11 @@
 #   建变更集（只改 InstanceType，其余参数沿用）→ 实例要被替换就删掉变更集并退出 → 打印变更 → 输入栈名确认 → 执行 → 健康检查。
 # 用法：upgrade-instance.sh <t3.small|t3.medium|t3.large>。先跑 backup.sh。会停机几分钟。
 set -euo pipefail
-REGION="${AWS_REGION:-us-east-1}"
-STACK="andon-finance-poc"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/lib/deploy-env.sh"
+load_deploy_env
+REGION="${AWS_REGION:-us-east-1}"
+STACK="${STACK:-andon-finance-poc}"
 TYPE="${1:-}"
 case "$TYPE" in t3.small|t3.medium|t3.large) ;; *) echo "用法：upgrade-instance.sh <t3.small|t3.medium|t3.large>" >&2; exit 2 ;; esac
 output() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }

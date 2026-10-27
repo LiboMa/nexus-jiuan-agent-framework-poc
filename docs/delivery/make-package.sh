@@ -38,6 +38,8 @@ if $CHECKS; then
   # 知识库工具：脚本语法与 Python 编译检查（它的部署和验证要线上环境，见 kb/GUIDE.md）
   for f in "$ROOT"/kb/deploy.sh "$ROOT"/kb/lib/common.sh "$ROOT"/kb/host/*.sh "$ROOT"/poc/infra/kb.sh; do bash -n "$f"; done
   python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$ROOT"/kb/lib/*.py && echo "知识库工具的语法检查通过"
+  (cd "$ROOT" && python3 -B -m unittest discover -s kb/tests >/dev/null 2>&1) && echo "知识库工具的单元测试通过"
+  (cd "$ROOT" && python3 -B -m unittest discover -s audit-agent/tests >/dev/null 2>&1) && echo "审核 Agent 下发脚本的单元测试通过"
   (cd "$ROOT" && python3 -B -m unittest discover -s skills/agent-access/tests >/dev/null 2>&1) && echo "命令行测试通过"
   say "图和 HTML 是不是最新的"
   "$ROOT/docs/build-html.sh" --check
@@ -69,7 +71,7 @@ copy poc/bench
 copy patches
 copy audit-agent
 copy kb --exclude /kb/.state --exclude /kb/.build --exclude /kb/deploy.env --include /kb/tests/fixtures/sample-matrix.docx --exclude '*.docx' --exclude '*.doc'
-copy poc/infra --exclude secrets.env --exclude kb.env --exclude design-jiuan-nexus-integrate.md
+copy poc/infra --exclude secrets.env --exclude kb.env --include /infra/env/example.env --exclude '/infra/env/*.env' --exclude design-jiuan-nexus-integrate.md
 copy poc/tools
 copy poc/README.md
 copy skills

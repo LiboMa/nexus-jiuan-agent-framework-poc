@@ -210,3 +210,17 @@ test('仿真文档进仓库：kb/.gitignore 忽略所有 .docx（制度原文）
   const { stdout } = await run('git', ['-C', ROOT, 'check-ignore', '-v', '--no-index', 'kb/tests/fixtures/sample-matrix.docx']).catch(error => ({ stdout: error.stdout }));
   assert.match(stdout, /!tests\/fixtures\/sample-matrix\.docx/, '仿真文档不被忽略');
 });
+
+test('kb.sh 读环境配置（DEPLOY_ENV）：栈名、区域、kb 的个人设置文件都从它来；配置里写了 AGENT_NAME 就以它为准写进 kb 的配置', async t => {
+  const h = await harness({ settings: 'RULES_DOCX=/local/rules.docx\nNEXUS_ADMIN_PASSWORD_FILE=/local/nexus-admin\nAGENT_NAME=jiuan_audit_ai_poc\n' });
+  t.after(h.done);
+  const env = path.join(h.dir, 'rehearsal.env');
+  await writeFile(env, `STACK=andon-finance-rehearsal\nAWS_REGION=us-east-1\nKB_SETTINGS=${path.join(h.dir, 'kb.env')}\nAGENT_NAME=jiuan_audit_ai_rehearsal\n`);
+  const result = await h.kb(['config'], { DEPLOY_ENV: env, KB_SETTINGS: path.join(h.dir, 'no-such-kb.env'), STACK: 'other-stack' });
+  assert.equal(result.code, 0, result.stderr);
+  const calls = await h.calls();
+  assert.ok(calls.length && calls.every(call => call.includes('--stack-name andon-finance-rehearsal') && call.includes('--region us-east-1')), calls.join('\n'));
+  const agent = (await run('bash', ['-c', `set -a; source "${h.config}"; echo "$AGENT_NAME"`])).stdout.trim();
+  assert.equal(agent, 'jiuan_audit_ai_rehearsal');
+  assert.match(result.stderr, /AGENT_NAME.*以环境配置为准/);
+});

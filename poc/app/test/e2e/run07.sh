@@ -4,15 +4,18 @@
 # 两个账号的口令从 infra/secrets.env 读进本进程的环境变量。调用密钥不经过这里：管理员在九安「后台配置 › Agent 接入」页上粘贴一次。
 # 真实调用 Nexus：每张对公付款单一次 AI 独立建议（约 0.1–0.3 美元），一轮约 5 张。用法：run07.sh [node --test 的参数，例如 --test-name-pattern 登录]
 set -euo pipefail
-REGION="${AWS_REGION:-us-east-1}"
-STACK="andon-finance-poc"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/../../../infra/lib/deploy-env.sh"
+load_deploy_env
+REGION="${AWS_REGION:-us-east-1}"
+STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/../../../infra/secrets.env"
 [[ -f "$SECRETS" ]] || { echo "找不到 ${SECRETS}：先运行 infra/deploy.sh" >&2; exit 1; }
 secret() { sed -n "s/^$1=//p" "$SECRETS" | head -1; }
 cd "$HERE"
 [[ -d node_modules/playwright ]] || PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund
 output() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+output_param() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Parameters[?ParameterKey=='$1'].ParameterValue" --output text; }
 SITE="$(output Jiuan07Url)"
 INSTANCE="$(output InstanceId)"
 echo "重置九安 v0.7.10：$INSTANCE"
@@ -21,7 +24,10 @@ COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE"
 aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE"
 [[ "$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query StandardOutputContent --output text)" == *JIUAN07_RESET_OK* ]] \
   || { echo "重置没有成功：sudo journalctl -u andon-jiuan07 -n 200" >&2; exit 1; }
-export E2E07_BASE_URL="$SITE" E2E07_INSTANCE="$INSTANCE"
+# 区域和 Nexus 的主机名给测试用（经 SSM 查库、核对出站拦截记录里没有 Nexus）
+E2E07_REGION="$REGION"
+E2E07_NEXUS_HOST="$(output_param NexusOrigin | sed -E 's#^https?://##; s#[/:].*$##')"
+export E2E07_BASE_URL="$SITE" E2E07_INSTANCE="$INSTANCE" E2E07_REGION E2E07_NEXUS_HOST
 E2E_REVIEWER_PASSWORD="$(secret REVIEWER_PASSWORD)"
 E2E_CHECKER_PASSWORD="$(secret CHECKER_PASSWORD)"
 export E2E_REVIEWER_PASSWORD E2E_CHECKER_PASSWORD

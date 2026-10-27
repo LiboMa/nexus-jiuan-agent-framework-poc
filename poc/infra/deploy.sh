@@ -8,9 +8,11 @@
 # 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
 set -euo pipefail
 
-REGION="${AWS_REGION:-us-east-1}"
-STACK="andon-finance-poc"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "$HERE/lib/deploy-env.sh"
+load_deploy_env
+REGION="${AWS_REGION:-us-east-1}"
+STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/secrets.env"
 POC_DIR="$(cd "$HERE/.." && pwd)"
 APP_DIR="$POC_DIR/app"
@@ -58,7 +60,9 @@ if ! $CODE_ONLY; then
   fi
   # 知识库的 PG 端口入站规则（模板里的 KbIngress）：第一次建栈时可以一起开；栈已在时用 infra/kb.sh sg（它会接管手工加的同样规则）。
   # 没给就沿用栈上的值（aws cloudformation deploy 对没写的参数用现值）。
-  [[ -n "${KB_ALLOWED_CIDR:-}" ]] && overrides+=("KbAllowedCidr=$KB_ALLOWED_CIDR")
+  # 给了环境配置（DEPLOY_ENV）：里面写了值的栈参数都传上去（KbAllowedCidr 也以文件为准）；没给就只认环境变量 KB_ALLOWED_CIDR
+  while IFS= read -r override; do overrides+=("$override"); done < <(deploy_env_overrides)
+  [[ -z "${DEPLOY_ENV:-}" && -n "${KB_ALLOWED_CIDR:-}" ]] && overrides+=("KbAllowedCidr=$KB_ALLOWED_CIDR")
   [[ ${#overrides[@]} -gt 0 ]] && args+=(--parameter-overrides "${overrides[@]}")
   aws cloudformation deploy "${args[@]}"
 fi

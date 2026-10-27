@@ -3,8 +3,11 @@
 # 不可恢复。Nexus 上的发布与调用密钥不受影响。
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/lib/deploy-env.sh"
+load_deploy_env
 REGION="${AWS_REGION:-us-east-1}"
-STACK="andon-finance-poc"
+STACK="${STACK:-andon-finance-poc}"
 PREFIX="/andon-finance/poc"
 
 read -r -p "将删除栈 ${STACK}、它的构件桶内容，以及 $PREFIX 下的全部参数。请输入栈名确认：" answer

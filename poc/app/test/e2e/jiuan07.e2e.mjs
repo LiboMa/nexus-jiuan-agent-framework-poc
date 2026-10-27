@@ -19,6 +19,9 @@ import { chromium } from 'playwright';
 const run = promisify(execFile);
 const BASE = process.env.E2E07_BASE_URL || 'https://jiuan-v0710.tinyboat.blog';
 const INSTANCE = process.env.E2E07_INSTANCE;
+const REGION = process.env.E2E07_REGION || 'us-east-1';
+// 出站拦截记录里不该出现的 Nexus 主机名（run07.sh 从栈参数 NexusOrigin 取）
+const NEXUS_HOST = process.env.E2E07_NEXUS_HOST || '';
 const SHOTS = new URL('../../../../evidence/round7/e2e/', import.meta.url);
 // fixtures.mjs 的四个场景：九安房租（合同、发票齐）、柯顿运维费（超合同、收款方不符）、O+O 税款（有缴款通知）、新零售推广费（无原件、事由带注入文字）
 const EXPECT = Object.freeze({ 'DGZF-F07-001': 'pass', 'DGZF-F07-002': 'fail', 'DGZF-F07-003': 'pass', 'DGZF-F07-004': 'fail' });
@@ -67,9 +70,9 @@ async function knownRuleIds(ids) {
   if (!ids.every(id => /^[A-Z0-9.-]+$/.test(id))) throw new Error(`规则编号格式不对：${ids}`);
   const sql = `SELECT string_agg(rule_id, ',' ORDER BY rule_id) FROM approval_rules WHERE rule_id IN (${ids.map(id => `'${id}'`).join(',')});`;
   const params = JSON.stringify({ commands: [`docker exec nexus-pgvector psql -U nexus -d nexus -X -tAc "${sql}"`] });
-  const aws = async args => (await run('aws', ['--region', 'us-east-1', ...args, '--output', 'text'])).stdout.trim();
+  const aws = async args => (await run('aws', ['--region', REGION, ...args, '--output', 'text'])).stdout.trim();
   const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', 'e2e kb rule-id check (read-only)', '--parameters', params, '--query', 'Command.CommandId']);
-  await run('aws', ['--region', 'us-east-1', 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
+  await run('aws', ['--region', REGION, 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
   return (await aws(['ssm', 'get-command-invocation', '--command-id', id, '--instance-id', INSTANCE, '--query', 'StandardOutputContent'])).split(',').filter(Boolean);
 }
 
@@ -270,11 +273,12 @@ test('制度知识库：管理员上传本机的制度原文——预览不删�
 test('出网与写回：测试期间九安没有调汇联易的审批写入；被拦下的出网只有写死的外部地址，没有 Nexus', async () => {
   const since = startedAt.toISOString().replace('T', ' ').slice(0, 19);
   const params = JSON.stringify({ commands: [`journalctl -u andon-jiuan07 --since '${since} UTC' --no-pager -o cat | grep -E 'POC_EGRESS_BLOCKED|POC_HLY_WRITE_BLOCKED' | sort | uniq -c || true`] });
-  const aws = async args => (await run('aws', ['--region', 'us-east-1', ...args, '--output', 'text'])).stdout.trim();
+  const aws = async args => (await run('aws', ['--region', REGION, ...args, '--output', 'text'])).stdout.trim();
   const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', 'e2e egress check (read-only)', '--parameters', params, '--query', 'Command.CommandId']);
-  await run('aws', ['--region', 'us-east-1', 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
+  await run('aws', ['--region', REGION, 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
   const lines = await aws(['ssm', 'get-command-invocation', '--command-id', id, '--instance-id', INSTANCE, '--query', 'StandardOutputContent']);
   console.log(`出网与写回拦截记录：${lines || '（无）'}`);
   assert.doesNotMatch(lines, /POC_HLY_WRITE_BLOCKED/);
-  assert.doesNotMatch(lines, /POC_EGRESS_BLOCKED nxs-beine1013/);
+  assert.ok(NEXUS_HOST, '请用 run07.sh 运行：它从栈参数取 Nexus 的主机名');
+  assert.ok(!lines.includes(`POC_EGRESS_BLOCKED ${NEXUS_HOST}`), `出站拦截记录里不该有 Nexus（${NEXUS_HOST}）`);
 });

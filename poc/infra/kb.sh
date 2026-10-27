@@ -12,11 +12,15 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-KB_DIR="${KB_DIR:-$ROOT/kb}"
-SETTINGS="${KB_SETTINGS:-$HERE/kb.env}"
-CONFIG="${KB_CONFIG:-$KB_DIR/.state/infra.env}"
+source "$HERE/lib/deploy-env.sh"
+load_deploy_env
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
+KB_DIR="${KB_DIR:-$ROOT/kb}"
+# kb 的个人设置文件：环境配置里的 KB_SETTINGS（相对仓库根目录），或环境变量 KB_SETTINGS，默认 poc/infra/kb.env
+SETTINGS="${KB_SETTINGS:-$HERE/kb.env}"
+[[ "$SETTINGS" == /* ]] || SETTINGS="$ROOT/$SETTINGS"
+CONFIG="${KB_CONFIG:-$KB_DIR/.state/infra.env}"
 TEMPLATE="$HERE/andon-finance-poc.yaml"
 PRIVATE='^(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]|[12][0-9]|3[0-2])$'
 RULE_DESCRIPTION='nexus-pgvector: Nexus server + sandbox VMs (private only)'
@@ -47,6 +51,15 @@ write_config() {
       echo "kb.env 里的 ${key}（${mine}）和栈不同，以栈为准（${wanted}）" >&2
     fi
   done
+  # 环境配置里写了 AGENT_NAME（审核 Agent 的 agent_name）就以它为准，和 audit-agent/setup.py 用的是同一个
+  local from_env=false
+  if [[ " ${DEPLOY_ENV_LOADED[*]:-} " == *" AGENT_NAME "* ]]; then
+    from_env=true
+    mine="$( set +u; set -a; source "$SETTINGS" >/dev/null 2>&1; printf '%s' "${AGENT_NAME-}" )"
+    if grep -Eq '^[[:space:]]*(export[[:space:]]+)?AGENT_NAME=' "$SETTINGS" && [[ "$mine" != "$AGENT_NAME" ]]; then
+      echo "kb.env 里的 AGENT_NAME（${mine}）和环境配置不同，以环境配置为准（${AGENT_NAME}）" >&2
+    fi
+  fi
   mkdir -p "$(dirname "$CONFIG")"
   local tmp; tmp="$(mktemp "$(dirname "$CONFIG")/.infra.env.XXXXXX")"
   chmod 600 "$tmp"
@@ -58,6 +71,11 @@ write_config() {
     echo
     echo "# ---- 来自栈 ${STACK}（以这里为准）----"
     for key in $DERIVED; do printf '%s=%q\n' "$key" "$(eval "printf '%s' \"\$${key}_V\"")"; done
+    if $from_env; then
+      echo
+      echo "# ---- 来自环境配置 ${DEPLOY_ENV}（以这里为准）----"
+      printf 'AGENT_NAME=%q\n' "$AGENT_NAME"
+    fi
   } > "$tmp"
   mv "$tmp" "$CONFIG"
   echo "已生成 ${CONFIG}：PG 在实例 ${instance}（existing 模式），端口 ${PG_PORT_V} ← ${cidr}，Nexus ${NEXUS_URL_V}"

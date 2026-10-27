@@ -367,3 +367,43 @@ test('换型脚本：InstanceType 变化在 CloudFormation 里永远是 Conditio
   assert.match(script, /\[\[ "\$ROOT_DEVICE" == "ebs" \]\]/);
   assert.match(script, /\[\[ "\$CAUSES" == "InstanceType" \]\]/);
 });
+
+// 一个环境一份配置文件（poc/infra/env/<环境名>.env，poc/infra/lib/deploy-env.sh 读）：不给 DEPLOY_ENV 就是现有环境
+const e2e07 = name => fileURLToPath(new URL(`../e2e/${name}`, import.meta.url));
+test('各脚本先读环境配置（DEPLOY_ENV）再定栈名和区域：不给就是现有环境（andon-finance-poc、us-east-1），栈名不再写死', async () => {
+  const scripts = { 'deploy.sh': infra('deploy.sh'), 'destroy.sh': infra('destroy.sh'), 'backup.sh': infra('backup.sh'), 'upgrade-instance.sh': infra('upgrade-instance.sh'),
+    'bench-test.sh': infra('bench-test.sh'), 'kb.sh': infra('kb.sh'), 'run07.sh': e2e07('run07.sh') };
+  for (const [name, file] of Object.entries(scripts)) {
+    const text = await readFile(file, 'utf8');
+    assert.match(text, /source "[^"\n]*\/lib\/deploy-env\.sh"\nload_deploy_env\n/, `${name} 先 source deploy-env.sh 再 load_deploy_env`);
+    const loadAt = text.indexOf('\nload_deploy_env\n');
+    assert.ok(text.indexOf('STACK="${STACK:-andon-finance-poc}"') > loadAt, `${name} 的栈名在读完配置之后定`);
+    assert.ok(text.indexOf('REGION="${AWS_REGION:-us-east-1}"') > loadAt, `${name} 的区域在读完配置之后定`);
+    assert.doesNotMatch(text, /^STACK="andon-finance-poc"$/m, name);
+    await run('bash', ['-n', file]);
+  }
+});
+
+test('deploy.sh：配置文件里写了值的栈参数都传给 CloudFormation；给了配置文件时 KbAllowedCidr 以文件为准（不再另加环境变量那一条）', async () => {
+  const deploy = await readFile(infra('deploy.sh'), 'utf8');
+  assert.match(deploy, /while IFS= read -r override; do overrides\+=\("\$override"\); done < <\(deploy_env_overrides\)/);
+  assert.match(deploy, /\[\[ -z "\$\{DEPLOY_ENV:-\}" && -n "\$\{KB_ALLOWED_CIDR:-\}" \]\] && overrides\+=\("KbAllowedCidr=\$KB_ALLOWED_CIDR"\)/);
+});
+
+test('九安 v0.7.10 的端到端测试不写死区域和 Nexus 地址：run07.sh 按配置 / 栈导出 E2E07_REGION、E2E07_NEXUS_HOST', async () => {
+  const spec = await readFile(e2e07('jiuan07.e2e.mjs'), 'utf8');
+  assert.doesNotMatch(spec, /'--region', 'us-east-1'/);
+  assert.doesNotMatch(spec, /nxs-beine1013/);
+  assert.match(spec, /process\.env\.E2E07_REGION/);
+  assert.match(spec, /process\.env\.E2E07_NEXUS_HOST/);
+  const runner = await readFile(e2e07('run07.sh'), 'utf8');
+  assert.match(runner, /E2E07_REGION="\$REGION"/);
+  assert.match(runner, /E2E07_NEXUS_HOST="\$\(output_param NexusOrigin \| sed -E 's#\^https\?:\/\/##; s#\[\/:\]\.\*\$##'\)"/);
+});
+
+test('交付包和交接仓库只带 poc/infra/env/example.env（各环境的配置不出去）；打包检查也跑 audit-agent、kb 的单元测试', async () => {
+  const pack = await readFile(fileURLToPath(new URL('../../../../docs/delivery/make-package.sh', import.meta.url)), 'utf8');
+  assert.match(pack, /copy poc\/infra [^\n]*--include \/infra\/env\/example\.env --exclude '\/infra\/env\/\*\.env'/);
+  assert.match(pack, /unittest discover -s audit-agent\/tests/);
+  assert.match(pack, /unittest discover -s kb\/tests/);
+});

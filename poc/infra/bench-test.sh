@@ -5,9 +5,11 @@
 # 用法：bench-test.sh [--mutate '<相对 poc/app 的文件>|<sed 表达式>'] [测试文件…]（默认三个 bench-*.test.mjs）
 #   --mutate：先在实例上的测试副本里用 sed 把一个文件改坏再跑——证明测试能抓住这种错（这时期望失败）。
 set -euo pipefail
-REGION="${AWS_REGION:-us-east-1}"
-STACK="andon-finance-poc"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/lib/deploy-env.sh"
+load_deploy_env
+REGION="${AWS_REGION:-us-east-1}"
+STACK="${STACK:-andon-finance-poc}"
 APP_DIR="$(cd "$HERE/../app" && pwd)"
 MUTATE=""
 if [[ "${1:-}" == "--mutate" ]]; then MUTATE="$2"; shift 2; fi

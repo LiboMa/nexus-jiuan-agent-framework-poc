@@ -4,8 +4,11 @@
 #   2. 经 SSM 在实例上把账号目录（users、nexus）打包到 /root/andon-backup-<时间>.tgz（0600）。
 # 恢复：用快照建卷替换根卷；或者把打包文件解回 /var/lib/andon-finance（属主 andon:andon，目录 0700、文件 0600）。
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/lib/deploy-env.sh"
+load_deploy_env
 REGION="${AWS_REGION:-us-east-1}"
-STACK="andon-finance-poc"
+STACK="${STACK:-andon-finance-poc}"
 output() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
 INSTANCE="$(output InstanceId)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
