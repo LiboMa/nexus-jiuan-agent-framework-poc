@@ -1,0 +1,14 @@
+{
+  "values": {
+    "basic.env": { "STACK": "andon-finance-rehearsal", "AWS_REGION": "us-east-1", "DOMAIN_NAME": "rehearsal one.example.com", "NEXUS_PROFILE": "my profile", "KB_ALLOWED_CIDR": "10.0.0.0/8", "NEXUS_ORIGIN": "https://nexus.example.com" },
+    "literal.env": { "STACK": "s", "AWS_REGION": "us-east-1", "DOMAIN_NAME": "$(touch /tmp/deploy-env-pwned)", "NEXUS_PROFILE": "`touch /tmp/deploy-env-pwned`", "CERTIFICATE_ARN": "${HOME}/x" }
+  },
+  "errors": {
+    "unknown.env": { "line": 3, "text": "DOMIAN_NAME" },
+    "dup.env": { "line": 2, "text": "STACK" },
+    "export.env": { "line": 1, "text": "export STACK=x" },
+    "nokey.env": { "line": 1, "text": "STACK" },
+    "nostack.env": { "line": 0, "text": "STACK" }
+  },
+  "overrides": { "basic.env": ["DomainName=rehearsal one.example.com", "NexusOrigin=https://nexus.example.com", "KbAllowedCidr=10.0.0.0/8"] }
+}

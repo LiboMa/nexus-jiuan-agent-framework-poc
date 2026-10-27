@@ -4,6 +4,9 @@ poc/infra/secrets.env.*
 !poc/infra/secrets.env.example
 # 知识库部署人的设置（kb/ 自己的 .gitignore 挡住 kb/deploy.env、kb/.state/、kb/.build/、*.docx）
 poc/infra/kb.env
+# 各环境的配置（poc/infra/env/<环境名>.env）：只有 example.env 进仓库
+poc/infra/env/*.env
+!poc/infra/env/example.env
 # 客户的制度原文（知识库的来源文档）：只在本机，不进任何仓库
 docs/sample-docs/
 kb-test-docs/
