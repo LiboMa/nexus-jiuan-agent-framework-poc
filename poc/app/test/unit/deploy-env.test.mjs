@@ -78,3 +78,11 @@ test('example.env 列的键就是脚本认的键；只有 example.env 进仓库'
   const example2 = await bash(`cd "${ROOT}" && git check-ignore --no-index poc/infra/env/example.env`);
   assert.equal(example2.code, 1, 'example.env 进仓库');
 });
+
+test('macOS 自带的 bash 3.2、set -euo pipefail 下也能用（空数组在 3.2 里算未定义）：给不给 DEPLOY_ENV 都不出错', async () => {
+  const strict = `set -euo pipefail; source "${LIB}"; load_deploy_env; deploy_env_overrides; echo done`;
+  const none = await run('/bin/bash', ['-c', strict], { env: { PATH: process.env.PATH } });
+  assert.equal(none.stdout, 'done\n');
+  const some = await run('/bin/bash', ['-c', strict], { env: { PATH: process.env.PATH, DEPLOY_ENV: path.join(FIXTURES, 'basic.env') } });
+  assert.deepEqual(some.stdout.trim().split('\n'), [...expected.overrides['basic.env'], 'done']);
+});

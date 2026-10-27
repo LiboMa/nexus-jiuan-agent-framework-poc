@@ -38,7 +38,7 @@ load_deploy_env() {
     DEPLOY_ENV_LOADED+=("$key")
   done < "$file"
   for key in STACK AWS_REGION; do
-    [[ " ${DEPLOY_ENV_LOADED[*]} " == *" $key "* ]] || deploy_env_fail "${file}：没写 ${key}（用配置文件时栈名和区域都要写明，免得动到别的栈）"
+    [[ " ${DEPLOY_ENV_LOADED[*]:-} " == *" $key "* ]] || deploy_env_fail "${file}：没写 ${key}（用配置文件时栈名和区域都要写明，免得动到别的栈）"
   done
   echo "环境：${file}（栈 ${STACK}，区域 ${AWS_REGION}）" >&2
 }
@@ -48,7 +48,7 @@ deploy_env_overrides() {
   local pair key
   for pair in "${DEPLOY_ENV_PARAMS[@]}"; do
     key="${pair%%:*}"
-    [[ " ${DEPLOY_ENV_LOADED[*]} " == *" $key "* ]] && printf '%s=%s\n' "${pair#*:}" "${!key}"
+    [[ " ${DEPLOY_ENV_LOADED[*]:-} " == *" $key "* ]] && printf '%s=%s\n' "${pair#*:}" "${!key}"
   done
   return 0
 }
