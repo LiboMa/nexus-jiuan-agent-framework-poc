@@ -1,0 +1,7 @@
+deploy.env
+.build/
+build/out/
+*.docx
+!tests/fixtures/*.docx
+__pycache__/
+.state/

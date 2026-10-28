@@ -35,6 +35,36 @@ test('make-package.sh --export：交接仓库只放交接内容（含两个 Skil
   assert.match(await readFile(path.join(out, '.gitignore'), 'utf8'), /^poc\/infra\/secrets\.env$/m);
 });
 
+// 在仓库里的文档管家包中临时放一个探针文件；已有的同名文件（真实的部署设置、状态）不碰。测试结束删掉探针和为它新建的目录
+async function plant(t, file) {
+  if (await exists(file)) return;
+  let top = file;
+  while (!(await exists(path.dirname(top)))) top = path.dirname(top);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, '# package.test.mjs 临时放的探针，测试结束就删\n');
+  t.after(() => rm(top, { recursive: true, force: true }));
+}
+
+test('make-package.sh --export：带上文档管家（knowbase-s3vectors-agent），不带它的 deploy.env、.state、.build、build/out、__pycache__ 和 .docx（tests/fixtures 的仿真文档除外）', async t => {
+  const pkg = fileURLToPath(new URL('../../../../knowbase-s3vectors-agent/', import.meta.url));
+  for (const probe of ['deploy.env', '.state/package-test-probe', '.build/package-test-probe', 'build/out/package-test-probe',
+    'tools/__pycache__/package-test-probe.pyc', 'package-test-probe.docx', 'tests/fixtures/package-test-probe.docx']) {
+    await plant(t, path.join(pkg, probe));
+  }
+  const out = await exportTo(t);
+  const dir = path.join(out, 'knowbase-s3vectors-agent');
+  for (const keep of ['GUIDE.zh.md', 'deploy.env.example', '.gitignore', 'tools/s3vectors_kb_tools.py', 'tests/local_test.py', 'tests/fixtures/package-test-probe.docx']) {
+    assert.ok(await exists(path.join(dir, keep)), `应该有 knowbase-s3vectors-agent/${keep}`);
+  }
+  for (const drop of ['deploy.env', '.state', '.build', 'build/out']) {
+    assert.equal(await exists(path.join(dir, drop)), false, `不应该有 knowbase-s3vectors-agent/${drop}`);
+  }
+  const { stdout } = await run('find', [dir, '(', '-name', '__pycache__', '-o', '-name', '*.docx', ')', '!', '-path', path.join(dir, 'tests/fixtures/*.docx')]);
+  assert.equal(stdout, '', '只有 tests/fixtures 里能有 .docx，哪里都不能有 __pycache__');
+  const ignore = await readFile(path.join(out, '.gitignore'), 'utf8');
+  for (const line of ['knowbase-s3vectors-agent/deploy.env', 'knowbase-s3vectors-agent/.state/']) assert.ok(ignore.split('\n').includes(line), `.gitignore 要挡住 ${line}`);
+});
+
 const EXAMPLES = { i: 'i-0123456789abcdef0', vpc: 'vpc-0123456789abcdef0', snap: 'snap-0123456789abcdef0', vol: 'vol-0123456789abcdef0', sg: 'sg-0123456789abcdef0' };
 
 async function exportTo(t) {
