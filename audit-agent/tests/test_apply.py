@@ -61,6 +61,39 @@ class TargetTest(unittest.TestCase):
                          ("https://nexus.example.com", "jiuan_audit_ai_poc", "九安审核AI（PoC）", "global.anthropic.claude-opus-5-5", "", ""))
 
 
+class NexusCallTest(unittest.TestCase):
+    """nexus()：路径参数用 -p，查询参数用 -q（operator 不让混用）；missing_ok 时 404 回 None，别的错误照样退出。"""
+
+    def run_call(self, returncode, stdout, **kwargs):
+        seen = {}
+
+        class Done:
+            pass
+
+        def fake_run(args, **_):
+            seen["args"] = args
+            done = Done()
+            done.returncode, done.stdout, done.stderr = returncode, stdout, "boom"
+            return done
+        original = nexus_common.subprocess.run
+        nexus_common.subprocess.run = fake_run
+        try:
+            return nexus_common.nexus("GET", "/api/v2/agents", **kwargs, target=nexus_common.target_from(None)), seen["args"]
+        finally:
+            nexus_common.subprocess.run = original
+
+    def test_query_parameters_use_q(self):
+        _, args = self.run_call(0, '{"data": []}', params=["agent_id=a"], query=["limit=100", "page=2"])
+        self.assertEqual(args[args.index("call"):], ["call", "GET", "/api/v2/agents", "-p", "agent_id=a", "-q", "limit=100", "-q", "page=2"])
+        self.assertEqual(args[args.index("--profile") + 1], "beine1013")
+
+    def test_missing_ok_turns_404_into_none(self):
+        result, _ = self.run_call(1, '{"ok": false, "status": 404}', missing_ok=True)
+        self.assertIsNone(result)
+        with self.assertRaises(SystemExit):
+            self.run_call(1, '{"ok": false, "status": 500}', missing_ok=True)
+
+
 class ApplyTest(unittest.TestCase):
     def setUp(self):
         sys.modules.pop("apply", None)

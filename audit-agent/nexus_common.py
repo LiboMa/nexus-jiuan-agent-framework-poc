@@ -74,11 +74,14 @@ def render_prompt(text, target):
     return rendered
 
 
-def nexus(method, path, params=(), body=None, write=False, dry_run=False, *, target):
-    """经 nexus-ai-operator 调一次 Nexus 接口；写操作 dry_run 时只打印，不调。"""
+def nexus(method, path, params=(), body=None, write=False, dry_run=False, *, target, query=(), missing_ok=False):
+    """经 nexus-ai-operator 调一次 Nexus 接口：params 是路径参数（-p），query 是查询参数（-q）；写操作 dry_run 时只打印，不调；
+    missing_ok 时接口回 404 就返回 None（例如发布还没有动态配置）。"""
     args = [sys.executable, str(NEXUS), '--profile', target.profile, '--json', 'call', method, path]
     for item in params:
         args += ['-p', item]
+    for item in query:
+        args += ['-q', item]
     with tempfile.NamedTemporaryFile('w', suffix='.json', encoding='utf-8') as data:
         if body is not None:
             json.dump(body, data, ensure_ascii=False)
@@ -88,6 +91,12 @@ def nexus(method, path, params=(), body=None, write=False, dry_run=False, *, tar
             args += ['--dry-run'] if dry_run else ['--yes']
         done = subprocess.run(args, capture_output=True, text=True, timeout=120)
     if done.returncode != 0:
+        if missing_ok:
+            try:
+                if json.loads(done.stdout).get('status') == 404:
+                    return None
+            except (ValueError, AttributeError):
+                pass
         raise SystemExit(f'{method} {path} 失败（退出码 {done.returncode}）：{done.stderr.strip()[:600]}')
     if write and dry_run:
         print(f'[dry-run] {method} {path}')

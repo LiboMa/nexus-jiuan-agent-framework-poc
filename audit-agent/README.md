@@ -1,12 +1,15 @@
 # 九安审核AI（PoC）提示词
 
-Nexus 测试环境 nxs-beine1013 上的 Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea`（A2A）。
+现有环境（Nexus nxs-beine1013）上是 Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea`（A2A + MCP）。别的环境的 Agent、发布、连接器写在环境配置里（`poc/infra/env/<环境名>.env`，见 `poc/infra/env/example.env`），两个脚本都用 `--env` 或 `DEPLOY_ENV` 指定；`apply.py` 不给就是现有环境，`setup.py` 必须给。
 
 | 文件 | 内容 |
 |---|---|
 | `prompt.yaml` | 当前版本 v3（2026-10-25，2026-10-26 改查询方式，`agentVersion` 为 `jiuan-audit-ai-kb-2026-10-26.1`）：三段式请求照旧；第 4 条加知识库只读查询的例外；第 8 条规则问答、第 9 条信封模式（九安 v0.7.10 的 `review_advice@1`）的第 1 次查询都用库内语义检索 `kb_search`，没对口的再按关键词 `ILIKE` |
 | `prompt-owner-2026-10-25.yaml` | 项目负责人在网页上改过的上一版（加了第 7、8 条和连接器），回退用 |
 | `apply.py` | 下发：写提示词 → 原样重存发布的动态配置 → 发布描述写上契约和任务两行 → 只读核对 |
+| `setup.py` | 新环境第一次用：按 `AGENT_NAME` 找或建 Agent（克隆通用助手、写入提示词）、找或建 A2A 发布、把知识库连接器绑进动态配置；幂等，编号写回环境配置。`--delete` 只删演练用的（名字以 `_rehearsal` 结尾） |
+| `nexus_common.py`、`deploy_env.py` | 两个脚本共用：目标环境、提示词渲染、经 operator 调 Nexus；读环境配置（规则和 `poc/infra/lib/deploy-env.sh` 一样） |
+| `tests/` | 单元测试（`python3 -B -m unittest discover -s audit-agent/tests`，假的 Nexus，不联网） |
 
 ## 知识库
 
@@ -22,11 +25,11 @@ Nexus 测试环境 nxs-beine1013 上的 Agent `agent_56d44dd9350f4a568bca387319e
 ## 怎么改
 
 1. 先存底稿。网页上改过的话，先把线上版本存成新的底稿文件。
-2. 改 `prompt.yaml`，同时把 `agentVersion` 的日期和序号加一。
+2. 改 `prompt.yaml`，同时把 `agentVersion` 的日期和序号加一。环境值不写进去：连接器写 `${CONNECTOR_ID}`、Agent 名写 `${AGENT_NAME}`、模型写 `${AGENT_MODEL}`，下发时按环境配置替换。
 3. 先演练，再下发：
    ```
-   python3 audit-agent/apply.py --base <底稿> --dry-run
-   python3 audit-agent/apply.py --base <底稿>
+   python3 audit-agent/apply.py --env poc/infra/env/<环境名>.env --base <底稿> --dry-run
+   python3 audit-agent/apply.py --env poc/infra/env/<环境名>.env --base <底稿>
    ```
 4. 验证：在测试台的九安 v0.7.10 上发起「AI 独立建议」，或跑 `bash poc/app/test/e2e/run07.sh`。
    - 调用密钥由管理员在九安「后台配置 › Agent 接入」页上粘贴一次（https://jiuan-v0710.tinyboat.blog/#adminConfig?tab=agentAccess），之后的调用都用这条启用记录。
