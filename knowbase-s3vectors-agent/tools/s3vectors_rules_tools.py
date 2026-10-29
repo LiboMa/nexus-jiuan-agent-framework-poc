@@ -699,8 +699,11 @@ def rules_writer(file_path: str, source_id: str, source_version: str = "", title
         old_md = (old or {}).get("metadata") or {}
         source_version = source_version or str(old_md.get("source_version") or "")
         title = title or str(old_md.get("title") or "") or Path(file_name).stem[:_MAX_TITLE_CHARS]
+        existing = {v["key"]: v.get("metadata") or {} for v in _list(client, _RULES_INDEX)}
+        own = {k: md for k, md in existing.items() if md.get("source_id") == source_id}
+        # 跳过不只看登记：索引里这份制度的编号也要和文件一致，否则走正常路径把缺的补上（check 建议的「再上传一次」才有效）
         if old and old_md.get("doc_hash") == doc_hash and old_md.get("source_version", "") == source_version \
-                and old_md.get("title") == title:
+                and old_md.get("title") == title and set(own) == {r["rule_id"] for r in records}:
             n = int(old_md.get("rules_total") or 0)
             return _dumps({"success": True, "status": "skipped", "source_id": source_id, "source_version": source_version,
                            "rules_total": n, "written": 0, "removed": 0, "unchanged": n, "conflicts": [], "report": report})
@@ -714,14 +717,12 @@ def rules_writer(file_path: str, source_id: str, source_version: str = "", title
             return _fail("metadata_too_large", f"{len(too_big)} 条规则的元数据超过 S3 Vectors 的上限（可过滤部分 2 KB），没有写入",
                          "多半是「板块」一格写得太长；请检查这些行", rule_ids=too_big, report=report)
 
-        existing = {v["key"]: v.get("metadata") or {} for v in _list(client, _RULES_INDEX)}
         conflicts = sorted(rid for rid in mds if rid in existing and existing[rid].get("source_id") != source_id)
         if conflicts:
             owners = sorted({str(existing[rid].get("source_id")) for rid in conflicts})
             return _fail("rule_conflict", f"{len(conflicts)} 条规则编号已属于别的制度（{', '.join(owners)}），整份没有写入",
                          "确认是不是同一份制度：是就用原来的 source_id 上传；不是就先下线或删除那一份",
                          source_id=source_id, conflicts=conflicts, report=report)
-        own = {k: md for k, md in existing.items() if md.get("source_id") == source_id}
         to_write = [rid for rid, md in mds.items()
                     if rid not in own or own[rid].get("rule_sha") != md["rule_sha"] or own[rid].get("active") is not active]
         removed = sorted(k for k in own if k not in mds)

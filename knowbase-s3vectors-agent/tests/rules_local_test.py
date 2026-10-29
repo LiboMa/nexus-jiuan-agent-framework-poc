@@ -364,6 +364,15 @@ def run(tmp):
           and S3V.store["rule_sources"]["fin-approval"]["metadata"]["rules_total"] == 17, r)
     check("first_ingest_time_kept", S3V.store["rule_sources"]["fin-approval"]["metadata"]["ingested_at"] == first_ingested_at)
 
+    # ── 登记和文件都没变、索引里却少了一条：check 建议的「再上传一次」真能修好，不按登记直接 skip ──
+    S3V.store["rules"].pop("C01-1.2")
+    r = call(T.rules_manager, action="check")
+    check("check_flags_missing_key", r["ok"] is False and r["problems"][0]["kind"] == "count_mismatch", r)
+    r = call(T.rules_writer, file_path=dropped, source_id="fin-approval", source_version="V4.0")
+    check("reupload_repairs_missing_key", r["success"] and r["status"] == "ingested" and r["written"] == 1
+          and r["unchanged"] == 16 and r["removed"] == 0 and "C01-1.2" in S3V.store["rules"]
+          and call(T.rules_manager, action="check")["ok"] is True, r)
+
     # ── writer_refuses_conflict：编号已属于另一个 source_id 时整份拒绝 ──
     before, embedded = copy.deepcopy(S3V.store["rules"]), BR.texts_embedded
     r = call(T.rules_writer, file_path=FIXTURE, source_id="other-policy", source_version="V1")
