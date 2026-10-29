@@ -5,13 +5,18 @@
 对照：解析 = kb/lib/parse_rules.py（子进程跑同一份文件）；金额档 = 研究 tiers.py 跑一次的结果（写死在 RESEARCH_TIERS）；
 过滤 = E10 的 keep(rule, f, True, True, False)（照写在 ref_keep()）。运行时不读研究目录，也不读 nexus-customer-deploy。
 文档全部虚构：kb/tests/fixtures/sample-matrix.docx，以及本文件现生成的几份。
+最后几条查部署脚本：scripts/render.py 的 rules-tools 与 prompt --rules-tool-dir（输出写临时目录，不碰包里的 .build/），
+scripts/nexus_admin.py 的 --module rules（只查模块选择与导入时的密钥声明，不连 Nexus）。
 
-用法（在任意目录）：
-  uv run --no-project --with boto3 --with python-docx --with openpyxl --with pdfplumber \
+用法（在任意目录；提示词 YAML 用 PyYAML 解析，没带 --with pyyaml 时测试自己借 uv 临时装一份）：
+  uv run --no-project --with boto3 --with python-docx --with openpyxl --with pdfplumber --with pyyaml \
       python -I knowbase-s3vectors-agent/tests/rules_local_test.py
 """
+import contextlib
 import copy
+import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -32,6 +37,8 @@ import fake_aws  # noqa: E402
 from nexus_utils import secret_key  # noqa: E402
 
 TOOLS = os.path.join(HERE, "..", "tools", "s3vectors_rules_tools.py")
+RENDER = os.path.join(HERE, "..", "scripts", "render.py")
+ADMIN = os.path.join(HERE, "..", "scripts", "nexus_admin.py")
 FIXTURE = os.path.join(REPO, "kb", "tests", "fixtures", "sample-matrix.docx")
 REF_PARSER = os.path.join(REPO, "kb", "lib", "parse_rules.py")
 BUCKET = "local-test-rules-bucket"
@@ -224,6 +231,131 @@ RETIRED = [("九、资产处置", "", [
 
 def keys_of(source_id):
     return sorted(k for k, v in S3V.store["rules"].items() if v["metadata"].get("source_id") == source_id)
+
+
+# ─────────────── 部署脚本：render.py / nexus_admin.py（按文件加载，不跑 main，不连任何服务） ───────────────
+def load_script(name, path):
+    s = importlib.util.spec_from_file_location(name, path)
+    m = importlib.util.module_from_spec(s)
+    s.loader.exec_module(m)
+    return m
+
+
+def load_yaml(path):
+    try:
+        import yaml
+    except ImportError:  # 测试命令没带 --with pyyaml：借 uv 临时装一份，只在子进程里解析
+        out = subprocess.run(["uv", "run", "--quiet", "--no-project", "--with", "pyyaml", "python", "-I", "-c",
+                              "import json, sys, yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1], encoding='utf-8'))))",
+                              path], capture_output=True, text=True, check=True).stdout
+        return json.loads(out)
+    return yaml.safe_load(open(path, encoding="utf-8"))
+
+
+def config_block(src):
+    if src.count("# >>> deploy-config") != 1 or src.count("# <<< deploy-config") != 1:
+        return None, None
+    head, rest = src.split("# >>> deploy-config", 1)
+    block, tail = rest.split("# <<< deploy-config", 1)
+    return re.findall(r'^(_[A-Z_]+) = "([^"]*)"$', block, flags=re.M), head + tail
+
+
+def quiet(fn, *args):
+    """跑一个会 print / sys.exit 的渲染函数：返回 (打印的 JSON 或 None, 退出信息或 None)。"""
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            fn(*args)
+    except SystemExit as e:
+        return None, str(e)
+    return json.loads(buf.getvalue()), None
+
+
+# 改这个包之前（Task 3 之前）render.py prompt --tool-dir kb_s3vectors_1a2b3c4d 的输出：不给 --rules-tool-dir 时必须逐字相同
+DEFAULT_PROMPT_SHA256 = "d4aa0388e55c1b36d6a89032fcc0204e2cf6682f57f3376d12b7a8dd5e62bc9a"
+RULE_OPS = ("ingest", "list", "detail", "deactivate", "restore", "delete", "search", "check")
+
+
+def deploy_script_checks(tmp):
+    R = load_script("kb_render", RENDER)
+    R.BUILD = os.path.join(tmp, "build")  # 渲染结果写临时目录，不碰包里的 .build/
+    env_path = os.path.join(tmp, "deploy.env")
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("AWS_REGION=eu-west-9\nVECTOR_BUCKET=local-render-bucket\nRULES_INDEX=rules-local  # 本测试用的索引名\n")
+
+    # ── render.py rules-tools：只改 deploy-config 段，桶名、区域、RULES_INDEX 来自 deploy.env；结果能 compile ──
+    printed, err = quiet(R.render_rules_tools, R.load_env(env_path))
+    dst = os.path.join(R.BUILD, "s3vectors_rules_tools.py")
+    out = open(dst, encoding="utf-8").read() if os.path.exists(dst) else ""
+    pairs, rest = config_block(out)
+    src_pairs, src_rest = config_block(open(TOOLS, encoding="utf-8").read())
+    try:
+        compile(out, "s3vectors_rules_tools.py", "exec")
+        compiles = bool(out)
+    except SyntaxError:
+        compiles = False
+    check("render_rules_tools", not err and compiles and rest == src_rest and pairs == [
+        ("_REGION", "eu-west-9"), ("_VECTOR_BUCKET", "local-render-bucket"), ("_RULES_INDEX", "rules-local"),
+        ("_SOURCES_INDEX", "rule_sources"), ("_AUDIT_INDEX", "audit")]
+          and [n for n, _ in src_pairs] == [n for n, _ in pairs]
+          and printed == {"file": os.path.relpath(dst, R.PKG), "region": "eu-west-9",
+                          "vector_bucket": "local-render-bucket", "rules_index": "rules-local"}, err or printed or pairs)
+
+    # ── RULES_INDEX 不写就是 rules；写错了（大写、下划线、和别的索引同名）不渲染 ──
+    _, err = quiet(R.render_rules_tools, {"AWS_REGION": "eu-west-9", "VECTOR_BUCKET": "local-render-bucket"})
+    default_pairs, _ = config_block(open(dst, encoding="utf-8").read())
+    bad = [quiet(R.render_rules_tools, {"AWS_REGION": "eu-west-9", "VECTOR_BUCKET": "local-render-bucket",
+                                        "RULES_INDEX": name})[1] for name in ("Rules", "rules_x", "chunks", "rule_sources")]
+    check("render_rules_index_default_and_checked", not err and ("_RULES_INDEX", "rules") in default_pairs
+          and all(b and "RULES_INDEX" in b for b in bad), err or bad)
+
+    # ── render.py prompt --rules-tool-dir：YAML 能解析、依赖里有三个规则工具、正文有「规则请求」一节 ──
+    _, err = quiet(R.render_prompt, "kb_s3vectors_1a2b3c4d", "kb_s3v_rules_5e6f7a8b")
+    yaml_path = os.path.join(R.BUILD, "prompt.yaml")
+    text = open(yaml_path, encoding="utf-8").read()
+    ver = load_yaml(yaml_path)["agent"]["versions"][0]
+    deps, body = ver["metadata"]["tools_dependencies"], ver["system_prompt"]
+    rules_deps = [f"imported_tools/kb_s3v_rules_5e6f7a8b/s3vectors_rules_tools/{n}"
+                  for n in ("rules_writer", "rules_search", "rules_manager")]
+    section = body.split("# 规则请求", 1)[1].split("\n# ", 1)[0] if "# 规则请求" in body else ""
+    sent = json.load(open(os.path.join(R.BUILD, "prompt-body.json"), encoding="utf-8"))
+    check("prompt_has_rules_section", not err and "imported_tools/kb_s3v_rules_5e6f7a8b/s3vectors_rules_tools/rules_search" in deps
+          and deps[-3:] == rules_deps and len(deps) == 9 and "kb.rules/v1" in section
+          and all(f"`{op}`" in section for op in RULE_OPS)
+          and all(t in section for t in ("rules_writer", "rules_search", "rules_manager", "nexus_ai_internal_attachments_temp"))
+          and sent == {"content": text, "file_type": "prompt"} and "{{" not in text, err or deps)
+
+    # ── 不给 --rules-tool-dir：与改动之前逐字相同；两个目录名一样时拒绝 ──
+    _, err = quiet(R.render_prompt, "kb_s3vectors_1a2b3c4d")
+    text = open(yaml_path, encoding="utf-8").read()
+    _, same_dir = quiet(R.render_prompt, "kb_s3vectors_1a2b3c4d", "kb_s3vectors_1a2b3c4d")
+    check("prompt_default_unchanged", not err and hashlib.sha256(text.encode("utf-8")).hexdigest() == DEFAULT_PROMPT_SHA256
+          and "kb.rules/v1" not in text and same_dir, err or same_dir)
+
+    # ── nexus_admin.py --module rules：模块、默认文件、状态文件、三个工具都声明要密钥；缺省仍是原来的模块 ──
+    A = load_script("kb_nexus_admin", ADMIN)
+    a = A.parse_args(["import"])
+    kb = (A.MODULE, A.STATE, [n for n, _, _ in A.TOOLS], a.file, a.label)
+    a = A.parse_args(["import", "--module", "rules"])
+    decl = A.tool_declarations()
+    check("admin_module_rules", kb == ("s3vectors_kb_tools", os.path.join(A.PKG, ".state", "import.json"),
+                                       ["s3vectors_writer", "s3vectors_search", "s3vectors_manager", "s3vectors_statistics",
+                                        "document_parser", "text_chunker"],
+                                       os.path.join(A.PKG, ".build", "s3vectors_kb_tools.py"), "kb_s3vectors")
+          and A.MODULE == "s3vectors_rules_tools" and A.STATE == os.path.join(A.PKG, ".state", "import-rules.json")
+          and a.file == os.path.join(A.PKG, ".build", "s3vectors_rules_tools.py")
+          and [d["source_function"] for d in decl] == ["rules_writer", "rules_search", "rules_manager"]
+          and all(d["requires_key"] is True and d["key_name"] == "s3vectors_kb" and d["key_type"] == "aws_credentials"
+                  and d["key_fields_schema"] == A.KEY_FIELDS for d in decl), (kb, decl))
+
+    # ── 导入前的文件检查：渲染过的规则模块通过；没渲染的源文件（桶名、索引名为空）拒绝 ──
+    A.check_tool_file(dst)
+    try:
+        A.check_tool_file(TOOLS)
+        refused = None
+    except SystemExit as e:
+        refused = str(e)
+    check("admin_refuses_unrendered_rules", refused and "rules-tools" in refused, refused)
 
 
 def main():
@@ -556,6 +688,8 @@ def run(tmp):
 
     check("every_session_used_injected_key", SESSIONS and all(s.get("aws_access_key_id") == CREDS["access_key_id"]
                                                                for s in SESSIONS))
+
+    deploy_script_checks(tmp)
     print(f"\n{len(PASSED)} checks passed")
 
 

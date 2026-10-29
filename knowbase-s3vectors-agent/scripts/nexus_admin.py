@@ -4,17 +4,24 @@
 仅管理员可修改」开着，发布新版本也只对管理员开放。导入时在确认请求里声明密钥：四个读写 S3 Vectors 的工具
 requires_key=true、key_name=s3vectors_kb、key_type=aws_credentials，平台据此在每次调用前注入绑定的密钥。
 
+两个工具模块，各自导入成一个工具目录，用 --module 选（import / check / publish / verify 都认）：
+  --module kb（缺省）  .build/s3vectors_kb_tools.py     六个工具，状态 .state/import.json，目录标签 kb_s3vectors
+  --module rules       .build/s3vectors_rules_tools.py  rules_writer / rules_search / rules_manager，三个都要密钥（同上），
+                       状态 .state/import-rules.json，目录标签 kb_s3v_rules；先运行 scripts/render.py rules-tools
+
 用法（NEXUS_URL / NEXUS_ADMIN_USER / NEXUS_PASSWORD_FILE 由 admin_run.sh 准备；密码不经命令行、不打印）：
   nexus_admin.py import  --file .build/s3vectors_kb_tools.py [--label kb_s3vectors]
   nexus_admin.py check   --tool-id <TOOL_ID> --file .build/s3vectors_kb_tools.py --expect-version <N>
   nexus_admin.py publish --tool-id <TOOL_ID> --file .build/s3vectors_kb_tools.py --expect-version <N>
   nexus_admin.py verify  --dir <DIR_NAME> [--file .build/s3vectors_kb_tools.py]
+  （规则模块：上面四条加 --module rules，--file 缺省就是 .build/s3vectors_rules_tools.py）
   nexus_admin.py key-create --name <Nexus 密钥名> --iam-user <WRITER_IAM_USER>
       给写入用 IAM 用户新建访问密钥，直接存成 Nexus「AWS 凭证」密钥：密钥值只在本进程内存里，
       不打印、不落盘；Nexus 侧失败就删掉刚建的 IAM 访问密钥。只输出 key_id 与访问密钥 ID 的末 4 位。
   nexus_admin.py issue-call-key --publish-id <PUBLISH_ID> [--label …] [--out .state/a2a-call-key]
       给 A2A / MCP 发布新建一把调用密钥（nxa_…），明文直接写进 600 文件，不打印；只输出 credential_id。
-import 成功后把目录名与工具 ID 写进 .state/import.json；已有这个文件时拒绝再次导入（加 --again 才导入第二份）。
+import 成功后把目录名与工具 ID 写进 .state/import.json（--module rules：.state/import-rules.json）；
+已有这个文件时拒绝再次导入（加 --again 才导入第二份）。
 """
 import argparse
 import hashlib
@@ -45,6 +52,24 @@ TOOLS = [
     ("document_parser", False, "解析 Word / Excel / PDF 文档，抽取结构化文本与元数据，计算内容 SHA256"),
     ("text_chunker", False, "把长文本按段落聚合、固定长度加重叠切成文本块"),
 ]
+RULES_TOOLS = [
+    ("rules_writer", True, "把审批矩阵格式的制度（.docx）一行一条规则写入 S3 Vectors 规则库（Cohere Embed v4，1536 维）；"
+                           "同一 source_id 再上传 = 新版本，按内容去重"),
+    ("rules_search", True, "按问题检索 S3 Vectors 规则库；板块、金额的过滤条件由工具代码拼"),
+    ("rules_manager", True, "S3 Vectors 规则库管理：制度清单、详情、下线、恢复、删除、一致性校验"),
+]
+# --module → (模块名, 工具, 状态文件, 缺省目录标签, 生成它的 render.py 子命令)
+MODULES = {
+    "kb": (MODULE, TOOLS, STATE, "kb_s3vectors", "tools"),
+    "rules": ("s3vectors_rules_tools", RULES_TOOLS, os.path.join(PKG, ".state", "import-rules.json"), "kb_s3v_rules",
+              "rules-tools"),
+}
+RENDER_CMD = "tools"
+
+
+def use_module(name):
+    global MODULE, TOOLS, STATE, RENDER_CMD
+    MODULE, TOOLS, STATE, _, RENDER_CMD = MODULES[name]
 
 
 def redact(raw):
@@ -116,9 +141,22 @@ def check_tool_file(path):
     missing = [n for n, _, _ in TOOLS if not re.search(rf"^@tool\ndef {n}\(", src, re.M)]
     if missing:
         raise SystemExit(f"{path} 里找不到这些 @tool 函数：{missing}")
+    if MODULE == MODULES["rules"][0] and re.search(r'^_(VECTOR_BUCKET|RULES_INDEX) = ""$', src, re.M):
+        raise SystemExit(f"工具文件还没渲染（桶名或规则索引名为空）：先运行 scripts/render.py {RENDER_CMD} 生成 .build/{MODULE}.py")
     if '_VECTOR_BUCKET = "knowbase-s3v-demo"' in src and "--allow-demo-bucket" not in sys.argv:
-        raise SystemExit("工具文件还是示例桶名：先运行 scripts/render.py tools 生成 .build/s3vectors_kb_tools.py")
+        raise SystemExit(f"工具文件还是示例桶名：先运行 scripts/render.py {RENDER_CMD} 生成 .build/{MODULE}.py")
     return src
+
+
+def tool_declarations():
+    """导入确认请求里的 tools：要密钥的工具声明 key_name / key_type / key_fields_schema，平台据此注入绑定的密钥。"""
+    tools = []
+    for name, needs_key, desc in TOOLS:
+        t = {"source_function": name, "name": name, "description": desc, "type": "strands_tool", "requires_key": needs_key}
+        if needs_key:
+            t.update({"key_name": KEY_NAME, "key_type": KEY_TYPE, "key_fields_schema": KEY_FIELDS})
+        tools.append(t)
+    return tools
 
 
 def cmd_import(nx, a):
@@ -132,13 +170,8 @@ def cmd_import(nx, a):
     review_id = up.get("review_id")
     if not review_id:
         raise SystemExit(f"上传没有返回 review_id：{up}")
-    tools = []
-    for name, needs_key, desc in TOOLS:
-        t = {"source_function": name, "name": name, "description": desc, "type": "strands_tool", "requires_key": needs_key}
-        if needs_key:
-            t.update({"key_name": KEY_NAME, "key_type": KEY_TYPE, "key_fields_schema": KEY_FIELDS})
-        tools.append(t)
-    res = data(nx.json("POST", "/tools/import/confirm", {"review_id": review_id, "tools": tools, "dir_label": a.label}))
+    res = data(nx.json("POST", "/tools/import/confirm", {"review_id": review_id, "tools": tool_declarations(),
+                                                         "dir_label": a.label}))
     out = {"dir_name": res.get("dir_name"), "module_path": f"imported_tools/{res.get('dir_name')}/{MODULE}",
            "tools": res.get("imported"), "errors": res.get("errors") or [], "file_sha": sha(src)}
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
@@ -231,11 +264,13 @@ def cmd_issue_call_key(nx, a):
                       "mode": "600"}, ensure_ascii=False))
 
 
-def main():
+def parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["import", "check", "publish", "verify", "key-create", "issue-call-key"])
-    ap.add_argument("--file", default=os.path.join(PKG, ".build", f"{MODULE}.py"))
-    ap.add_argument("--label", default="kb_s3vectors")
+    ap.add_argument("--module", choices=sorted(MODULES), default="kb",
+                    help="kb = s3vectors_kb_tools（缺省），rules = s3vectors_rules_tools")
+    ap.add_argument("--file", help="缺省 .build/<模块>.py")
+    ap.add_argument("--label", help="导入时的目录标签，缺省 kb_s3vectors（--module rules：kb_s3v_rules）")
     ap.add_argument("--tool-id")
     ap.add_argument("--dir")
     ap.add_argument("--expect-version", type=int)
@@ -247,7 +282,17 @@ def main():
     ap.add_argument("--description")
     ap.add_argument("--publish-id")
     ap.add_argument("--out")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
+    use_module(a.module)
+    if a.file is None:
+        a.file = os.path.join(PKG, ".build", f"{MODULE}.py")
+    if a.label is None:
+        a.label = MODULES[a.module][3]
+    return a
+
+
+def main():
+    a = parse_args()
     if a.cmd in ("check", "publish") and not a.tool_id:
         raise SystemExit(f"{a.cmd} 需要 --tool-id")
     if a.cmd == "verify" and not a.dir:

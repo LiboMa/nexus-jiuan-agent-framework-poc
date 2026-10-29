@@ -3,8 +3,12 @@
 用法：
   render.py tools  [--env deploy.env]
       → .build/s3vectors_kb_tools.py：把工具文件的 deploy-config 段换成本环境的区域与向量桶
-  render.py prompt --tool-dir <导入后的目录名> [--env deploy.env]
+  render.py rules-tools [--env deploy.env]
+      → .build/s3vectors_rules_tools.py：规则工具模块，同样换 deploy-config 段（区域、向量桶、RULES_INDEX，缺省 rules）
+  render.py prompt --tool-dir <导入后的目录名> [--rules-tool-dir <规则模块导入后的目录名>] [--env deploy.env]
       → .build/prompt.yaml 与 .build/prompt-body.json（Operator `PUT /api/v2/agents/{id}/files/prompt` 的请求体）
+      给了 --rules-tool-dir 才带上模板里 {{#RULES}}…{{/RULES}} 的部分（「规则请求」一节与三个规则工具）；
+      不给时与只有文档工具时的输出逐字相同
   render.py connector [--env deploy.env]
       → .build/connector-body.json（Operator `POST /api/v2/connectors` 的请求体：s3_vector、未绑定密钥、只读）
 """
@@ -31,44 +35,85 @@ def load_env(path):
     return env
 
 
-def render_tools(env):
+def region_and_bucket(env):
     region, bucket = env.get("AWS_REGION", ""), env.get("VECTOR_BUCKET", "")
     if not re.fullmatch(r"[a-z]{2}(-[a-z]+)+-\d", region):
         sys.exit(f"AWS_REGION 不像区域名：{region!r}")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", bucket):
         sys.exit(f"VECTOR_BUCKET 不合法：{bucket!r}")
-    src = open(os.path.join(PKG, "tools", "s3vectors_kb_tools.py"), encoding="utf-8").read()
+    return region, bucket
+
+
+def splice_config(module, values):
+    """把 tools/<module>.py 的 deploy-config 段换成 values（名字 → 值，按顺序），写到 .build/<module>.py。"""
+    src = open(os.path.join(PKG, "tools", f"{module}.py"), encoding="utf-8").read()
     if src.count(BEGIN) != 1 or src.count(END) != 1:
         sys.exit("工具文件里的 deploy-config 段不完整")
     head, rest = src.split(BEGIN, 1)
     _, tail = rest.split(END, 1)
-    block = (f"{BEGIN}：scripts/render.py 按 deploy.env 改写这一段；其余代码各环境相同\n"
-             f'_REGION = "{region}"\n'
-             f'_VECTOR_BUCKET = "{bucket}"\n'
-             f'_CHUNK_INDEX = "chunks"\n'
-             f'_DOC_INDEX = "docs"\n'
-             f'_AUDIT_INDEX = "audit"\n')
+    block = f"{BEGIN}：scripts/render.py 按 deploy.env 改写这一段；其余代码各环境相同\n" + \
+        "".join(f'{k} = "{v}"\n' for k, v in values)
     out = head + block + END + tail
-    compile(out, "s3vectors_kb_tools.py", "exec")
+    compile(out, f"{module}.py", "exec")
     os.makedirs(BUILD, exist_ok=True)
-    dst = os.path.join(BUILD, "s3vectors_kb_tools.py")
+    dst = os.path.join(BUILD, f"{module}.py")
     open(dst, "w", encoding="utf-8").write(out)
+    return dst
+
+
+def render_tools(env):
+    region, bucket = region_and_bucket(env)
+    dst = splice_config("s3vectors_kb_tools", [("_REGION", region), ("_VECTOR_BUCKET", bucket), ("_CHUNK_INDEX", "chunks"),
+                                               ("_DOC_INDEX", "docs"), ("_AUDIT_INDEX", "audit")])
     print(json.dumps({"file": os.path.relpath(dst, PKG), "region": region, "vector_bucket": bucket}, ensure_ascii=False))
 
 
-def render_prompt(tool_dir):
-    if not re.fullmatch(r"[a-z0-9_]{1,32}_[0-9a-f]{8}", tool_dir):
+# 同一个向量桶里其余的索引（infra/aws_setup.sh 建）：规则索引不能和它们同名
+OTHER_INDEXES = ("chunks", "docs", "audit", "rule_sources")
+
+
+def render_rules_tools(env):
+    region, bucket = region_and_bucket(env)
+    rules_index = env.get("RULES_INDEX") or "rules"
+    # S3 Vectors 索引名：3~63 位小写字母、数字、连字符、点，首尾是字母或数字
+    if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", rules_index) or rules_index in OTHER_INDEXES:
+        sys.exit(f"RULES_INDEX 不合法（3~63 位小写字母、数字、连字符、点，且不能是 {' / '.join(OTHER_INDEXES)}）：{rules_index!r}")
+    dst = splice_config("s3vectors_rules_tools", [("_REGION", region), ("_VECTOR_BUCKET", bucket),
+                                                  ("_RULES_INDEX", rules_index), ("_SOURCES_INDEX", "rule_sources"),
+                                                  ("_AUDIT_INDEX", "audit")])
+    print(json.dumps({"file": os.path.relpath(dst, PKG), "region": region, "vector_bucket": bucket,
+                      "rules_index": rules_index}, ensure_ascii=False))
+
+
+TOOL_DIR_RE = r"[a-z0-9_]{1,32}_[0-9a-f]{8}"
+# 模板里只在有规则模块时才要的部分：单独成行的 {{#RULES}} … {{/RULES}}（两行标记本身不进输出）
+RULES_BLOCK = re.compile(r"^[ \t]*\{\{#RULES\}\}\n(.*?)^[ \t]*\{\{/RULES\}\}\n", re.M | re.S)
+
+
+def render_prompt(tool_dir, rules_tool_dir=None):
+    if not re.fullmatch(TOOL_DIR_RE, tool_dir):
         sys.exit(f"--tool-dir 应是导入返回的目录名（形如 kb_s3vectors_1a2b3c4d），收到：{tool_dir!r}")
+    if rules_tool_dir is not None:
+        if not re.fullmatch(TOOL_DIR_RE, rules_tool_dir):
+            sys.exit(f"--rules-tool-dir 应是规则模块导入返回的目录名（形如 kb_s3v_rules_1a2b3c4d），收到：{rules_tool_dir!r}")
+        if rules_tool_dir == tool_dir:
+            sys.exit("--rules-tool-dir 与 --tool-dir 相同：规则模块是单独导入的另一个目录（.state/import-rules.json 的 dir_name）")
     text = open(os.path.join(PKG, "prompt", "knowbase_s3vectors_agent.yaml.tmpl"), encoding="utf-8").read()
+    text = RULES_BLOCK.sub(lambda m: m.group(1) if rules_tool_dir else "", text)
     text = text.replace("{{TOOL_DIR}}", tool_dir)
+    if rules_tool_dir:
+        text = text.replace("{{RULES_TOOL_DIR}}", rules_tool_dir)
     if "{{" in text:
         sys.exit("提示词模板里还有没替换的占位符")
     os.makedirs(BUILD, exist_ok=True)
     open(os.path.join(BUILD, "prompt.yaml"), "w", encoding="utf-8").write(text)
     json.dump({"content": text, "file_type": "prompt"}, open(os.path.join(BUILD, "prompt-body.json"), "w", encoding="utf-8"),
               ensure_ascii=False)
-    print(json.dumps({"prompt": ".build/prompt.yaml", "body": ".build/prompt-body.json", "tool_dir": tool_dir,
-                      "tools": text.count(f"imported_tools/{tool_dir}/")}, ensure_ascii=False))
+    summary = {"prompt": ".build/prompt.yaml", "body": ".build/prompt-body.json", "tool_dir": tool_dir,
+               "tools": text.count(f"imported_tools/{tool_dir}/")}
+    if rules_tool_dir:
+        summary.update({"rules_tool_dir": rules_tool_dir, "rules_tools": text.count(f"imported_tools/{rules_tool_dir}/")})
+    print(json.dumps(summary, ensure_ascii=False))
 
 
 CONNECTOR_DESC = (
@@ -98,18 +143,21 @@ def render_connector(env):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["tools", "prompt", "connector"])
+    ap.add_argument("what", choices=["tools", "rules-tools", "prompt", "connector"])
     ap.add_argument("--env", default=os.path.join(PKG, "deploy.env"))
     ap.add_argument("--tool-dir")
+    ap.add_argument("--rules-tool-dir")
     a = ap.parse_args()
     if a.what == "tools":
         render_tools(load_env(a.env))
+    elif a.what == "rules-tools":
+        render_rules_tools(load_env(a.env))
     elif a.what == "connector":
         render_connector(load_env(a.env))
     else:
         if not a.tool_dir:
             sys.exit("prompt 需要 --tool-dir")
-        render_prompt(a.tool_dir)
+        render_prompt(a.tool_dir, a.rules_tool_dir)
 
 
 if __name__ == "__main__":
