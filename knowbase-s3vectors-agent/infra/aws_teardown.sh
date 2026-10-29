@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 删除 aws_setup.sh 建的 AWS 资源：三个索引（连同其中全部向量）、向量桶、写入用 IAM 用户（先删它的访问密钥与内联策略）。
+# 删除 aws_setup.sh 建的 AWS 资源：五个索引（chunks / docs / audit / rules（名字取 RULES_INDEX）/ rule-sources，
+# 连同其中全部向量）、向量桶、写入用 IAM 用户（先删它的访问密钥与内联策略）。
 # 不可恢复。缺省只打印计划；必须同时给 --confirm <向量桶名> 和 --apply 才执行。
 #
 # 用法：infra/aws_teardown.sh --confirm <VECTOR_BUCKET> [--apply] [--env deploy.env] [--keep-users]
@@ -21,11 +22,13 @@ done
 . "$ENV_FILE"
 : "${AWS_REGION:?}" "${VECTOR_BUCKET:?}" "${WRITER_IAM_USER:?}"
 APP_IAM_USER="${APP_IAM_USER:-}"
+RULES_INDEX="${RULES_INDEX:-rules}"
 [ "$CONFIRM" = "$VECTOR_BUCKET" ] || { echo "要删除请加 --confirm $VECTOR_BUCKET（防止删错桶）" >&2; exit 2; }
 run() { if [ "$APPLY" = 1 ]; then "$@" >/dev/null; fi; }
 echo "区域 $AWS_REGION · 向量桶 $VECTOR_BUCKET · $([ "$APPLY" = 1 ] && echo 执行删除 || echo 只看计划)"
 
-for idx in chunks docs audit; do
+# 桶里还有索引时删不掉桶：规则模块的两个索引也在这里删
+for idx in chunks docs audit "$RULES_INDEX" rule-sources; do
   if aws s3vectors get-index --region "$AWS_REGION" --vector-bucket-name "$VECTOR_BUCKET" --index-name "$idx" >/dev/null 2>&1; then
     echo "  - 删除索引 $idx（其中的向量一并删除）"
     run aws s3vectors delete-index --region "$AWS_REGION" --vector-bucket-name "$VECTOR_BUCKET" --index-name "$idx"

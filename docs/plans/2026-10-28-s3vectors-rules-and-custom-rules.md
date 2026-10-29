@@ -64,7 +64,7 @@
   - `rules_writer(file_path: str, source_id: str, source_version: str = "", title: str = "") -> str`：`{success, status: "ingested"|"skipped", source_id, source_version, rules_total, written, removed, unchanged, conflicts: [rule_id], report}`
   - `rules_search(question: str, segment: str = "", amount: float | None = None, top_k: int = 8) -> str`：`{success, filter, results: [{rule_id, rule_type, chapter_no, segments, amt_kind, source_id, text, distance}]}`
   - `rules_manager(action: str, source_id: str = "") -> str`，`action ∈ list|detail|deactivate|restore|delete|check`：`list → {success, sources: [{source_id, title, source_version, file_name, doc_hash, rules_total, status: "active"|"inactive", ingested_at, updated_at}]}`；`detail → {success, source, rule_ids}`；`check → {success, ok, problems: [...]}`；其余 `{success, source_id, affected}`
-  - 渲染段（`# >>> deploy-config` … `# <<< deploy-config`，与 `s3vectors_kb_tools.py` 同一写法）：`_REGION`、`_VECTOR_BUCKET`、`_RULES_INDEX`、`_SOURCES_INDEX = "rule_sources"`、`_AUDIT_INDEX = "audit"`
+  - 渲染段（`# >>> deploy-config` … `# <<< deploy-config`，与 `s3vectors_kb_tools.py` 同一写法）：`_REGION`、`_VECTOR_BUCKET`、`_RULES_INDEX`、`_SOURCES_INDEX = "rule-sources"`、`_AUDIT_INDEX = "audit"`
   - 模块级纯函数（测试直接调）：`parse_matrix(path) -> (records, report)`、`tier_interval(text) -> (lo, lo_incl, hi, hi_incl, kind)`、`rule_metadata(rule, source) -> dict`、`build_filter(segment, amount) -> dict`
 
 - [ ] **Step 1: 写测试** `rules_local_test.py`（照 `local_test.py` 的写法：stubs + 假 AWS + 假密钥注入），至少这些用例：
@@ -77,7 +77,7 @@
   - `deactivate_restore_delete`：`deactivate` 后 `rules_search` 查不到这份制度的规则，`restore` 后又能查到且距离不变，`delete` 后键和登记都没了；`check` 发现登记条数与键数不一致时 `ok=false`。
   - `credentials_missing`：没注入密钥时三个工具都返回 `error_type == "credentials_missing"`，不回落默认凭证链。
 - [ ] **Step 2: 跑** `uv run --no-project --with boto3 --with python-docx --with openpyxl --with pdfplumber python -I knowbase-s3vectors-agent/tests/rules_local_test.py`，FAIL（模块不存在）。
-- [ ] **Step 3: 实现** `s3vectors_rules_tools.py`：解析照搬 `kb/lib/parse_rules.py` 的 `parse()`（标准库）；`tier_interval` 照搬研究的 `tiers.py`；元数据照 E10 `metadata_for()` 再加 `source_id, source_version, active, ingested_at, rule_sha`（`rule_sha` = 正文与元数据的 sha256 前 16 位，用来算 `unchanged`）；凭证、客户端、嵌入、`_fetch_k` 多取再截断、错误映射照 `s3vectors_kb_tools.py` 复制（不 import 它）。登记写 `rule_sources` 索引（1 维，向量 `[1.0]`，键 = `source_id`）；写、删照现有做法记 `audit`。`PutVectors` 每批 ≤ 500，嵌入每批 ≤ 96 条。
+- [ ] **Step 3: 实现** `s3vectors_rules_tools.py`：解析照搬 `kb/lib/parse_rules.py` 的 `parse()`（标准库）；`tier_interval` 照搬研究的 `tiers.py`；元数据照 E10 `metadata_for()` 再加 `source_id, source_version, active, ingested_at, rule_sha`（`rule_sha` = 正文与元数据的 sha256 前 16 位，用来算 `unchanged`）；凭证、客户端、嵌入、`_fetch_k` 多取再截断、错误映射照 `s3vectors_kb_tools.py` 复制（不 import 它）。登记写 `rule-sources` 索引（1 维，向量 `[1.0]`，键 = `source_id`）；写、删照现有做法记 `audit`。`PutVectors` 每批 ≤ 500，嵌入每批 ≤ 96 条。
 - [ ] **Step 4: 跑** 同 Step 2，全部 PASS；`local_test.py` 仍 62 项全过。
 - [ ] **Step 5: 提交** `feat(kb-s3v): rules tools — one vector per rule, filters built in code`
 
@@ -90,7 +90,7 @@
 **Interfaces:**
 - Consumes: Task 2 的模块与渲染段。
 - Produces：
-  - `deploy.env` 新键 `RULES_INDEX`（缺省 `rules`）；`aws_setup.sh` 建 `ensure_index "$RULES_INDEX" 1536 '["text"]'` 与 `ensure_index rule_sources 1 '["title","file_name","doc_hash"]'`。
+  - `deploy.env` 新键 `RULES_INDEX`（缺省 `rules`）；`aws_setup.sh` 建 `ensure_index "$RULES_INDEX" 1536 '["text"]'` 与 `ensure_index rule-sources 1 '["title","file_name","doc_hash"]'`。
   - `render.py rules-tools` → `.build/s3vectors_rules_tools.py`；`render.py prompt --tool-dir <DIR> --rules-tool-dir <RULES_DIR>`。
   - `nexus_admin.py import --module rules`：导入 `.build/s3vectors_rules_tools.py`，三个工具都 `requires_key=true, key_name=s3vectors_kb, key_type=aws_credentials`，结果写 `.state/import-rules.json`（`dir_name`、`module_path`、`tools`）；`check/publish/verify` 同样接 `--module rules`。
   - 提示词新增一节「规则请求」：文字以 `kb.rules/v1 · <op>` 开头并带数据 Part 时只调对应工具一次、原样返回工具 JSON；`op → 工具`：`ingest → rules_writer(file_path=<附件路径>, source_id, source_version, title)`，`list|detail|deactivate|restore|delete|check → rules_manager(action=op, source_id)`，`search → rules_search(question, segment, amount, top_k)`。`tools_dependencies` 加三个规则工具。
@@ -98,7 +98,7 @@
 - [ ] **Step 1: 写测试**：`render_rules_tools`（给假 deploy.env，渲染结果能 `compile`，渲染段里是那个桶名和 `RULES_INDEX`）；`prompt_has_rules_section`（渲染出的提示词 YAML 能解析，`tools_dependencies` 含 `imported_tools/<RULES_DIR>/s3vectors_rules_tools/rules_search`，正文含 `kb.rules/v1`）。
 - [ ] **Step 2: 跑**，FAIL。
 - [ ] **Step 3: 实现** 上面的 Produces；`nexus_admin.py` 的 `TOOLS` / `MODULE` / `STATE` 按 `--module` 选，缺省行为不变。
-- [ ] **Step 4: 跑** 测试 PASS；`bash -n infra/aws_setup.sh scripts/admin_run.sh`；`bash infra/aws_setup.sh`（不加 `--apply`）在现有环境的 `deploy.env` 下只打印「创建索引 rules」「创建索引 rule_sources」两项计划。
+- [ ] **Step 4: 跑** 测试 PASS；`bash -n infra/aws_setup.sh scripts/admin_run.sh`；`bash infra/aws_setup.sh`（不加 `--apply`）在现有环境的 `deploy.env` 下只打印「创建索引 rules」「创建索引 rule-sources」两项计划。
 - [ ] **Step 5: 提交** `feat(kb-s3v): rules index, render and import for the rules module; rules requests in the prompt`
 
 ### Task 4: 在 nxs-beine1013 上落地规则工具（人确认后写）

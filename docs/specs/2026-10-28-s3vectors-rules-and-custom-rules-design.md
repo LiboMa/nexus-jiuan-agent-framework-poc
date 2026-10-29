@@ -78,7 +78,7 @@ PG 方式的架构见 10-26 的设计第 2 节，不变；两种方式只在「�
 ```
 
 - 金额档转区间用研究里的 `tiers.py` 的 `tier_interval()`（`~/Documents/Word_KB_Vectorization_DeepResearch_20261026/experiments/tiers.py`，60 行，我们自己的代码），搬进工具模块；`mixed` / `any` / 非金额条件一律 `amt_kind: "other"`，不按金额过滤。可过滤元数据要在 2 KB 以内。
-- 一份制度的登记（来源标识、版本、文件哈希、规则条数、状态、时间）放在哪由实现方定：单独一个小索引 `rule_sources`，或沿用 `docs` 索引加 `kind` 区分。要求是清单、下线、恢复都能做，且不影响文档管家现有的 `s3vectors_statistics` 统计。写、删操作照现有做法记进 `audit` 索引。
+- 一份制度的登记（来源标识、版本、文件哈希、规则条数、状态、时间）放在哪由实现方定：单独一个小索引 `rule-sources`，或沿用 `docs` 索引加 `kind` 区分。要求是清单、下线、恢复都能做，且不影响文档管家现有的 `s3vectors_statistics` 统计。写、删操作照现有做法记进 `audit` 索引。
 
 ### 3.2 文档管家：新工具模块 `s3vectors_rules_tools.py`
 

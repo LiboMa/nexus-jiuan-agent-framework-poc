@@ -16,7 +16,7 @@ S3 Vectors 规则工具集 - 知识库文档管家（S3 Vectors 版，knowbase_s
                 可过滤：source_id / source_version / rule_type / chapter_no / segments / amt_kind / lo / lo_incl / hi / hi_incl /
                         active / ingested_at / rule_sha
                 不可过滤：text（规则全文 = parse_rules 的 content，里面已有章名、业务事项、板块、金额档、审批路径、控制要点）
-  rule_sources  一份制度一条登记。键 = source_id；1 维常量向量 [1.0]
+  rule-sources  一份制度一条登记。键 = source_id；1 维常量向量 [1.0]
                 可过滤：source_version / rules_total / status（active / inactive）/ ingested_at / updated_at
                 不可过滤：title / file_name / doc_hash
   audit         与 s3vectors_kb_tools.py 共用：每次入库、下线、恢复、删除记一条（operation = rules_*）
@@ -47,7 +47,7 @@ from strands import tool
 _REGION = "us-east-1"
 _VECTOR_BUCKET = ""
 _RULES_INDEX = ""
-_SOURCES_INDEX = "rule_sources"
+_SOURCES_INDEX = "rule-sources"
 _AUDIT_INDEX = "audit"
 # <<< deploy-config
 
@@ -652,7 +652,8 @@ def rules_writer(file_path: str, source_id: str, source_version: str = "", title
     步骤：解析附件（制度说明、章节说明、矩阵每一行各成一条，编号如 C05-3.4 / G-02 / C05-NOTE）→ 算元数据
     （板块、金额区间等，供 rules_search 过滤）→ 只对新增和改动的规则向量化并写入 → 删掉这份制度旧版本里有、
     新版本没有的编号 → 更新制度登记。
-      - 同一个 source_id 再上传同一文件（且版本、标题没变）：不重写，status=skipped，直接返回现状
+      - 同一个 source_id 再上传同一文件（且版本、标题没变），并且规则索引里仍有这份制度的每一条规则（编号与文件一致）：
+        不重写，status=skipped，直接返回现状；索引里缺了或多了编号时照常入库，把缺的补上
       - 规则编号已属于另一个 source_id 时整份拒绝（error_type=rule_conflict），conflicts 列出冲突编号，什么都不写
       - 已下线的制度上传新版本：照样入库，仍是下线状态
     S3 Vectors 凭证经 Nexus 密钥注入（key_name=s3vectors_kb，类型 aws_credentials）；Bedrock 用运行环境的 IAM 角色。

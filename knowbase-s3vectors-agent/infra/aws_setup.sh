@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 建 S3 Vectors 知识库的 AWS 资源（幂等，已存在的照原样保留）：
-#   向量桶 + chunks / docs / audit 三个索引 + 规则模块的 rules（名字取 RULES_INDEX）/ rule_sources 两个索引
+#   向量桶 + chunks / docs / audit 三个索引 + 规则模块的 rules（名字取 RULES_INDEX）/ rule-sources 两个索引
 #   + 写入用 IAM 用户及其内联策略（只授权这一个向量桶）
 #   可选：APP_IAM_USER（前端后端直连用：本桶读写 + 调 Cohere Embed v4）
 # 缺省只打印计划（每行 ~ 表示将要创建，= 表示已存在且一致）；加 --apply 才执行。
@@ -40,7 +40,7 @@ esac
 # ── 规则索引名：S3 Vectors 索引名规则（3~63 位小写字母、数字、连字符、点，首尾是字母或数字），且不和其余索引同名 ──
 [[ "$RULES_INDEX" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || die "RULES_INDEX 只能用小写字母、数字、连字符、点，3~63 位"
 case "$RULES_INDEX" in
-  chunks|docs|audit|rule_sources) die "RULES_INDEX=$RULES_INDEX 与本桶的其他索引同名；请换一个名字（缺省 rules）" ;;
+  chunks|docs|audit|rule-sources) die "RULES_INDEX=$RULES_INDEX 与本桶的其他索引同名；请换一个名字（缺省 rules）" ;;
 esac
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
@@ -81,9 +81,9 @@ ensure_index chunks 1536 '["text","file_name"]'
 ensure_index docs 1536 '["file_name","doc_hash","embedding_model","page_or_row_count","quality_flag"]'
 ensure_index audit 1 '["detail"]'
 # 规则模块（s3vectors_rules_tools.py）：rules 一条规则一个向量，键 = 规则编号，规则全文 text 不可过滤，
-# 板块、金额档、上下线标记都是可过滤键；rule_sources 一份制度一条登记（1 维常量向量）
+# 板块、金额档、上下线标记都是可过滤键；rule-sources 一份制度一条登记（1 维常量向量）
 ensure_index "$RULES_INDEX" 1536 '["text"]'
-ensure_index rule_sources 1 '["title","file_name","doc_hash"]'
+ensure_index rule-sources 1 '["title","file_name","doc_hash"]'
 
 # ── IAM 用户与内联策略 ──
 render_policy() {

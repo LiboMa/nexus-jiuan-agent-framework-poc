@@ -2,6 +2,8 @@
 
 照搬的规则（boto3 1.43 服务模型 + AWS 文档）：
 - PutVectors 1~500 条、GetVectors 1~100 个键、DeleteVectors 1~500 个键、ListVectors 每页 ≤ 1000；
+- 索引名 3~63 位，只能用小写字母、数字、连字符、点，首尾是字母或数字（不合规的名字建不了索引，
+  读写时服务回 ValidationException「Invalid index name」，2026-10-29 在现有桶上用 get-index 实测）；
 - 键 1~1024 字符；向量维度必须等于索引维度；
 - 每条向量的可过滤元数据 ≤ 2 KB、元数据合计 ≤ 40 KB、键 ≤ 50 个；
 - 过滤条件只能引用可过滤的键（引用不可过滤的键按校验错误处理，比真实服务更严）；
@@ -12,9 +14,13 @@ import hashlib
 import io
 import json
 import math
+import re
 from collections import Counter
 
 from botocore.exceptions import ClientError
+
+
+INDEX_NAME_RE = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 
 
 def _err(code, msg, op):
@@ -25,6 +31,9 @@ class FakeS3Vectors:
     def __init__(self, bucket, indexes):
         """indexes: {name: {"dimension": int, "non_filterable": [..]}}"""
         self.bucket = bucket
+        bad = [n for n in indexes if not INDEX_NAME_RE.fullmatch(n)]
+        if bad:
+            raise _err("ValidationException", f"Invalid index name: {bad}", "CreateIndex")
         self.indexes = {n: {"dimension": c["dimension"], "non_filterable": set(c.get("non_filterable", []))}
                         for n, c in indexes.items()}
         self.store = {n: {} for n in indexes}
@@ -37,6 +46,8 @@ class FakeS3Vectors:
     # ---- 内部 ----
     def _check(self, op, vectorBucketName, indexName):
         self.calls[op] += 1
+        if not INDEX_NAME_RE.fullmatch(str(indexName)):
+            raise _err("ValidationException", "Invalid index name", op)
         if self.deny:
             raise _err("AccessDeniedException", "denied", op)
         if vectorBucketName != self.bucket:

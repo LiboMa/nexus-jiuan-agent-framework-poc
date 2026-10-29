@@ -69,7 +69,7 @@ def render_tools(env):
 
 
 # 同一个向量桶里其余的索引（infra/aws_setup.sh 建）：规则索引不能和它们同名
-OTHER_INDEXES = ("chunks", "docs", "audit", "rule_sources")
+OTHER_INDEXES = ("chunks", "docs", "audit", "rule-sources")
 
 
 def render_rules_tools(env):
@@ -79,7 +79,7 @@ def render_rules_tools(env):
     if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", rules_index) or rules_index in OTHER_INDEXES:
         sys.exit(f"RULES_INDEX 不合法（3~63 位小写字母、数字、连字符、点，且不能是 {' / '.join(OTHER_INDEXES)}）：{rules_index!r}")
     dst = splice_config("s3vectors_rules_tools", [("_REGION", region), ("_VECTOR_BUCKET", bucket),
-                                                  ("_RULES_INDEX", rules_index), ("_SOURCES_INDEX", "rule_sources"),
+                                                  ("_RULES_INDEX", rules_index), ("_SOURCES_INDEX", "rule-sources"),
                                                   ("_AUDIT_INDEX", "audit")])
     print(json.dumps({"file": os.path.relpath(dst, PKG), "region": region, "vector_bucket": bucket,
                       "rules_index": rules_index}, ensure_ascii=False))

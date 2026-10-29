@@ -1,7 +1,7 @@
 """本机离线测试：规则工具模块 s3vectors_rules_tools.py（一行一条规则、过滤条件由代码拼），不连 AWS、不花钱。
 
 替身是 fake_aws.py 的 S3 Vectors / Bedrock；三个索引的配置与 infra/aws_setup.sh 建的一致：
-  rules（1536 维，不可过滤 text）、rule_sources（1 维，不可过滤 title / file_name / doc_hash）、audit（1 维，不可过滤 detail）。
+  rules（1536 维，不可过滤 text）、rule-sources（1 维，不可过滤 title / file_name / doc_hash）、audit（1 维，不可过滤 detail）。
 对照：解析 = kb/lib/parse_rules.py（子进程跑同一份文件）；金额档 = 研究 tiers.py 跑一次的结果（写死在 RESEARCH_TIERS）；
 过滤 = E10 的 keep(rule, f, True, True, False)（照写在 ref_keep()）。运行时不读研究目录，也不读 nexus-customer-deploy。
 文档全部虚构：kb/tests/fixtures/sample-matrix.docx，以及本文件现生成的几份。
@@ -46,7 +46,7 @@ CREDS = {"access_key_id": "FAKE-ACCESS-KEY-ID-LOCAL-TEST", "secret_access_key": 
 
 S3V = fake_aws.FakeS3Vectors(BUCKET, {
     "rules": {"dimension": 1536, "non_filterable": ["text"]},
-    "rule_sources": {"dimension": 1, "non_filterable": ["title", "file_name", "doc_hash"]},
+    "rule-sources": {"dimension": 1, "non_filterable": ["title", "file_name", "doc_hash"]},
     "audit": {"dimension": 1, "non_filterable": ["detail"]},
 })
 BR = fake_aws.FakeBedrock()
@@ -296,7 +296,7 @@ def deploy_script_checks(tmp):
         compiles = False
     check("render_rules_tools", not err and compiles and rest == src_rest and pairs == [
         ("_REGION", "eu-west-9"), ("_VECTOR_BUCKET", "local-render-bucket"), ("_RULES_INDEX", "rules-local"),
-        ("_SOURCES_INDEX", "rule_sources"), ("_AUDIT_INDEX", "audit")]
+        ("_SOURCES_INDEX", "rule-sources"), ("_AUDIT_INDEX", "audit")]
           and [n for n, _ in src_pairs] == [n for n, _ in pairs]
           and printed == {"file": os.path.relpath(dst, R.PKG), "region": "eu-west-9",
                           "vector_bucket": "local-render-bucket", "rules_index": "rules-local"}, err or printed or pairs)
@@ -305,9 +305,39 @@ def deploy_script_checks(tmp):
     _, err = quiet(R.render_rules_tools, {"AWS_REGION": "eu-west-9", "VECTOR_BUCKET": "local-render-bucket"})
     default_pairs, _ = config_block(open(dst, encoding="utf-8").read())
     bad = [quiet(R.render_rules_tools, {"AWS_REGION": "eu-west-9", "VECTOR_BUCKET": "local-render-bucket",
-                                        "RULES_INDEX": name})[1] for name in ("Rules", "rules_x", "chunks", "rule_sources")]
+                                        "RULES_INDEX": name})[1] for name in ("Rules", "rules_x", "chunks", "rule-sources")]
     check("render_rules_index_default_and_checked", not err and ("_RULES_INDEX", "rules") in default_pairs
           and all(b and "RULES_INDEX" in b for b in bad), err or bad)
+
+    # ── 索引名都合 S3 Vectors 的规矩（替身也照此拒绝）：两个工具文件的渲染段、aws_setup.sh 建的、aws_teardown.sh 删的、
+    #    render.py 防重名的，是同一组五个名字 ──
+    pkg = os.path.join(HERE, "..")
+    setup_sh = open(os.path.join(pkg, "infra", "aws_setup.sh"), encoding="utf-8").read()
+    teardown_sh = open(os.path.join(pkg, "infra", "aws_teardown.sh"), encoding="utf-8").read()
+    rules_default = re.search(r'^RULES_INDEX="\$\{RULES_INDEX:-([^}]*)\}"$', setup_sh, re.M).group(1)
+    created = [n.strip('"').replace("$RULES_INDEX", rules_default)
+               for n in re.findall(r"^ensure_index (\S+) ", setup_sh, re.M)]
+    removed = [n.strip('"').replace("$RULES_INDEX", rules_default)
+               for n in re.search(r"^for idx in (.*); do$", teardown_sh, re.M).group(1).split()]
+    in_blocks = [v for f in (TOOLS, os.path.join(pkg, "tools", "s3vectors_kb_tools.py"))
+                 for k, v in config_block(open(f, encoding="utf-8").read())[0] if k.endswith("_INDEX") and v]
+    in_blocks += [v for k, v in pairs if k.endswith("_INDEX")]
+    names = set(created) | set(removed) | set(in_blocks) | set(R.OTHER_INDEXES)
+    try:
+        fake_aws.FakeS3Vectors("b", {"rule_sources": {"dimension": 1}})
+        fake_create = None
+    except fake_aws.ClientError as e:
+        fake_create = e.response["Error"]["Code"]
+    fake_read = call(T.rules_manager, action="list")
+    check("index_names_valid", all(re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", n) for n in names)
+          and sorted(created) == sorted(removed) == ["audit", "chunks", "docs", "rule-sources", "rules"]
+          and set(in_blocks) - {"rules-local"} <= set(created) and set(R.OTHER_INDEXES) | {"rules"} == set(created)
+          and fake_create == "ValidationException", (names, created, removed, fake_create))
+    T._SOURCES_INDEX = "rule_sources"
+    bad_read = call(T.rules_manager, action="list")
+    T._SOURCES_INDEX = "rule-sources"
+    check("fake_rejects_bad_index_name", fake_read["success"] and not bad_read["success"]
+          and S3V.calls["ListVectors"] > 0, bad_read)
 
     # ── render.py prompt --rules-tool-dir：YAML 能解析、依赖里有三个规则工具、正文有「规则请求」一节 ──
     _, err = quiet(R.render_prompt, "kb_s3vectors_1a2b3c4d", "kb_s3v_rules_5e6f7a8b")
@@ -324,6 +354,12 @@ def deploy_script_checks(tmp):
           and all(f"`{op}`" in section for op in RULE_OPS)
           and all(t in section for t in ("rules_writer", "rules_search", "rules_manager", "nexus_ai_internal_attachments_temp"))
           and sent == {"content": text, "file_type": "prompt"} and "{{" not in text, err or deps)
+
+    # ── 规则请求不向用户确认（含写入的 ingest）：本节第 4 条说清，禁止行为与质量标准里「先确认」的两处各有例外 ──
+    forbid = body.split("## 禁止行为", 1)[1].split("\n#", 1)[0] if "## 禁止行为" in body else ""
+    quality = body.split("# 质量标准", 1)[1] if "# 质量标准" in body else ""
+    check("prompt_rules_skip_confirmation", re.search(r"^4\. .*`ingest`.*不向用户确认.*不适用", section, re.M)
+          and all("kb.rules/v1" in part and "`ingest`" in part for part in (forbid, quality)), (forbid, quality))
 
     # ── 不给 --rules-tool-dir：与改动之前逐字相同；两个目录名一样时拒绝 ──
     _, err = quiet(R.render_prompt, "kb_s3vectors_1a2b3c4d")
@@ -375,7 +411,7 @@ def run(tmp):
         and src.count("# <<< deploy-config") == 1 else ""
     names = re.findall(r"^(_[A-Z_]+) = ", block, flags=re.M)
     check("deploy_config_block", names == ["_REGION", "_VECTOR_BUCKET", "_RULES_INDEX", "_SOURCES_INDEX", "_AUDIT_INDEX"]
-          and T._SOURCES_INDEX == "rule_sources" and T._AUDIT_INDEX == "audit", names)
+          and T._SOURCES_INDEX == "rule-sources" and T._AUDIT_INDEX == "audit", names)
 
     # ── 没渲染（桶名、索引名为空）时说清楚，不发请求 ──
     secret_key.set_tool_credentials(CREDS)
@@ -459,7 +495,7 @@ def run(tmp):
     check("search_needs_question", call(T.rules_search, question="  ")["error_type"] == "invalid_parameter")
     check("search_bad_amount", all(call(T.rules_search, question="立项", amount=a)["error_type"] == "invalid_parameter"
                                    for a in ("二十万", float("nan"), True)))
-    check("no_writes_yet", not S3V.store["rules"] and not S3V.store["rule_sources"] and BR.texts_embedded == 0)
+    check("no_writes_yet", not S3V.store["rules"] and not S3V.store["rule-sources"] and BR.texts_embedded == 0)
 
     # ── writer_ingests_and_reingests ──
     r = call(T.rules_writer, file_path=FIXTURE, source_id="fin-approval", source_version="V4.0", title="虚构审批矩阵")
@@ -471,7 +507,7 @@ def run(tmp):
     check("stored_rule", stored["text"] == next(x["content"] for x in fixture_ref if x["rule_id"] == "C05-5.4")
           and stored["segments"] == ["全部板块"] and stored["amt_kind"] == "range" and stored["lo"] == 10000.0
           and stored["active"] is True and stored["source_version"] == "V4.0", stored)
-    reg = S3V.store["rule_sources"]["fin-approval"]
+    reg = S3V.store["rule-sources"]["fin-approval"]
     check("registry_written", reg["data"] == [1.0] and reg["metadata"]["rules_total"] == 18
           and reg["metadata"]["status"] == "active" and reg["metadata"]["title"] == "虚构审批矩阵"
           and reg["metadata"]["file_name"] == "sample-matrix.docx" and len(reg["metadata"]["doc_hash"]) == 64, reg)
@@ -493,8 +529,8 @@ def run(tmp):
     r = call(T.rules_writer, file_path=dropped, source_id="fin-approval", source_version="V4.0")
     check("one_row_removed", r["success"] and r["removed"] == 1 and r["written"] == 0 and r["unchanged"] == 17
           and r["rules_total"] == 17 and "C05-5.5" not in S3V.store["rules"]
-          and S3V.store["rule_sources"]["fin-approval"]["metadata"]["rules_total"] == 17, r)
-    check("first_ingest_time_kept", S3V.store["rule_sources"]["fin-approval"]["metadata"]["ingested_at"] == first_ingested_at)
+          and S3V.store["rule-sources"]["fin-approval"]["metadata"]["rules_total"] == 17, r)
+    check("first_ingest_time_kept", S3V.store["rule-sources"]["fin-approval"]["metadata"]["ingested_at"] == first_ingested_at)
 
     # ── 登记和文件都没变、索引里却少了一条：check 建议的「再上传一次」真能修好，不按登记直接 skip ──
     S3V.store["rules"].pop("C01-1.2")
@@ -510,7 +546,7 @@ def run(tmp):
     r = call(T.rules_writer, file_path=FIXTURE, source_id="other-policy", source_version="V1")
     check("writer_refuses_conflict", not r["success"] and r["error_type"] == "rule_conflict" and "C01-1.1" in r["conflicts"]
           and r["conflicts"] == sorted(keys_of("fin-approval")) and S3V.store["rules"] == before
-          and "other-policy" not in S3V.store["rule_sources"] and BR.texts_embedded == embedded, r)
+          and "other-policy" not in S3V.store["rule-sources"] and BR.texts_embedded == embedded, r)
 
     # ── 再加两份：seg-demo（在线）、retired-policy（下线） ──
     r = call(T.rules_writer, file_path=seg_doc, source_id="seg-demo", source_version="2026", title="板块金额样例")
@@ -568,13 +604,13 @@ def run(tmp):
     r = call(T.rules_writer, file_path=retired2, source_id="retired-policy")
     check("reingest_keeps_inactive", r["success"] and r["written"] == 1 and r["unchanged"] == 2
           and S3V.store["rules"]["C09-9.3"]["metadata"]["active"] is False
-          and S3V.store["rule_sources"]["retired-policy"]["metadata"]["status"] == "inactive"
+          and S3V.store["rule-sources"]["retired-policy"]["metadata"]["status"] == "inactive"
           and "C09-9.3" not in picked("", None), r)
     # 同一文件换了版本号：不算「同一份」，每条规则带上新版本号重写
     r = call(T.rules_writer, file_path=retired2, source_id="retired-policy", source_version="V2")
     check("new_version_rewrites", r["success"] and r["status"] == "ingested" and r["written"] == 3 and r["unchanged"] == 0
           and {S3V.store["rules"][k]["metadata"]["source_version"] for k in keys_of("retired-policy")} == {"V2"}
-          and S3V.store["rule_sources"]["retired-policy"]["metadata"]["source_version"] == "V2", r)
+          and S3V.store["rule-sources"]["retired-policy"]["metadata"]["source_version"] == "V2", r)
     r = call(T.rules_writer, file_path=retired2, source_id="retired-policy")
     check("version_kept_when_omitted", r["status"] == "skipped" and r["source_version"] == "V2", r)
 
@@ -610,7 +646,7 @@ def run(tmp):
     gone = call(T.rules_search, question=q, top_k=5)["results"]
     check("deactivate_hides", r["success"] and r["affected"] == 12 and gone
           and all(x["source_id"] != "seg-demo" for x in gone)
-          and S3V.store["rule_sources"]["seg-demo"]["metadata"]["status"] == "inactive", (r, gone))
+          and S3V.store["rule-sources"]["seg-demo"]["metadata"]["status"] == "inactive", (r, gone))
     check("deactivate_idempotent", call(T.rules_manager, action="deactivate", source_id="seg-demo")["affected"] == 0)
     r = call(T.rules_manager, action="restore", source_id="seg-demo")
     back = call(T.rules_search, question=q, top_k=5)["results"]
@@ -638,7 +674,7 @@ def run(tmp):
     audits_before = len(S3V.store["audit"])
     r = call(T.rules_manager, action="delete", source_id="seg-demo")
     check("delete", r["success"] and r["affected"] == 12 and not keys_of("seg-demo")
-          and "seg-demo" not in S3V.store["rule_sources"] and len(S3V.store["audit"]) == audits_before + 1, r)
+          and "seg-demo" not in S3V.store["rule-sources"] and len(S3V.store["audit"]) == audits_before + 1, r)
     check("delete_unknown", call(T.rules_manager, action="delete", source_id="seg-demo")["error_type"] == "source_not_found")
     check("check_ok_after_delete", call(T.rules_manager, action="check")["ok"] is True)
     ops = sorted(v["metadata"]["operation"] for v in S3V.store["audit"].values())
@@ -659,14 +695,14 @@ def run(tmp):
     BR.deny_models = {"global.cohere.embed-v4:0", "us.cohere.embed-v4:0"}
     r = call(T.rules_writer, file_path=seg_doc, source_id="seg-demo")
     check("embed_denied_no_write", r["error_type"] == "embedding_access_denied" and not keys_of("seg-demo")
-          and "seg-demo" not in S3V.store["rule_sources"], r)
+          and "seg-demo" not in S3V.store["rule-sources"], r)
     BR.deny_models = set()
 
     # ── 写到一半失败（登记没写上）：check 看得出来，再上传同一文件补齐，不重新向量化 ──
-    S3V.fail_put_on = "rule_sources"
+    S3V.fail_put_on = "rule-sources"
     r = call(T.rules_writer, file_path=seg_doc, source_id="seg-demo")
     check("partial_failure_reported", r["error_type"] == "write_failed" and len(keys_of("seg-demo")) == 12
-          and "seg-demo" not in S3V.store["rule_sources"], r)
+          and "seg-demo" not in S3V.store["rule-sources"], r)
     S3V.fail_put_on = None
     r = call(T.rules_manager, action="check", source_id="seg-demo")
     check("check_sees_partial", r["ok"] is False and r["problems"][0]["kind"] == "unregistered_rules", r)
