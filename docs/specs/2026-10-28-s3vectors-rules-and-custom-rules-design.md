@@ -195,7 +195,7 @@ PG 方式的架构见 10-26 的设计第 2 节，不变；两种方式只在「�
 | 问题 | 决定 |
 |---|---|
 | 审核 Agent 怎么查规则 | **方案 B**：两种方式下审核 Agent 都只调一个 `rules_search(question, segment, amount, top_k)`，参数和返回格式完全一样（3.2 节那一份：`rule_id, rule_type, chapter_no, segments, amt_kind, source_id, text, distance`，外加实际用的 `filter`）。提示词只有一份，不再写 SQL，也不再有「运维 / 测验模式读写数据库」那一条；工具的路径和绑的密钥按 `KB_MODE` 从配置里取 |
-| PG 后端的工具 | 新写 **`kb/` 里的 PG 版 `rules_search` 工具模块**：用注入的 `database_credentials` 密钥连 PG，调现有的 `kb_search(问题, k, NULL, 'agent')` 取候选（向量仍在 PG 里由 `kb_embed()` 生成，检索日志照常记），再按规则编号取 `approval_rules.content` 作为 `text`，板块和金额过滤在 Python 里做，解析和语义与 S3 Vectors 版相同（`tier_interval`、只认「全板块」为全部板块）。`kb_search` 自己的板块参数是子串匹配、会漏掉「全板块」，所以不用它 |
+| PG 后端的工具 | 新写 **`kb/` 里的 PG 版 `rules_search` 工具模块，只做路由**（项目负责人 2026-10-29）：用注入的 `database_credentials` 密钥连 PG，把「板块 问题 金额」拼成一句（和现在提示词里「九安 房租 对公付款 单笔3万」的写法一样）交给现有的 `kb_search(这句话, top_k, NULL, 'agent')`，再按规则编号取 `approval_rules.content` 作为 `text`，按统一格式返回。**不按板块、金额筛**，PG 的检索结果和现在线上已验证的一致，金额档仍由审核 Agent 读规则文字判断；返回里的 `filter` 写明没有筛（`{"applied": false, "query": <拼成的那句>}`）。向量仍在 PG 里由 `kb_embed()` 生成，检索日志照常记 |
 | PG 工具用什么密钥 | 复用 PG 连接器 `conn-f0c7233959d9` 现在绑的数据库密钥 **`key-a015b93ad361`**，不新建密钥 |
 | 连接器 | 两种方式下审核 Agent 都不再用连接器：发布的动态配置里解绑 `conn-f0c7233959d9`。连接器本身保留（「制度知识库」页的 PG 方式、`kb.sh verify` 还在用它们自己的连库方式，不经这个连接器的照旧） |
 | 最终方式与测试 | 现有环境**最后停在 PG**；本轮**只跑 PG 方式的端到端**（含自定义规则）。S3 Vectors 方式只做代码和单元测试，**任务 4（S3 Vectors 上线）这轮不做** |

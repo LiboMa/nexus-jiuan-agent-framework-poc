@@ -341,22 +341,22 @@
 - [ ] **Step 2: 跑**，FAIL → **Step 3: 实现**（example.env 里各一行例子和中文说明）→ **Step 4: 跑** 两边测试 PASS。
 - [ ] **Step 5: 提交** `feat(infra): config keys for the PG rules_search tool`
 
-### Task 16: `kb/` 里的 PG 版 `rules_search`
+### Task 16: `kb/` 里的 PG 版 `rules_search`（只做路由）
 
 **Files:**
 - Create: `kb/tools/pg_rules_tools.py`、`kb/tests/test_pg_rules_tools.py`
-- Modify: `kb/lib/nexus_api.py`（导入 / 发布新版本 / 核对 / 绑定这个工具的命令）、`kb/deploy.sh`（新阶段 `rules-tool`，管理员密码照现有的 SSM 密封读取）
+- Modify: `kb/lib/nexus_api.py`（导入 / 发布新版本 / 核对 / 绑定这个工具的命令，请求格式照 `knowbase-s3vectors-agent/scripts/nexus_admin.py` 已验证的写法）、`kb/deploy.sh`（新阶段 `rules-tool`，管理员密码照现有的 SSM 密封读取）
 - Test: `kb/tests/test_pg_rules_tools.py`（`python3 -B -m unittest discover -s kb/tests`）
 
 **Interfaces:**
-- Consumes: Task 14 定下的注入字段与导入声明；`kb_search(question text, k int, segment text, caller text)`（`kb/sql/kb_search.sql`）；`approval_rules` 的 `rule_id, rule_type, chapter_no, segment, amount_tier, content, source_tag`。
-- Produces（`@tool`，返回 JSON 字符串）：`rules_search(question: str, segment: str = "", amount: float | None = None, top_k: int = 8) -> str`，返回 `{success, filter, results: [{rule_id, rule_type, chapter_no, segments, amt_kind, source_id, text, distance}]}`，失败 `success=false, error_type, message`。`source_id` = `source_tag`；`text` = `content`；`distance` = `1 - kb_search 的语义分`（实现方核对 `kb_search` 返回的分数含义后写进注释）。模块级纯函数 `tier_interval`、`segments_of`、`rule_matches(rule, segment, amount) -> bool`。
-- 做法：`kb_search(问题, max(top_k*5, 40), NULL, 'agent')` 取候选 → 按编号取 `approval_rules` 全文 → `rule_matches` 过滤 → 保持 `kb_search` 的先后顺序取前 `top_k`。只读事务；连接 5 秒超时；没拿到注入的密钥就 `credentials_missing`，不回落任何默认凭据。
+- Consumes: Task 14 定下的注入字段与导入声明；`kb_search(question text, k int, segment text, caller text)`（`kb/sql/kb_search.sql`，核对真实签名和返回列）；`approval_rules` 的 `rule_id, rule_type, chapter_no, segment, amount_tier, content, source_tag`。
+- Produces（`@tool`，返回 JSON 字符串）：`rules_search(question: str, segment: str = "", amount: float | None = None, top_k: int = 8) -> str`，返回 `{success, filter: {"applied": false, "query": <拼成的那句>}, results: [{rule_id, rule_type, chapter_no, segments, amt_kind, source_id, text, distance}]}`，失败 `success=false, error_type, message`。字段名、类型与 S3 Vectors 版逐个相同：`segments` 按 S3 Vectors 版同样的拆法从 `segment` 列算（只认「全板块」为 `"*"`），`amt_kind` 按 `tier_interval` 算（`range` 或 `other`），`source_id` = `source_tag`，`text` = `content`，`distance` = `1 - kb_search 的语义分`（实现方核对分数含义后写进注释）。
+- 做法：`query = " ".join(x for x in (segment, question, 金额文字) if x)`，金额文字按「单笔<金额>元」写（整数不带小数点）；`kb_search(query, top_k, NULL, 'agent')` → 按编号取全文 → 保持 `kb_search` 的先后返回。**不按板块、金额筛**。只读事务；连接 5 秒超时；没拿到注入的密钥就 `credentials_missing`，不回落任何默认凭据；`top_k` 只收 1–20。
 - `kb.sh rules-tool [--dry-run]`：导入（声明需要密钥）、绑到 `KB_PG_KEY_ID`、核对 `configured=True`，结果写进 kb 的状态文件（`RULES_TOOL_DIR`）；再跑一次是「已存在」。
 
-- [ ] **Step 1: 写测试**（假的 psycopg 连接：按 SQL 回预设的行）：`filter_parity`——对 `kb/tests/fixtures/sample-matrix.docx` 解析出的规则，板块 `九安` / `全板块` / 空 × 金额 `200000` / `200000.01` / `None`，`rule_matches` 选出的集合与 `knowbase-s3vectors-agent/tools/s3vectors_rules_tools.py` 的 `build_filter` 交给 `fake_aws` 选出的集合相同；`order_kept`——过滤后保持 `kb_search` 的先后；`contract_shape`——返回字段与 S3 Vectors 版逐个同名同类型；`readonly_and_timeout`——连接参数里有 5 秒超时、事务是只读；`credentials_missing`；`no_secret_in_errors`——连不上时错误里没有密码和连接串。
+- [ ] **Step 1: 写测试**（假的 psycopg 连接：记下执行的 SQL 和参数，按 SQL 回预设的行）：`query_composed`——`segment="九安", question="房租 对公付款", amount=30000` 时传给 `kb_search` 的是「九安 房租 对公付款 单笔30000元」、`k=8`、`caller='agent'`；不给板块 / 金额时只有问题本身；`no_filtering`——`kb_search` 回来的编号全部返回、顺序不变（包括板块对不上的）；`contract_shape`——返回字段与 S3 Vectors 版 `rules_search` 的结果逐个同名同类型（测试里读 `knowbase-s3vectors-agent/tools/s3vectors_rules_tools.py` 的一个真实结果作对照，或把字段表写成常量两边共用）；`readonly_and_timeout`——连接参数里有 5 秒超时、事务是只读；`credentials_missing`；`no_secret_in_errors`——连不上时错误里没有密码和连接串；`top_k_range`——0 和 21 回 `invalid_parameter`。
 - [ ] **Step 2: 跑**，FAIL → **Step 3: 实现** → **Step 4: 跑** PASS；`kb.sh rules-tool --dry-run` 只打印计划。
-- [ ] **Step 5: 提交** `feat(kb): PG rules_search tool — same contract as the S3 Vectors one`
+- [ ] **Step 5: 提交** `feat(kb): PG rules_search tool — routes to kb_search, same contract as the S3 Vectors one`
 
 ### Task 17: 审核 Agent：一份提示词，两种后端
 
