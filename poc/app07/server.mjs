@@ -25,6 +25,7 @@ import { createKbRoutes } from './kb-routes.mjs';
 import { createKbRunner } from './kb-runner.mjs';
 import { createKbS3vClient } from './kb-s3v-client.mjs';
 import { createKbS3vRoutes } from './kb-s3v-routes.mjs';
+import { createCustomRules, customRulesRoutes, docxToText } from './custom-rules.mjs';
 import { a2aCall } from '../app/nexus/a2a-client.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
@@ -154,6 +155,9 @@ const kb = settings.kb?.mode === 's3vectors'
     credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log })
   : settings.kb?.mode === 'pg' ? createKbRoutes({ runner: createKbRunner({ python: settings.kb.python, dir: settings.kb.dir, pg: settings.kb.pg }), uploadsDir: settings.kb.uploadsDir, log }) : null;
 if (kb) await kb.start();
+// 「我的规则」：审核员（管理员、分析员）自己的 .md / .docx 规则，存在本机 <stateDir>/custom-rules/<账号>/，两种知识库方式都有
+const customRules = createCustomRules({ dir: settings.customRulesDir, docxToText });
+const myRules = customRulesRoutes({ rules: customRules, log });
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
 const contract = J.contractChecks.loadContract();
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
@@ -190,7 +194,7 @@ const agentCalls = agentCallRoutes({ log, extraRows: () => agentTests.rows(), te
   listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, ...page })), readState: key => store.readState(key) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
   return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args))
-    || (kb ? await kb.handle(args) : false) || jiuanRoutes.handle(args);
+    || (await myRules.handle(args)) || (kb ? await kb.handle(args) : false) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。
