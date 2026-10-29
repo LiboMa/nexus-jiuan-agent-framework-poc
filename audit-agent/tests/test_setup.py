@@ -17,20 +17,26 @@ CONNECTOR = "conn-0123456789ab"
 class FakeNexus:
     """按路径回 Nexus 的现状；写操作记下来并改现状。"""
 
-    def __init__(self, agents=(), publications=(), configs=None, clone_polls=2):
+    def __init__(self, agents=(), publications=(), configs=None, clone_polls=2, key_rows=()):
         self.agents = [dict(a) for a in agents]
         self.publications = [dict(p) for p in publications]
         self.configs = dict(configs or {})
-        self.writes, self.clone_polls, self.prompts = [], clone_polls, {}
+        self.writes, self.clone_polls, self.prompts, self.calls = [], clone_polls, {}, []
+        self.key_rows = key_rows  # GET /api/v2/keys/tools-requiring-key 的回复；None 是 Operator 调不了这个接口
 
     def __call__(self, method, path, params=(), body=None, write=False, dry_run=False, *, target, query=(), missing_ok=False):
         values = dict(item.split("=", 1) for item in params)
+        self.calls.append((method, path, tuple(query)))
         if write:
             self.writes.append((method, path, values, body))
             if dry_run:
                 return None
         if method == "GET" and path == "/api/v2/agents":
             return list(self.agents)
+        if method == "GET" and path == "/api/v2/keys/tools-requiring-key":
+            if self.key_rows is None:
+                raise SystemExit(f"{method} {path} 失败（退出码 1）：HTTP 403 forbidden")
+            return [dict(row) for row in self.key_rows]
         if method == "POST" and path.endswith("/clone"):
             new = {"agent_id": "agent_" + "a" * 32, "agent_name": body["name_en"], "status": "creating"}
             self.agents.append(new)
@@ -176,6 +182,118 @@ class SetupTest(unittest.TestCase):
         setup.nexus = FakeNexus()
         with self.assertRaises(SystemExit):
             setup.main([])
+
+    def test_setup_pg_unchanged(self):
+        """pg（不写 KB_MODE，或写 pg）：写操作的顺序和以前一样，不读规则工具的密钥绑定。"""
+        for extra in ("", "KB_MODE=pg\n"):
+            with self.subTest(extra=extra):
+                fake = FakeNexus()
+                self.run_setup(fake, env=env_file(extra))
+                self.assertEqual([(m, p) for m, p, _, _ in fake.writes], [
+                    ("POST", "/api/v2/agents/{source_id}/clone"), ("PUT", "/api/v2/agents/{agent_id}/files/prompt"),
+                    ("POST", "/api/v2/publications"), ("POST", "/api/v2/publications/{publish_id}/dynamic-config")])
+                self.assertEqual(fake.writes[3][3]["connectors"], [CONNECTOR])
+                self.assertFalse([c for c in fake.calls if "tools-requiring-key" in c[1]])
+                fake = FakeNexus([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: {**EXISTING_CONFIG, "connectors": ["conn-other"]}})
+                self.run_setup(fake, env=env_file(extra))
+                self.assertEqual([w[3]["connectors"] for w in fake.writes], [["conn-other", CONNECTOR]])
+
+
+S3V_DIR = "kb_s3v_rules_0a1b2c3d"
+LIVE_CONNECTOR = "conn-f0c7233959d9"
+S3V_ENV = ("KB_MODE=s3vectors\nKB_S3V_BUCKET=knowbase-s3v-example\nKB_S3V_RULES_INDEX=rules\n"
+           f"RULES_TOOL_DIR={S3V_DIR}\nKB_S3V_KEY_ID=key-0123456789ab\nKB_S3V_PUBLICATION_ID=pub_0123456789abcdef\n")
+BOUND = [{"tool_name": "rules_writer", "module_path": f"imported_tools/{S3V_DIR}/s3vectors_rules_tools.py", "configured": True},
+         {"tool_name": "rules_search", "module_path": f"imported_tools/{S3V_DIR}/s3vectors_rules_tools.py", "configured": True},
+         {"tool_name": "rules_search", "module_path": "imported_tools/kb_s3v_rules_other/s3vectors_rules_tools.py", "configured": False}]
+
+
+def s3v_env(connector=LIVE_CONNECTOR):
+    """s3vectors 方式的环境配置；CONNECTOR_ID 留着（setup.py 用它找要解绑的 PG 连接器）。"""
+    path = env_file(S3V_ENV)
+    Path(path).write_text(Path(path).read_text(encoding="utf-8").replace(f"CONNECTOR_ID={CONNECTOR}\n", f"CONNECTOR_ID={connector}\n"), encoding="utf-8")
+    return path
+
+
+class SetupS3VectorsTest(unittest.TestCase):
+    """s3vectors：先核对规则工具 rules_search 的密钥绑定（只读），再找或建 Agent、发布；动态配置里去掉 PG 连接器，其余字段原样带回。"""
+    run_setup = SetupTest.run_setup
+
+    def config(self, connectors):
+        return {"dynamic_id": "dyn-1", "config_name": "demo", "connectors": connectors, "keys": ["key-aaaaaaaaaaaa"], "key_match_mode": "exact",
+                "skills": ["s1"], "tools": None, "agents": [], "cowork_mode": None, "directive_ids": ["d1"]}
+
+    def test_setup_s3vectors_unbinds(self):
+        config = self.config([LIVE_CONNECTOR, "conn-other"])
+        fake = FakeNexus([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: config}, key_rows=BOUND)
+        out, _ = self.run_setup(fake, env=s3v_env())
+        self.assertEqual([(m, p) for m, p, _, _ in fake.writes], [("POST", "/api/v2/publications/{publish_id}/dynamic-config")])
+        saved = fake.writes[0][3]
+        self.assertEqual(saved["connectors"], ["conn-other"])
+        self.assertEqual(saved["overwrite_dynamic_id"], "dyn-1")
+        for field in nexus_common.CONFIG_FIELDS:
+            if field != "connectors":
+                self.assertEqual(saved[field], config.get(field), field)
+        self.assertIn(LIVE_CONNECTOR, out)
+        self.assertIn(("GET", "/api/v2/keys/tools-requiring-key", ("limit=500",)), fake.calls)
+        reads = [c for c in fake.calls if c[:2] == ("GET", "/api/v2/publications/{publish_id}/dynamic-config")]
+        self.assertEqual(len(reads), 2, "保存后再读一次确认")
+
+    def test_setup_s3vectors_unbind_is_confirmed_by_reading_back(self):
+        class Stubborn(FakeNexus):
+            def __call__(self, method, path, params=(), body=None, write=False, dry_run=False, **kwargs):
+                if write and method == "POST" and path.endswith("/dynamic-config"):
+                    self.writes.append((method, path, {}, body))
+                    return {"dynamic_id": "dyn-1"}
+                return super().__call__(method, path, params, body, write, dry_run, **kwargs)
+        fake = Stubborn([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: self.config([LIVE_CONNECTOR])}, key_rows=BOUND)
+        with self.assertRaises(SystemExit) as caught:
+            self.run_setup(fake, env=s3v_env())
+        self.assertIn(LIVE_CONNECTOR, str(caught.exception.code))
+
+    def test_setup_s3vectors_already_unbound_writes_nothing(self):
+        fake = FakeNexus([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: self.config(["conn-other"])}, key_rows=BOUND)
+        out, _ = self.run_setup(fake, env=s3v_env())
+        self.assertEqual(fake.writes, [])
+        self.assertEqual([line.split()[0] for line in out.splitlines() if line.strip()[:1] in "=+~"], ["=", "=", "=", "="])
+
+    def test_setup_s3vectors_dry_run_only_prints_the_unbind(self):
+        fake = FakeNexus([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: self.config([LIVE_CONNECTOR])}, key_rows=BOUND)
+        out, path = self.run_setup(fake, "--dry-run", env=s3v_env())
+        self.assertEqual(len(fake.writes), 1)
+        self.assertEqual(fake.configs[EXISTING_PUB["publish_id"]]["connectors"], [LIVE_CONNECTOR], "dry-run 不改")
+        self.assertIn("[dry-run]", out)
+        self.assertIn("AGENT_ID=\n", Path(path).read_text(encoding="utf-8"))
+
+    def test_setup_s3vectors_binding_missing(self):
+        """rules_search 的密钥没绑（configured=False）、Nexus 上没有这个目录的 rules_search、Operator 调不了接口：都非 0 退出，什么都不写。"""
+        not_bound = [{**row, "configured": False} if S3V_DIR in row["module_path"] else row for row in BOUND]
+        for rows, expect in ((not_bound, "configured"), ([BOUND[2]], S3V_DIR), (None, f"admin_run.sh verify --dir {S3V_DIR}")):
+            with self.subTest(rows=rows):
+                fake = FakeNexus([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: self.config([LIVE_CONNECTOR])}, key_rows=rows)
+                with self.assertRaises(SystemExit) as caught:
+                    self.run_setup(fake, env=s3v_env())
+                self.assertNotIn(caught.exception.code, (0, None))
+                self.assertIn(expect, str(caught.exception.code))
+                self.assertEqual(fake.writes, [])
+
+    def test_setup_s3vectors_from_zero_writes_the_s3vectors_prompt(self):
+        fake = FakeNexus(key_rows=BOUND)
+        self.run_setup(fake, env=s3v_env())
+        self.assertEqual([(m, p) for m, p, _, _ in fake.writes], [
+            ("POST", "/api/v2/agents/{source_id}/clone"), ("PUT", "/api/v2/agents/{agent_id}/files/prompt"), ("POST", "/api/v2/publications")])
+        prompt = fake.prompts["agent_" + "a" * 32]
+        self.assertIn(f"imported_tools/{S3V_DIR}/s3vectors_rules_tools/rules_search", prompt)
+        self.assertNotIn("data_connector", prompt)
+        self.assertNotIn(LIVE_CONNECTOR, prompt)
+
+    def test_setup_s3vectors_without_connector_id_leaves_connectors_alone(self):
+        fake = FakeNexus([EXISTING_AGENT], [EXISTING_PUB], {EXISTING_PUB["publish_id"]: self.config([LIVE_CONNECTOR])}, key_rows=BOUND)
+        path = s3v_env()
+        Path(path).write_text(Path(path).read_text(encoding="utf-8").replace(f"CONNECTOR_ID={LIVE_CONNECTOR}\n", ""), encoding="utf-8")
+        out, _ = self.run_setup(fake, env=path)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("CONNECTOR_ID", out)
 
 
 if __name__ == "__main__":

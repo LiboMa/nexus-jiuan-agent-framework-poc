@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""在 Nexus 上找或建审核 Agent、它的 A2A 发布，并把知识库连接器绑进发布的动态配置。幂等：每一步先读现状，
+"""在 Nexus 上找或建审核 Agent、它的 A2A 发布，并按知识库方式（KB_MODE）处理发布的动态配置。幂等：每一步先读现状，
 已是目标状态就跳过（=），新建（+）、修改（~）才写。目标来自环境配置（--env <文件> 或环境变量 DEPLOY_ENV，必须给）。
 
-1. 按 AGENT_NAME 找 Agent：没有就克隆 Nexus 的通用助手模板，写入 prompt.yaml（按环境替换占位符）；已有就不动提示词（改提示词用 apply.py）。
+0. 只在 s3vectors 方式：先核对规则工具 RULES_TOOL_DIR 里的 rules_search 已绑上密钥（只读，GET /api/v2/keys/tools-requiring-key）；
+   没绑、找不到或 Operator 调不了这个接口就以非 0 退出，什么都不写。
+1. 按 AGENT_NAME 找 Agent：没有就克隆 Nexus 的通用助手模板，写入 prompt.yaml（按环境和方式渲染）；已有就不动提示词（改提示词用 apply.py）。
 2. 找这个 Agent 的 A2A 发布：没有就建（a2a + mcp，跟随最新版本，模型 AGENT_MODEL，描述带「契约」「任务」两行）；已有就只核对描述。
-3. 发布的动态配置里没有 CONNECTOR_ID 就加上（没有动态配置就新建一份，没绑上就绑）。
+3. pg 方式（不写 KB_MODE 就是）：发布的动态配置里没有 CONNECTOR_ID 就加上（没有动态配置就新建一份，没绑上就绑）。
+   s3vectors 方式：动态配置的连接器里有 CONNECTOR_ID 就去掉它，其余字段原样带回，保存后再读一次确认。
 4. 配置文件里 AGENT_ID、PUBLICATION_ID 为空时写回；不为空又和 Nexus 上的不一致就报错，什么都不写。
 
 调用密钥不在这里签发（接口不让，只能由发布者在 Nexus 网页上签发）；九安上的连接 Nexus、启用、设为审批 Agent 也是人做。
@@ -22,6 +25,7 @@ from nexus_common import CONFIG_FIELDS, DESCRIPTION, nexus, render_prompt, targe
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE_AGENT = 'featured_general_assistant'
+RULES_TOOL = 'rules_search'
 CONFIG_NAME = 'jiuan-audit'
 CLONE_TIMEOUT, POLL_SECONDS, PAGE = 600, 5, 100
 
@@ -87,7 +91,7 @@ def ensure_agent(target, dry_run):
 
 def ensure_publication(target, agent_id, dry_run):
     if agent_id is None:
-        say('+', '[dry-run] 建 A2A 发布（a2a + mcp），把连接器绑进动态配置')
+        say('+', '[dry-run] 建 A2A 发布（a2a + mcp），把连接器绑进动态配置' if target.kb_mode == 'pg' else '[dry-run] 建 A2A 发布（a2a + mcp）')
         return None
     publications = find_publications(target, agent_id)
     if len(publications) > 1:
@@ -141,6 +145,54 @@ def ensure_connector(target, publish_id, dry_run):
     say('~' if config else '+', f'动态配置：已绑上连接器 {target.connector_id}')
 
 
+def ensure_no_connector(target, publish_id, dry_run):
+    """s3vectors 方式：动态配置的连接器里有 CONNECTOR_ID（PG 知识库的连接器）就去掉，其余字段原样带回；保存后再读一次确认。"""
+    if publish_id is None:
+        return
+    config = nexus('GET', '/api/v2/publications/{publish_id}/dynamic-config', [f'publish_id={publish_id}'], target=target, missing_ok=True)
+    if not config:
+        say('=', '发布还没有动态配置，没有要解绑的连接器')
+        return
+    connectors = config.get('connectors') or []
+    if not target.connector_id:
+        say('=' if not connectors else '!', f'配置里没写 CONNECTOR_ID，不知道哪个是 PG 知识库的连接器，不解绑（动态配置 {config.get("config_name")} 的连接器：{connectors}）')
+        return
+    if target.connector_id not in connectors:
+        say('=', f'动态配置 {config.get("config_name")} 没绑 PG 连接器 {target.connector_id}')
+        return
+    body = {field: config.get(field) for field in CONFIG_FIELDS}
+    body['connectors'] = [connector for connector in connectors if connector != target.connector_id]
+    body['overwrite_dynamic_id'] = config['dynamic_id']
+    nexus('POST', '/api/v2/publications/{publish_id}/dynamic-config', [f'publish_id={publish_id}'], body,
+          write=True, dry_run=dry_run, target=target)
+    if dry_run:
+        say('~', f'[dry-run] 动态配置去掉 PG 连接器 {target.connector_id}（留下 {body["connectors"]}）')
+        return
+    after = nexus('GET', '/api/v2/publications/{publish_id}/dynamic-config', [f'publish_id={publish_id}'], target=target, missing_ok=True)
+    left = (after or {}).get('connectors') or []
+    if not after or target.connector_id in left or any(connector not in left for connector in body['connectors']):
+        raise SystemExit(f'动态配置保存后再读，连接器是 {left}（应当是 {body["connectors"]}，不含 {target.connector_id}）：到 Nexus 网页上核对发布 {publish_id}')
+    say('~', f'动态配置：已去掉 PG 连接器 {target.connector_id}（留下 {left}）')
+
+
+def check_rules_binding(target):
+    """s3vectors 方式：规则工具目录 RULES_TOOL_DIR 里的 rules_search 要已绑上密钥（configured=True）；否则以非 0 退出。只读。"""
+    hint = f'请用 knowbase-s3vectors-agent/scripts/admin_run.sh verify --dir {target.rules_tool_dir} 核对'
+    try:
+        rows = nexus('GET', '/api/v2/keys/tools-requiring-key', query=['limit=500'], target=target)
+    except SystemExit as error:
+        raise SystemExit(f'读不了需要密钥的工具列表（GET /api/v2/keys/tools-requiring-key：{error.code}）。{hint}') from None
+    if isinstance(rows, dict):
+        rows = rows.get('items') or []
+    mine = [row for row in rows or [] if row.get('tool_name') == RULES_TOOL and target.rules_tool_dir in str(row.get('module_path') or '')]
+    if not mine:
+        raise SystemExit(f'Nexus 上需要密钥的工具里没有 {target.rules_tool_dir} 的 {RULES_TOOL}：先导入规则工具（RULES_TOOL_DIR 写的是不是导入后的目录名）。{hint}')
+    if not all(row.get('configured') is True for row in mine):
+        raise SystemExit(f'{target.rules_tool_dir} 的 {RULES_TOOL} 还没绑密钥（configured={[row.get("configured") for row in mine]}）：'
+                         f'先把密钥 {target.kb_key_id} 绑给它。{hint}')
+    say('=', f'规则工具 {target.rules_tool_dir}/{RULES_TOOL} 已绑密钥（configured=True）')
+
+
 def write_back(env_path, values):
     """把建好的编号写回配置文件里空着的那一行（没有这一行就加在末尾），其他行原样不动。"""
     lines = Path(env_path).read_text(encoding='utf-8').splitlines(keepends=True)
@@ -182,7 +234,7 @@ def delete_rehearsal(target, env_path, dry_run):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='在 Nexus 上找或建审核 Agent、A2A 发布，并绑上知识库连接器')
+    parser = argparse.ArgumentParser(description='在 Nexus 上找或建审核 Agent、A2A 发布，并按知识库方式处理连接器（pg 绑上、s3vectors 去掉）')
     parser.add_argument('--env', default=os.environ.get('DEPLOY_ENV') or None, help='环境配置（poc/infra/env/<环境名>.env），必须给')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--delete', action='store_true', help='删掉演练用的 Agent 和发布（AGENT_NAME 以 _rehearsal 结尾）')
@@ -193,13 +245,19 @@ def main(argv=None):
         target = target_from(opts.env)
     except ValueError as error:
         raise SystemExit(str(error)) from None
-    print(f'环境：{opts.env}（Nexus {target.origin}，Agent {target.agent_name}）')
+    mode = '' if target.kb_mode == 'pg' else f'，知识库 {target.kb_mode}（规则工具 {target.rules_tool_dir}）'
+    print(f'环境：{opts.env}（Nexus {target.origin}，Agent {target.agent_name}{mode}）')
     if opts.delete:
         delete_rehearsal(target, opts.env, opts.dry_run)
         return
+    if target.kb_mode == 's3vectors':
+        check_rules_binding(target)
     agent_id = ensure_agent(target, opts.dry_run)
     publish_id = ensure_publication(target, agent_id, opts.dry_run)
-    ensure_connector(target, publish_id, opts.dry_run)
+    if target.kb_mode == 's3vectors':
+        ensure_no_connector(target, publish_id, opts.dry_run)
+    else:
+        ensure_connector(target, publish_id, opts.dry_run)
     if opts.dry_run:
         return
     write_back(opts.env, {'AGENT_ID': agent_id, 'PUBLICATION_ID': publish_id})
