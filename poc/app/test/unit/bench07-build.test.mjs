@@ -349,10 +349,13 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
     if (url.includes('/poc/kb/search?')) return reply({ items: [{ rule_id: 'C05-5.2', business_item: '供应商货款', segment: '甲板块', amount_tier: '单笔 ＞1 万', final_approver: '财务经理', score: 0.81, keyword_hits: 2 }] });
     if (url.endsWith('/poc/kb/search-log')) return reply({ items: [{ at: '2026-10-26T08:01:00Z', caller: 'agent', question: '房租 九安', hits: [{ rule_id: 'C05-3.4', score: 0.7 }], took_ms: 300 },
       { at: '2026-10-26T08:02:00Z', caller: 'page', question: '税款', hits: [], took_ms: 200 }, { at: '2026-10-26T08:03:00Z', caller: 'verify', question: 'ping', hits: [], took_ms: 100 }] });
+    // 补丁 0005：管理员的页面先问知识库方式（PG 方式就是 0004 的样子），「我的规则」块也会读一次列表
+    if (url.endsWith('/poc/kb/mode')) return reply({ mode: 'pg', ready: true });
+    if (url.endsWith('/poc/custom-rules')) return reply({ items: [], usedChars: 0, limitChars: 20000, limitFiles: 10 });
     return reply({ message: '没有这个接口' }, 404);
   };
   const root = new FakeNode('div');
-  mountKbPage({ root, csrfToken: () => 'tok', fetcher, pollMs: 0 });
+  mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-admin', role: 'admin' }, fetcher, pollMs: 0 });
   const until = async check => { for (let index = 0; index < 50 && !check(); index += 1) await settle(); assert.ok(check(), root.textContent.slice(0, 400)); };
   const press = async label => root.all(node => node.tagName === 'BUTTON' && node.textContent === label)[0].click();
   // 等数据（日志里的问题、历史里的文件名）出来再看，不能只看卡片上固定的说明文字
@@ -412,4 +415,266 @@ test('补丁 0004：制度知识库页——上传后显示解析报告和入库
   const at = cells.indexOf('C05-5.2');
   assert.deepEqual(cells.slice(at, at + 7), ['C05-5.2', '供应商货款', '甲板块', '单笔 ＞1 万', '财务经理', '2', '0.81']);
   assert.ok(root.all(node => node.tagName === 'TH').some(node => node.textContent === '命中词数'));
+});
+
+// ---- 补丁 0005：「制度知识库」页按知识库方式画「公司制度」块（只给管理员），能进这一页的人都有「我的规则」块 ----
+const kbReply = (data, code = 200) => ({ ok: code < 400, status: code, json: async () => (code < 400 ? { data } : { error: data }) });
+async function kbPageModule(t) {
+  const out = await builtPage(t);
+  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
+  t.after(() => { delete globalThis.document; });
+  return import(pathToFileURL(path.join(out, 'public/kb-page.js')).href);
+}
+function kbHelpers(root) {
+  const until = async check => { for (let index = 0; index < 80 && !check(); index += 1) await settle(); assert.ok(check(), root.textContent.slice(0, 600)); };
+  const buttons = (scope, label) => scope.all(node => node.tagName === 'BUTTON' && node.textContent === label);
+  const press = async (label, scope = root) => buttons(scope, label)[0].click();
+  const row = (text, scope = root) => scope.all(node => node.tagName === 'TR' && node.textContent.includes(text))[0];
+  const block = name => root.all(node => node.attributes?.['data-kb-block'] === name)[0];
+  const input = name => root.all(node => node.tagName === 'INPUT' && node.name === name)[0];
+  return { until, buttons, press, row, block, input };
+}
+/** 「我的规则」接口的假实现（内存里一份，按账号的上传先后）。 */
+function ownRulesFake(initial = []) {
+  let rules = [...initial];
+  const list = () => ({ items: rules.map(({ text, ...rest }) => rest), usedChars: rules.reduce((sum, rule) => sum + rule.chars, 0), limitChars: 20000, limitFiles: 10 });
+  return (method, url, init) => {
+    if (url.endsWith('/poc/custom-rules') && method === 'GET') return kbReply(list());
+    if (url.endsWith('/poc/custom-rules') && method === 'POST') {
+      const name = decodeURIComponent(init.headers['X-File-Name']);
+      if (name === '太长的规则.md') return kbReply({ code: 'CUSTOM_RULES_CHAR_LIMIT', message: '每人的规则合计不超过 20,000 字：这份有 19,500 字，现在还剩 18,800 字。' }, 409);
+      const rule = { id: `r-${rules.length + 2}`, title: name, format: name.endsWith('.docx') ? 'docx' : 'md', chars: 300, uploadedAt: '2026-10-29T09:00:00Z', text: '对公付款单金额超过 10 万元须附合同。' };
+      rules.push(rule);
+      return kbReply(rule, 201);
+    }
+    const one = /\/poc\/custom-rules\/([a-z0-9-]+)(\/delete)?$/.exec(url);
+    if (one && method === 'GET' && !one[2]) { const rule = rules.find(item => item.id === one[1]); return rule ? kbReply(rule) : kbReply({ code: 'CUSTOM_RULES_NOT_FOUND', message: '找不到这份规则，刷新后再试。' }, 404); }
+    if (one && method === 'POST' && one[2]) { rules = rules.filter(item => item.id !== one[1]); return kbReply({ id: one[1], deleted: true }); }
+    return null;
+  };
+}
+
+test('补丁 0005：「制度知识库」页签对管理员和分析员都显示（公司制度块在 kb-page.js 里只给管理员）', async t => {
+  const out = await builtPage(t);
+  const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
+  const tabs = analysis.slice(analysis.indexOf('function rulesTabs('), analysis.indexOf('function rulesTabs(') + 900);
+  assert.match(tabs, /if \(state\.session\?\.capabilities\?\.platformAdmin === true \|\| state\.session\?\.user\?\.role === 'analyst'\) \{/);
+  assert.ok(analysis.includes("const kbView = state.routeParams.view === 'kb' && (state.session.capabilities?.platformAdmin === true || state.session.user?.role === 'analyst');"),
+    '分析员打开 #rules?view=kb 也进「制度知识库」');
+  const page = await readFile(path.join(out, 'public/kb-page.js'), 'utf8');
+  assert.match(page, /export function mountKbPage\(\{ root, csrfToken = \(\) => '', user = null, fetcher = /);
+  assert.match(await readFile(path.join(out, 'public/platform-center.css'), 'utf8'), /\.kb-own-text\{/);
+  for (const file of ['public/kb-page.js', 'public/analysis.js']) await run('node', ['--check', path.join(out, file)]);
+});
+
+test('补丁 0005：分析员只看到「我的规则」——不问公司制度的接口；上传超限显示服务端的中文提示；上传成功显示转出来的文字；查看全文、删除；「已用」随列表更新', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  const calls = [];
+  const own = ownRulesFake([{ id: 'r-1', title: '房租补充要求.md', format: 'md', chars: 1200, uploadedAt: '2026-10-28T08:00:00Z', text: '九安板块的房租对公付款须附出租方的房产证明。' }]);
+  const fetcher = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push([method, url, init.headers || {}, init.body]);
+    return own(method, url, init) ?? kbReply({ message: '没有这个接口' }, 404);
+  };
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-reviewer', role: 'analyst' }, fetcher, pollMs: 0 });
+  const { until, press, row, block, input } = kbHelpers(root);
+  await until(() => root.textContent.includes('房租补充要求.md'));
+  assert.match(root.textContent, /已用 1,200 \/ 20,000 字/);
+  assert.deepEqual(calls.filter(call => call[1].includes('/poc/kb/')), [], '分析员连 /poc/kb/mode 都不问');
+  assert.equal(block('company'), undefined, '没有「公司制度」块');
+  assert.ok(block('own'), '有「我的规则」块');
+  assert.doesNotMatch(root.textContent, /上传制度文档|上传历史|上传记录|检索日志|制度清单/);
+  assert.deepEqual(row('房租补充要求.md').all(node => node.tagName === 'TD').slice(0, 2).map(node => node.textContent), ['房租补充要求.md', '1,200']);
+
+  const file = input('ownFile');
+  assert.match(file.accept, /\.md/);
+  assert.match(file.accept, /\.docx/);
+  // 不是 .md / .docx：不发请求
+  let before = calls.length;
+  file.files = [new File(['x'], '规则.txt', { type: 'text/plain' })];
+  await file.listeners.change[0]();
+  assert.equal(calls.length, before);
+  assert.match(root.textContent, /只收 Markdown（\.md）或 Word（\.docx）文件/);
+  // 服务端拒绝（合计超过 20,000 字）：原样显示它的中文提示，「已用」不变
+  file.files = [new File(['很长'], '太长的规则.md', { type: 'text/markdown' })];
+  await file.listeners.change[0]();
+  await until(() => /这份有 19,500 字，现在还剩 18,800 字/.test(root.textContent));
+  assert.match(root.textContent, /已用 1,200 \/ 20,000 字/);
+  // 上传成功：显示转出来的文字，列表和「已用」刷新
+  file.files = [new File(['对公付款单金额超过 10 万元须附合同。'], '合同要求.md', { type: 'text/markdown' })];
+  await file.listeners.change[0]();
+  await until(() => /已用 1,500 \/ 20,000 字/.test(root.textContent));
+  const upload = calls.findLast(call => call[0] === 'POST' && call[1].endsWith('/poc/custom-rules'));
+  assert.deepEqual([upload[2]['X-File-Name'], upload[2]['X-CSRF-Token']], [encodeURIComponent('合同要求.md'), 'tok']);
+  assert.equal(upload[3], file.files[0], '请求体是文件原文');
+  assert.match(root.textContent, /已上传「合同要求\.md」：300 字[\s\S]*对公付款单金额超过 10 万元须附合同。/, '上传成功后显示转出来的文字');
+  assert.doesNotMatch(root.textContent, /还剩 18,800 字/, '上一次的错误提示收起');
+  // 查看全文
+  await press('查看全文', row('房租补充要求.md'));
+  await until(() => root.textContent.includes('须附出租方的房产证明'));
+  assert.ok(calls.some(call => call[0] === 'GET' && call[1].endsWith('/poc/custom-rules/r-1')));
+  // 删除：发 POST …/r-1/delete，列表和「已用」跟着变
+  await press('删除', row('房租补充要求.md'));
+  await until(() => /已用 300 \/ 20,000 字/.test(root.textContent));
+  const removal = calls.find(call => call[0] === 'POST' && call[1].endsWith('/poc/custom-rules/r-1/delete'));
+  assert.equal(removal[2]['X-CSRF-Token'], 'tok');
+  assert.equal(row('房租补充要求.md'), undefined);
+  assert.ok(row('合同要求.md'));
+});
+
+test('补丁 0005：S3 Vectors 方式、文档管家还没在「Agent 接入」页启用（ready=false）：「公司制度」块只有一句提示，不发别的请求', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  const calls = [];
+  const own = ownRulesFake();
+  const fetcher = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push(`${method} ${url}`);
+    if (url.endsWith('/poc/kb/mode')) return kbReply({ mode: 's3vectors', ready: false });
+    return own(method, url, init) ?? kbReply({ message: '没有这个接口' }, 404);
+  };
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-admin', role: 'admin' }, fetcher, pollMs: 0 });
+  const { until, block } = kbHelpers(root);
+  await until(() => root.textContent.includes('先在『Agent 接入』页启用知识库文档管家') && root.textContent.includes('已用 0 / 20,000 字'));
+  for (let index = 0; index < 10; index += 1) await settle();
+  assert.deepEqual(calls.sort(), ['GET /api/analysis/v1/poc/custom-rules', 'GET /api/analysis/v1/poc/kb/mode']);
+  const company = block('company');
+  assert.equal(company.all(node => ['BUTTON', 'INPUT', 'TABLE'].includes(node.tagName)).length, 0, '整块只有那句提示');
+  assert.equal(company.textContent.replace('公司制度', ''), '先在『Agent 接入』页启用知识库文档管家');
+  assert.ok(block('own'));
+});
+
+test('补丁 0005：S3 Vectors 方式（ready=true）：上传带制度标识（按文件名预填）、版本、文档名，轮询上传记录到入库完成后刷新清单；下线 / 恢复 / 删除（删除先确认）；data.success=false 照失败显示；按问题检索带板块和金额', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  const calls = [];
+  const own = ownRulesFake();
+  let sources = [
+    { source_id: 'sample-matrix', title: '仿真办法', source_version: 'V3', file_name: '仿真办法.docx', doc_hash: 'ab', rules_total: 18, status: 'active', ingested_at: '2026-10-20T08:00:00Z', updated_at: '2026-10-20T08:00:00Z' },
+    { source_id: 'old-policy', title: '旧制度', source_version: 'V1', file_name: 'old.docx', doc_hash: 'cd', rules_total: 5, status: 'inactive', ingested_at: '2026-10-01T08:00:00Z', updated_at: '2026-10-02T08:00:00Z' },
+  ];
+  const uploads = [];
+  let polls = 0, release = null;
+  const gate = new Promise(resolve => { release = resolve; });
+  const fetcher = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push([method, url, init.headers || {}, init.body]);
+    const where = new URL(url, 'http://bench.test');
+    const route = where.pathname.replace('/api/analysis/v1/poc/kb', '');
+    if (route === '/mode') return kbReply({ mode: 's3vectors', ready: true });
+    if (route === '/sources' && method === 'GET') return kbReply({ success: true, sources });
+    if (route === '/uploads') return kbReply({ items: [...uploads].reverse() });
+    if (route === '/sources' && method === 'POST') {
+      const p = where.searchParams;
+      uploads.push({ id: 1, at: '2026-10-29T08:00:00Z', fileName: decodeURIComponent(init.headers['X-File-Name']), by: 'poc-admin', sourceId: p.get('sourceId'),
+        sourceVersion: p.get('sourceVersion'), title: p.get('title'), status: 'ingesting', rulesTotal: null, written: null, removed: null, unchanged: null, conflicts: [], elapsedMs: null, error: null });
+      return kbReply({ id: 1, status: 'ingesting' }, 202);
+    }
+    if (route === '/uploads/1') {
+      polls += 1;
+      if (polls >= 2 && uploads[0].status === 'ingesting') {
+        Object.assign(uploads[0], { status: 'ingested', rulesTotal: 18, written: 2, removed: 1, unchanged: 16, finishedAt: '2026-10-29T08:01:30Z', elapsedMs: 90000 });
+        sources = sources.map(source => (source.source_id === 'sample-matrix' ? { ...source, source_version: 'V4', updated_at: '2026-10-29T08:01:30Z' } : source));
+      }
+      return kbReply(uploads[0]);
+    }
+    if (route === '/sources/sample-matrix/deactivate') {
+      await gate;
+      sources = sources.map(source => (source.source_id === 'sample-matrix' ? { ...source, status: 'inactive' } : source));
+      return kbReply({ success: true, source_id: 'sample-matrix', affected: 18 });
+    }
+    if (route === '/sources/old-policy/restore') return kbReply({ success: false, error_type: 'source_not_found', message: '规则库里没有制度「old-policy」', suggestion: '请用 action=list 查看已有的制度' });
+    if (route === '/sources/old-policy/delete') { sources = sources.filter(source => source.source_id !== 'old-policy'); return kbReply({ success: true, source_id: 'old-policy', affected: 5 }); }
+    if (route === '/search' && where.searchParams.get('q') === '不在线') return kbReply({ code: 'KB_AGENT_NOT_READY', message: '先在『Agent 接入』页启用知识库文档管家' }, 409);
+    if (route === '/search') return kbReply({ success: true, filter: { active: { $eq: true } }, results: [{ rule_id: 'C05-3.4', rule_type: 'matrix', chapter_no: 5, segments: ['九安'], amt_kind: 'range', source_id: 'sample-matrix', text: '房租（年度框架合同）由财务经理审批', distance: 0.21 }] });
+    return own(method, url, init) ?? kbReply({ message: '没有这个接口' }, 404);
+  };
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-admin', role: 'admin' }, fetcher, pollMs: 0 });
+  const { until, buttons, press, row: anyRow, block, input } = kbHelpers(root);
+  // 制度清单里的一行（上传记录里也有制度标识，所以限定在清单那张卡片里找）
+  const row = text => (block('sources') ? anyRow(text, block('sources')) : undefined);
+  await until(() => Boolean(row('old-policy')) && root.textContent.includes('已用 0 / 20,000 字'));
+  // 清单：标题、标识、版本、条数、状态、时间
+  assert.deepEqual(row('sample-matrix').all(node => node.tagName === 'TD').slice(0, 5).map(node => node.textContent), ['仿真办法', 'sample-matrix', 'V3', '18', '有效']);
+  assert.match(row('old-policy').textContent, /已下线/);
+  assert.ok(buttons(row('sample-matrix'), '下线').length && !buttons(row('sample-matrix'), '恢复').length);
+  assert.ok(buttons(row('old-policy'), '恢复').length && !buttons(row('old-policy'), '下线').length);
+  assert.ok(calls.every(call => !/\/poc\/kb\/(documents|search-log)/.test(call[1])), 'S3 Vectors 方式没有 PG 的上传历史和检索日志');
+  assert.doesNotMatch(block('company').textContent, /检索日志/);
+  assert.ok(block('own'), '管理员也有「我的规则」');
+
+  // 上传：按文件名预填（清单里有同名文件的制度就用它的标识和标题），标识不合格不发
+  const file = input('file');
+  file.files = [new File([new Uint8Array([0x50, 0x4b, 3, 4])], '仿真办法.docx', { type: KB_DOCX })];
+  await file.listeners.change[0]();
+  await until(() => Boolean(input('sourceId')));
+  assert.equal(input('sourceId').value, 'sample-matrix');
+  assert.equal(input('docTitle').value, '仿真办法');
+  assert.ok(block('company').all(node => /kb-warn/.test(node.className) && !node.hidden && /作为它的新版本/.test(node.textContent)).length, '标识已在库里：提醒会作为它的新版本');
+  input('sourceId').value = 'Bad_ID';
+  let before = calls.length;
+  await press('上传并入库');
+  assert.equal(calls.length, before, '制度标识不合格不发请求');
+  assert.match(root.textContent, /制度标识只能用小写字母、数字和连字符/);
+  input('sourceId').value = 'sample-matrix';
+  input('sourceVersion').value = 'V4 正式签批版';
+  const listsBefore = calls.filter(call => call[0] === 'GET' && call[1].endsWith('/poc/kb/sources')).length;
+  await press('上传并入库');
+  await until(() => /入库完成/.test(root.textContent) && /V4/.test(row('sample-matrix')?.textContent ?? ''));
+  const upload = calls.find(call => call[0] === 'POST' && call[1].includes('/poc/kb/sources?'));
+  const params = new URL(upload[1], 'http://bench.test').searchParams;
+  assert.deepEqual([params.get('sourceId'), params.get('sourceVersion'), params.get('title')], ['sample-matrix', 'V4 正式签批版', '仿真办法']);
+  assert.deepEqual([upload[2]['X-File-Name'], upload[2]['X-CSRF-Token'], upload[2]['Content-Type']], [encodeURIComponent('仿真办法.docx'), 'tok', KB_DOCX]);
+  assert.equal(upload[3], file.files[0]);
+  assert.ok(polls >= 2, '轮询上传记录到 ingested');
+  assert.match(root.textContent, /入库完成[\s\S]*18 条规则[\s\S]*写入 2[\s\S]*删除 1[\s\S]*不变 16/);
+  assert.ok(calls.filter(call => call[0] === 'GET' && call[1].endsWith('/poc/kb/sources')).length > listsBefore, '入库完成后刷新清单');
+  assert.match(anyRow('V4 正式签批版', block('uploads'))?.textContent ?? '', /仿真办法\.docx[\s\S]*poc-admin[\s\S]*sample-matrix[\s\S]*已入库/, '上传记录刷新');
+
+  // 下线：进行中显示「正在处理（约 10–20 秒）」、按钮不可用；做完刷新清单
+  const pending = press('下线', row('sample-matrix'));
+  await settle();
+  const sourcesCard = block('sources');
+  assert.match(sourcesCard.textContent, /正在处理（约 10–20 秒）/);
+  const cardButtons = sourcesCard.all(node => node.tagName === 'BUTTON');
+  assert.ok(cardButtons.length >= 4 && cardButtons.every(node => node.disabled === true), '处理中清单的按钮都不可用');
+  release();
+  await pending;
+  await until(() => /已下线「仿真办法」/.test(root.textContent) && buttons(row('sample-matrix') ?? root, '恢复').length > 0);
+  assert.ok(calls.some(call => call[0] === 'POST' && call[1].endsWith('/poc/kb/sources/sample-matrix/deactivate') && call[2]['X-CSRF-Token'] === 'tok'));
+
+  // 恢复：工具自己失败（HTTP 200、data.success=false）照失败显示
+  await press('恢复', row('old-policy'));
+  await until(() => root.textContent.includes('规则库里没有制度「old-policy」'));
+  assert.doesNotMatch(root.textContent, /已恢复/);
+
+  // 删除：先确认，确认了才发
+  before = calls.length;
+  await press('删除', row('old-policy'));
+  assert.equal(calls.length, before, '先确认');
+  assert.match(sourcesCard.textContent, /不能恢复/);
+  await press('确认删除', sourcesCard);
+  await until(() => /已删除「旧制度」/.test(root.textContent) && !row('old-policy'));
+  assert.ok(calls.some(call => call[0] === 'POST' && call[1].endsWith('/poc/kb/sources/old-policy/delete')));
+
+  // 按问题检索：板块、金额可空，空的不传
+  input('question').value = '房租 年度框架合同';
+  input('segment').value = '九安';
+  input('amount').value = '300000';
+  await press('检索');
+  await until(() => root.textContent.includes('房租（年度框架合同）由财务经理审批'));
+  const search = new URL(calls.findLast(call => call[1].includes('/poc/kb/search?'))[1], 'http://bench.test').searchParams;
+  assert.deepEqual([search.get('q'), search.get('segment'), search.get('amount'), search.get('k')], ['房租 年度框架合同', '九安', '300000', '8']);
+  assert.match(anyRow('C05-3.4').textContent, /C05-3\.4[\s\S]*九安[\s\S]*sample-matrix/);
+  input('segment').value = '';
+  input('amount').value = '';
+  await press('检索');
+  await settle();
+  const plain = calls.findLast(call => call[1].includes('/poc/kb/search?'))[1];
+  assert.ok(!plain.includes('segment=') && !plain.includes('amount='), plain);
+  // 文档管家的钥匙中途没了：整块换成那句提示
+  input('question').value = '不在线';
+  await press('检索');
+  await until(() => block('company').textContent.replace('公司制度', '') === '先在『Agent 接入』页启用知识库文档管家');
 });
