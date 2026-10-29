@@ -26,6 +26,7 @@ import { createKbRunner } from './kb-runner.mjs';
 import { createKbS3vClient } from './kb-s3v-client.mjs';
 import { createKbS3vRoutes } from './kb-s3v-routes.mjs';
 import { createCustomRules, customRulesRoutes, docxToText } from './custom-rules.mjs';
+import { withAdviceActor, withCustomRules } from './custom-rules-advice.mjs';
 import { a2aCall } from '../app/nexus/a2a-client.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
@@ -142,7 +143,12 @@ const anchorRuntime = J.runtimeServices.createAnalysisRuntimeServices({ ...runti
 runtimeRegistry = J.runtimeRegistry.createAnalysisRuntimeRegistry({ anchorCompanyId: config.scope.companyId,
   createRuntime: companyId => (companyId === config.scope.companyId ? anchorRuntime : J.runtimeServices.createAnalysisRuntimeServices({ ...runtimeOptions, scopeCompanyId: companyId })) });
 const readEvidence = ({ companyId, documentId, version }) => runtimeRegistry.evidenceService.context({ actor: J.serviceIdentity.SYSTEM_PIPELINE, companyId, documentId, sourceVersion: version });
-if (nexusAdvice) agentAssemblers['review_advice@1'] = J.reviewAdviceTask.createReviewAdviceAssembler({ analysisStore: store, readEvidence });
+// 「我的规则」：审核员（管理员、分析员）自己的 .md / .docx 规则，存在本机 <stateDir>/custom-rules/<账号>/，两种知识库方式都有
+const customRules = createCustomRules({ dir: settings.customRulesDir, docxToText });
+const contract = J.contractChecks.loadContract();
+// 人从单据页发起时附上这个人的「我的规则」（custom-rules-advice.mjs；页面的 reviewAdvice 也包一层）；流水线、「Agent 接入」页的测试不附
+if (nexusAdvice) agentAssemblers['review_advice@1'] = withCustomRules(J.reviewAdviceTask.createReviewAdviceAssembler({ analysisStore: store, readEvidence }),
+  { rules: customRules, contract, task: contract.tasks.get('review_advice@1'), log });
 const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceService, adviceService: runtimeRegistry.adviceService,
   listAdviceSummaries: runtimeRegistry.listAdviceSummaries, close: runtimeRegistry.close };
 
@@ -155,11 +161,8 @@ const kb = settings.kb?.mode === 's3vectors'
     credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log })
   : settings.kb?.mode === 'pg' ? createKbRoutes({ runner: createKbRunner({ python: settings.kb.python, dir: settings.kb.dir, pg: settings.kb.pg }), uploadsDir: settings.kb.uploadsDir, log }) : null;
 if (kb) await kb.start();
-// 「我的规则」：审核员（管理员、分析员）自己的 .md / .docx 规则，存在本机 <stateDir>/custom-rules/<账号>/，两种知识库方式都有
-const customRules = createCustomRules({ dir: settings.customRulesDir, docxToText });
 const myRules = customRulesRoutes({ rules: customRules, log });
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
-const contract = J.contractChecks.loadContract();
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
 const cli = createOperatorCli(operator);
 const nexusAccess = nexusAccessRoutes({ origin: settings.nexusOrigin, fetchCard: url => fetchAgentCard(url), cli,
@@ -202,7 +205,7 @@ const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: n
   approvalWritebackService: null, approvalSourceKind: config.source.kind, ...runtime, dingtalk: null, healthCheck: database.health, loginAttemptLimit: 600,
   adviceSummaryProvider: { list: runtime.listAdviceSummaries }, sync: syncLoop, syncRange, syncScope: config.scope, origin: config.origin,
   instance: config.instance, source: 'huilianyi-stage', milestone, elementCheck: J.elementCheckState.createElementCheckState({ tasks: agentTasks }),
-  reviewAdvice: nexusAdvice ? J.reviewAdviceState.createReviewAdviceState({ tasks: agentTasks }) : null, onError: ({ code }) => log(code) });
+  reviewAdvice: nexusAdvice ? withAdviceActor(J.reviewAdviceState.createReviewAdviceState({ tasks: agentTasks })) : null, onError: ({ code }) => log(code) });
 
 const login = createPasswordLogin({ passwords: new Map([['poc-reviewer', secretText('reviewer_password')], ['poc-checker', secretText('checker_password')]]),
   issueTicket: accountId => auth.issueLocalTicket(accountId) });
