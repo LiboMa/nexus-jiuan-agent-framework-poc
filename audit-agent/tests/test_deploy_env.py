@@ -28,6 +28,23 @@ class DeployEnvTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy_env.read_deploy_env(str(FIXTURES / "no-such.env"))
 
+    def test_kb_mode_is_pg_or_s3vectors_and_absent_means_pg(self):
+        for name in ("basic.env", "kb-empty.env"):
+            self.assertNotIn("KB_MODE", deploy_env.read_deploy_env(str(FIXTURES / name)), name)
+        with self.assertRaises(ValueError) as caught:
+            deploy_env.read_deploy_env(str(FIXTURES / "badmode.env"))
+        self.assertIn(f"{FIXTURES / 'badmode.env'}:3：KB_MODE 只能是 pg 或 s3vectors：mongo", str(caught.exception))
+
+    def test_s3vectors_needs_all_five_keys_and_names_only_the_missing_ones(self):
+        with self.assertRaises(ValueError) as caught:
+            deploy_env.read_deploy_env(str(FIXTURES / "s3v-missing.env"))
+        self.assertIn("还要写：KB_S3V_KEY_ID（", str(caught.exception))
+        for present in ("KB_S3V_BUCKET", "KB_S3V_RULES_INDEX", "RULES_TOOL_DIR", "KB_S3V_PUBLICATION_ID"):
+            self.assertNotIn(present, str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            deploy_env.read_deploy_env(str(FIXTURES / "s3v-bare.env"))
+        self.assertIn("还要写：KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TOOL_DIR、KB_S3V_KEY_ID、KB_S3V_PUBLICATION_ID（", str(caught.exception))
+
     def test_keys_are_the_ones_in_example_env(self):
         lines = (ROOT / "poc/infra/env/example.env").read_text(encoding="utf-8").splitlines()
         keys = [line.split("=", 1)[0] for line in lines if line[:1].isupper() and "=" in line]

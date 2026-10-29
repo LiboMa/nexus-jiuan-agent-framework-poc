@@ -85,4 +85,32 @@ test('macOS 自带的 bash 3.2、set -euo pipefail 下也能用（空数组在 3
   assert.equal(none.stdout, 'done\n');
   const some = await run('/bin/bash', ['-c', strict], { env: { PATH: process.env.PATH, DEPLOY_ENV: path.join(FIXTURES, 'basic.env') } });
   assert.deepEqual(some.stdout.trim().split('\n'), [...expected.overrides['basic.env'], 'done']);
+  const s3v = await run('/bin/bash', ['-c', strict], { env: { PATH: process.env.PATH, DEPLOY_ENV: path.join(FIXTURES, 's3v.env') } });
+  assert.equal(s3v.stdout, 'done\n');
+  await assert.rejects(run('/bin/bash', ['-c', strict], { env: { PATH: process.env.PATH, DEPLOY_ENV: path.join(FIXTURES, 's3v-bare.env') } }),
+    error => error.code === 2 && error.stderr.includes(expected.errors['s3v-bare.env'].text));
+});
+
+test('KB_MODE：只能是 pg 或 s3vectors（别的值报错带行号）；不写或留空读出来没有这个键（调用方当 pg），也不要 S3 Vectors 的几项', async () => {
+  for (const name of ['basic.env', 'kb-empty.env']) {
+    const result = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, name) });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal('KB_MODE' in values(result.stdout), false, name);
+  }
+  const mongo = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, 'badmode.env') });
+  assert.equal(mongo.code, 2);
+  assert.ok(mongo.stderr.includes(`${path.join(FIXTURES, 'badmode.env')}:3：KB_MODE 只能是 pg 或 s3vectors：mongo`), mongo.stderr);
+});
+
+test('KB_MODE=s3vectors：五项（KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TOOL_DIR、KB_S3V_KEY_ID、KB_S3V_PUBLICATION_ID）都要写，缺了一次列出缺哪几项、只列缺的', async () => {
+  const missing = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, 's3v-missing.env') });
+  assert.equal(missing.code, 2);
+  assert.ok(missing.stderr.includes('还要写：KB_S3V_KEY_ID（'), missing.stderr);
+  for (const present of ['KB_S3V_BUCKET', 'KB_S3V_RULES_INDEX', 'RULES_TOOL_DIR', 'KB_S3V_PUBLICATION_ID']) assert.doesNotMatch(missing.stderr, new RegExp(present));
+  // 只看配置文件里写的：shell 里 export 了也不算
+  const fromShell = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, 's3v-missing.env'), KB_S3V_KEY_ID: 'key-ffffffffffff' });
+  assert.equal(fromShell.code, 2);
+  const bare = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, 's3v-bare.env') });
+  assert.equal(bare.code, 2);
+  assert.ok(bare.stderr.includes('还要写：KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TOOL_DIR、KB_S3V_KEY_ID、KB_S3V_PUBLICATION_ID（'), bare.stderr);
 });

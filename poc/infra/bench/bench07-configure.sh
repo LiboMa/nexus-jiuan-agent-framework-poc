@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # 部署时配置测试台上的九安 v0.7.10（deploy.sh 经 SSM 调用，root 运行；在 PoC 服务重启之前，因为 PoC 要读这里写的转发设置）：
-#   1. 系统用户 jiuan07，不进 andon 组（读不到 PoC 的 secrets.env）；工作目录 /var/lib/jiuan07；
+#   1. 系统用户 jiuan07，不进 andon 组（读不到 PoC 的 secrets.env）；工作目录 /var/lib/jiuan07（含「我的规则」的 custom-rules/）；
 #   2. /etc/andon-finance/jiuan07/：从 secrets.env 取库密码、数据密钥和两个账号的口令写成文件（root:jiuan07 0640），
 #      实例上已有的库密码和数据密钥只认原值；虚构的汇联易凭据（假汇联易不校验）；服务的 env 文件；
 #   3. MySQL：在 jiuan-mysql 里建库 jiuan07 和只能看这个库的账号 jiuan07_app（密码只经标准输入进容器）；
 #   4. /etc/hosts 堵掉九安代码里写死的外部地址（整段带标记，可以整段删）；
 #   5. systemd 单元 andon-jiuan07.service；PoC 服务按 Host 转发的设置（jiuan07-forward.env + 补充配置）。
-# 用法：bench07-configure.sh <站点主机名> <Nexus 地址>。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
+# 用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<文档管家发布编号>]]。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
+#   kb 方式：pg（缺省，知识库在本机的 PG 容器）或 s3vectors（经知识库文档管家读写 S3 Vectors；这时要给文档管家的发布编号，它的调用密钥在「Agent 接入」页上启用，不经过这里）。
 set -euo pipefail
-DOMAIN="${1:-}"; NEXUS="${2:-}"
-[[ "$DOMAIN" =~ ^[a-z0-9.-]+$ && "$NEXUS" =~ ^https://[a-z0-9.-]+$ ]] || { echo "用法：bench07-configure.sh <站点主机名> <Nexus 地址>" >&2; exit 2; }
+DOMAIN="${1:-}"; NEXUS="${2:-}"; KB_MODE="${3:-pg}"; KB_PUBLICATION="${4:-}"
+[[ "$DOMAIN" =~ ^[a-z0-9.-]+$ && "$NEXUS" =~ ^https://[a-z0-9.-]+$ ]] || { echo "用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<文档管家发布编号>]]" >&2; exit 2; }
+[[ "$KB_MODE" == pg || "$KB_MODE" == s3vectors ]] || { echo "kb 方式只能是 pg 或 s3vectors" >&2; exit 2; }
+[[ "$KB_MODE" == pg || "$KB_PUBLICATION" =~ ^pub_[0-9a-f]{16}$ ]] || { echo "s3vectors 方式要给文档管家的发布编号（pub_ 加 16 位十六进制）" >&2; exit 2; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECRETS=/etc/andon-finance/secrets.env
 DIR=/etc/andon-finance/jiuan07
 
 id jiuan07 >/dev/null 2>&1 || useradd --system --home-dir /var/lib/jiuan07 --create-home --shell /sbin/nologin jiuan07
-install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07 /var/lib/jiuan07/nexus
+install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07 /var/lib/jiuan07/nexus /var/lib/jiuan07/custom-rules
 install -d -o root -g jiuan07 -m 0750 "$DIR"
 
 # >>> jiuan07-secret-files
@@ -44,12 +47,18 @@ write_secret hly_app_secret fake-hly-app-secret-jiuan07
 # <<< jiuan07-secret-files
 
 # >>> jiuan07-kb
-# 「规则库 › 制度知识库」：知识库（kb/）的 PG 容器在本机，由 infra/kb.sh 部署。只有它已部署（PG 主机的 .env 在）才开这个功能：
+# 「规则库 › 制度知识库」按 kb 方式（服务的 env 里写 POC07_KB_MODE）：
+# s3vectors：经知识库文档管家（发布 POC07_KB_S3V_PUBLICATION_ID）读写 S3 Vectors；只建上传文件目录 /var/lib/jiuan07/kb-uploads（0700），
+#   不读 PG 主机的 .env、不写任何密钥文件（文档管家的调用密钥在「Agent 接入」页上启用）。
+# pg：知识库（kb/）的 PG 容器在本机，由 infra/kb.sh 部署。只有它已部署（PG 主机的 .env 在）才开这个功能：
 #   连库密码从 PG 主机的 .env 复制成 kb_pg_password（root:jiuan07 0640），不打印；上传文件目录 /var/lib/jiuan07/kb-uploads（0700）；
 #   入库进程用的 Python venv（钉 psycopg 版本，Bedrock 由库里的 kb_embed 调，这里不需要 boto3）。
 KB_ENV=/opt/nexus-pgvector/.env
 KB_LINES=""
-if [[ -s "$KB_ENV" ]]; then
+if [[ "$KB_MODE" == s3vectors ]]; then
+  install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads
+  KB_LINES="POC07_KB_S3V_PUBLICATION_ID=$KB_PUBLICATION"
+elif [[ -s "$KB_ENV" ]]; then
   kb_pw="$(sed -n 's/^NEXUS_DB_PASSWORD=//p' "$KB_ENV" | head -1)"
   kb_user="$(sed -n 's/^NEXUS_DB_USER=//p' "$KB_ENV" | head -1)"
   kb_db="$(sed -n 's/^NEXUS_DB_NAME=//p' "$KB_ENV" | head -1)"
@@ -83,6 +92,7 @@ NEXUS_OPERATOR=/opt/andon-finance/current/operator/scripts/nexus.py
 POC07_NEXUS_HOME=/var/lib/jiuan07/nexus
 TZ=Asia/Shanghai
 NODE_ENV=production
+POC07_KB_MODE=$KB_MODE
 ${KB_LINES}
 ENV
 chown root:jiuan07 "$DIR/env.new"; chmod 0640 "$DIR/env.new"; mv "$DIR/env.new" "$DIR/env"

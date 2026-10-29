@@ -3,10 +3,15 @@
 # 规则（audit-agent/deploy_env.py 是同一套）：逐行 KEY=VALUE；# 开头的行和空行跳过；值可以用一对 " 或 ' 包起来；
 # 值原样取，不展开 $、反引号（不 source、不 eval）；不认识的键、重复的键、格式不对的行都报错（exit 2，带行号）；
 # 空值等于没写。给了 DEPLOY_ENV 时 STACK 和 AWS_REGION 必须写明；文件里写了的键压过 shell 里同名的环境变量。
+# KB_MODE（知识库的部署方式）只能是 pg 或 s3vectors，不写就是 pg；KB_MODE=s3vectors 时 DEPLOY_ENV_S3V_KEYS 这五项都要写，
+# 缺了就报错并一次列出缺哪几项（只看文件里写的，和 STACK / AWS_REGION 一样）。
 
 DEPLOY_ENV_KEYS=(STACK AWS_REGION VPC_ID SUBNET_ID INSTANCE_TYPE DOMAIN_NAME ORIGIN_DOMAIN_NAME JIUAN07_DOMAIN_NAME HOSTED_ZONE_ID
-  CERTIFICATE_ARN CLOUDFRONT_PREFIX_LIST_ID NEXUS_ORIGIN NEXUS_PROFILE ADVISORY_PUBLICATION_ID KB_ALLOWED_CIDR KB_SETTINGS CONNECTOR_ID
+  CERTIFICATE_ARN CLOUDFRONT_PREFIX_LIST_ID NEXUS_ORIGIN NEXUS_PROFILE ADVISORY_PUBLICATION_ID KB_MODE KB_ALLOWED_CIDR KB_SETTINGS CONNECTOR_ID
+  KB_S3V_BUCKET KB_S3V_RULES_INDEX RULES_TOOL_DIR KB_S3V_KEY_ID KB_S3V_PUBLICATION_ID
   AGENT_NAME AGENT_DISPLAY_NAME AGENT_MODEL AGENT_ID PUBLICATION_ID)
+# KB_MODE=s3vectors 时必须写的几项（S3 Vectors 方式：向量桶、规则索引、规则工具目录、文档管家的写入密钥编号和发布）
+DEPLOY_ENV_S3V_KEYS=(KB_S3V_BUCKET KB_S3V_RULES_INDEX RULES_TOOL_DIR KB_S3V_KEY_ID KB_S3V_PUBLICATION_ID)
 # 配置键 → 栈参数（deploy_env_overrides 按这个顺序输出）
 DEPLOY_ENV_PARAMS=(VPC_ID:VpcId SUBNET_ID:SubnetId INSTANCE_TYPE:InstanceType DOMAIN_NAME:DomainName ORIGIN_DOMAIN_NAME:OriginDomainName
   JIUAN07_DOMAIN_NAME:Jiuan07DomainName HOSTED_ZONE_ID:HostedZoneId CERTIFICATE_ARN:CertificateArn CLOUDFRONT_PREFIX_LIST_ID:CloudFrontPrefixListId
@@ -17,7 +22,7 @@ deploy_env_fail() { echo "$1" >&2; exit 2; }
 
 load_deploy_env() {
   [[ -n "${DEPLOY_ENV:-}" ]] || return 0
-  local file="$DEPLOY_ENV" line key value n=0 seen=" " known k
+  local file="$DEPLOY_ENV" line key value n=0 seen=" " known k missing=""
   local line_re='^([A-Z][A-Z0-9_]*)=(.*)$' double_re='^"(.*)"$' single_re="^'(.*)'\$"
   [[ -f "$file" ]] || deploy_env_fail "DEPLOY_ENV=${file}：找不到这个文件（从 poc/infra/env/example.env 复制一份再改）"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -32,6 +37,7 @@ load_deploy_env() {
     [[ "$seen" == *" $key "* ]] && deploy_env_fail "${file}:${n}：键 ${key} 写了两次"
     seen+="$key "
     if [[ "$value" =~ $double_re || "$value" =~ $single_re ]]; then value="${BASH_REMATCH[1]}"; fi
+    [[ "$key" != KB_MODE || -z "$value" || "$value" == pg || "$value" == s3vectors ]] || deploy_env_fail "${file}:${n}：KB_MODE 只能是 pg 或 s3vectors：${value}"
     [[ -n "$value" ]] || continue
     printf -v "$key" '%s' "$value"
     export "${key?}"
@@ -40,6 +46,12 @@ load_deploy_env() {
   for key in STACK AWS_REGION; do
     [[ " ${DEPLOY_ENV_LOADED[*]:-} " == *" $key "* ]] || deploy_env_fail "${file}：没写 ${key}（用配置文件时栈名和区域都要写明，免得动到别的栈）"
   done
+  if [[ " ${DEPLOY_ENV_LOADED[*]:-} " == *" KB_MODE "* && "$KB_MODE" == s3vectors ]]; then
+    for key in "${DEPLOY_ENV_S3V_KEYS[@]}"; do
+      [[ " ${DEPLOY_ENV_LOADED[*]:-} " == *" $key "* ]] || missing+="${missing:+、}${key}"
+    done
+    [[ -z "$missing" ]] || deploy_env_fail "${file}：KB_MODE=s3vectors 时还要写：${missing}（S3 Vectors 方式的几项见 poc/infra/env/example.env）"
+  fi
   echo "环境：${file}（栈 ${STACK}，区域 ${AWS_REGION}）" >&2
 }
 

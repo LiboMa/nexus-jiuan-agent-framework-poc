@@ -30,6 +30,7 @@ function portOf(env, name, fallback) {
 }
 
 export function readSettings(env = process.env) {
+  const stateDir = absolute(env, 'POC07_STATE_DIR', '/var/lib/jiuan07');
   return {
     origin: httpsOrigin(env, 'POC07_ORIGIN'), port: portOf(env, 'POC07_PORT', 4181), bindHost: env.POC07_BIND || '0.0.0.0',
     secretsDir: absolute(env, 'POC07_SECRETS_DIR', '/etc/andon-finance/jiuan07'),
@@ -38,18 +39,33 @@ export function readSettings(env = process.env) {
     // 「Agent 接入」页连 Nexus（列出已发布的 Agent）用的 Operator 命令行；凭证目录是 v0.7.10 自己的，不和 PoC 共用
     operatorScript: absolute(env, 'NEXUS_OPERATOR'), nexusHome: absolute(env, 'POC07_NEXUS_HOME', '/var/lib/jiuan07/nexus'),
     // 服务自己的数据目录：种子时间锚点（seed-anchor.json）等
-    stateDir: absolute(env, 'POC07_STATE_DIR', '/var/lib/jiuan07'),
+    stateDir,
     database: { host: env.POC07_MYSQL_HOST || '127.0.0.1', port: portOf(env, 'POC07_MYSQL_PORT', 3306),
       database: env.POC07_MYSQL_DATABASE || 'jiuan07', user: env.POC07_MYSQL_USER || 'jiuan07_app' },
-    kb: kbSettings(env),
+    kb: kbSettings(env, stateDir),
+    // 「我的规则」：每人上传的自定义规则，两种知识库方式都有
+    customRulesDir: path.join(stateDir, 'custom-rules'),
   };
 }
 
-/** 「规则库 › 制度知识库」：知识库（kb/）在同一台实例的 PG 容器里；没配 POC07_KB_PG_HOST 就不开这个功能。 */
-function kbSettings(env) {
+const PUBLICATION_ID = /^pub_[0-9a-f]{16}$/;
+
+/**
+ * 「规则库 › 制度知识库」按 POC07_KB_MODE（不写就是 pg）：
+ * - pg：知识库（kb/）在同一台实例的 PG 容器里；没配 POC07_KB_PG_HOST 就不开这个功能。
+ * - s3vectors：经知识库文档管家（Nexus 上的发布 POC07_KB_S3V_PUBLICATION_ID）读写 S3 Vectors；调用密钥由「Agent 接入」页启用，不在设置里。
+ */
+function kbSettings(env, stateDir) {
+  const mode = env.POC07_KB_MODE || 'pg';
+  if (mode !== 'pg' && mode !== 's3vectors') throw invalid('POC07_KB_MODE 只能是 pg 或 s3vectors');
+  if (mode === 's3vectors') {
+    const publishId = String(env.POC07_KB_S3V_PUBLICATION_ID ?? '');
+    if (!PUBLICATION_ID.test(publishId)) throw invalid('POC07_KB_S3V_PUBLICATION_ID 应是知识库文档管家的发布编号（pub_ 加 16 位十六进制）');
+    return { mode, publishId, uploadsDir: path.join(stateDir, 'kb-uploads') };
+  }
   if (!env.POC07_KB_PG_HOST) return null;
-  const secretsDir = absolute(env, 'POC07_SECRETS_DIR', '/etc/andon-finance/jiuan07'), stateDir = absolute(env, 'POC07_STATE_DIR', '/var/lib/jiuan07');
-  return { dir: absolute(env, 'POC07_KB_DIR'), python: absolute(env, 'POC07_KB_PYTHON'), uploadsDir: path.join(stateDir, 'kb-uploads'),
+  const secretsDir = absolute(env, 'POC07_SECRETS_DIR', '/etc/andon-finance/jiuan07');
+  return { mode, dir: absolute(env, 'POC07_KB_DIR'), python: absolute(env, 'POC07_KB_PYTHON'), uploadsDir: path.join(stateDir, 'kb-uploads'),
     pg: { host: String(env.POC07_KB_PG_HOST), port: portOf(env, 'POC07_KB_PG_PORT', 5432), db: env.POC07_KB_DB || 'nexus', user: env.POC07_KB_USER || 'nexus',
       passwordFile: path.join(secretsDir, 'kb_pg_password') } };
 }

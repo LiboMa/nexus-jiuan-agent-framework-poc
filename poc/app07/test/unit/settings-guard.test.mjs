@@ -21,6 +21,33 @@ test('设置：默认端口 4181、密钥目录和新库；地址、发布编号
   assert.throws(() => readSettings({ ...ENV, NEXUS_OPERATOR: '' }), /NEXUS_OPERATOR/);
 });
 
+test('知识库方式（POC07_KB_MODE，不写就是 pg）：pg 照旧（没配 POC07_KB_PG_HOST 就不开）；「我的规则」目录单独一项，两种方式都有', () => {
+  const PG = { POC07_KB_PG_HOST: '10.0.1.10', POC07_KB_DIR: '/opt/andon-finance/current/kb', POC07_KB_PYTHON: '/opt/andon-finance/kb-venv/bin/python' };
+  const pgKb = { mode: 'pg', dir: '/opt/andon-finance/current/kb', python: '/opt/andon-finance/kb-venv/bin/python', uploadsDir: '/var/lib/jiuan07/kb-uploads',
+    pg: { host: '10.0.1.10', port: 5432, db: 'nexus', user: 'nexus', passwordFile: '/etc/andon-finance/jiuan07/kb_pg_password' } };
+  assert.equal(readSettings(ENV).kb, null);
+  assert.equal(readSettings({ ...ENV, POC07_KB_MODE: 'pg' }).kb, null);
+  assert.deepEqual(readSettings({ ...ENV, ...PG }).kb, pgKb);
+  assert.deepEqual(readSettings({ ...ENV, ...PG, POC07_KB_MODE: 'pg', POC07_KB_S3V_PUBLICATION_ID: 'pub_0123456789abcdef' }).kb, pgKb);
+  assert.deepEqual(readSettings({ ...ENV, ...PG, POC07_KB_MODE: '' }).kb, pgKb);
+  assert.equal(readSettings(ENV).customRulesDir, '/var/lib/jiuan07/custom-rules');
+  assert.equal(readSettings({ ...ENV, POC07_STATE_DIR: '/srv/j7' }).customRulesDir, '/srv/j7/custom-rules');
+  assert.throws(() => readSettings({ ...ENV, POC07_KB_MODE: 'mongo' }), error => error.code === 'POC_CONFIG_INVALID' && /POC07_KB_MODE/.test(error.message));
+});
+
+test('知识库方式 s3vectors：只有文档管家的发布编号和上传目录（不连 PG、不读 kb_pg_password）；发布编号不是 pub_ 加 16 位十六进制就启动失败', () => {
+  const S3V = { ...ENV, POC07_KB_MODE: 's3vectors', POC07_KB_S3V_PUBLICATION_ID: 'pub_0123456789abcdef' };
+  const settings = readSettings(S3V);
+  assert.deepEqual(settings.kb, { mode: 's3vectors', publishId: 'pub_0123456789abcdef', uploadsDir: '/var/lib/jiuan07/kb-uploads' });
+  assert.equal(settings.customRulesDir, '/var/lib/jiuan07/custom-rules');
+  assert.equal('publishId' in settings, false, '文档管家的发布只在 kb 里');
+  assert.deepEqual(readSettings({ ...S3V, POC07_KB_PG_HOST: '10.0.1.10', POC07_STATE_DIR: '/srv/j7' }).kb,
+    { mode: 's3vectors', publishId: 'pub_0123456789abcdef', uploadsDir: '/srv/j7/kb-uploads' });
+  for (const id of [undefined, '', 'pub_0123', 'pub_0123456789ABCDEF', 'pub_0123456789abcdefa', ' pub_0123456789abcdef', 'pub_0123456789abcdef\n', 'agent_0123456789abcdef']) {
+    assert.throws(() => readSettings({ ...S3V, POC07_KB_S3V_PUBLICATION_ID: id }), error => error.code === 'POC_CONFIG_INVALID' && /POC07_KB_S3V_PUBLICATION_ID/.test(error.message), String(id));
+  }
+});
+
 test('九安配置：测试实例、测试汇联易、AI 独立建议打开但不写死发布（路由由启用记录现算），没有回写，两个本机账号', () => {
   const settings = readSettings(ENV);
   const config = jiuanConfig(settings, { tenantId: 'poc-tenant', connectionId: 'hly-stage-poc', companies: COMPANIES });

@@ -5,6 +5,8 @@
 # 测试台：构件里的九安是构建出来的副本（poc/bench/build-jiuan.sh：开发包 + 补丁 + mysql2）；重启前在实例上配置测试台（bench/bench-configure.sh）。
 #   KB_ALLOWED_CIDR=<私网段> deploy.sh  建栈时一起放行知识库的 PG 端口（栈已在时用 infra/kb.sh sg）；知识库本身用 infra/kb.sh 部署，见 kb/README.md
 #   POC_STORE=memory|mysql 决定服务用内存存储还是本机 MySQL（默认 mysql；回到内存存储：POC_STORE=memory deploy.sh --code-only）。
+#   KB_MODE=pg|s3vectors（一般写在 DEPLOY_ENV 的配置文件里）决定九安 v0.7.10「制度知识库」走哪种方式（默认 pg）；
+#   s3vectors 时 KB_S3V_PUBLICATION_ID 是知识库文档管家的发布，两项都交给 bench/bench07-configure.sh。
 # 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
 set -euo pipefail
 
@@ -22,6 +24,10 @@ CODE_ONLY=false
 [[ "${1:-}" == "--code-only" ]] && CODE_ONLY=true
 POC_STORE="${POC_STORE:-mysql}"
 [[ "$POC_STORE" == "memory" || "$POC_STORE" == "mysql" ]] || { echo "POC_STORE 只能是 memory 或 mysql" >&2; exit 2; }
+# 这两项原样拼进实例上以 root 跑的命令：先核对格式，不合格就在动任何 AWS 资源之前停下
+[[ "${KB_MODE:-pg}" == "pg" || "${KB_MODE:-pg}" == "s3vectors" ]] || { echo "KB_MODE 只能是 pg 或 s3vectors" >&2; exit 2; }
+[[ -z "${KB_S3V_PUBLICATION_ID:-}" || "$KB_S3V_PUBLICATION_ID" =~ ^pub_[0-9a-f]{16}$ ]] || { echo "KB_S3V_PUBLICATION_ID 应是文档管家的发布编号（pub_ 加 16 位十六进制）" >&2; exit 2; }
+[[ "${KB_MODE:-pg}" == "pg" || -n "${KB_S3V_PUBLICATION_ID:-}" ]] || { echo "KB_MODE=s3vectors 时要给 KB_S3V_PUBLICATION_ID（知识库文档管家的发布）" >&2; exit 2; }
 
 say() { printf '\n== %s\n' "$*"; }
 output() {
@@ -153,7 +159,7 @@ ENV_B64="$(printf '%s\n' "$ENV_FILE" | base64 | tr -d '\n')"
 J07_DOMAIN="$(param Jiuan07DomainName)"
 [[ -n "$J07_DOMAIN" && "$J07_DOMAIN" != None ]] || J07_DOMAIN=jiuan-v0710.tinyboat.blog
 # 先装密钥配置文件（root:andon 0640），再写 env，最后重启；任何一步失败都不重启。
-INSTALL="aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors && chown root:andon /etc/andon-finance/secrets.env.new && chmod 0640 /etc/andon-finance/secrets.env.new && mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env && echo $ENV_B64 | base64 -d > /etc/andon-finance/env && chmod 0644 /etc/andon-finance/env && rm -rf /var/tmp/andon-bench-config && mkdir -p /var/tmp/andon-bench-config && aws s3 cp s3://$BUCKET/releases/current.tgz /var/tmp/andon-bench-config/release.tgz --region $REGION --only-show-errors && tar -xzf /var/tmp/andon-bench-config/release.tgz -C /var/tmp/andon-bench-config ./bench && bash /var/tmp/andon-bench-config/bench/bench-configure.sh $POC_STORE && bash /var/tmp/andon-bench-config/bench/bench07-configure.sh $J07_DOMAIN $(param NexusOrigin) && systemctl restart andon-finance-poc.service && systemctl restart andon-jiuan07.service"
+INSTALL="aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors && chown root:andon /etc/andon-finance/secrets.env.new && chmod 0640 /etc/andon-finance/secrets.env.new && mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env && echo $ENV_B64 | base64 -d > /etc/andon-finance/env && chmod 0644 /etc/andon-finance/env && rm -rf /var/tmp/andon-bench-config && mkdir -p /var/tmp/andon-bench-config && aws s3 cp s3://$BUCKET/releases/current.tgz /var/tmp/andon-bench-config/release.tgz --region $REGION --only-show-errors && tar -xzf /var/tmp/andon-bench-config/release.tgz -C /var/tmp/andon-bench-config ./bench && bash /var/tmp/andon-bench-config/bench/bench-configure.sh $POC_STORE && bash /var/tmp/andon-bench-config/bench/bench07-configure.sh $J07_DOMAIN $(param NexusOrigin) '${KB_MODE:-pg}' '${KB_S3V_PUBLICATION_ID:-}' && systemctl restart andon-finance-poc.service && systemctl restart andon-jiuan07.service"
 COMMANDS="$(printf '{"commands":["%s","sleep 5","systemctl is-active andon-finance-poc.service","systemctl is-active andon-jiuan07.service"]}' "$INSTALL")"
 COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --comment 'andon-finance-poc deploy' \
   --parameters "$COMMANDS" --query Command.CommandId --output text)"

@@ -192,6 +192,6 @@ test('runner：解析读 REPORT 行；入库和预览用 --embed sql，密码只
   assert.equal(readSettings({ POC07_ORIGIN: 'https://jiuan.example', NEXUS_ORIGIN: 'https://nexus.example', NEXUS_OPERATOR: '/opt/nexus.py' }).kb, null);
   const kb = readSettings({ POC07_ORIGIN: 'https://jiuan.example', NEXUS_ORIGIN: 'https://nexus.example', NEXUS_OPERATOR: '/opt/nexus.py', POC07_KB_PG_HOST: '10.0.1.10',
     POC07_KB_DIR: '/opt/andon-finance/current/kb', POC07_KB_PYTHON: '/opt/andon-finance/kb-venv/bin/python' }).kb;
-  assert.deepEqual(kb, { dir: '/opt/andon-finance/current/kb', python: '/opt/andon-finance/kb-venv/bin/python', uploadsDir: '/var/lib/jiuan07/kb-uploads',
+  assert.deepEqual(kb, { mode: 'pg', dir: '/opt/andon-finance/current/kb', python: '/opt/andon-finance/kb-venv/bin/python', uploadsDir: '/var/lib/jiuan07/kb-uploads',
     pg: { host: '10.0.1.10', port: 5432, db: 'nexus', user: 'nexus', passwordFile: '/etc/andon-finance/jiuan07/kb_pg_password' } });
 });
