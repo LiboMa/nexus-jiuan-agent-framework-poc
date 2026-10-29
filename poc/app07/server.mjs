@@ -23,6 +23,8 @@ import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
 import { createKbRoutes } from './kb-routes.mjs';
 import { createKbRunner } from './kb-runner.mjs';
+import { createKbS3vClient } from './kb-s3v-client.mjs';
+import { createKbS3vRoutes } from './kb-s3v-routes.mjs';
 import { a2aCall } from '../app/nexus/a2a-client.mjs';
 import { fetchAgentCard } from '../app/nexus/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
@@ -144,11 +146,14 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
   listAdviceSummaries: runtimeRegistry.listAdviceSummaries, close: runtimeRegistry.close };
 
 const intake = intakeRoutes({ fake });
-// 「规则库 › 制度知识库」：上传审批矩阵 .docx → 解析 → 入库预览 → 确认入库；历史、检索、检索日志（知识库 kb/ 在同一台实例的 PG 容器里）
-const kb = settings.kb?.mode === 'pg' ? createKbRoutes({ runner: createKbRunner({ python: settings.kb.python, dir: settings.kb.dir, pg: settings.kb.pg }), uploadsDir: settings.kb.uploadsDir, log }) : null;
+// 「规则库 › 制度知识库」按 POC07_KB_MODE 挂其中一套（同一个前缀，两套不同时挂）：
+// - pg：上传审批矩阵 .docx → 解析 → 入库预览 → 确认入库；历史、检索、检索日志（知识库 kb/ 在同一台实例的 PG 容器里）
+// - s3vectors：经 A2A 调知识库文档管家的发布读写 S3 Vectors；调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效
+const kb = settings.kb?.mode === 's3vectors'
+  ? createKbS3vRoutes({ client: createKbS3vClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
+    credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log })
+  : settings.kb?.mode === 'pg' ? createKbRoutes({ runner: createKbRunner({ python: settings.kb.python, dir: settings.kb.dir, pg: settings.kb.pg }), uploadsDir: settings.kb.uploadsDir, log }) : null;
 if (kb) await kb.start();
-// S3 Vectors 方式的「公司制度」接口还没接上：这一版不开这个页面（不连 PG）
-if (settings.kb?.mode === 's3vectors') log('POC_KB_S3V_NOT_WIRED 「制度知识库」的 S3 Vectors 方式还没接上，这一版不开这个页面');
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
 const contract = J.contractChecks.loadContract();
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };

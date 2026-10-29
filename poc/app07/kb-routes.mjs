@@ -8,6 +8,7 @@
  *   GET  …/documents、…/documents/<id>                     上传历史；一条详情（带这一版解析出的规则）
  *   GET  …/search?q=&k=&segment=                           语义检索（库里的 kb_search，和审核 Agent 用的同一个）
  *   GET  …/search-log                                      检索日志：审核 Agent、页面、verify 查了什么、命中了哪些
+ *   GET  …/mode                                            { mode: 'pg', ready: true }：页面据此画「公司制度」块（S3 Vectors 方式见 kb-s3v-routes.mjs）
  * 这些路径不在 /platform 下，九安不替它们读请求体，这里自己读；会话、来源和 CSRF 由九安校验。
  * 原文件存 <uploadsDir>/<sha256>.docx（0600），解析结果存 <id>.rules.json；数据库的读写都经 runner（kb-runner.mjs）。
  */
@@ -18,7 +19,7 @@ import path from 'node:path';
 const BASE = '/api/analysis/v1/poc/kb';
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const TAG = /^[a-z0-9][a-z0-9-]{1,62}$/;
-const MESSAGES = Object.freeze({
+export const KB_MESSAGES = Object.freeze({
   KB_FORBIDDEN: '只有管理员能管理制度知识库。',
   KB_UPLOAD_INVALID: '只收审批矩阵格式的 Word 文档（.docx）：这个文件不是有效的 .docx，或者解压后太大、条目太多。',
   KB_UPLOAD_TOO_LARGE: '文件超过 20 MB。',
@@ -43,6 +44,28 @@ async function readBody(req, max, code = 'KB_UPLOAD_TOO_LARGE') {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * 请求体里的 .docx（两种知识库方式共用）：Content-Type 是 .docx、X-File-Name（encodeURIComponent 后的文件名）以 .docx 结尾、
+ * 不超过 maxBytes、zip 目录合格（checkDocx）；不合格抛 KB_UPLOAD_INVALID（400）/ KB_UPLOAD_TOO_LARGE（413）。
+ */
+export async function readDocxUpload(req, maxBytes) {
+  const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  let name = '';
+  try { name = path.basename(decodeURIComponent(String(req.headers['x-file-name'] || ''))).slice(0, 200); } catch { name = ''; }
+  if (type !== DOCX || !/\.docx$/iu.test(name)) fail('KB_UPLOAD_INVALID', 400);
+  const bytes = await readBody(req, maxBytes);
+  if (!checkDocx(bytes)) fail('KB_UPLOAD_INVALID', 400);
+  return { name, bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+}
+
+/** 原文件存 <uploadsDir>/<sha256>.docx（目录 0700，文件 0600）。 */
+export async function storeDocx(uploadsDir, { sha256, bytes }) {
+  await mkdir(uploadsDir, { recursive: true, mode: 0o700 });
+  const file = path.join(uploadsDir, `${sha256}.docx`);
+  await writeFile(file, bytes, { mode: 0o600 });
+  return file;
 }
 
 /** 只看 zip 的目录，不解压：本地文件头、中央目录在、条目数和解压后总大小不超限、里面有 word/document.xml。 */
@@ -93,16 +116,8 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
   }
 
   async function upload(user, req) {
-    const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-    let name = '';
-    try { name = path.basename(decodeURIComponent(String(req.headers['x-file-name'] || ''))).slice(0, 200); } catch { name = ''; }
-    if (type !== DOCX || !/\.docx$/iu.test(name)) fail('KB_UPLOAD_INVALID', 400);
-    const bytes = await readBody(req, maxBytes);
-    if (!checkDocx(bytes)) fail('KB_UPLOAD_INVALID', 400);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    await mkdir(uploadsDir, { recursive: true, mode: 0o700 });
-    const file = path.join(uploadsDir, `${sha256}.docx`);
-    await writeFile(file, bytes, { mode: 0o600 });
+    const { name, bytes, sha256 } = await readDocxUpload(req, maxBytes);
+    const file = await storeDocx(uploadsDir, { sha256, bytes });
     const parsedFile = scratch('.rules.json');
     const parsed = await runner.parse(file, parsedFile);
     const reportFile = await writeJson(scratch('.report.json'), parsed.report);
@@ -111,7 +126,7 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
     finally { await rm(reportFile, { force: true }); }
     if (parsed.code !== 0) {
       await rm(parsedFile, { force: true });
-      await runner.admin(['status', String(id), '--status', 'failed', '--error', parsed.message || MESSAGES.KB_PARSE_FAILED]);
+      await runner.admin(['status', String(id), '--status', 'failed', '--error', parsed.message || KB_MESSAGES.KB_PARSE_FAILED]);
       fail('KB_PARSE_FAILED', 422, parsed.message);
     }
     await rename(parsedFile, rulesFile(id));
@@ -178,6 +193,7 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
       return [200, await runner.admin(['search', question, '--k', String(k), ...(segment ? ['--segment', segment] : [])])];
     }
     if (method === 'GET' && route === '/search-log') return [200, await runner.admin(['search-log', '--limit', '50'])];
+    if (method === 'GET' && route === '/mode') return [200, { mode: 'pg', ready: true }];
     return null;
   }
 
@@ -195,10 +211,10 @@ export function createKbRoutes({ runner, uploadsDir, maxBytes = 20 * 1024 * 1024
         if (!answer) return false;
         send(res, answer[0], { data: answer[1] });
       } catch (error) {
-        const known = Object.hasOwn(MESSAGES, error?.code);
+        const known = Object.hasOwn(KB_MESSAGES, error?.code);
         if (!known) log(`POC_KB_FAILED ${error?.code || ''}`);
         const code = known ? error.code : 'KB_UNAVAILABLE';
-        send(res, known ? error.status : 503, { error: { code, message: error?.detail || MESSAGES[code] } });
+        send(res, known ? error.status : 503, { error: { code, message: error?.detail || KB_MESSAGES[code] } });
       }
       return true;
     },

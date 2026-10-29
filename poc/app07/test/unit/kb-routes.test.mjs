@@ -195,3 +195,12 @@ test('runner：解析读 REPORT 行；入库和预览用 --embed sql，密码只
   assert.deepEqual(kb, { mode: 'pg', dir: '/opt/andon-finance/current/kb', python: '/opt/andon-finance/kb-venv/bin/python', uploadsDir: '/var/lib/jiuan07/kb-uploads',
     pg: { host: '10.0.1.10', port: 5432, db: 'nexus', user: 'nexus', passwordFile: '/etc/andon-finance/jiuan07/kb_pg_password' } });
 });
+
+test('GET /mode：PG 方式回 { mode: pg, ready: true }（页面据此画「公司制度」块）；只给管理员', async t => {
+  const h = await harness();
+  t.after(h.done);
+  const mode = await h.ask('GET', '/mode');
+  assert.deepEqual([mode.status, mode.payload.data], [200, { mode: 'pg', ready: true }]);
+  assert.equal((await h.ask('GET', '/mode', { role: 'analyst' })).status, 403);
+  assert.deepEqual(h.runner.calls, [], '不碰知识库');
+});
