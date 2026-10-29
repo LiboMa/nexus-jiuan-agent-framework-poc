@@ -300,99 +300,36 @@
 
 ---
 
-## 修订（2026-10-29，项目负责人改为方案 B、最终用 PG）
+## 修订（2026-10-29，项目负责人：最终用 PG，S3 Vectors 只做代码）
 
-依据：Spec 第 7 节。下面几条**替换**前文对应的部分；没提到的 Task（1–3、5–9）照旧。
+依据：Spec 第 7 节。下面几条**替换**前文对应的部分；没提到的 Task（1–3、5–10、13）照旧。
 
-**Global Constraints 改动：**
-- 「本轮只跑 S3 Vectors 方式的端到端，现有环境最后停在 `s3vectors`」改为：**本轮只跑 PG 方式的端到端，现有环境最后停在 `pg`**（`KB_MODE` 不写，现有配置文件不加 `KB_MODE`）。
-- 两种方式下审核 Agent 都只调 `rules_search(question, segment, amount, top_k)`，返回格式相同；提示词一份，没有 SQL；发布的动态配置里不绑连接器。
-- PG 版工具用密钥 `KB_PG_KEY_ID`（现有环境 `key-a015b93ad361`，即 PG 连接器绑的那把），不新建密钥。
+**Global Constraints 改动：** 「本轮只跑 S3 Vectors 方式的端到端，现有环境最后停在 `s3vectors`」改为：**本轮只跑 PG 方式的端到端，现有环境最后停在 `pg`**（`KB_MODE` 不写，现有配置文件不加 `KB_MODE`）。
 
-**执行顺序：** 5 → 14（PG 连通实测，人确认后写，和代码任务并行）→ 6 → 7 → 8 → 9 → 15 → 16 → 17 → 18 → 19 → 13。Task 4、10、11、12 被替换。
+**执行顺序：** 7 → 8 → 9 → 10 → 18 → 19 → 13。
 
-### Task 4: （这一轮不做——项目负责人 2026-10-29 决定 S3 Vectors 不上线）
-
-### Task 10: （被 Task 17 替换）
+### Task 4: （这一轮不做——S3 Vectors 不上线）
 
 ### Task 11: （被 Task 18 替换）
 
 ### Task 12: （被 Task 19 替换）
 
-### Task 14: PG 连通实测（人确认后写）
+### Task 14: （已做：PG 连通实测，结果见 Spec 第 7 节；方案 B 撤回，不再有后续）
 
-**Files:** 探测工具只放 `/tmp`（一次性，不提交）；结果记进执行记录。
+### Task 18: 现有环境上线（PG 方式，人确认后写）
 
-- [ ] **Step 1:** 读 Nexus v0.3.28 源码（`/Users/malibo/MyDev/LLM/Nexus-AI-strands/Nexus-AI`）和 `knowbase-s3vectors-agent/scripts/nexus_admin.py` 已验证的请求，定下：`database_credentials` 密钥注入给工具时有哪些字段（`get_tool_credentials()` 拿到什么）；导入时怎么声明 `key_name` / `key_type=database_credentials`；能不能不改任何 Agent 的提示词、只给一个测试会话加上这个工具（会话级动态配置的 `tools` 字段，或别的办法）；会话、动态配置、工具、绑定怎么删。
-- [ ] **Step 2:** 写探测工具 `pg_probe(question: str) -> str`：从注入的密钥取连库参数，`psycopg` 连库（5 秒超时），只读事务里 `SELECT rule_id FROM kb_search(%s, 3, NULL, 'agent')`，返回 `{success, rule_ids, elapsed_ms}` 或 `{success: false, error_type}`（不带密钥、不带连接串）。
-- [ ] **Step 3:** 把要发的每个写请求（导入、绑定、会话 / 动态配置、对话、清理）列出来给项目负责人看；同意后执行。
-- [ ] **Step 4:** 判定：拿到 `rule_ids`（非空）= 方案 B 的 PG 一半可行；`credentials_missing` / 连不上 / 没有 psycopg = 停下，带着原因回来找项目负责人。然后清理：删工具和绑定、测试会话与动态配置；核对 `GET /api/v2/keys/key-a015b93ad361` 的 `bound_tool_ids` 回到原样。
+**Files:** 无代码改动（问题回到对应 Task 修）；本机 `poc/infra/env/beine1013.env`（不进仓库，不加 `KB_MODE`）。
 
-### Task 15: PG 方式的配置键
+- [ ] **Step 1:** `DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/deploy.sh --code-only`：构件带补丁 0005、外壳的「我的规则」和自定义规则外壳；健康检查通过；「制度知识库」页仍是 PG 方式，分析员能看到「我的规则」。
+- [ ] **Step 2:** `apply.py --env poc/infra/env/beine1013.env --dry-run` 的输出给项目负责人看（应只有自定义规则一段和 `agentVersion`）；同意后去掉 `--dry-run` 跑一次；再读线上：提示词与 `render_prompt` 的 `pg` 结果一致，动态配置里仍有 `conn-f0c7233959d9`。`setup.py --dry-run` 应是一次写都没有。
+- [ ] **Step 3:** 在「Agent 接入」页用「测试 › 单据」测审批 Agent 一张对公付款单：有结论、`note` 里没有「自定义规则」；「制度知识库」页的检索日志里有这一次 `caller` 为审核 Agent 的调用。不通就停下报告。
 
-**Files:**
-- Modify: `poc/infra/lib/deploy-env.sh`（`DEPLOY_ENV_KEYS`）、`audit-agent/deploy_env.py`（`KEYS`）、`poc/infra/env/example.env`
-- Test: `poc/app/test/unit/deploy-env.test.mjs`、`audit-agent/tests/test_deploy_env.py`
-
-**Interfaces:**
-- Produces: 配置键 `KB_PG_RULES_TOOL_DIR`（形如 `kb_pg_rules_0a1b2c3d`）、`KB_PG_KEY_ID`（形如 `key-0123456789ab`）。读配置时只认、不强制；必填检查在 Task 17 的 `target_from`。
-
-- [ ] **Step 1: 写测试**：两边都认这两个键；`KB_MODE` 不写、也不写这两个键的现有配置照样读得进来。
-- [ ] **Step 2: 跑**，FAIL → **Step 3: 实现**（example.env 里各一行例子和中文说明）→ **Step 4: 跑** 两边测试 PASS。
-- [ ] **Step 5: 提交** `feat(infra): config keys for the PG rules_search tool`
-
-### Task 16: `kb/` 里的 PG 版 `rules_search`（只做路由）
-
-**Files:**
-- Create: `kb/tools/pg_rules_tools.py`、`kb/tests/test_pg_rules_tools.py`
-- Modify: `kb/lib/nexus_api.py`（导入 / 发布新版本 / 核对 / 绑定这个工具的命令，请求格式照 `knowbase-s3vectors-agent/scripts/nexus_admin.py` 已验证的写法）、`kb/deploy.sh`（新阶段 `rules-tool`，管理员密码照现有的 SSM 密封读取）
-- Test: `kb/tests/test_pg_rules_tools.py`（`python3 -B -m unittest discover -s kb/tests`）
-
-**Interfaces:**
-- Consumes: Task 14 定下的注入字段与导入声明；`kb_search(question text, k int, segment text, caller text)`（`kb/sql/kb_search.sql`，核对真实签名和返回列）；`approval_rules` 的 `rule_id, rule_type, chapter_no, segment, amount_tier, content, source_tag`。
-- Produces（`@tool`，返回 JSON 字符串）：`rules_search(question: str, segment: str = "", amount: float | None = None, top_k: int = 8) -> str`，返回 `{success, filter: {"applied": false, "query": <拼成的那句>}, results: [{rule_id, rule_type, chapter_no, segments, amt_kind, source_id, text, distance}]}`，失败 `success=false, error_type, message`。字段名、类型与 S3 Vectors 版逐个相同：`segments` 按 S3 Vectors 版同样的拆法从 `segment` 列算（只认「全板块」为 `"*"`），`amt_kind` 按 `tier_interval` 算（`range` 或 `other`），`source_id` = `source_tag`，`text` = `content`，`distance` = `1 - kb_search 的语义分`（实现方核对分数含义后写进注释）。
-- 做法：`query = " ".join(x for x in (segment, question, 金额文字) if x)`，金额文字按「单笔<金额>元」写（整数不带小数点）；`kb_search(query, top_k, NULL, 'agent')` → 按编号取全文 → 保持 `kb_search` 的先后返回。**不按板块、金额筛**。只读事务；连接 5 秒超时；没拿到注入的密钥就 `credentials_missing`，不回落任何默认凭据；`top_k` 只收 1–20。
-- `kb.sh rules-tool [--dry-run]`：导入（声明需要密钥）、绑到 `KB_PG_KEY_ID`、核对 `configured=True`，结果写进 kb 的状态文件（`RULES_TOOL_DIR`）；再跑一次是「已存在」。
-
-- [ ] **Step 1: 写测试**（假的 psycopg 连接：记下执行的 SQL 和参数，按 SQL 回预设的行）：`query_composed`——`segment="九安", question="房租 对公付款", amount=30000` 时传给 `kb_search` 的是「九安 房租 对公付款 单笔30000元」、`k=8`、`caller='agent'`；不给板块 / 金额时只有问题本身；`no_filtering`——`kb_search` 回来的编号全部返回、顺序不变（包括板块对不上的）；`contract_shape`——返回字段与 S3 Vectors 版 `rules_search` 的结果逐个同名同类型（测试里读 `knowbase-s3vectors-agent/tools/s3vectors_rules_tools.py` 的一个真实结果作对照，或把字段表写成常量两边共用）；`readonly_and_timeout`——连接参数里有 5 秒超时、事务是只读；`credentials_missing`；`no_secret_in_errors`——连不上时错误里没有密码和连接串；`top_k_range`——0 和 21 回 `invalid_parameter`。
-- [ ] **Step 2: 跑**，FAIL → **Step 3: 实现** → **Step 4: 跑** PASS；`kb.sh rules-tool --dry-run` 只打印计划。
-- [ ] **Step 5: 提交** `feat(kb): PG rules_search tool — routes to kb_search, same contract as the S3 Vectors one`
-
-### Task 17: 审核 Agent：一份提示词，两种后端
-
-**Files:**
-- Modify: `audit-agent/prompt.yaml`、`audit-agent/nexus_common.py`、`audit-agent/setup.py`、`audit-agent/apply.py`、`audit-agent/README.md`、`kb/agent/prompt-rules.txt`（或 `kb/deploy.sh` 的 `agent` 阶段，见下）
-- Create / Modify: `audit-agent/tests/fixtures/prompt-expected-beine1013.yaml`（PG）、`audit-agent/tests/fixtures/prompt-expected-beine1013-s3vectors.yaml`
-- Test: `audit-agent/tests/test_apply.py`、`audit-agent/tests/test_setup.py`、`kb/tests/`（如改了 `prompt-rules.txt`）
-
-**Interfaces:**
-- Consumes: Task 5 / 15 的配置键；Task 16 与 Task 2 的工具模块名 `pg_rules_tools` / `s3vectors_rules_tools`。
-- Produces：
-  - `Target` 加 `kb_mode`、`rules_tool_path`（`imported_tools/<dir>/<模块>/rules_search`，`pg` 用 `KB_PG_RULES_TOOL_DIR` + `pg_rules_tools`，`s3vectors` 用 `RULES_TOOL_DIR` + `s3vectors_rules_tools`）、`rules_key_id`（`KB_PG_KEY_ID` / `KB_S3V_KEY_ID`）；`target_from` 按方式检查必填，缺了报错写明是哪个键、从哪里抄（`kb.sh status` / 文档管家包的 `.state/import-rules.json`）。不给配置文件时（现有环境的缺省 `EXISTING`）也要有这三项的值，现有环境 PG：工具目录在 Task 18 导入后回填进 `EXISTING`。
-  - 提示词：只有一个占位 `${RULES_TOOL}`（`tools_dependencies` 里唯一的一项）；第 4 条例外只调 `rules_search`；第 7 条删掉；第 8 条、第 9 条 ② 用 `rules_search(question="<业务事项的 2–4 个关键词>", segment="<所属板块>", amount=<支付金额，元>, top_k=8)`，不超过 3 次，板块拿不准不填 `segment`、金额读不出不填 `amount`（Task 2 的工具对读不出的金额回 `invalid_parameter`）；自定义规则一段照原 Task 10；`agentVersion` 改成 `jiuan-audit-ai-kb-2026-10-29.1`。两种方式渲染出的提示词只差 `tools_dependencies` 那一行。
-  - `setup.py`：两种方式都 `ensure_no_connector`（动态配置里有 `CONNECTOR_ID` 就去掉，其余字段原样带回，保存后再读一次确认），并 `check_rules_binding`（`GET /api/v2/keys/tools-requiring-key?limit=500` 里路径对得上的 `rules_search` 是 `configured=True`；Operator 调不了就非 0 退出并说明用哪个管理员命令核对）。
-  - `kb/agent/prompt-rules.txt` 与审核 Agent 第 8 条不能互相覆盖：要么改成同一段 `rules_search` 写法、测试钉住两边逐字相同；要么 `kb.sh agent` 不再改审核 Agent 的提示词（只做它自己的检查）。选一种，写进 `kb/GUIDE.md` 和测试。
-
-- [ ] **Step 1: 写测试**：`render_pg` 与新的 PG 期望文件相同，不含 `data_connector`、`approval_rules`、`kb_search`、`SELECT`，`tools_dependencies` 只有 `imported_tools/<dir>/pg_rules_tools/rules_search`；`render_s3vectors` 与 PG 版只差那一行；`target_from` 缺键报错；`setup_unbinds_connector`（`['conn-f0c7233959d9', 'conn-other']` → 只剩 `conn-other`，其余字段原样）；`setup_binding_missing` 非 0 退出；`prompt_rules_shared`（按上面选的那种）。
-- [ ] **Step 2: 跑** `python3 -B -m unittest discover -s audit-agent/tests`（和 `kb/tests`），FAIL → **Step 3: 实现** → **Step 4: 跑** PASS。
-- [ ] **Step 5: 提交** `feat(audit-agent): one prompt, rules_search for either backend; no connector`
-
-### Task 18: 现有环境上线 PG 版 `rules_search`（人确认后写）
-
-**Files:** 无代码改动（问题回到对应 Task 修）；本机 `poc/infra/env/beine1013.env`、kb 的本机配置（不进仓库）。
-
-- [ ] **Step 1:** `kb.sh rules-tool --dry-run` → 给项目负责人看 → `kb.sh rules-tool`：工具导入、绑 `key-a015b93ad361`、`configured=True`；把目录名回填进 `beine1013.env` 的 `KB_PG_RULES_TOOL_DIR`、`KB_PG_KEY_ID=key-a015b93ad361`（`KB_MODE` 不写），以及 `audit-agent/nexus_common.py` 的 `EXISTING`（这一处要提交）。
-- [ ] **Step 2:** `DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/deploy.sh --code-only`：构件带补丁 0005、外壳的「我的规则」和自定义规则外壳；健康检查通过；「制度知识库」页仍是 PG 方式。
-- [ ] **Step 3:** `setup.py --dry-run`、`apply.py --dry-run` 给项目负责人看；同意后各跑一次；再读线上：提示词与渲染结果一致，`tools_dependencies` 只有 PG 版 `rules_search`，动态配置里没有 `conn-f0c7233959d9`。
-- [ ] **Step 4:** 在「Agent 接入」页用「测试 › 文本」问审核 Agent：「九安板块 房租 对公付款 单笔 3 万元，由谁审批？」——回答引用 `C05-` 开头的规则编号；「制度知识库」页的检索日志里有这一次 `caller=agent` 的调用。不通就停下报告。
-
-### Task 19: 端到端测试（PG）与检索回归
+### Task 19: 端到端测试（PG）
 
 照原 Task 12 改测试代码（按 `KB_MODE` 分支、清场、自定义规则用例、日志里核对 `POC_CUSTOM_RULES`），只是：
 
-- [ ] **Step 1:** 改测试代码同原 Task 12 Step 1；`pg` 分支保留现有「制度知识库」用例（上传、预览、入库、检索、**检索日志里有审核 Agent 的调用**）和位置，`knownRuleIds` 照旧经 SSM 查 `approval_rules`。
+- [ ] **Step 1:** 改测试代码同原 Task 12 Step 1；`pg` 分支保留现有「制度知识库」用例（上传、预览、入库、检索、检索日志里有审核 Agent 的调用）和位置，`knownRuleIds` 照旧经 SSM 查 `approval_rules`。原 Task 12 的 `rules_regression.py` 这一轮不做。
 - [ ] **Step 2:** `DEPLOY_ENV=poc/infra/env/beine1013.env KB_E2E_DOCX=<本机真实制度> bash poc/app/test/e2e/run07.sh`：全部用例通过；四张单 001 pass、002 fail、003 pass、004 fail；自定义规则用例通过。
-- [ ] **Step 3: 检索回归（PG）**：`kb/tests/rules_regression_pg.py <研究 experiments 目录>`，经 `kb/` 现有的端口转发连 PG，用 E10 两套题库和 Haiku 抽出的板块 / 金额调 `pg_rules_tools` 的检索逻辑（同一份代码，凭据走本机），打印前 1 / 前 5 命中，只打印指标和规则编号。不设门槛，结果给项目负责人。
-- [ ] **Step 4: 提交** `test(e2e): reviewers' own rules on the PG backend; retrieval regression for PG rules_search`
+- [ ] **Step 3: 提交** `test(e2e): reviewers' own rules; KB mode-aware cases (PG run)`
 
 **Task 13 补充：** 文档以 PG 方式为主、S3 Vectors 为另一种部署方式；写明 S3 Vectors 方式这一轮只做了代码和单元测试、没有上线（Task 4 没做）。

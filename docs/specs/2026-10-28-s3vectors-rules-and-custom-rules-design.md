@@ -188,18 +188,12 @@ PG 方式的架构见 10-26 的设计第 2 节，不变；两种方式只在「�
 
 改动都在 `audit-nexus` 里：测试台、补丁、审核 Agent、端到端，加上复制进来的 `knowbase-s3vectors-agent/`（工具、提示词、AWS 脚本）。`nexus-customer-deploy/knowbase-s3vectors-agent/` 原目录不动。按项目负责人的规矩：端到端测试通过、项目负责人确认之后再提交、推送。
 
-## 7. 补充（2026-10-29，项目负责人）：方案 B——一个 `rules_search`，两种后端；最终用 PG
+## 7. 补充（2026-10-29，项目负责人）：最终用 PG；S3 Vectors 只做代码
 
 项目负责人在执行中改了几项，以本节为准；和前文冲突的地方按本节。
 
 | 问题 | 决定 |
 |---|---|
-| 审核 Agent 怎么查规则 | **方案 B**：两种方式下审核 Agent 都只调一个 `rules_search(question, segment, amount, top_k)`，参数和返回格式完全一样（3.2 节那一份：`rule_id, rule_type, chapter_no, segments, amt_kind, source_id, text, distance`，外加实际用的 `filter`）。提示词只有一份，不再写 SQL，也不再有「运维 / 测验模式读写数据库」那一条；工具的路径和绑的密钥按 `KB_MODE` 从配置里取 |
-| PG 后端的工具 | 新写 **`kb/` 里的 PG 版 `rules_search` 工具模块，只做路由**（项目负责人 2026-10-29）：用注入的 `database_credentials` 密钥连 PG，把「板块 问题 金额」拼成一句（和现在提示词里「九安 房租 对公付款 单笔3万」的写法一样）交给现有的 `kb_search(这句话, top_k, NULL, 'agent')`，再按规则编号取 `approval_rules.content` 作为 `text`，按统一格式返回。**不按板块、金额筛**，PG 的检索结果和现在线上已验证的一致，金额档仍由审核 Agent 读规则文字判断；返回里的 `filter` 写明没有筛（`{"applied": false, "query": <拼成的那句>}`）。向量仍在 PG 里由 `kb_embed()` 生成，检索日志照常记 |
-| PG 工具用什么密钥 | 复用 PG 连接器 `conn-f0c7233959d9` 现在绑的数据库密钥 **`key-a015b93ad361`**，不新建密钥 |
-| 连接器 | 两种方式下审核 Agent 都不再用连接器：发布的动态配置里解绑 `conn-f0c7233959d9`。连接器本身保留（「制度知识库」页的 PG 方式、`kb.sh verify` 还在用它们自己的连库方式，不经这个连接器的照旧） |
-| 最终方式与测试 | 现有环境**最后停在 PG**；本轮**只跑 PG 方式的端到端**（含自定义规则）。S3 Vectors 方式只做代码和单元测试，**任务 4（S3 Vectors 上线）这轮不做** |
-| 先验证 | 先实测：Nexus 上导入的工具代码，在隔离环境里能不能拿到 `database_credentials` 密钥、能不能用 psycopg 连到 10.0.1.38:5432 并调 `kb_search`。导入一个只读的探测工具、绑 `key-a015b93ad361`、在一个测试会话里调一次、用完删掉；请求先给项目负责人看 |
-| 配置键 | PG 方式新增 `KB_PG_RULES_TOOL_DIR`（PG 工具导入后的目录名）和 `KB_PG_KEY_ID`（现有环境 `key-a015b93ad361`）。只在 `audit-agent/setup.py` / `apply.py` 需要它们时检查（不在读配置时强制，免得现有环境的配置文件因为缺这两个键而读不进来） |
-| `kb/agent/prompt-rules.txt` | 现在与审核 Agent 第 8 条共用、由 `kb.sh agent` 写进审核 Agent。改成 `rules_search` 的写法，或不再由 `kb.sh agent` 改审核 Agent 的提示词——由实现方定，但两边不能互相覆盖 |
-| 检索回归 | 在 PG 后端上用 E10 的两套题库跑一遍 `rules_search`（经 `kb/` 现有的端口转发连 PG），报告前 1 / 前 5 命中；PG 后端没做过 E10，所以不设门槛，结果给项目负责人看 |
+| 最终方式与测试 | 现有环境**最后停在 PG**（`KB_MODE` 不写）；本轮**只跑 PG 方式的端到端**（含自定义规则）。S3 Vectors 方式只做代码和单元测试，**任务 4（S3 Vectors 上线）这轮不做**，也不跑它的检索回归 |
+| 审核 Agent | **照原设计（3.7）**：提示词按 `KB_MODE` 渲染两种。`pg` 和现在线上的逐字一致，只多自定义规则一段，仍经连接器 `conn-f0c7233959d9` 用 SQL 和 `kb_search`；`s3vectors` 用 `rules_search`。PG 方式不解绑连接器 |
+| 方案 B（一个 `rules_search`、PG 和 S3 Vectors 两种后端） | 讨论过，**撤回**，不做 PG 版 `rules_search`。撤回前做过一次 PG 连通实测（经项目负责人同意，已清理）：导入的工具在隔离环境里拿到了数据库密钥 `key-a015b93ad361` 的 host / port / database / username / password，用 psycopg 3.3.4 连上 10.0.1.38:5432，`kb_search` 回了 3 条 `C05-` 规则，连接 332 ms、总共 767 ms；只读事务里 `kb_search` 不写检索日志。留作以后要做方案 B 时的依据 |
