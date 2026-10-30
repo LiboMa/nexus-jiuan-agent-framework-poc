@@ -446,6 +446,14 @@ test('九安 v0.7.10 的端到端测试按知识库方式走：run07.sh 从 DEPL
   assert.match(spec, /journalLines\('POC_CUSTOM_RULES '\)/, '带空格：POC_CUSTOM_RULES_FAILED 不算');
   assert.match(spec, /'s3vectors', 'get-vectors'[\s\S]{0,300}'--return-metadata'/);
   assert.match(spec, /FROM kb_search_log/);
+  // 页面那次检索要认得出（md5 取去掉首尾空白的问题），审核 Agent 的另数
+  assert.match(spec, /createHash\('md5'\)\.update\(KB_QUESTION\.trim\(\), 'utf8'\)/);
+  assert.match(spec, /count\(\*\) FILTER \(WHERE md5\(question\) = /);
+  // 日志里「没有这一行」要有凭据：只有 grep 的退出码 1 算没找到，journalctl 读不出就失败
+  const journal = spec.slice(spec.indexOf('async function journalLines'), spec.indexOf('async function knownRuleIds'));
+  assert.doesNotMatch(journal, /\|\| true/);
+  assert.match(journal, /if \[ "\$rc" -eq 1 \]; then exit 0; fi; exit "\$rc"/);
+  assert.match(journal, /\|\| \{ echo "journalctl failed: \$\?" >&2; exit 3; \}/);
   // 截图只拍单据、Agent 接入、模拟来单：「规则库 › 制度知识库」页上有真实制度，不截图
   const kbCase = spec.slice(spec.indexOf('test(`制度知识库'), spec.indexOf("test('清场"));
   assert.ok(kbCase.length > 100);

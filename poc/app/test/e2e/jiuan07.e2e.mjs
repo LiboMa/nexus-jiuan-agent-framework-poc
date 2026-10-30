@@ -127,10 +127,14 @@ function psql(sql, comment) {
   return ssm(`docker exec -e 'PGOPTIONS=-c default_transaction_read_only=on' nexus-pgvector psql -U nexus -d nexus -X -v ON_ERROR_STOP=1 -tAc "${sql}"`, comment);
 }
 const journalSince = date => `${date.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
-/** 测试台外壳（andon-jiuan07）从 since 起的日志里含 text（原样匹配）的行。 */
+/**
+ * 测试台外壳（andon-jiuan07）从 since 起的日志里含 text（原样匹配）的行。只有 grep 的「没找到」（退出码 1）算没有；
+ * journalctl 读不出、grep 出错（退出码 2）都让命令失败（ssm 抛），免得「没有这一行」的断言没凭据也过。
+ */
 async function journalLines(text, since = startedAt) {
   if (!/^[A-Za-z0-9_ .:-]+$/.test(text)) throw new Error(`日志匹配串格式不对：${text}`);
-  const out = await ssm(`journalctl -u andon-jiuan07 --since '${journalSince(since)}' --no-pager -o cat | grep -F '${text}' || true`, 'e2e journal check (read-only)');
+  const out = await ssm([`out=$(journalctl -u andon-jiuan07 --since '${journalSince(since)}' --no-pager -o cat) || { echo "journalctl failed: $?" >&2; exit 3; }`,
+    `printf '%s\\n' "$out" | grep -F '${text}'; rc=$?; if [ "$rc" -eq 1 ]; then exit 0; fi; exit "$rc"`].join('; '), 'e2e journal check (read-only)');
   return out.split('\n').map(line => line.trim()).filter(Boolean);
 }
 
@@ -340,12 +344,16 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
 });
 
 test('检索日志（pg 方式）：这次测试期间审核 Agent 审单时经连接器调了 kb_search（经 SSM 只读查 kb_search_log；不算页面上那次检索）', { skip: KB_MODE === 'pg' ? false : 's3vectors 方式没有检索日志（审核 Agent 用 rules_search）' }, async () => {
-  // 页面检索经知识库 Agent 也记 caller = agent：按问题的 md5 去掉它（问题本身不进 SQL）
-  const pageQuestion = createHash('md5').update(KB_QUESTION, 'utf8').digest('hex');
-  const sql = `SELECT count(*) FROM kb_search_log WHERE caller = 'agent' AND at >= to_timestamp(${Math.floor(startedAt.getTime() / 1000)}) AND md5(question) <> '${pageQuestion}';`;
-  const count = Number(await psql(sql, 'e2e kb_search_log check (read-only)'));
-  console.log(`检索日志：测试开始以来审核 Agent 的 kb_search ${count} 次`);
-  assert.ok(count > 0, `测试开始以来 kb_search_log 里没有审核 Agent 的检索（caller = agent）：${count}`);
+  // 页面那次检索经知识库 Agent 也记进来（约定里 caller 也是 agent）：按问题的 md5 认出它（问题本身不进 SQL；页面和接口都先去掉首尾空白）。
+  // 一条查询数两样：页面那次（不限 caller，证明 md5 认得出它）和其余 caller = agent 的（审核 Agent 审单时的检索），两样都至少一次
+  const pageQuestion = createHash('md5').update(KB_QUESTION.trim(), 'utf8').digest('hex');
+  const sql = `SELECT count(*) FILTER (WHERE md5(question) = '${pageQuestion}'), count(*) FILTER (WHERE caller = 'agent' AND md5(question) IS DISTINCT FROM '${pageQuestion}')`
+    + ` FROM kb_search_log WHERE at >= to_timestamp(${Math.floor(startedAt.getTime() / 1000)});`;
+  const reply = await psql(sql, 'e2e kb_search_log check (read-only)');
+  const [pageCount, agentCount] = reply.split('|').map(Number);
+  console.log(`检索日志：测试开始以来页面那次检索 ${pageCount} 次，审核 Agent 的 kb_search ${agentCount} 次`);
+  assert.ok(pageCount >= 1, `kb_search_log 里认不出页面那次检索（「${KB_QUESTION.trim()}」）：知识库 Agent 可能改了问题文字，其余的检索就分不清是谁的（${reply}）`);
+  assert.ok(agentCount >= 1, `测试开始以来 kb_search_log 里没有审核 Agent 的检索（caller = agent，页面那次不算）：${reply}`);
 });
 
 test('调用记录与测试：每张对公付款单的这一轮都在调用记录里；在「Agent 接入」页测审批 Agent：单据（得到结论，不改单据的结论）、文本（有回复）、请求信封 describe@1（回答合契约），都记进调用记录', { timeout: 8 * 60_000 }, async () => {
@@ -458,10 +466,13 @@ test('自定义规则：poc-reviewer 上传「九安房租补充要求.md」后�
     const long = await uploadOwnRule(NEAR_LIMIT_RULE);
     const { usedChars, limitChars } = await ownRules();
     assert.ok(usedChars === long.chars && limitChars - usedChars <= 200, `合计应接近上限：${usedChars} / ${limitChars}`);
+    // 只看 Nexus 收没收下这份请求：Agent 答了（completed）或婉拒（declined）都算收下；failed（如 AI_REQUEST_INVALID、请求过长、外壳的
+    // AGENT_REQUEST_TOO_LARGE）带着错误码失败
     const near = await runAdvice(number);
-    assert.equal(near.advice.status, 'completed', `带 ${long.chars} 字自定义规则的这一轮没有完成（Nexus 可能拒收了请求的大小）：${near.advice.errorCode ?? near.advice.declinedReason}`);
+    assert.ok(['completed', 'declined'].includes(near.advice.status),
+      `带 ${long.chars} 字自定义规则的这一轮没被收下（Nexus 可能拒收了请求的大小）：${near.advice.status} ${near.advice.errorCode ?? ''}`);
     assert.ok((await logged(id)).includes(`POC_CUSTOM_RULES ${id} ${OWNER} ${long.chars}`), `外壳日志里应有 POC_CUSTOM_RULES ${id} ${OWNER} ${long.chars}（整份规则附上了）`);
-    console.log(`接近上限的一轮：自定义规则 ${long.chars} 字，结论 ${near.advice.result}`);
+    console.log(`接近上限的一轮：自定义规则 ${long.chars} 字，${near.advice.status === 'declined' ? `Agent 婉拒：${near.advice.declinedReason}` : `结论 ${near.advice.result}`}`);
     await clearOwnRules();
   } finally {
     // 中途失败也不留规则
