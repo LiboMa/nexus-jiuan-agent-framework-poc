@@ -27,7 +27,7 @@ export interface Session {
 }
 
 export const SESSION_KEY = ['session'] as const;
-export const ROLE_LABELS: Record<Role, string> = { admin: '管理员', analyst: '分析员', policy_reviewer: '规则复核人' };
+export const ROLE_LABELS: Record<Role, string> = { admin: '管理员', analyst: '分析员', policy_reviewer: '规则发布复核人' };
 
 // 本标签页里登录过的标记（不是凭据）：刷新页面后再遇到 401，也能说「登录已过期」而不是当成第一次来。
 const SIGNED_IN_FLAG = 'web07.signedIn';

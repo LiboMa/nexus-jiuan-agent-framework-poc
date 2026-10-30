@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { childEnv } from './helpers/child-env.mjs';
+import { DEPLOY_ENV_KEYS, childEnv } from './helpers/child-env.mjs';
 
 const execFileAsync = promisify(execFile);
 // 子进程不继承部署的环境（DEPLOY_ENV 和环境配置的键，见 helpers/child-env.mjs）；自己给了 env 的调用照它给的
@@ -94,6 +94,51 @@ test('deploy.sh：构建 v0.7.10 副本、把 app07 和副本打进发布包；�
   assert.ok(order.every(index => index > 0) && order.every((index, i) => i === 0 || index > order[i - 1]), `安装顺序不对：${order}`);
   assert.match(deploy, /\/poc\/healthz/);
   assert.doesNotMatch(install.slice(install.indexOf('bench07-configure.sh'), install.indexOf('systemctl restart andon-finance-poc')), /AdvisoryPublicationId/, 'v0.7.10 不接收发布编号');
+});
+
+// ---- 新前端（poc/web07，React）：部署时按锁文件装依赖、跑测试、构建；dist/ 进构件的 web07/dist，外壳的前门默认找 app07/../web07/dist ----
+const WEB_BUILD = 'web_build() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && npm ci && npm test && npm run build); }';
+const WEB_RSYNC = 'rsync -a --exclude .DS_Store "$POC_DIR/web07/dist/" "$STAGE/release/web07/dist/"';
+
+test('deploy.sh：动 AWS 资源之前先构建新前端（npm ci → npm test → npm run build），dist/ 打进构件的 web07/dist；外壳默认就找这里', async () => {
+  const deploy = await readFile(infra('deploy.sh'), 'utf8');
+  const lines = deploy.split('\n');
+  assert.ok(lines.find(line => line.startsWith('for tool in ')).split(' ').includes('npm'), '检查工具时要有 npm');
+  assert.equal(lines.find(line => line.startsWith('web_build() ')), WEB_BUILD);
+  const at = text => { const index = lines.indexOf(text); assert.ok(index > 0, `deploy.sh 里没有这一行：${text}`); return index; };
+  const build = at('web_build "$POC_DIR/web07"');
+  assert.ok(at('unit_tests "$POC_DIR/app07"') < build, '先跑外壳的单元测试');
+  assert.ok(build < lines.findIndex(line => line.includes('aws cloudformation deploy')), '新前端构建不过就不建栈、不更新栈');
+  const mkdir = lines.find(line => line.startsWith('mkdir -p "$STAGE/release/app"'));
+  assert.ok(mkdir.includes('"$STAGE/release/web07/dist"'), '构件里先建好 web07/dist');
+  assert.ok(build < at(WEB_RSYNC) && at(WEB_RSYNC) < lines.findIndex(line => line.includes('tar --no-mac-metadata')), '构建在前，复制进构件、再打包');
+  const front = await readFile(fileURLToPath(new URL('../../../app07/front.mjs', import.meta.url)), 'utf8');
+  assert.match(front, /webDir = path\.join\(here, '\.\.\/web07\/dist'\)/, '实例上外壳是 current/app07/server.mjs，构件里是 current/web07/dist');
+});
+
+test('deploy.sh 的 web_build：在 poc/web07 里依次 npm ci、npm test、npm run build，DEPLOY_ENV 和环境配置的键都不传给 npm；哪一步失败部署就停', async t => {
+  const fn = (await readFile(infra('deploy.sh'), 'utf8')).split('\n').find(line => line.startsWith('web_build() '));
+  assert.ok(fn, 'deploy.sh 里应有一行 web_build() { … }');
+  const fixture = fileURLToPath(new URL('../fixtures/deploy-env/s3v.env', import.meta.url));
+  const dir = await mkdtemp(path.join(tmpdir(), 'deploy-web-build-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const script = npm => ['set -euo pipefail', `source ${JSON.stringify(infra('lib/deploy-env.sh'))}`, 'load_deploy_env 2>/dev/null', fn, npm,
+    'printf "loaded=%s\\n" "${DEPLOY_ENV_LOADED[*]}"', `web_build ${JSON.stringify(dir)}`, 'echo AFTER_BUILD'].join('\n');
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, DEPLOY_ENV: fixture, KB_ALLOWED_CIDR: '10.9.0.0/16', KEEP_ME: 'yes' };
+  const { stdout } = await run('bash', ['-c', script('npm() { printf "npm=%s cwd=%s\\n" "$*" "$PWD"; [[ "$1" != ci ]] || env; }')], { env });
+  const lines = stdout.split('\n');
+  assert.ok(lines.find(line => line.startsWith('loaded=')).split(/[= ]/).includes('KB_MODE'), '先确认读进来了（并 export 了）');
+  assert.deepEqual(lines.filter(line => line.startsWith('npm=')), [`npm=ci cwd=${dir}`, `npm=test cwd=${dir}`, `npm=run build cwd=${dir}`]);
+  assert.ok(lines.includes('KEEP_ME=yes'), '别的环境变量照常传');
+  assert.deepEqual(lines.map(line => line.slice(0, line.indexOf('='))).filter(name => name === 'DEPLOY_ENV' || DEPLOY_ENV_KEYS.includes(name)), []);
+  assert.ok(lines.includes('AFTER_BUILD'));
+  for (const step of ['ci', 'test', 'run']) {
+    const failed = await run('bash', ['-c', script(`npm() { printf "npm=%s\\n" "$*"; [[ "$1" != ${step} ]]; }`)], { env }).then(() => null, error => error);
+    assert.ok(failed && failed.code !== 0, `npm ${step} 失败时部署要停`);
+    assert.doesNotMatch(failed.stdout, /AFTER_BUILD/, step);
+    const ran = failed.stdout.split('\n').filter(line => line.startsWith('npm=')).map(line => line.slice(4).split(' ')[0]);
+    assert.deepEqual(ran, ['ci', 'test', 'run'].slice(0, ['ci', 'test', 'run'].indexOf(step) + 1), step);
+  }
 });
 
 // ---- 知识库两种方式（KB_MODE=pg|s3vectors，不写就是 pg）：「制度知识库」页都经 Nexus 上的知识库 Agent（A2A），测试台不直连 PG。

@@ -5,7 +5,7 @@
   "description": "九安审单测试台的 React 新前端（同源挂在测试台外壳的 /）",
   "type": "module",
   "engines": {
-    "node": ">=22.22.0"
+    "node": "^22.22 || ^24.15 || >=26"
   },
   "scripts": {
     "dev": "vite",

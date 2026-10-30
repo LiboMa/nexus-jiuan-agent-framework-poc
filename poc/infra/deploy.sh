@@ -3,6 +3,7 @@
 #   infra/deploy.sh             单元测试 → 生成前端副本 → 建栈或更新栈 → 生成口令（只在没有时）→ 打包上传 → 让 EC2 拉取并重启 → 健康检查
 #   infra/deploy.sh --code-only 跳过建栈，只打包上传、重启、健康检查
 # 测试台：构件里的九安是构建出来的副本（poc/bench/build-jiuan.sh：开发包 + 补丁 + mysql2）；重启前在实例上配置测试台（bench/bench-configure.sh）。
+#   九安 v0.7.10 测试台的新前端（poc/web07，React）：动 AWS 资源之前 npm ci、跑测试、构建，dist/ 放进构件的 web07/dist（外壳的前门在 / 给它）。
 #   KB_ALLOWED_CIDR=<私网段> deploy.sh  建栈时一起放行知识库的 PG 端口（栈已在时用 infra/kb.sh sg）；知识库本身用 infra/kb.sh 部署，见 kb/README.md
 #   POC_STORE=memory|mysql 决定服务用内存存储还是本机 MySQL（默认 mysql；回到内存存储：POC_STORE=memory deploy.sh --code-only）。
 #   KB_MODE=pg|s3vectors（一般写在 DEPLOY_ENV 的配置文件里）决定九安 v0.7.10「制度知识库」走哪种方式（默认 pg）；两种方式都经 Nexus 上的知识库 Agent，
@@ -40,9 +41,11 @@ output() {
 }
 # 单元测试不看部署的环境：DEPLOY_ENV 和环境配置能写的键（load_deploy_env 把读到的 export 了，shell 里也可能有同名的）都不传给 node --test
 unit_tests() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && node --test "test/unit/**/*.test.mjs"); }
+# 新前端：按锁文件装依赖、跑它的测试、构建出 dist/；和单元测试一样不看部署的环境，哪一步失败部署就停
+web_build() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && npm ci && npm test && npm run build); }
 
 say "检查工具与账号"
-for tool in node aws rsync tar curl openssl; do command -v "$tool" >/dev/null || { echo "缺少 $tool" >&2; exit 1; }; done
+for tool in node npm aws rsync tar curl openssl; do command -v "$tool" >/dev/null || { echo "缺少 $tool" >&2; exit 1; }; done
 aws sts get-caller-identity --query Account --output text
 [[ -f "$JIUAN_CODE_DIR/analysis-server.mjs" ]] || { echo "找不到九安开发包：$JIUAN_CODE_DIR" >&2; exit 1; }
 [[ -f "$OPERATOR_SCRIPT" ]] || { echo "找不到 nexus-ai-operator：$OPERATOR_SCRIPT" >&2; exit 1; }
@@ -59,6 +62,9 @@ say "构建九安副本（开发包 + 补丁 + mysql2）"
 say "构建九安 v0.7.10 副本（按清单复制 + mysql2），跑测试台外壳的单元测试"
 "$POC_DIR/bench/build-jiuan07.sh"
 unit_tests "$POC_DIR/app07"
+
+say "构建九安 v0.7.10 测试台的新前端（poc/web07：npm ci、测试、构建）"
+web_build "$POC_DIR/web07"
 
 if ! $CODE_ONLY; then
   say "建栈或更新栈 ${STACK}（第一次建 CloudFront 约需 5–15 分钟）"
@@ -115,7 +121,7 @@ chmod 600 "$SECRETS"
 say "打包并上传构件"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/jiuan07"
+mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/web07/dist" "$STAGE/release/jiuan07"
 rsync -a --exclude test --exclude node_modules --exclude .DS_Store "$APP_DIR/" "$STAGE/release/app/"
 # 九安取构建出来的副本：已经不含 tests、deploy，带着锁定版本的 node_modules（mysql2）。
 rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan/" "$STAGE/release/jiuan/"
@@ -123,6 +129,8 @@ rsync -a --exclude .DS_Store "$HERE/bench/" "$STAGE/release/bench/"
 # 九安 v0.7.10：测试台外壳（不带测试和冒烟脚本）和按清单复制的副本（不含 seeds、database、tests、deploy、scripts）
 rsync -a --exclude test --exclude scripts --exclude node_modules --exclude .DS_Store "$POC_DIR/app07/" "$STAGE/release/app07/"
 rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan07/" "$STAGE/release/jiuan07/"
+# 新前端只带构建产物（外壳的 front.mjs 默认找 app07/../web07/dist）
+rsync -a --exclude .DS_Store "$POC_DIR/web07/dist/" "$STAGE/release/web07/dist/"
 cp "$OPERATOR_SCRIPT" "$STAGE/release/operator/scripts/nexus.py"
 # macOS 的 tar 默认会带上 AppleDouble（._*）和扩展属性，实例上解包会多出垃圾文件和告警。
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf "$STAGE/current.tgz" -C "$STAGE/release" .

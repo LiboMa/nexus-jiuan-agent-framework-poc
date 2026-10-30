@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { PAGE_CSP } from '../../../app/http.mjs';
 import { createFrontDoor, MARKER_COOKIE } from '../../front.mjs';
 import { intakeRoutes } from '../../intake.mjs';
 
@@ -30,12 +36,8 @@ const login = { login: ({ account, password }) => {
   throw Object.assign(new Error('INVALID_CREDENTIALS'), { code: 'INVALID_CREDENTIALS', status: 401 });
 } };
 
-test('首页：没登录过就跳到口令登录页；登录页和脚本自带 CSP，不用内联脚本', async t => {
+test('口令登录页和脚本照旧，自带 CSP，不用内联脚本；九安的文件交还九安', async t => {
   const call = await serve(t, createFrontDoor({ origin: ORIGIN, login }));
-  const home = await call('GET', '/');
-  assert.equal(home.status, 302);
-  assert.equal(home.headers.location, '/poc/login');
-  assert.equal((await call('GET', '/', { headers: { cookie: `${MARKER_COOKIE}=1` } })).status, 599);
   const page = await call('GET', '/poc/login');
   assert.equal(page.status, 200);
   assert.match(page.headers['content-security-policy'], /script-src 'self'/);
@@ -55,6 +57,97 @@ test('口令登录：同源、口令对才给票据，并设登录提示 Cookie�
   assert.equal((await call('POST', '/api/analysis/v1/poc/login', { headers: { origin: 'https://evil.invalid' }, body: { account: 'poc-reviewer', password: 'right' } })).status, 403);
   assert.equal((await call('POST', '/api/analysis/v1/poc/login', { headers: { origin: ORIGIN }, body: { account: 'poc-reviewer', password: 'right', extra: 1 } })).status, 400);
   assert.equal((await call('GET', '/poc/login', { headers: { host: 'other.invalid' } })).status, 403);
+});
+
+// ---- 新前端（poc/web07 的构建产物）：GET / 给 index.html，/assets/ 下只给构建产物里真实存在的文件 ----
+const INDEX = '<!doctype html><html><head><script type="module" src="/assets/index-AbC123.js"></script></head><body><div id="root"></div></body></html>';
+const ASSETS = { 'index-AbC123.js': 'console.log(1);', 'index-AbC123.css': 'body{margin:0}', 'logo-AbC123.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
+  'mark-AbC123.png': 'png', 'font-AbC123.woff2': 'woff2', 'index-AbC123.js.map': '{}', 'stray.html': '<p>x</p>', 'notes.txt': 'x' };
+async function webBuild(t, { index = INDEX, assets = ASSETS } = {}) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'front-web-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  if (index !== null) await writeFile(path.join(dir, 'index.html'), index);
+  await mkdir(path.join(dir, 'assets', 'nested'), { recursive: true });
+  await writeFile(path.join(dir, 'assets', 'nested', 'deep.js'), 'nested');
+  for (const [name, text] of Object.entries(assets)) await writeFile(path.join(dir, 'assets', name), text);
+  await writeFile(path.join(dir, 'server.mjs'), 'SECRET-SOURCE');
+  return dir;
+}
+const PAGE_HEADERS = headers => {
+  assert.equal(headers['content-security-policy'], PAGE_CSP);
+  assert.equal(headers['x-content-type-options'], 'nosniff');
+  assert.equal(headers['referrer-policy'], 'no-referrer');
+};
+
+test('首页：不管有没有登录提示 Cookie 都给新前端的 index.html（不缓存、带 CSP）；带查询串也给；别的方法交还九安；主机名不对 403', async t => {
+  const call = await serve(t, createFrontDoor({ origin: ORIGIN, login, webDir: await webBuild(t) }));
+  for (const [target, headers] of [['/', {}], ['/', { cookie: `${MARKER_COOKIE}=1` }], ['/?x=1', {}]]) {
+    const home = await call('GET', target, { headers });
+    assert.equal(home.status, 200, target);
+    assert.equal(home.text, INDEX);
+    assert.equal(home.headers['content-type'], 'text/html; charset=utf-8');
+    assert.equal(home.headers['cache-control'], 'no-store');
+    PAGE_HEADERS(home.headers);
+  }
+  assert.equal((await call('POST', '/')).status, 599);
+  assert.equal((await call('GET', '/', { headers: { host: 'other.invalid' } })).status, 403);
+  assert.equal((await call('GET', '/analysis.html')).status, 599, '九安的旧页面照旧交给九安');
+});
+
+test('/assets/：只给构建产物里真实存在、类型认得的文件（长缓存、带 CSP）；别的一律 404，含 ../ 和编码过的 ..', async t => {
+  const dir = await webBuild(t);
+  const call = await serve(t, createFrontDoor({ origin: ORIGIN, login, webDir: dir }));
+  const types = { 'index-AbC123.js': 'text/javascript; charset=utf-8', 'index-AbC123.css': 'text/css; charset=utf-8', 'logo-AbC123.svg': 'image/svg+xml',
+    'mark-AbC123.png': 'image/png', 'font-AbC123.woff2': 'font/woff2' };
+  for (const [name, type] of Object.entries(types)) {
+    const asset = await call('GET', `/assets/${name}`);
+    assert.equal(asset.status, 200, name);
+    assert.equal(asset.text, ASSETS[name]);
+    assert.equal(asset.headers['content-type'], type);
+    assert.equal(asset.headers['cache-control'], 'public, max-age=31536000, immutable');
+    PAGE_HEADERS(asset.headers);
+  }
+  await writeFile(path.join(dir, 'assets', 'later-AbC123.js'), 'added after start');
+  for (const target of ['/assets/missing.js', '/assets/index-AbC123.js.map', '/assets/stray.html', '/assets/notes.txt', '/assets/nested', '/assets/nested/deep.js',
+    '/assets/', '/assets/../server.mjs', '/assets/%2e%2e/server.mjs', '/assets/..%2fserver.mjs', '/assets/.%2e/server.mjs', '/assets/%2E%2E/%2E%2E/server.mjs',
+    '/assets/later-AbC123.js', '/assets/INDEX-ABC123.JS']) {
+    const miss = await call('GET', target);
+    assert.equal(miss.status, 404, target);
+    assert.equal(JSON.parse(miss.text).error.code, 'NOT_FOUND', target);
+    assert.doesNotMatch(miss.text, /SECRET-SOURCE|nested|added after start/, target);
+  }
+  assert.equal((await call('POST', '/assets/index-AbC123.js')).status, 404);
+  assert.equal((await call('GET', '/assets/index-AbC123.js', { headers: { host: 'other.invalid' } })).status, 403);
+});
+
+test('还没构建新前端：首页回 503「新前端还没构建」，/assets/ 404；口令登录页和登录接口照常', async t => {
+  for (const webDir of [path.join(tmpdir(), 'front-web-no-such-dir'), await webBuild(t, { index: null })]) {
+    const call = await serve(t, createFrontDoor({ origin: ORIGIN, login, webDir }));
+    const home = await call('GET', '/');
+    assert.equal(home.status, 503, webDir);
+    assert.deepEqual(JSON.parse(home.text), { error: { code: 'WEB_NOT_BUILT', message: '新前端还没构建' } });
+    assert.equal((await call('GET', '/assets/index-AbC123.js')).status, 404);
+    assert.equal((await call('GET', '/poc/login')).status, 200);
+    assert.equal((await call('POST', '/api/analysis/v1/poc/login', { headers: { origin: ORIGIN }, body: { account: 'poc-reviewer', password: 'right' } })).status, 200);
+  }
+});
+
+const REAL_DIST = fileURLToPath(new URL('../../../web07/dist/', import.meta.url));
+test('真实的构建产物（poc/web07/dist，前门默认就找它）：首页和它引用的每个 /assets/ 文件都给得出来', {
+  skip: existsSync(path.join(REAL_DIST, 'index.html')) ? false : '没有 poc/web07/dist：先 cd poc/web07 && npm run build',
+}, async t => {
+  const call = await serve(t, createFrontDoor({ origin: ORIGIN, login }));
+  const home = await call('GET', '/');
+  assert.equal(home.status, 200);
+  assert.equal(home.text, await readFile(path.join(REAL_DIST, 'index.html'), 'utf8'));
+  const refs = [...new Set([...home.text.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(match => match[1]))];
+  assert.ok(refs.some(ref => ref.endsWith('.js')) && refs.some(ref => ref.endsWith('.css')), `index.html 里应引用脚本和样式：${refs}`);
+  for (const ref of refs) {
+    const asset = await call('GET', ref);
+    assert.equal(asset.status, 200, ref);
+    assert.equal(asset.headers['cache-control'], 'public, max-age=31536000, immutable');
+  }
+  for (const name of await readdir(path.join(REAL_DIST, 'assets'))) assert.equal((await call('GET', `/assets/${name}`)).status, 200, name);
 });
 
 function capture() {
