@@ -1,16 +1,24 @@
 /**
  * 测试台上九安 v0.7.10（https://jiuan-v0710.tinyboat.blog）的端到端测试（Playwright + 本机 Chrome）。请用 run07.sh 运行：它先重置库
- * （保留「Agent 接入」的启用记录），再从 infra/secrets.env 读两个账号的口令。调用密钥不经过测试：管理员在
- * 「后台配置 › Agent 接入」页上粘贴一次，九安加密存库，之后的调用都用这条启用记录。
- * 流程：口令登录 → 页面上的启用记录在、可用 → 四张虚构对公付款单先读取原件、再手动发起 AI 独立建议（重置后启用记录写回之前的那一轮九安不自动重排）
- * → 结论和依据核对，Agent 引用的规则编号到测试台的知识库（nexus-pgvector 的 approval_rules）里逐个核对 → 计入两档结论 → 没有回写
- * → 模拟来单一张，等九安同步、读详情后自动发起并完成 → 给了 KB_E2E_DOCX（本机的制度原文）时，在「规则库 › 制度知识库」上传、预览、入库、检索、看检索日志
- * → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
- * 真实调用 Nexus：五次 AI 独立建议，每次约 0.1–0.3 美元。
+ * （保留「Agent 接入」的启用记录），再从 infra/secrets.env 读两个账号的口令，从 DEPLOY_ENV 取知识库方式（KB_MODE，不写是 pg）和这种方式的
+ * 知识库 Agent 的发布编号。调用密钥不经过测试：管理员在「后台配置 › Agent 接入」页上粘贴一次，九安加密存库，之后的调用都用这条启用记录。
+ * 流程：口令登录 → 页面上的启用记录在、可用，知识库 Agent 的发布已启用、不是审批 Agent
+ * → 「规则库 › 制度知识库 › 公司制度」经知识库 Agent（A2A，两种方式同一块；在 AI 独立建议之前，知识库要先有规则）：给了 KB_E2E_DOCX（本机的
+ *   制度原文）就在页面上传入库、核对上传记录和制度清单，没给就先核对库里已有预期规则；按问题检索前 3 名有预期规则
+ * → 清场：poc-reviewer 的「我的规则」清空（下面以它手动发起，带上自定义规则就不只是公司制度的结论）
+ * → 四张虚构对公付款单先读取原件、再手动发起 AI 独立建议（重置后启用记录写回之前的那一轮九安不自动重排）→ 结论和依据核对，Agent 引用的
+ *   规则编号按方式到知识库里逐个核对（pg：经 SSM 查 nexus-pgvector 的 approval_rules；s3vectors：本机凭证对规则索引 GetVectors，只认有效的）；
+ *   这几轮都没附自定义规则（外壳日志里没有 POC_CUSTOM_RULES）→ pg 方式：检索日志 kb_search_log 里有审核 Agent 审单时的检索
+ * → 调用记录与「Agent 接入」页的测试 → 计入两档结论 → 没有回写 → 模拟来单一张，等九安同步、读详情后自动发起并完成
+ * → 自定义规则：poc-reviewer 上传一份虚构的补充要求，手动发起 DGZF-F07-001 不通过、删掉后回到通过；再带接近 20,000 字的虚构规则发起一次，
+ *   Nexus 不拒收；用例结束时不留规则 → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
+ * 真实调用 Nexus：八次 AI 独立建议（四张单、模拟来单、自定义规则三轮），每次约 0.1–0.3 美元；另有「Agent 接入」页的三次测试和几次知识库 Agent 的调用。
+ * 制度原文只在本机（不进仓库）；「规则库 › 制度知识库」页不截图（上面有真实制度的标题和检索出的原文）。自定义规则的文字都是虚构的。
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -22,17 +30,45 @@ const INSTANCE = process.env.E2E07_INSTANCE;
 const REGION = process.env.E2E07_REGION || 'us-east-1';
 // 出站拦截记录里不该出现的 Nexus 主机名（run07.sh 从栈参数 NexusOrigin 取）
 const NEXUS_HOST = process.env.E2E07_NEXUS_HOST || '';
+// 知识库方式和「公司制度」经的知识库 Agent 的发布（run07.sh 从 DEPLOY_ENV 取：KB_MODE、KB_PG_PUBLICATION_ID 或 KB_S3V_PUBLICATION_ID）
+const KB_MODE = process.env.E2E07_KB_MODE || 'pg';
+const KB_PUBLICATION_ID = process.env.E2E07_KB_PUBLICATION_ID || '';
+const KB_PUBLICATION_KEY = KB_MODE === 's3vectors' ? 'KB_S3V_PUBLICATION_ID' : 'KB_PG_PUBLICATION_ID';
+// s3vectors 方式：引用的规则编号用本机的 AWS 凭证到这个向量桶的规则索引里查
+const KB_S3V_BUCKET = process.env.E2E07_KB_S3V_BUCKET || '';
+const KB_S3V_RULES_INDEX = process.env.E2E07_KB_S3V_RULES_INDEX || '';
+// 制度原文只在本机（不进仓库、页面不截图）。制度标识沿用知识库工具的默认值（kb/lib/common.sh 的 RULES_SOURCE_TAG），这样页面和 kb.sh ingest 认的是同一套规则
+const KB_DOCX = process.env.KB_E2E_DOCX;
+const KB_TAG = process.env.KB_E2E_TAG || 'finance-approval-v4';
+const KB_QUESTION = process.env.KB_E2E_QUESTION || '房租 年度框架合同 九安';
+const KB_EXPECT = process.env.KB_E2E_EXPECT || 'C05-3.4';
 const SHOTS = new URL('../../../../evidence/round7/e2e/', import.meta.url);
 // fixtures.mjs 的四个场景：九安房租（合同、发票齐）、柯顿运维费（超合同、收款方不符）、O+O 税款（有缴款通知）、新零售推广费（无原件、事由带注入文字）
 const EXPECT = Object.freeze({ 'DGZF-F07-001': 'pass', 'DGZF-F07-002': 'fail', 'DGZF-F07-003': 'pass', 'DGZF-F07-004': 'fail' });
 const RULE_ID = /\b(C\d{2}-(?:\d+\.\d+|NOTE)|G-\d{2})\b/g;
 const ADVICE_TIMEOUT = 5 * 60_000;
+// 登录的账号：管理员，「我的规则」按它存，手动发起时附它的规则（外壳日志 POC_CUSTOM_RULES <单据> poc-reviewer <字数>）
+const OWNER = 'poc-reviewer';
+const CUSTOM_NOTE = `（含 ${OWNER} 的自定义规则）`;
+// 「我的规则」用的虚构规则（不是真实制度）：一份让 DGZF-F07-001（九安房租，合同、发票齐）不通过；一份接近每人合计 20,000 字的上限，只用来量请求大小
+const RENT_RULE = Object.freeze({ name: '九安房租补充要求.md', text: '九安板块的房租类对公付款，须附出租方的房产证明；没有的不予通过。' });
+const NEAR_LIMIT_CHARS = 19_900;
+const NEAR_LIMIT_RULE = Object.freeze({ name: '虚构长规则-量请求大小.md', text: (() => {
+  const lines = [];
+  for (let n = 1, size = 0; size < NEAR_LIMIT_CHARS; n += 1) {
+    const line = `第 ${n} 条（虚构的填充文字）：本条只用来在端到端测试里量一次调用的大小，不对任何单据提出审核要求。`;
+    lines.push(line);
+    size += line.length + 1;
+  }
+  return `${lines.join('\n').slice(0, NEAR_LIMIT_CHARS - 1).trimEnd()}。`;
+})() });
 const startedAt = new Date();
 let browser, page, publication = null;
 const advices = new Map();
 
 before(async () => {
   assert.ok(process.env.E2E_REVIEWER_PASSWORD && INSTANCE, '请用 run07.sh 运行：它重置测试台并从 infra/secrets.env 读两个账号的口令');
+  assert.ok(['pg', 's3vectors'].includes(KB_MODE), `E2E07_KB_MODE 只能是 pg 或 s3vectors：${KB_MODE}`);
   await mkdir(SHOTS, { recursive: true });
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   page = await (await browser.newContext({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } })).newPage();
@@ -64,22 +100,101 @@ async function until(read, done, { timeout, every = 5000, what }) {
 }
 const finished = advice => ['completed', 'failed', 'declined'].includes(advice?.status);
 const ruleIdsOf = advice => [...new Set((advice?.basis ?? []).filter(item => item.kind === 'rule').flatMap(item => [...String(item.ref).matchAll(RULE_ID)].map(match => match[1])))];
+const adviceOf = async document => (await api(`/documents/${document.id}/advice`)).json.data;
+/** 以登录的人（poc-reviewer）在单据页手动发起一轮 AI 独立建议（同页面上「运行一轮 AI 独立建议」的接口），等这一轮跑完。 */
+async function runAdvice(number) {
+  const document = await byNumber(number);
+  const started = await api(`/documents/${document.id}/advice`, { method: 'POST', body: { sourceVersion: document.version } });
+  assert.equal(started.status, 202, `${number} 发起失败：${JSON.stringify(started.json)?.slice(0, 300)}`);
+  const advice = await until(() => adviceOf(document), finished, { timeout: ADVICE_TIMEOUT, what: `${number} 的 AI 独立建议` });
+  return { document, advice };
+}
 
-/** 经 SSM 到测试台的知识库里查这些规则编号，返回查到的那些（以应用用户查：规则表归它，不在超级用户会话里读）。 */
+const aws = async args => (await run('aws', ['--region', REGION, ...args])).stdout.trim();
+/** 经 SSM 在测试台实例上跑一条只读命令，回标准输出；命令没成功就抛（带标准错误的开头）。 */
+async function ssm(command, comment) {
+  const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', comment,
+    '--parameters', JSON.stringify({ commands: [command] }), '--query', 'Command.CommandId', '--output', 'text']);
+  await aws(['ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
+  const [status, stdout, stderr] = JSON.parse(await aws(['ssm', 'get-command-invocation', '--command-id', id, '--instance-id', INSTANCE,
+    '--query', '[Status,StandardOutputContent,StandardErrorContent]', '--output', 'json']));
+  if (status !== 'Success') throw new Error(`经 SSM 的只读命令没有成功（${comment}）：${status} ${String(stderr ?? '').trim().slice(0, 300)}`);
+  return String(stdout ?? '').trim();
+}
+/** 以应用用户在测试台的知识库（nexus-pgvector）里跑一条只读 SQL（会话设成只读；规则表归应用用户，不在超级用户会话里读）。 */
+function psql(sql, comment) {
+  if (/["$`\\]/.test(sql)) throw new Error('SQL 里不能有双引号、$、反引号或反斜杠（整条命令放在 shell 的双引号里）');
+  return ssm(`docker exec -e 'PGOPTIONS=-c default_transaction_read_only=on' nexus-pgvector psql -U nexus -d nexus -X -v ON_ERROR_STOP=1 -tAc "${sql}"`, comment);
+}
+const journalSince = date => `${date.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
+/** 测试台外壳（andon-jiuan07）从 since 起的日志里含 text（原样匹配）的行。 */
+async function journalLines(text, since = startedAt) {
+  if (!/^[A-Za-z0-9_ .:-]+$/.test(text)) throw new Error(`日志匹配串格式不对：${text}`);
+  const out = await ssm(`journalctl -u andon-jiuan07 --since '${journalSince(since)}' --no-pager -o cat | grep -F '${text}' || true`, 'e2e journal check (read-only)');
+  return out.split('\n').map(line => line.trim()).filter(Boolean);
+}
+
+/**
+ * 这些规则编号里知识库查得到的那些（按方式）：pg 经 SSM 查 nexus-pgvector 的 approval_rules（以应用用户、只读会话）；
+ * s3vectors 用本机的 AWS 凭证对规则索引 GetVectors（只读），只认元数据 active 为 true 的。
+ */
 async function knownRuleIds(ids) {
   if (!ids.every(id => /^[A-Z0-9.-]+$/.test(id))) throw new Error(`规则编号格式不对：${ids}`);
+  if (!ids.length) return [];
+  if (KB_MODE === 's3vectors') {
+    assert.ok(KB_S3V_BUCKET && KB_S3V_RULES_INDEX, 's3vectors 方式要知道向量桶和规则索引：DEPLOY_ENV 里写 KB_S3V_BUCKET、KB_S3V_RULES_INDEX，用 run07.sh 运行');
+    const found = [];
+    for (let at = 0; at < ids.length; at += 100) {   // GetVectors 一次最多 100 个
+      const reply = JSON.parse(await aws(['s3vectors', 'get-vectors', '--vector-bucket-name', KB_S3V_BUCKET, '--index-name', KB_S3V_RULES_INDEX,
+        '--keys', ...ids.slice(at, at + 100), '--return-metadata', '--output', 'json']));
+      found.push(...(reply.vectors ?? []).filter(vector => vector.metadata?.active === true).map(vector => vector.key));
+    }
+    return found;
+  }
   const sql = `SELECT string_agg(rule_id, ',' ORDER BY rule_id) FROM approval_rules WHERE rule_id IN (${ids.map(id => `'${id}'`).join(',')});`;
-  const params = JSON.stringify({ commands: [`docker exec nexus-pgvector psql -U nexus -d nexus -X -tAc "${sql}"`] });
-  const aws = async args => (await run('aws', ['--region', REGION, ...args, '--output', 'text'])).stdout.trim();
-  const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', 'e2e kb rule-id check (read-only)', '--parameters', params, '--query', 'Command.CommandId']);
-  await run('aws', ['--region', REGION, 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
-  return (await aws(['ssm', 'get-command-invocation', '--command-id', id, '--instance-id', INSTANCE, '--query', 'StandardOutputContent'])).split(',').filter(Boolean);
+  return (await psql(sql, 'e2e kb rule-id check (read-only)')).split(',').filter(Boolean);
+}
+
+/** 「公司制度」的制度清单（经知识库 Agent 的 list；工具失败时接口也回 200、data.success === false）。 */
+async function kbSources() {
+  const { status, json } = await api('/poc/kb/sources');
+  assert.ok(status === 200 && json?.data?.success !== false, `读不出制度清单：${status} ${JSON.stringify(json?.error ?? json?.data)?.slice(0, 300)}`);
+  return json.data.sources ?? [];
+}
+
+async function ownRules() {
+  const { status, json } = await api('/poc/custom-rules');
+  assert.equal(status, 200, `读不出「我的规则」：${JSON.stringify(json)?.slice(0, 300)}`);
+  return json.data;
+}
+/** 删掉 poc-reviewer 的全部「我的规则」，回删掉的那些。 */
+async function clearOwnRules() {
+  const { items } = await ownRules();
+  for (const item of items) {
+    const { status, json } = await api(`/poc/custom-rules/${encodeURIComponent(item.id)}/delete`, { method: 'POST' });
+    assert.equal(status, 200, `删不掉「我的规则」里的「${item.title}」：${JSON.stringify(json)?.slice(0, 300)}`);
+  }
+  return items;
+}
+/** 像审核员一样在「规则库 › 制度知识库 › 我的规则」选一个 .md 上传，等页面显示转出来的文字；回列表里这一份 { id, title, chars, … }。 */
+async function uploadOwnRule({ name, text }) {
+  await page.goto(`${BASE}/#rules?view=kb`);
+  const own = page.locator('section[data-kb-block=own]');
+  await own.locator('button:not([disabled])', { hasText: '选择文件' }).waitFor({ timeout: 60_000 });   // 列表读完、不忙
+  await own.locator('input[type=file][name=ownFile]').setInputFiles({ name, mimeType: 'text/markdown', buffer: Buffer.from(text, 'utf8') });
+  const failure = own.locator('.platform-ops-dialog-result.error');
+  await own.getByText(`已上传「${name}」`).or(failure).first().waitFor({ timeout: 60_000 });
+  assert.equal(await failure.count(), 0, `上传「${name}」没有成功：${await failure.allInnerTexts()}`);
+  const rule = (await ownRules()).items.find(item => item.title === name);
+  assert.ok(rule, `「我的规则」列表里没有「${name}」`);
+  assert.equal(rule.chars, [...text.trim()].length, `「${name}」转出来的字数和原文不一致`);
+  return rule;
 }
 
 test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联易同步来的 5 张虚构单据（4 张对公付款、1 张差旅报销）', async () => {
   await page.goto(BASE);
   await page.waitForURL(/\/poc\/login$/);
-  await page.locator('#account').selectOption('poc-reviewer');
+  await page.locator('#account').selectOption(OWNER);
   await page.locator('#password').fill(process.env.E2E_REVIEWER_PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
   await page.getByText('版本 v0.7.10').first().waitFor({ timeout: 30_000 });
@@ -91,7 +206,7 @@ test('登录：口令登录后进入九安 v0.7.10，单据池里是模拟汇联
   await shot('01-documents');
 });
 
-test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启用的 Agent 在一张表里；审批流只调一个审批 Agent（就绪、接 review_advice@1），其他就绪的只供前端工作流调用（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
+test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启用的 Agent 在一张表里；审批流只调一个审批 Agent（就绪、接 review_advice@1），其他就绪的只供前端工作流调用；「公司制度」经的知识库 Agent 已启用、不是审批 Agent（不写死发布；密钥只在页面上粘贴，测试不碰）', async () => {
   const { records = [] } = (await api('/platform/agent-access')).json?.data ?? {};
   // 审批流只调审批 Agent（补丁 0003）：就绪、被指定为审批 Agent 的那一个，它的 card.tasks 才带 review_advice@1
   publication = records.find(record => record.status === 'active' && record.approval === true && record.card?.tasks?.includes('review_advice@1')) ?? null;
@@ -115,9 +230,67 @@ test('Agent 接入：页面上已经连了 Nexus，Nexus 上的发布和已启�
   assert.doesNotMatch(await page.locator('.platform-access-page').innerText(), /description 不满足|hasLine/);
   await assert.rejects(page.getByRole('button', { name: '启用一个发布' }).waitFor({ timeout: 2000 }), '不再有手填发布编号的启用表单');
   await shot('02-agent-access');
+  // 「公司制度」经的知识库 Agent（pg：PG 知识库 Agent；s3vectors：知识库文档管家）：人在这一页启用过（就绪），只供前端调用、不是审批 Agent
+  assert.ok(KB_PUBLICATION_ID, `run07.sh 没给知识库 Agent 的发布编号：DEPLOY_ENV 里写 ${KB_PUBLICATION_KEY}（${KB_MODE} 方式）`);
+  const kb = records.find(record => record.publishId === KB_PUBLICATION_ID);
+  assert.equal(kb?.status, 'active', `知识库 Agent 的发布 ${KB_PUBLICATION_ID} 还没启用：请到 ${BASE}/#adminConfig?tab=agentAccess 启用它（贴调用密钥），然后跑测试`);
+  assert.notEqual(kb.approval, true, `知识库 Agent（${KB_PUBLICATION_ID}）不能是审批 Agent：在 Agent 接入页把审批 Agent 设回审核 Agent`);
+  await page.locator('.platform-access-agent').filter({ hasText: KB_PUBLICATION_ID }).getByText('就绪', { exact: true }).waitFor({ timeout: 60_000 });
 });
 
-test('AI 独立建议：四张对公付款单都有结论（重置后九安自动发起；没发起的再手动发起），结论符合预期，依据里引用了知识库规则，编号都在库里', { timeout: ADVICE_TIMEOUT + 3 * 60_000 }, async () => {
+test(`制度知识库（${KB_MODE}）：管理员的「公司制度」经知识库 Agent——给了 KB_E2E_DOCX 就在页面上传本机的制度原文，入库完成（或没有变化）、没有冲突，清单里这份是有效的；没给就先核对库里已有预期规则；按问题检索前 3 名有预期规则（在 AI 独立建议之前；页面不截图）`, { timeout: 20 * 60_000 }, async () => {
+  const mode = (await api('/poc/kb/mode')).json?.data;
+  assert.equal(mode?.mode, KB_MODE, `测试台的知识库方式是 ${mode?.mode}，run07.sh 按 DEPLOY_ENV 给的是 ${KB_MODE}`);
+  assert.equal(mode.configured, true, `测试台没配知识库 Agent 的发布：DEPLOY_ENV 里写 ${KB_PUBLICATION_KEY}，重新配置测试台`);
+  assert.equal(mode.ready, true, `知识库 Agent 还没就绪：请到 ${BASE}/#adminConfig?tab=agentAccess 启用 ${KB_PUBLICATION_ID || KB_PUBLICATION_KEY}`);
+  const company = page.locator('section[data-kb-block=company]');
+  const card = title => company.locator('section.platform-ops-card').filter({ has: page.getByRole('heading', { name: title }) });
+  await page.goto(`${BASE}/#rules?view=kb`);
+  await card('上传制度文档').waitFor({ timeout: 3 * 60_000 });   // 页面先等 Agent 回 describe（约 10–20 秒）
+
+  if (KB_DOCX) {
+    // 库里已有这份制度时，文档名和版本说明照旧（再上传是它的新版本），只换原文
+    const existing = (await kbSources()).find(source => source.source_id === KB_TAG);
+    await company.locator('input[type=file][name=file]').setInputFiles(KB_DOCX);
+    await company.locator('input[name=sourceId]').fill(KB_TAG);
+    if (existing?.title) await company.locator('input[name=docTitle]').fill(existing.title);
+    await company.locator('input[name=sourceVersion]').fill(existing?.source_version ?? '');
+    const [response] = await Promise.all([
+      page.waitForResponse(reply => reply.request().method() === 'POST' && new URL(reply.url()).pathname === '/api/analysis/v1/poc/kb/sources', { timeout: 3 * 60_000 }),
+      company.getByRole('button', { name: '上传并入库' }).click()]);
+    const accepted = await response.json().catch(() => null);
+    assert.equal(response.status(), 202, `上传没有受理：${JSON.stringify(accepted?.error ?? accepted)?.slice(0, 300)}`);
+    const item = await until(async () => (await api(`/poc/kb/uploads/${accepted.data.id}`)).json?.data, value => value && value.status !== 'ingesting',
+      { timeout: 15 * 60_000, what: '知识库 Agent 入库' });
+    assert.ok(['ingested', 'skipped'].includes(item.status), `入库没有完成：${item.error?.code ?? item.status} ${item.error?.message ?? ''} 冲突 ${JSON.stringify(item.conflicts)}`);
+    assert.deepEqual(item.conflicts, [], '规则编号不该和库里另一份制度冲突');
+    console.log(`制度入库（${KB_MODE}）：${item.status}，共 ${item.rulesTotal} 条（写入 ${item.written}、删除 ${item.removed}、不变 ${item.unchanged}），用时 ${Math.round(item.elapsedMs / 1000)} 秒`);
+    await card('上传制度文档').getByText(/入库完成：|已经是这一版/).first().waitFor({ timeout: 60_000 });
+    const source = (await kbSources()).find(entry => entry.source_id === KB_TAG);
+    assert.ok(source, `制度清单里没有 ${KB_TAG}`);
+    assert.deepEqual([source.status, source.rules_total], ['active', item.rulesTotal], `清单里 ${KB_TAG} 应是有效的、条数和这次入库一致`);
+  } else {
+    const known = await knownRuleIds([KB_EXPECT]);
+    assert.ok(known.includes(KB_EXPECT), `知识库（${KB_MODE}）里还没有有效的 ${KB_EXPECT}：先入库——给 KB_E2E_DOCX=<本机的制度原文> 让这条用例在页面上传，或由管理员在「规则库 › 制度知识库」页上传`);
+  }
+
+  const search = card('按问题检索');
+  await search.locator('input[name=question]').fill(KB_QUESTION);
+  await search.getByRole('button', { name: '检索' }).click();
+  const searchFailure = search.locator('.platform-ops-dialog-result.error');
+  await search.locator('tbody tr td').or(searchFailure).first().waitFor({ timeout: 3 * 60_000 });
+  assert.equal(await searchFailure.count(), 0, `检索没有完成：${await searchFailure.allInnerTexts()}`);
+  const top3 = (await search.locator('tbody tr').evaluateAll(rows => rows.map(row => row.cells[1]?.innerText))).slice(0, 3);
+  assert.ok(top3.includes(KB_EXPECT), `「${KB_QUESTION}」前 3 名应有 ${KB_EXPECT}：${top3}`);
+});
+
+test('清场：poc-reviewer 的「我的规则」是空的（有就删掉并记一笔）——下面以它手动发起 AI 独立建议，带上自定义规则就不只是公司制度的结论', async () => {
+  const removed = await clearOwnRules();
+  if (removed.length) console.log(`清场：删掉了 ${OWNER} 留下的 ${removed.length} 份「我的规则」`);
+  assert.deepEqual((await ownRules()).items, [], `${OWNER} 还有「我的规则」`);
+});
+
+test('AI 独立建议：四张对公付款单都有结论（重置后九安自动发起；没发起的再手动发起），结论符合预期，依据里引用了知识库规则，编号都在库里；这几轮都没附自定义规则', { timeout: ADVICE_TIMEOUT + 3 * 60_000 }, async () => {
   assert.ok(publication, '上一条用例没找到可用的审核 Agent');
   for (const number of Object.keys(EXPECT)) {
     const document = await byNumber(number);
@@ -128,7 +301,7 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
       assert.ok([200, 202].includes(read.status), `${number} 读取原件没有受理：${JSON.stringify(read.json)?.slice(0, 300)}`);
       await until(evidence, value => ['completed', 'failed'].includes(value?.status), { timeout: 60_000, every: 2000, what: `${number} 读取原件` });
     }
-    const now = (await api(`/documents/${document.id}/advice`)).json.data;
+    const now = await adviceOf(document);
     if (now?.status === 'running' || now?.status === 'completed' && now.stale !== true) continue;   // 九安已经自动发起或跑完
     const started = await api(`/documents/${document.id}/advice`, { method: 'POST', body: { sourceVersion: document.version } });
     assert.ok([202, 409].includes(started.status), `${number} 发起失败：${JSON.stringify(started.json)?.slice(0, 300)}`);   // 409 是自动那一轮正在跑
@@ -136,7 +309,7 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
   const cited = new Set();
   for (const [number, expected] of Object.entries(EXPECT)) {
     const document = await byNumber(number);
-    const advice = await until(async () => (await api(`/documents/${document.id}/advice`)).json.data, finished, { timeout: ADVICE_TIMEOUT, what: `${number} 的 AI 独立建议` });
+    const advice = await until(() => adviceOf(document), finished, { timeout: ADVICE_TIMEOUT, what: `${number} 的 AI 独立建议` });
     advices.set(number, advice);
     assert.equal(advice.status, 'completed', `${number}：${advice.errorCode ?? advice.declinedReason}`);
     assert.equal(advice.result, expected, `${number} 的结论是 ${advice.result}，应为 ${expected}：${advice.note}`);
@@ -145,7 +318,9 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
     ids.forEach(id => cited.add(id));
   }
   const known = await knownRuleIds([...cited]);
-  assert.deepEqual([...cited].filter(id => !known.includes(id)), [], 'Agent 引用了知识库里没有的规则编号');
+  assert.deepEqual([...cited].filter(id => !known.includes(id)), [], `Agent 引用了知识库（${KB_MODE}）里没有的规则编号`);
+  // 自动初审不附自定义规则，手动发起的那几轮清场后 poc-reviewer 也没有规则：外壳一行 POC_CUSTOM_RULES 都不该记（带空格，不算 POC_CUSTOM_RULES_FAILED）
+  assert.deepEqual(await journalLines('POC_CUSTOM_RULES '), [], '四张单的这几轮不该附自定义规则');
   // 页面上：单据详情里的「AI 独立建议」显示结论和规则依据
   for (const [number, expected] of Object.entries(EXPECT)) {
     await page.getByRole('link', { name: '单据池' }).first().click();
@@ -162,6 +337,15 @@ test('AI 独立建议：四张对公付款单都有结论（重置后九安自�
     await shot(`03-advice-${number}`);
     await dialog.getByRole('button', { name: '关闭' }).click();
   }
+});
+
+test('检索日志（pg 方式）：这次测试期间审核 Agent 审单时经连接器调了 kb_search（经 SSM 只读查 kb_search_log；不算页面上那次检索）', { skip: KB_MODE === 'pg' ? false : 's3vectors 方式没有检索日志（审核 Agent 用 rules_search）' }, async () => {
+  // 页面检索经知识库 Agent 也记 caller = agent：按问题的 md5 去掉它（问题本身不进 SQL）
+  const pageQuestion = createHash('md5').update(KB_QUESTION, 'utf8').digest('hex');
+  const sql = `SELECT count(*) FROM kb_search_log WHERE caller = 'agent' AND at >= to_timestamp(${Math.floor(startedAt.getTime() / 1000)}) AND md5(question) <> '${pageQuestion}';`;
+  const count = Number(await psql(sql, 'e2e kb_search_log check (read-only)'));
+  console.log(`检索日志：测试开始以来审核 Agent 的 kb_search ${count} 次`);
+  assert.ok(count > 0, `测试开始以来 kb_search_log 里没有审核 Agent 的检索（caller = agent）：${count}`);
 });
 
 test('调用记录与测试：每张对公付款单的这一轮都在调用记录里；在「Agent 接入」页测审批 Agent：单据（得到结论，不改单据的结论）、文本（有回复）、请求信封 describe@1（回答合契约），都记进调用记录', { timeout: 8 * 60_000 }, async () => {
@@ -227,56 +411,69 @@ test('模拟来单：管理员来一张新单，九安下一轮同步进单据�
   await shot('04-intake');
   await page.goto(BASE);
   const document = await until(() => byNumber(number), Boolean, { timeout: 4 * 60_000, what: `${number} 进单据池` });
-  const advice = await until(async () => (await api(`/documents/${document.id}/advice`)).json.data, finished, { timeout: ADVICE_TIMEOUT, what: `${number} 自动发起的 AI 独立建议` });
+  const advice = await until(() => adviceOf(document), finished, { timeout: ADVICE_TIMEOUT, what: `${number} 自动发起的 AI 独立建议` });
   assert.equal(advice.status, 'completed', `${number}：${advice.errorCode ?? advice.declinedReason}`);
   assert.equal(advice.result, 'pass', `${number}（模板 DGZF-F07-001）的结论应为 pass：${advice.note}`);
   assert.ok(ruleIdsOf(advice).length, '自动发起的这一轮也要引用知识库规则');
 });
 
-// 制度原文只在本机（不进仓库、页面不截图）；没给就跳过。标签沿用知识库工具的默认值（kb/lib/common.sh 的 RULES_SOURCE_TAG），
-// 这样页面和 kb.sh ingest 认的是同一套规则
-const KB_DOCX = process.env.KB_E2E_DOCX;
-const KB_TAG = process.env.KB_E2E_TAG || 'finance-approval-v4';
-const KB_QUESTION = process.env.KB_E2E_QUESTION || '房租 年度框架合同 九安';
-const KB_EXPECT = process.env.KB_E2E_EXPECT || 'C05-3.4';
+// 放在两档结论、模拟来单之后：这几轮改了 DGZF-F07-001 的当前建议，最后一轮（接近上限）的结论不核对
+test('自定义规则：poc-reviewer 上传「九安房租补充要求.md」后在单据页手动发起 DGZF-F07-001——不通过，备注写明含它的自定义规则，依据里有「自定义：」那一条，外壳记了 POC_CUSTOM_RULES；删掉后再发起回到通过、不提自定义规则；再带接近 20,000 字的虚构规则发起一次，Nexus 不拒收；用例结束时不留规则', { timeout: 3 * ADVICE_TIMEOUT + 10 * 60_000 }, async () => {
+  assert.ok(publication, '前面的用例没找到可用的审核 Agent');
+  const number = 'DGZF-F07-001';
+  const logged = async id => journalLines(`POC_CUSTOM_RULES ${id} ${OWNER} `);   // 外壳的一行：POC_CUSTOM_RULES <单据> <账号> <规则字数>
+  try {
+    // 1. 带上补充要求：公司制度下通过的这张单，因为没附出租方的房产证明而不通过
+    const rent = await uploadOwnRule(RENT_RULE);
+    const strict = await runAdvice(number);
+    const { id } = strict.document;
+    assert.equal(strict.advice.status, 'completed', `${number}：${strict.advice.errorCode ?? strict.advice.declinedReason}`);
+    assert.equal(strict.advice.result, 'fail', `带上「${RENT_RULE.name}」后 ${number} 应不通过：${strict.advice.note}`);
+    assert.ok(strict.advice.note.startsWith(CUSTOM_NOTE), `备注应以「${CUSTOM_NOTE}」开头：${strict.advice.note.slice(0, 200)}`);
+    assert.ok(strict.advice.basis.some(item => item.kind === 'rule' && String(item.ref).startsWith('自定义：')), `依据里应有 ref 以「自定义：」开头的规则：${JSON.stringify(strict.advice.basis).slice(0, 600)}`);
+    assert.ok((await logged(id)).includes(`POC_CUSTOM_RULES ${id} ${OWNER} ${rent.chars}`), `外壳日志里应有 POC_CUSTOM_RULES ${id} ${OWNER} ${rent.chars}`);
+    // 页面上：单据详情的「模型说明」里写明含 poc-reviewer 的自定义规则
+    await page.getByRole('link', { name: '单据池' }).first().click();
+    await page.locator(`article.document-card[data-document-id="${id}"]`).getByRole('button', { name: '查看依据' }).click();
+    const dialog = page.getByRole('dialog', { name: number });
+    await dialog.getByRole('heading', { name: 'AI 独立建议', level: 2 }).waitFor({ timeout: 30_000 });
+    await dialog.getByText(/^不建议通过（/).first().waitFor({ timeout: 30_000 });
+    const note = dialog.locator('details.analysis-advice-model-note').first();
+    await note.locator('summary').click();
+    await note.getByText(CUSTOM_NOTE).first().waitFor();
+    await shot('05-custom-rule-advice');
+    await dialog.getByRole('button', { name: '关闭' }).click();
 
-test('制度知识库：管理员上传本机的制度原文——预览不删、不和别的文档冲突，确认入库后历史里是「已入库」；按问题检索前 3 名有预期规则；检索日志里有这次测试期间审核 Agent 的调用', { skip: KB_DOCX ? false : '没给 KB_E2E_DOCX（本机的制度原文）', timeout: 20 * 60_000 }, async () => {
-  const card = title => page.locator('section.platform-ops-card').filter({ has: page.getByRole('heading', { name: title }) });
-  await page.goto(`${BASE}/#rules?view=kb`);
-  await page.locator('input[type=file][name=file]').setInputFiles(KB_DOCX);
-  const preview = page.locator('.kb-preview').first();
-  await preview.waitFor({ timeout: 3 * 60_000 });
-  await page.locator('input[name=sourceTag]').fill(KB_TAG);
-  await Promise.all([page.waitForResponse(response => /\/poc\/kb\/documents\/\d+\/preview$/.test(new URL(response.url()).pathname), { timeout: 3 * 60_000 }),
-    page.getByRole('button', { name: '重新预览' }).click()]);
-  await sleep(500);
-  assert.match(await preview.innerText(), /删除 0$/, '同一份制度重新入库不该删规则');
-  assert.equal(await page.locator('.kb-block').count(), 0, '规则编号不该和库里另一份文档冲突');
-  await page.getByRole('button', { name: '确认入库' }).click();
-  const outcome = await card('上传制度文档').getByText(/入库完成|入库没有完成/).first().innerText({ timeout: 15 * 60_000 });
-  assert.match(outcome, /^入库完成/, outcome);
-  const [latest] = (await api('/poc/kb/documents')).json.data.items;
-  assert.deepEqual([latest.status, latest.source_tag, latest.result?.pruned], ['ingested', KB_TAG, 0]);
+    // 2. 删掉规则再发起：回到公司制度的结论，备注不提自定义规则，外壳也没再附
+    await clearOwnRules();
+    assert.deepEqual((await ownRules()).items, [], `${OWNER} 的规则没删干净`);
+    const linesBefore = (await logged(id)).length;
+    const plain = await runAdvice(number);
+    assert.equal(plain.advice.status, 'completed', `${number}：${plain.advice.errorCode ?? plain.advice.declinedReason}`);
+    assert.equal(plain.advice.result, 'pass', `删掉规则后 ${number} 应回到通过：${plain.advice.note}`);
+    assert.doesNotMatch(plain.advice.note, /自定义规则/, '没有规则时备注不该提自定义规则');
+    assert.equal((await logged(id)).length, linesBefore, '删掉规则后这一轮不该再附自定义规则');
 
-  await card('按问题检索').locator('input[name=question]').fill(KB_QUESTION);
-  await card('按问题检索').getByRole('button', { name: '检索' }).click();
-  await card('按问题检索').locator('tbody tr td').first().waitFor();
-  await sleep(1000);
-  const top3 = (await card('按问题检索').locator('tbody tr').evaluateAll(rows => rows.map(row => row.cells[1]?.innerText))).slice(0, 3);
-  assert.ok(top3.includes(KB_EXPECT), `「${KB_QUESTION}」前 3 名应有 ${KB_EXPECT}：${top3}`);
-
-  const log = (await api('/poc/kb/search-log')).json.data.items;
-  assert.ok(log.some(entry => entry.caller === 'page' && entry.question === KB_QUESTION), '页面检索记进检索日志');
-  assert.ok(log.some(entry => entry.caller === 'agent' && new Date(entry.at) >= startedAt), '这次测试里审核 Agent 审单时经连接器调了 kb_search');
+    // 3. 接近每人 20,000 字的上限（虚构的填充文字）：请求整份送到 Nexus，不被拒收（设计第 5 节风险 4）
+    const long = await uploadOwnRule(NEAR_LIMIT_RULE);
+    const { usedChars, limitChars } = await ownRules();
+    assert.ok(usedChars === long.chars && limitChars - usedChars <= 200, `合计应接近上限：${usedChars} / ${limitChars}`);
+    const near = await runAdvice(number);
+    assert.equal(near.advice.status, 'completed', `带 ${long.chars} 字自定义规则的这一轮没有完成（Nexus 可能拒收了请求的大小）：${near.advice.errorCode ?? near.advice.declinedReason}`);
+    assert.ok((await logged(id)).includes(`POC_CUSTOM_RULES ${id} ${OWNER} ${long.chars}`), `外壳日志里应有 POC_CUSTOM_RULES ${id} ${OWNER} ${long.chars}（整份规则附上了）`);
+    console.log(`接近上限的一轮：自定义规则 ${long.chars} 字，结论 ${near.advice.result}`);
+    await clearOwnRules();
+  } finally {
+    // 中途失败也不留规则
+    const left = await clearOwnRules().catch(error => { console.log(`清理「我的规则」没有完成：${error.message}`); return []; });
+    if (left.length) console.log(`自定义规则用例中途失败：删掉了 ${OWNER} 留下的 ${left.length} 份「我的规则」`);
+  }
+  assert.deepEqual((await ownRules()).items, [], `用例结束时 ${OWNER} 不留规则`);
 });
 
 test('出网与写回：测试期间九安没有调汇联易的审批写入；被拦下的出网只有写死的外部地址，没有 Nexus', async () => {
-  const since = startedAt.toISOString().replace('T', ' ').slice(0, 19);
-  const params = JSON.stringify({ commands: [`journalctl -u andon-jiuan07 --since '${since} UTC' --no-pager -o cat | grep -E 'POC_EGRESS_BLOCKED|POC_HLY_WRITE_BLOCKED' | sort | uniq -c || true`] });
-  const aws = async args => (await run('aws', ['--region', REGION, ...args, '--output', 'text'])).stdout.trim();
-  const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', 'e2e egress check (read-only)', '--parameters', params, '--query', 'Command.CommandId']);
-  await run('aws', ['--region', REGION, 'ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
-  const lines = await aws(['ssm', 'get-command-invocation', '--command-id', id, '--instance-id', INSTANCE, '--query', 'StandardOutputContent']);
+  const lines = await ssm(`journalctl -u andon-jiuan07 --since '${journalSince(startedAt)}' --no-pager -o cat | grep -E 'POC_EGRESS_BLOCKED|POC_HLY_WRITE_BLOCKED' | sort | uniq -c || true`,
+    'e2e egress check (read-only)');
   console.log(`出网与写回拦截记录：${lines || '（无）'}`);
   assert.doesNotMatch(lines, /POC_HLY_WRITE_BLOCKED/);
   assert.ok(NEXUS_HOST, '请用 run07.sh 运行：它从栈参数取 Nexus 的主机名');

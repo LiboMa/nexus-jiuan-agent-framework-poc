@@ -401,6 +401,24 @@ test('九安 v0.7.10 的端到端测试不写死区域和 Nexus 地址：run07.s
   assert.match(runner, /E2E07_NEXUS_HOST="\$\(output_param NexusOrigin \| sed -E 's#\^https\?:\/\/##; s#\[\/:\]\.\*\$##'\)"/);
 });
 
+test('九安 v0.7.10 的端到端测试按知识库方式走：run07.sh 从 DEPLOY_ENV 导出方式（缺省 pg）和这种方式的知识库 Agent 发布，s3vectors 另给桶和规则索引；测试不再调已删掉的直连 PG 接口，自定义规则的日志按带空格的 POC_CUSTOM_RULES 找', async () => {
+  const runner = await readFile(e2e07('run07.sh'), 'utf8');
+  assert.match(runner, /E2E07_KB_MODE="\$\{KB_MODE:-pg\}"/);
+  assert.match(runner, /if \[\[ "\$E2E07_KB_MODE" == s3vectors \]\]; then\n  E2E07_KB_PUBLICATION_ID="\$\{KB_S3V_PUBLICATION_ID:-\}"\n  E2E07_KB_S3V_BUCKET="\$\{KB_S3V_BUCKET:-\}"\n  E2E07_KB_S3V_RULES_INDEX="\$\{KB_S3V_RULES_INDEX:-\}"\n  export E2E07_KB_S3V_BUCKET E2E07_KB_S3V_RULES_INDEX\nelse\n  E2E07_KB_PUBLICATION_ID="\$\{KB_PG_PUBLICATION_ID:-\}"\nfi\nexport E2E07_KB_MODE E2E07_KB_PUBLICATION_ID\n/);
+  assert.ok(runner.indexOf('export E2E07_KB_MODE') < runner.lastIndexOf('node --test --test-concurrency=1'), '先导出再跑测试');
+  const spec = await readFile(e2e07('jiuan07.e2e.mjs'), 'utf8');
+  for (const name of ['E2E07_KB_MODE', 'E2E07_KB_PUBLICATION_ID', 'E2E07_KB_S3V_BUCKET', 'E2E07_KB_S3V_RULES_INDEX']) assert.match(spec, new RegExp(`process\\.env\\.${name}\\b`), name);
+  assert.doesNotMatch(spec, /\/poc\/kb\/(documents|search-log)/, '0005 之后没有这两个接口');
+  assert.match(spec, /journalLines\('POC_CUSTOM_RULES '\)/, '带空格：POC_CUSTOM_RULES_FAILED 不算');
+  assert.match(spec, /'s3vectors', 'get-vectors'[\s\S]{0,300}'--return-metadata'/);
+  assert.match(spec, /FROM kb_search_log/);
+  // 截图只拍单据、Agent 接入、模拟来单：「规则库 › 制度知识库」页上有真实制度，不截图
+  const kbCase = spec.slice(spec.indexOf('test(`制度知识库'), spec.indexOf("test('清场"));
+  assert.ok(kbCase.length > 100);
+  assert.doesNotMatch(kbCase, /shot\(/);
+  assert.doesNotMatch(spec.slice(spec.indexOf('async function uploadOwnRule'), spec.indexOf("test('登录")), /shot\(/);
+});
+
 test('交付包和交接仓库只带 poc/infra/env/example.env（各环境的配置不出去）；打包检查也跑 audit-agent、kb 的单元测试', async () => {
   const pack = await readFile(fileURLToPath(new URL('../../../../docs/delivery/make-package.sh', import.meta.url)), 'utf8');
   assert.match(pack, /copy poc\/infra [^\n]*--include \/infra\/env\/example\.env --exclude '\/infra\/env\/\*\.env'/);
