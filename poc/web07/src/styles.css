@@ -1,0 +1,111 @@
+/*
+ * 九安审单 · A 版视觉系统（docs/specs/2026-10-30-react-frontend-design.md 第 2 节）。
+ * Tailwind CSS 4 在构建时编译成一个静态 CSS 文件；页面的 CSP 是 style-src 'self'，所以这里是唯一的样式来源。
+ * 只留设计系统里的颜色、字号、字重、圆角：默认调色板全部清掉，写错颜色名会直接没有样式，而不是悄悄用上别的蓝。
+ */
+@import "tailwindcss";
+
+/* static：所有 token 都输出成 CSS 变量（没用到的也输出），图表的 SVG 可以直接写 fill="var(--color-pass)"。 */
+@theme static {
+  --color-*: initial;
+  --color-white: #FFFFFF;
+  --color-canvas: #F5F7FA;     /* 画布 */
+  --color-surface: #FFFFFF;    /* 面 */
+  --color-ink: #0E1B33;        /* 正文（深海军蓝） */
+  --color-steel: #5A6880;      /* 次要 */
+  --color-faint: #8A97AB;      /* 弱 */
+  --color-line: #E2E7EF;       /* 分隔 */
+  --color-nav: #33415C;        /* 未选中的导航文字（样稿 A） */
+  --color-blue: #1E5EFF;       /* 主蓝 */
+  --color-blue-50: #EEF3FF;    /* 浅蓝 */
+  --color-blue-100: #DCE6FF;   /* 头像底 */
+  --color-blue-200: #C9D7FF;   /* 规则标签边 */
+  --color-pass: #0E9F6E;       /* 通过 */
+  --color-pass-50: #F0FAF5;
+  --color-pass-200: #BDE7D6;
+  --color-fail: #E5484D;       /* 不通过 */
+  --color-fail-50: #FDF2F2;
+  --color-fail-200: #F6C9CA;
+  --color-wait: #D19A2B;       /* 处理中（图形填色） */
+  --color-wait-ink: #B7791F;   /* 处理中（浅底上的文字，样稿 drafts-v2） */
+  --color-wait-50: #FFF9EC;
+  --color-wait-200: #F1DDB0;
+  --color-own: #7A5AF8;        /* 我的规则（图形） */
+  --color-own-ink: #6941C6;    /* 我的规则（文字） */
+  --color-own-50: #F7F3FE;
+  --color-own-200: #DCCFF7;
+  --color-sunken: #FAFBFD;     /* 复核区、拖放区的底 */
+  --color-track: #EEF1F6;      /* 进度条、条形图的底 */
+  --color-scrim: rgb(14 27 51 / 0.16);
+
+  --font-*: initial;
+  --font-sans: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+
+  --text-*: initial;
+  --text-12: 12px;
+  --text-12--line-height: 1.45;
+  --text-13: 13px;
+  --text-13--line-height: 1.45;
+  --text-14: 14px;
+  --text-14--line-height: 1.45;
+  --text-16: 16px;
+  --text-16--line-height: 1.4;
+  --text-22: 22px;
+  --text-22--line-height: 1.3;
+  --text-28: 28px;
+  --text-28--line-height: 1.2;
+
+  --font-weight-*: initial;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-title: 650;
+
+  --radius-*: initial;
+  --radius-box: 4px;           /* 容器 */
+  --radius-ctl: 2px;           /* 按钮、输入框、标签 */
+
+  --shadow-*: initial;
+  --shadow-modal: 0 24px 60px rgb(14 27 51 / 0.22);
+  --shadow-drawer: -24px 0 60px rgb(14 27 51 / 0.14);
+  --shadow-logo: 0 6px 14px rgb(30 94 255 / 0.25);
+  --shadow-tip: 0 6px 18px rgb(14 27 51 / 0.18);
+
+  /* 动效只给抽屉、弹框的开合（150–200 ms）；减少动态效果时由 motion-reduce:animate-none 关掉。 */
+  --animate-*: initial;
+  --animate-drawer-in: drawer-in 180ms ease-out;
+  --animate-drawer-out: drawer-out 150ms ease-in;
+  --animate-modal-in: modal-in 160ms ease-out;
+  --animate-modal-out: modal-out 150ms ease-in;
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-fade-out: fade-out 150ms ease-in;
+
+  @keyframes drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes drawer-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
+  /* 弹框的水平居中用的是 translate 属性（Tailwind 4），这里只动 transform，两者叠加。 */
+  @keyframes modal-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes modal-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(8px); } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    font-feature-settings: "tnum" 1;   /* 数字等宽 */
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--color-blue); outline-offset: 2px; }
+  ::selection { background: var(--color-blue-50); }
+  .boot-note { margin: 0; padding: 40vh 0 0; text-align: center; color: var(--color-steel); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
