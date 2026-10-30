@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { childEnv } from './helpers/child-env.mjs';
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+// 子进程不继承部署的环境（DEPLOY_ENV 和环境配置的键，见 helpers/child-env.mjs）；自己给了 env 的调用照它给的
+const run = (file, args, options = {}) => execFileAsync(file, args, { env: childEnv(), ...options });
 const infra = name => fileURLToPath(new URL(`../../../infra/${name}`, import.meta.url));
 const block = (text, name) => {
   const start = text.indexOf(`\n  ${name}:\n`);

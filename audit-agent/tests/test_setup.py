@@ -1,10 +1,12 @@
 """setup.py：在 Nexus 上找或建审核 Agent、它的 A2A 发布，并把知识库连接器绑进发布的动态配置。幂等；写操作只在需要时做。"""
 import io
+import os
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -180,8 +182,11 @@ class SetupTest(unittest.TestCase):
         sys.modules.pop("setup", None)
         import setup
         setup.nexus = FakeNexus()
-        with self.assertRaises(SystemExit):
+        # 「--env 和 DEPLOY_ENV 都没给」：外面（比如部署的 shell）带着 DEPLOY_ENV 时也要测到这一种，所以先拿掉
+        with mock.patch.dict(os.environ), self.assertRaises(SystemExit) as caught:
+            os.environ.pop("DEPLOY_ENV", None)
             setup.main([])
+        self.assertIn("要指明是哪个环境", str(caught.exception.code))
 
     def test_setup_pg_unchanged(self):
         """pg（不写 KB_MODE，或写 pg）：写操作的顺序和以前一样，不读规则工具的密钥绑定。"""

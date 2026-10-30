@@ -38,6 +38,8 @@ output() {
   aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" \
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
+# 单元测试不看部署的环境：DEPLOY_ENV 和环境配置能写的键（load_deploy_env 把读到的 export 了，shell 里也可能有同名的）都不传给 node --test
+unit_tests() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && node --test "test/unit/**/*.test.mjs"); }
 
 say "检查工具与账号"
 for tool in node aws rsync tar curl openssl; do command -v "$tool" >/dev/null || { echo "缺少 $tool" >&2; exit 1; }; done
@@ -46,7 +48,7 @@ aws sts get-caller-identity --query Account --output text
 [[ -f "$OPERATOR_SCRIPT" ]] || { echo "找不到 nexus-ai-operator：$OPERATOR_SCRIPT" >&2; exit 1; }
 
 say "单元测试"
-(cd "$APP_DIR" && node --test "test/unit/**/*.test.mjs")
+unit_tests "$APP_DIR"
 
 say "生成前端副本"
 (cd "$APP_DIR" && node scripts/build-public.mjs)
@@ -56,7 +58,7 @@ say "构建九安副本（开发包 + 补丁 + mysql2）"
 
 say "构建九安 v0.7.10 副本（按清单复制 + mysql2），跑测试台外壳的单元测试"
 "$POC_DIR/bench/build-jiuan07.sh"
-(cd "$POC_DIR/app07" && node --test "test/unit/**/*.test.mjs")
+unit_tests "$POC_DIR/app07"
 
 if ! $CODE_ONLY; then
   say "建栈或更新栈 ${STACK}（第一次建 CloudFront 约需 5–15 分钟）"

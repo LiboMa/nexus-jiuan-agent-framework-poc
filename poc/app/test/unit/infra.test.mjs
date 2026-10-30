@@ -7,8 +7,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { DEPLOY_ENV_KEYS, childEnv } from './helpers/child-env.mjs';
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+// 子进程不继承部署的环境（DEPLOY_ENV 和环境配置的键，见 helpers/child-env.mjs）；自己给了 env 的调用照它给的
+const run = (file, args, options = {}) => execFileAsync(file, args, { env: childEnv(), ...options });
 const infra = name => fileURLToPath(new URL(`../../../infra/${name}`, import.meta.url));
 
 test('模板里的 Fn::Sub 只引用模板自己的参数、资源与伪参数（用户数据里的 shell 变量一律不带花括号）', async () => {
@@ -101,6 +104,37 @@ test('deploy.sh 开头的变量定义在 set -u 下能跑通（变量要先定�
   const prelude = deploy.slice(0, deploy.indexOf('\nsay() '));
   assert.ok(prelude.includes('CODE_ONLY=false'), '变量定义应在 say() 之前');
   await run('bash', ['-c', `cd ${JSON.stringify(fileURLToPath(new URL('../../../infra/', import.meta.url)))} && ${prelude.replace(/^#!.*\n/, '')}\necho "$SECRETS $APP_DIR"`]);
+});
+
+test('单元测试不继承部署的环境：外面带着找不到的 DEPLOY_ENV（相对路径）和环境配置的键（KB_MODE 还不合格），上面那条测试照样通过', async () => {
+  const env = { ...process.env, DEPLOY_ENV: 'poc/infra/env/no-such.env', KB_MODE: 'mongo', STACK: 'not-this-stack' };   // 有意带上
+  delete env.NODE_TEST_CONTEXT;   // 不然里面的 node --test 以为自己是被测试运行器拉起来的子进程
+  const { stdout } = await run(process.execPath, ['--test', '--test-reporter=tap', '--test-name-pattern=^deploy\\.sh 开头的变量定义在 set -u 下能跑通',
+    fileURLToPath(import.meta.url)], { env });
+  assert.match(stdout, /^# pass 1$/m);
+  assert.match(stdout, /^# fail 0$/m);
+});
+
+test('deploy.sh 跑单元测试只经 unit_tests：DEPLOY_ENV 和 load_deploy_env export 出来的键（shell 里同名的也算）都不传给 node --test', async t => {
+  const deploy = await readFile(infra('deploy.sh'), 'utf8');
+  const fn = deploy.split('\n').find(line => line.startsWith('unit_tests() '));
+  assert.ok(fn, 'deploy.sh 里应有一行 unit_tests() { … }');
+  assert.deepEqual(deploy.split('\n').filter(line => !/^\s*#/.test(line) && line.includes('node --test')), [fn], 'node --test 只在 unit_tests 里跑');
+  assert.match(deploy, /^unit_tests "\$APP_DIR"$/m);
+  assert.match(deploy, /^unit_tests "\$POC_DIR\/app07"$/m);
+  const dir = await mkdtemp(path.join(tmpdir(), 'deploy-unit-tests-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const script = ['set -euo pipefail', `source ${JSON.stringify(infra('lib/deploy-env.sh'))}`, 'load_deploy_env 2>/dev/null', fn,
+    'node() { printf "cwd=%s\\n" "$PWD"; printf "args=%s\\n" "$*"; env; }', 'printf "loaded=%s\\n" "${DEPLOY_ENV_LOADED[*]}"', `unit_tests ${JSON.stringify(dir)}`].join('\n');
+  const fixture = fileURLToPath(new URL('../fixtures/deploy-env/s3v.env', import.meta.url));
+  const { stdout } = await run('bash', ['-c', script], { env: { PATH: process.env.PATH, HOME: process.env.HOME, DEPLOY_ENV: fixture, KB_ALLOWED_CIDR: '10.9.0.0/16', KEEP_ME: 'yes' } });
+  const lines = stdout.split('\n');
+  assert.ok(lines.find(line => line.startsWith('loaded=')).split(/[= ]/).includes('KB_MODE'), '先确认读进来了（并 export 了）');
+  assert.ok(lines.includes(`cwd=${dir}`));
+  assert.ok(lines.includes('args=--test test/unit/**/*.test.mjs'));
+  assert.ok(lines.includes('KEEP_ME=yes'), '别的环境变量照常传');
+  const leaked = lines.map(line => line.slice(0, line.indexOf('='))).filter(name => name === 'DEPLOY_ENV' || DEPLOY_ENV_KEYS.includes(name));
+  assert.deepEqual(leaked, []);
 });
 
 test('deploy.sh：secrets.env 没有 REGISTRY_KEY 时追加一条（openssl 32 字节）；新文件模板不再写 NEXUS_API_KEY', async () => {
