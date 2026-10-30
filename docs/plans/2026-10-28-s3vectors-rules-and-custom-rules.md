@@ -333,3 +333,65 @@
 - [ ] **Step 3: 提交** `test(e2e): reviewers' own rules; KB mode-aware cases (PG run)`
 
 **Task 13 补充：** 文档以 PG 方式为主、S3 Vectors 为另一种部署方式；写明 S3 Vectors 方式这一轮只做了代码和单元测试、没有上线（Task 4 没做）。
+
+---
+
+## 修订 2（2026-10-30，项目负责人：PG 的连接放到 Agent 侧）
+
+依据：Spec 第 8 节和 `docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md`。执行顺序：20 → 21 → 22 → （新 Agent 建好）18 → 19 → 13。Task 18、19 按下面的补充改。
+
+**Global Constraints 补充：** 测试台不直连 PG；两种方式的「公司制度」都经 A2A 调知识库 Agent。「不给 DEPLOY_ENV 时行为不变」对「制度知识库」页不再适用，其余照旧。
+
+### Task 20: 配置：PG 方式也经 Agent
+
+**Files:**
+- Modify: `poc/infra/lib/deploy-env.sh`、`audit-agent/deploy_env.py`、`poc/infra/env/example.env`、`poc/infra/deploy.sh`、`poc/infra/bench/bench07-configure.sh`、`poc/app07/settings.mjs`
+- Test: `poc/app/test/unit/deploy-env.test.mjs`、`audit-agent/tests/test_deploy_env.py`、`poc/app/test/unit/bench07-infra.test.mjs`、`poc/app07/test/unit/settings-guard.test.mjs`
+
+**Interfaces:**
+- Produces：
+  - 配置键 `KB_PG_PUBLICATION_ID`（形如 `pub_` + 16 位小写十六进制）；读配置时只校验格式、不强制（没配时页面说「知识库 Agent 还没配置」）。example.env 里留空、注释写形状（顺带修 Task 5 的 minor：`RULES_TOOL_DIR`、`KB_S3V_KEY_ID`、`KB_S3V_PUBLICATION_ID` 也改成留空、注释写形状）。
+  - `deploy.sh` 第 4 个参数传当前方式的发布编号：`pg` 用 `KB_PG_PUBLICATION_ID`，`s3vectors` 用 `KB_S3V_PUBLICATION_ID`（照旧在任何 AWS 调用前校验）。
+  - `bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<知识库 Agent 发布编号>]]`：两种方式都写 `POC07_KB_MODE`、给了编号就写 `POC07_KB_PUBLICATION_ID`，建 `/var/lib/jiuan07/kb-uploads` 和 `/var/lib/jiuan07/custom-rules`（jiuan07 0700）；**不再读 PG 主机的 `.env`、不再写 `kb_pg_password`、不再建 kb-venv**，并删掉 `$DIR/kb_pg_password`（有就删）。`POC07_KB_PG_HOST` 等 PG 连库变量不再写。
+  - `settings.kb` 两种方式都是 `{ mode, publishId (或 null), uploadsDir }`；`publishId` 有值时必须合格式，否则启动失败；`settings.customRulesDir` 不变。
+
+- [ ] **Step 1: 写测试**：两边加载器认 `KB_PG_PUBLICATION_ID` 并校验格式；`deploy.sh` 在两种方式下传对编号；`bench07-configure.sh` 两种方式都不碰 PG 的 `.env`、不写 `kb_pg_password`、会删掉旧的 `kb_pg_password`、写 `POC07_KB_PUBLICATION_ID`；`settings` 两种方式的形状、没配编号时 `publishId === null`、格式错时抛错。
+- [ ] **Step 2: 跑**，FAIL → **Step 3: 实现** → **Step 4: 跑**（`cd poc/app && npm test`、`cd poc/app07 && npm test`、`python3 -B -m unittest discover -s audit-agent/tests`）PASS。
+- [ ] **Step 5: 提交** `feat(infra): the KB page reaches PG only through a Nexus agent (KB_PG_PUBLICATION_ID)`
+
+### Task 21: 外壳：两种方式共用「经 Agent 管理公司制度」的接口
+
+**Files:**
+- Rename: `poc/app07/kb-s3v-client.mjs` → `poc/app07/kb-steward-client.mjs`、`poc/app07/kb-s3v-routes.mjs` → `poc/app07/kb-steward-routes.mjs`、`poc/app07/test/unit/kb-s3v-routes.test.mjs` → `poc/app07/test/unit/kb-steward-routes.test.mjs`
+- Delete: `poc/app07/kb-routes.mjs`、`poc/app07/kb-runner.mjs`、`poc/app07/test/unit/kb-routes.test.mjs`（共用的 .docx 校验搬进 `kb-steward-routes.mjs` 或一个小的 `kb-docx.mjs`）
+- Modify: `poc/app07/server.mjs`；`poc/infra/deploy.sh`（构件不再带 `kb/lib`、`kb/sql`，如果只有旧路径用它们）
+- Test: `poc/app07/test/unit/kb-steward-routes.test.mjs`
+
+**Interfaces:**
+- Consumes: Task 20 的 `settings.kb = { mode, publishId, uploadsDir }`；约定文档的 `describe` 回复 `{success, protocol: "kb.rules/v1", backend, ops}`。
+- Produces：
+  - `createKbStewardClient({ origin, publishId, credentialFor, markInvalid, call = a2aCall })` → `{ ready(), describe(), request(op, input, file?) }`。`publishId` 为 `null` 时 `ready()` 回 `false`、调用抛 `KB_AGENT_NOT_CONFIGURED`。`describe()` 的结果缓存 5 分钟（钥匙被拒或回复不合格时清缓存）；`protocol` 不是 `kb.rules/v1` 当作回复不合格。其余行为（文字、数据 Part、文件 Part、超时、`markInvalid` 一次、回复按 op 校验）照 Task 6。
+  - `createKbStewardRoutes({ mode, client, uploadsDir, log })`：路由同 Task 6；`GET /mode` → `{ mode, configured, ready, ops }`（`ops` 来自 `describe`，没就绪时 `[]`）；`deactivate` / `restore` 不在 `ops` 里时回 409 `KB_OP_UNSUPPORTED`「这个知识库 Agent 不支持这个操作」、不调 Agent。错误文案里的 Agent 名字按方式：`pg`「知识库 Agent」、`s3vectors`「知识库文档管家」。新增 `KB_AGENT_NOT_CONFIGURED`（409）「知识库 Agent 还没配置：部署配置里缺发布编号」。
+  - `server.mjs`：两种方式都挂这一套；不再有 PG 直连的路由和子进程。
+
+- [ ] **Step 1: 写测试**：Task 6 的用例照搬并改名；新增 `describe_gates_ops`（`ops` 没有 `deactivate` 时那条路由 409、`call` 没被调）、`describe_cached`（5 分钟内只调一次，钥匙被拒后重新调）、`not_configured`（`publishId=null` → `/mode` 的 `configured:false`，其他接口 409 `KB_AGENT_NOT_CONFIGURED`）、`mode_names`（两种方式的错误文案用对 Agent 名字）。
+- [ ] **Step 2: 跑**，FAIL → **Step 3: 实现**（`git mv` 改名，保留历史）→ **Step 4: 跑** `cd poc/app07 && npm test`、`cd poc/app && npm test` PASS。
+- [ ] **Step 5: 提交** `feat(app07): company rules go through the KB agent in both modes; drop the direct PG path`
+
+### Task 22: 补丁 0005：两种方式共用「公司制度」块
+
+**Files:**
+- Modify: `patches/jiuan-v0.7.10/0005-rules-page-modes-and-own-rules.patch`（还没推送，直接改这一份：以打过 0001–0004 的副本为 `a` 重新生成）
+- Test: `poc/app/test/unit/bench07-build.test.mjs`
+
+**Interfaces:**
+- Consumes: Task 21 的 `GET /poc/kb/mode` → `{ mode, configured, ready, ops }` 和其余路由。
+- Produces：`kb-page.js` 里 0004 的 PG 块（入库预览、检索日志）去掉；两种方式都画 Task 9 的 S3 Vectors 块；「下线」「恢复」只在 `ops` 里有时显示；`configured === false` 时整块只说「知识库 Agent 还没配置」，`ready === false` 时只说「先在『Agent 接入』页启用知识库 Agent」（`s3vectors` 方式说「知识库文档管家」）。顺带修 Task 9 的三个 minor：入库进行中「取消」也禁用；删掉刚上传的那份规则后清掉它的全文框；「我的规则」请求进行中按钮禁用。
+
+- [ ] **Step 1: 改测试**：0004 的两条页面测试测的是被删掉的 PG 块——改成测两种方式共用的块（项目负责人同意删旧路径，所以这两条的断言可以改）；新增 `ops_gate_buttons`、`not_configured_message`；Task 9 的 4 条照过。
+- [ ] **Step 2: 跑**，FAIL → **Step 3: 重新生成补丁** → **Step 4: 跑** `cd poc/app && npm test` PASS；构建出的副本 `node --check` 通过。
+- [ ] **Step 5: 提交** `feat(bench07): one company-rules block for both KB modes (patch 0005)`
+
+**Task 18 补充（新 Agent 建好后）：** Step 1 之前加：(a) 人在「Agent 接入」页启用新 Agent 的发布；(b) 经它发一次 `describe`（`kb.rules/v1 · describe`），回复合格；(c) 发布编号填进 `beine1013.env` 的 `KB_PG_PUBLICATION_ID`。Step 1 部署后，管理员经页面上传本机的真实制度：`ingested`、条数与 `approval_rules` 里这份制度的行数一致、`conflicts` 为空；检索「房租 年度框架合同 九安」前 3 名有 `C05-3.4`。Step 3 的「检索日志」改为经 SSM 只读查 `kb_search_log`。
+
+**Task 19 补充：** `pg` 分支的「制度知识库」用例改为经新 Agent（同 `s3vectors` 分支的写法：挪到 AI 独立建议之前，上传 → 等 `ingested|skipped` → 清单里有、`conflicts` 为空 → 检索前 3 名有 `KB_E2E_EXPECT`）；「检索日志里有审核 Agent 的调用」改为经 SSM 只读查 `kb_search_log`（测试期间有审核 Agent 那一侧的调用）；`knownRuleIds` 照旧经 SSM 查 `approval_rules`；Agent 接入那条另核对新 Agent 的发布是「就绪」、不是审批 Agent。

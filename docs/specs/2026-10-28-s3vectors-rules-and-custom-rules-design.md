@@ -197,3 +197,15 @@ PG 方式的架构见 10-26 的设计第 2 节，不变；两种方式只在「�
 | 最终方式与测试 | 现有环境**最后停在 PG**（`KB_MODE` 不写）；本轮**只跑 PG 方式的端到端**（含自定义规则）。S3 Vectors 方式只做代码和单元测试，**任务 4（S3 Vectors 上线）这轮不做**，也不跑它的检索回归 |
 | 审核 Agent | **照原设计（3.7）**：提示词按 `KB_MODE` 渲染两种。`pg` 和现在线上的逐字一致，只多自定义规则一段，仍经连接器 `conn-f0c7233959d9` 用 SQL 和 `kb_search`；`s3vectors` 用 `rules_search`。PG 方式不解绑连接器 |
 | 方案 B（一个 `rules_search`、PG 和 S3 Vectors 两种后端） | 讨论过，**撤回**，不做 PG 版 `rules_search`。撤回前做过一次 PG 连通实测（经项目负责人同意，已清理）：导入的工具在隔离环境里拿到了数据库密钥 `key-a015b93ad361` 的 host / port / database / username / password，用 psycopg 3.3.4 连上 10.0.1.38:5432，`kb_search` 回了 3 条 `C05-` 规则，连接 332 ms、总共 767 ms；只读事务里 `kb_search` 不写检索日志。留作以后要做方案 B 时的依据 |
+
+## 8. 补充（2026-10-30，项目负责人）：PG 的连接放到 Agent 侧
+
+**为什么**：九安的前端和 PostgreSQL 不在同一台主机，测试台不能再直连 PG（现在的 `kb-runner.mjs` 在本机起 Python 连库）。
+
+| 问题 | 决定 |
+|---|---|
+| 「制度知识库」页的 PG 方式 | 照 S3 Vectors 方式：页面 → 测试台后端 → A2A → Nexus 上的 PG 知识库 Agent（项目负责人正在重建 `knowledgebase_agent`）→ 它的工具 → PG。接口约定见 `docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md`（与 S3 Vectors 版同一套 `kb.rules/v1`，多一个 `describe`） |
+| 测试台的接口和页面 | 两种方式共用一套「经 Agent 管理公司制度」的接口和页面块；页面按 `describe` 返回的 `ops` 显示按钮（例如没有下线 / 恢复就不显示）；PG 方式的发布编号是新配置键 `KB_PG_PUBLICATION_ID` |
+| 直连 PG 的旧路径 | **删掉**：`kb-routes.mjs`、`kb-runner.mjs` 和页面里 0004 的 PG 块（入库预览、检索日志）不再用；`bench07-configure.sh` 不再拷数据库密码、不再建 kb-venv，并删掉实例上留下的 `kb_pg_password`。「不给 DEPLOY_ENV 时行为不变」这一条对「制度知识库」页不再适用（项目负责人同意） |
+| 审核 Agent | 不变：PG 方式下照旧经连接器 `conn-f0c7233959d9` 查 `approval_rules`、调 `kb_search`（连接本来就在 Nexus 那一侧）。前提是新 Agent 按约定写同一套表、用 `kb_embed()` 生成向量 |
+| 端到端测试 | PG 方式的「制度知识库」用例经新 Agent 上传、入库、检索；「审核 Agent 查过知识库」改为经 SSM 只读查 `kb_search_log` |
