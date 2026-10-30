@@ -21,8 +21,8 @@ import { createOperatorCli } from '../app/nexus/cli.mjs';
 import { agentCallRoutes, everyDocument } from './agent-calls.mjs';
 import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
-import { createKbS3vClient } from './kb-s3v-client.mjs';
-import { createKbS3vRoutes } from './kb-s3v-routes.mjs';
+import { createKbStewardClient } from './kb-steward-client.mjs';
+import { createKbStewardRoutes } from './kb-steward-routes.mjs';
 import { createCustomRules, customRulesRoutes, docxToText } from './custom-rules.mjs';
 import { withAdviceActor, withCustomRules } from './custom-rules-advice.mjs';
 import { a2aCall } from '../app/nexus/a2a-client.mjs';
@@ -155,7 +155,7 @@ const intake = intakeRoutes({ fake });
 // - s3vectors：经 A2A 调知识库文档管家的发布读写 S3 Vectors；调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效
 // - pg：经 PG 知识库 Agent 的接口还没接上（下一步两种方式共用一套），这时不挂「公司制度」的接口，启动时记一行 POC_KB_PG_AGENT_NOT_WIRED
 const kb = settings.kb.mode === 's3vectors'
-  ? createKbS3vRoutes({ client: createKbS3vClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
+  ? createKbStewardRoutes({ client: createKbStewardClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
     credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log })
   : null;
 if (settings.kb.mode === 'pg') log('POC_KB_PG_AGENT_NOT_WIRED');

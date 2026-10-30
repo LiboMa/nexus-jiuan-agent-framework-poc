@@ -97,7 +97,7 @@ function outcome(result) {
     ...(typeof result.suggestion === 'string' && result.suggestion ? { suggestion: result.suggestion.slice(0, 500) } : {}) } };
 }
 
-export function createKbS3vRoutes({ client, uploadsDir, maxBytes = 20 * 1024 * 1024, log = () => {}, now = Date.now }) {
+export function createKbStewardRoutes({ client, uploadsDir, maxBytes = 20 * 1024 * 1024, log = () => {}, now = Date.now }) {
   const history = createHistory(path.join(uploadsDir, 'history.json'), log);
   let busy = false;
   const iso = ms => new Date(ms).toISOString();

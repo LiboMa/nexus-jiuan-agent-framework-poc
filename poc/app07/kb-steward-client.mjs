@@ -47,7 +47,7 @@ function readReply(op, input, text) {
   return reply;
 }
 
-export function createKbS3vClient({ origin, publishId, credentialFor, markInvalid, call = a2aCall }) {
+export function createKbStewardClient({ origin, publishId, credentialFor, markInvalid, call = a2aCall }) {
   const url = `${origin}/a2a/${publishId}`;
   return {
     /** 「Agent 接入」页里这个发布有没有可用的钥匙（GET /mode 的 ready）。 */

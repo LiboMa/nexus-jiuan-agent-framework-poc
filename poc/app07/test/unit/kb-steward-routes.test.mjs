@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ModelError } from '../../../app/nexus/a2a-client.mjs';
-import { createKbS3vClient } from '../../kb-s3v-client.mjs';
-import { createKbS3vRoutes } from '../../kb-s3v-routes.mjs';
+import { createKbStewardClient } from '../../kb-steward-client.mjs';
+import { createKbStewardRoutes } from '../../kb-steward-routes.mjs';
 
 // S3 Vectors 方式的「公司制度」接口：经 A2A 调文档管家（kb.rules/v1）。call、credentialFor、markInvalid 都是假的，不出网、不碰真钥匙。
 const BASE = '/api/analysis/v1/poc/kb';
@@ -36,13 +36,13 @@ async function harness({ answer = () => reply(INGESTED), key = KEY, uploadsDir }
   const calls = [], invalid = [], requests = [];
   const state = { key };
   const call = async args => { calls.push(args); return { text: await answer(args, calls.length), taskId: 't', timings: {} }; };
-  const client = createKbS3vClient({ origin: ORIGIN, publishId: PUB, call,
+  const client = createKbStewardClient({ origin: ORIGIN, publishId: PUB, call,
     credentialFor: async id => (id === PUB ? state.key : null),
     markInvalid: async (id, reason) => { invalid.push([id, reason]); state.key = null; } });
   const spied = { ...client, request: (...args) => { requests.push(args); return client.request(...args); } };
   let clock = Date.parse('2026-10-29T08:00:00.000Z');
   const logs = [];
-  const routes = createKbS3vRoutes({ client: spied, uploadsDir: dir, log: line => logs.push(line), now: () => (clock += 1500) });
+  const routes = createKbStewardRoutes({ client: spied, uploadsDir: dir, log: line => logs.push(line), now: () => (clock += 1500) });
   const ask = async (method, route, { role = 'admin', body = null, headers = {} } = {}) => {
     const req = Object.assign(Readable.from([body ?? Buffer.alloc(0)]), { method, headers });
     let status = null, payload = null;
