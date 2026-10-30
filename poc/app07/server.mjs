@@ -151,15 +151,13 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
   listAdviceSummaries: runtimeRegistry.listAdviceSummaries, close: runtimeRegistry.close };
 
 const intake = intakeRoutes({ fake });
-// 「规则库 › 制度知识库」按 POC07_KB_MODE；测试台不直连 PG，两种方式都经 Nexus 上的知识库 Agent（A2A）：
-// - s3vectors：经 A2A 调知识库文档管家的发布读写 S3 Vectors；调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效
-// - pg：经 PG 知识库 Agent 的接口还没接上（下一步两种方式共用一套），这时不挂「公司制度」的接口，启动时记一行 POC_KB_PG_AGENT_NOT_WIRED
-const kb = settings.kb.mode === 's3vectors'
-  ? createKbStewardRoutes({ client: createKbStewardClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
-    credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log })
-  : null;
-if (settings.kb.mode === 'pg') log('POC_KB_PG_AGENT_NOT_WIRED');
-if (kb) await kb.start();
+// 「规则库 › 制度知识库 › 公司制度」：测试台不直连 PG，两种方式（POC07_KB_MODE）共用一套接口，经 A2A 调 Nexus 上的知识库 Agent 的发布
+// （pg：PG 知识库 Agent；s3vectors：知识库文档管家）。调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效；
+// 部署配置里没有发布编号时页面说「知识库 Agent 还没配置」，启动时记一行 POC_KB_AGENT_NOT_CONFIGURED
+const kb = createKbStewardRoutes({ mode: settings.kb.mode, client: createKbStewardClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
+  credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log });
+if (!settings.kb.publishId) log(`POC_KB_AGENT_NOT_CONFIGURED ${settings.kb.mode}`);
+await kb.start();
 const myRules = customRulesRoutes({ rules: customRules, log });
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口
 const operator = { script: settings.operatorScript, nexusHome: settings.nexusHome, profile: 'jiuan07', origin: settings.nexusOrigin };
@@ -196,7 +194,7 @@ const agentCalls = agentCallRoutes({ log, extraRows: () => agentTests.rows(), te
   listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, ...page })), readState: key => store.readState(key) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
   return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args))
-    || (await myRules.handle(args)) || (kb ? await kb.handle(args) : false) || jiuanRoutes.handle(args);
+    || (await myRules.handle(args)) || (await kb.handle(args)) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。

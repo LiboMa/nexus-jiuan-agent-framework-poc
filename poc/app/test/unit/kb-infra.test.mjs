@@ -171,10 +171,10 @@ test('测试台配置：「制度知识库」页经知识库 Agent，不直连 P
   assert.match(configure.slice(configure.indexOf('cat > "$DIR/env.new" <<ENV')), /\$\{KB_LINES\}\nENV/);
 });
 
-test('部署：构件里带上知识库的入库代码与 SQL（kb/lib、kb/sql），不带状态、生成物和文档原文', async () => {
+test('部署：构件里不再带知识库的入库代码与 SQL（kb/lib、kb/sql）——「制度知识库」页两种方式都经 Nexus 上的知识库 Agent，测试台不起入库子进程', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
-  assert.match(deploy, /rsync -a --exclude __pycache__ --exclude \.DS_Store "\$POC_DIR\/\.\.\/kb\/lib" "\$POC_DIR\/\.\.\/kb\/sql" "\$STAGE\/release\/kb\/"/);
-  assert.match(deploy, /mkdir -p [^\n]*"\$STAGE\/release\/kb"/);
+  assert.doesNotMatch(deploy, /kb\/lib|kb\/sql|release\/kb/);
+  assert.match(deploy, /mkdir -p "\$STAGE\/release\/app" [^\n]*"\$STAGE\/release\/jiuan07"\n/, '构件目录照旧，只是没有 kb');
 });
 
 test('kb/deploy.sh ingest --dry-run：规则编号已属于库里另一份文档时先警告（实跑时 ingest_rules.py 拒绝入库，一条不写）', async () => {

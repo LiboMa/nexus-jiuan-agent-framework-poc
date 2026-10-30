@@ -1,25 +1,34 @@
 /**
- * S3 Vectors 方式的「公司制度」：经 A2A 调「知识库文档管家（S3 Vectors 版）」的发布，约定 kb.rules/v1（文档管家提示词的「规则请求」一节）：
+ * 「公司制度」经 A2A 调知识库 Agent 的发布（两种知识库方式共用一套）：pg 方式是 PG 知识库 Agent（约定见
+ * docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md），s3vectors 方式是知识库文档管家（它提示词的「规则请求」一节）。约定 kb.rules/v1：
  *   文字 `kb.rules/v1 · <op>：只调用对应的工具一次，原样返回工具的 JSON。` + 数据 Part `{ op, …input }`（+ ingest 的 .docx 文件 Part）。
- *   op → 工具：ingest → rules_writer；list / detail / deactivate / restore / delete / check → rules_manager；search → rules_search。
- *   文档管家只回工具的 JSON：这里去掉偶尔的 ```json 围栏后 JSON.parse，按 op 校验形态；不合格抛 KB_AGENT_REPLY_INVALID，不重试。
+ *   op：describe（这个 Agent 支持哪些操作）、ingest、list、detail、deactivate、restore、delete、check、search；ingest 限时 5 分钟，其余 2 分钟。
+ *   Agent 只回工具的 JSON：这里去掉偶尔的 ```json 围栏后 JSON.parse，按 op 校验形态；不合格抛 KB_AGENT_REPLY_INVALID，不重试。
+ * describe 的结果缓存 5 分钟（同时来的几次共用一轮）；protocol 不是 kb.rules/v1、工具失败都算不合格。钥匙被拒或哪一次回复不合格就清缓存，没问成的不缓存。
+ * 部署配置里没有发布编号（publishId 为 null）：configured 为 false，ready() 回 false，describe / request 抛 KB_AGENT_NOT_CONFIGURED——不取钥匙、不发调用。
  * 调用密钥只经「Agent 接入」页启用（credentialFor）；没有就抛 KB_AGENT_NOT_READY、不发调用。Nexus 不认这把钥匙（401 / credential_invalid）
  * 时 markInvalid 一次后抛 KB_AGENT_KEY_REJECTED；之后 credentialFor 回 null，不会反复重试。别的调用失败（超时、404、5xx）抛 KB_UNAVAILABLE。
  * 抛出的错误只带错误码（reason 是 A2A 的错误码或校验没过的那一项），不带回复的内容和钥匙。
  */
 import { a2aCall, keyRejected, unwrapJson } from '../app/nexus/a2a-client.mjs';
+import { DOCX } from './kb-docx.mjs';
 
-const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const PROTOCOL = 'kb.rules/v1';
+const KNOWN_OPS = Object.freeze(['describe', 'ingest', 'list', 'detail', 'deactivate', 'restore', 'delete', 'check', 'search']);
+const DESCRIBE_TTL_MS = 5 * 60_000;
 const TIMEOUT_MS = Object.freeze({ ingest: 300_000 });
 const DEFAULT_TIMEOUT_MS = 120_000;
 const failure = (code, reason) => Object.assign(new Error(code), { code, ...(reason ? { reason } : {}) });
+/** 这两种失败说明 Agent 那边变了（换了钥匙、换了版本）：describe 的缓存作废。 */
+const STALE = new Set(['KB_AGENT_KEY_REJECTED', 'KB_AGENT_REPLY_INVALID']);
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isCount = value => Number.isInteger(value) && value >= 0;
 const isText = value => typeof value === 'string';
 const sameSource = (reply, input) => reply.source_id === input.source_id;
-/** 成功时各 op 的回复形态（工具的返回值，见 s3vectors_rules_tools.py）。 */
+/** 成功时各 op 的回复形态（工具的返回值；两种方式字段相同，见 s3vectors_rules_tools.py 和 PG 知识库 Agent 的约定）。 */
 const SHAPES = Object.freeze({
+  describe: reply => reply.protocol === PROTOCOL && isText(reply.backend) && Array.isArray(reply.ops) && reply.ops.every(isText),
   ingest: (reply, input) => ['ingested', 'skipped'].includes(reply.status) && sameSource(reply, input) && isText(reply.source_version)
     && ['rules_total', 'written', 'removed', 'unchanged'].every(key => isCount(reply[key])) && Array.isArray(reply.conflicts)
     && (reply.report === undefined || isObject(reply.report)),
@@ -47,28 +56,51 @@ function readReply(op, input, text) {
   return reply;
 }
 
-export function createKbStewardClient({ origin, publishId, credentialFor, markInvalid, call = a2aCall }) {
-  const url = `${origin}/a2a/${publishId}`;
+export function createKbStewardClient({ origin, publishId, credentialFor, markInvalid, call = a2aCall, now = Date.now }) {
+  const configured = typeof publishId === 'string' && publishId !== '';
+  let described = null;   // describe 的缓存 { at, pending }（进行中的那一轮也算）
+
+  async function exchange(op, input, file) {
+    if (!configured) throw failure('KB_AGENT_NOT_CONFIGURED');
+    const key = await credentialFor(publishId);
+    if (!key) throw failure('KB_AGENT_NOT_READY');
+    let answer;
+    try {
+      answer = await call({ url: `${origin}/a2a/${publishId}`, key, text: `${PROTOCOL} · ${op}：只调用对应的工具一次，原样返回工具的 JSON。`, data: [{ op, ...input }],
+        files: file ? [{ name: file.name, mimeType: DOCX, bytes: file.bytes }] : [], timeoutMs: TIMEOUT_MS[op] ?? DEFAULT_TIMEOUT_MS });
+    } catch (error) {
+      if (keyRejected(error)) {
+        await Promise.resolve().then(() => markInvalid(publishId, 'AI_AUTH_INVALID')).catch(() => {});
+        throw failure('KB_AGENT_KEY_REJECTED');
+      }
+      throw failure('KB_UNAVAILABLE', String(error?.code || 'A2A_FAILED').slice(0, 40));
+    }
+    return readReply(op, input, answer?.text);
+  }
+
   return {
-    /** 「Agent 接入」页里这个发布有没有可用的钥匙（GET /mode 的 ready）。 */
-    async ready() { return Boolean(await credentialFor(publishId)); },
+    /** 部署配置里有没有这个发布编号（GET /mode 的 configured）。 */
+    configured,
+    /** 「Agent 接入」页里这个发布有没有可用的钥匙（GET /mode 的 ready）；没配置时不取钥匙。 */
+    async ready() { return configured && Boolean(await credentialFor(publishId)); },
+    /** 这个 Agent 支持哪些操作：{ protocol, backend, ops }（ops 只留认识的、去重，按 Agent 给的顺序）。缓存 5 分钟。 */
+    async describe() {
+      if (!configured) throw failure('KB_AGENT_NOT_CONFIGURED');
+      if (described && now() - described.at < DESCRIBE_TTL_MS) return described.pending;
+      const pending = exchange('describe', {}).then(reply => {
+        if (reply.success !== true) throw failure('KB_AGENT_REPLY_INVALID', 'describe_failed');
+        return Object.freeze({ protocol: reply.protocol, backend: reply.backend, ops: Object.freeze([...new Set(reply.ops.filter(op => KNOWN_OPS.includes(op)))]) });
+      });
+      const entry = { at: now(), pending };
+      described = entry;
+      pending.catch(() => { if (described === entry) described = null; });
+      return pending;
+    },
     /** 一次规则请求；file = { name, bytes }（只有 ingest 带）。返回工具的 JSON（success 为 true 或 false）。 */
     async request(op, input = {}, file = null) {
-      if (!Object.hasOwn(SHAPES, op)) throw new TypeError(`unknown kb.rules op: ${op}`);
-      const key = await credentialFor(publishId);
-      if (!key) throw failure('KB_AGENT_NOT_READY');
-      let answer;
-      try {
-        answer = await call({ url, key, text: `kb.rules/v1 · ${op}：只调用对应的工具一次，原样返回工具的 JSON。`, data: [{ op, ...input }],
-          files: file ? [{ name: file.name, mimeType: DOCX, bytes: file.bytes }] : [], timeoutMs: TIMEOUT_MS[op] ?? DEFAULT_TIMEOUT_MS });
-      } catch (error) {
-        if (keyRejected(error)) {
-          await Promise.resolve().then(() => markInvalid(publishId, 'AI_AUTH_INVALID')).catch(() => {});
-          throw failure('KB_AGENT_KEY_REJECTED');
-        }
-        throw failure('KB_UNAVAILABLE', String(error?.code || 'A2A_FAILED').slice(0, 40));
-      }
-      return readReply(op, input, answer?.text);
+      if (op === 'describe' || !Object.hasOwn(SHAPES, op)) throw new TypeError(`unknown kb.rules op: ${op}`);
+      try { return await exchange(op, input, file); }
+      catch (error) { if (STALE.has(error?.code)) described = null; throw error; }
     },
   };
 }

@@ -1,46 +1,62 @@
 /**
- * S3 Vectors 方式（POC07_KB_MODE=s3vectors）的「规则库 › 制度知识库 › 公司制度」接口；和 PG 方式的 kb-routes.mjs 同一个前缀，两套不同时挂。
- * 只给管理员（KB_FORBIDDEN 403）。规则库由文档管家经 A2A 读写（kb-s3v-client.mjs），这里不连 PG、不解析文档：
- *   GET  /api/analysis/v1/poc/kb/mode                     { mode: 's3vectors', ready }：ready = 「Agent 接入」页里文档管家的发布有可用钥匙
+ * 「规则库 › 制度知识库 › 公司制度」的接口，两种知识库方式（POC07_KB_MODE=pg|s3vectors）共用这一套：测试台不连 PG、不解析文档，
+ * 规则库由 Nexus 上的知识库 Agent 经 A2A 读写（kb-steward-client.mjs）——pg 方式是 PG 知识库 Agent，s3vectors 方式是知识库文档管家。
+ * 只给管理员（KB_FORBIDDEN 403）。部署配置里没有发布编号时只有 /mode 回答，别的都回 409 KB_AGENT_NOT_CONFIGURED。
+ *   GET  /api/analysis/v1/poc/kb/mode                     { mode, configured, ready, ops }：configured = 有发布编号，ready = 「Agent 接入」页里这个发布有可用钥匙，
+ *                                                         ops = 这个 Agent 的 describe 回的操作（没就绪时 []；页面按它显示按钮）
  *   POST …/sources?sourceId=&sourceVersion=&title=        请求体是 .docx 原文（X-File-Name）：校验 → 存 <uploadsDir>/<sha256>.docx（0600）→
  *                                                         记一条上传历史 → 后台 ingest，先回 202 { id, status: 'ingesting' }；同一时间只跑一个
  *   GET  …/uploads、…/uploads/<id>                         上传历史（最近 50 条；<uploadsDir>/history.json，0600），页面轮询到 ingested / skipped / failed
  *   GET  …/sources、…/sources/<id>                         制度清单、一份制度的登记和规则编号
- *   POST …/sources/<id>/(deactivate|restore|delete)       下线、恢复、硬删除
+ *   POST …/sources/<id>/(deactivate|restore|delete)       下线、恢复、硬删除；下线、恢复不在 describe 的 ops 里时回 409 KB_OP_UNSUPPORTED，不调 Agent
  *   GET  …/search?q=&segment=&amount=&k=                  按问题检索（板块、金额可空，空的不传）
  * 同步的操作各一次 A2A 调用（约 10–20 秒），回 { data: 工具的 JSON }：工具自己失败时也是 200，data.success === false，带 error_type / message / suggestion。
- * 日志只写错误码，不写回复、制度内容和钥匙。
+ * 错误文案里的 Agent 名字按方式。日志只写错误码，不写回复、制度内容和钥匙。
  */
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { KB_MESSAGES, readDocxUpload, storeDocx } from './kb-routes.mjs';
+import { DOCX_MESSAGES, readDocxUpload, storeDocx } from './kb-docx.mjs';
 
 const BASE = '/api/analysis/v1/poc/kb';
-// 新上传的制度标识沿用 PG 方式的标签规则；路径里的标识按文档管家工具的规则（别处入库的制度也能管理）
+// 新上传的制度标识（PG 知识库 Agent 约定的 source_id，也是 PG 方式原来的标签规则）；路径里的标识按文档管家工具的规则（别处入库的制度也能管理）
 const TAG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const AMOUNT = /^\d{1,13}(?:\.\d{1,2})?$/;
 const HISTORY_LIMIT = 200;
-const MESSAGES = Object.freeze({
-  KB_FORBIDDEN: KB_MESSAGES.KB_FORBIDDEN,
-  KB_UPLOAD_INVALID: KB_MESSAGES.KB_UPLOAD_INVALID,
-  KB_UPLOAD_TOO_LARGE: KB_MESSAGES.KB_UPLOAD_TOO_LARGE,
-  KB_NOT_FOUND: KB_MESSAGES.KB_NOT_FOUND,
-  KB_INGEST_BUSY: KB_MESSAGES.KB_INGEST_BUSY,
-  KB_RULE_CONFLICT: KB_MESSAGES.KB_RULE_CONFLICT,
+/** 这两个操作 Agent 可以不支持（describe 的 ops 里没有就不调）。 */
+const OPTIONAL_OPS = new Set(['deactivate', 'restore']);
+/** 文案里的 Agent 名字按方式；lead 是放在句首、后面直接接汉字时的写法（「知识库 Agent」后空一格）。 */
+const AGENTS = Object.freeze({
+  pg: Object.freeze({ name: '知识库 Agent', lead: '知识库 Agent ' }),
+  s3vectors: Object.freeze({ name: '知识库文档管家', lead: '知识库文档管家' }),
+});
+const COMMON_MESSAGES = Object.freeze({
+  KB_FORBIDDEN: '只有管理员能管理制度知识库。',
+  ...DOCX_MESSAGES,
+  KB_NOT_FOUND: '找不到这条上传记录，刷新后再试。',
+  KB_INGEST_BUSY: '已经有一份文档在入库，等它完成再试。',
+  KB_RULE_CONFLICT: '有规则编号已属于库里另一份文档，入库会覆盖那份文档的规则，所以不能入库。',
   KB_REQUEST_INVALID: '请求不完整：制度标识只能用小写字母、数字和连字符（2–63 位），版本说明不超过 64 字，文档名不超过 200 字。',
   KB_QUESTION_INVALID: '请写一个问题（不超过 2000 字）；板块不超过 40 字，金额写以元为单位的数字，条数 1–20。',
-  KB_AGENT_NOT_READY: '先在『Agent 接入』页启用知识库文档管家',
   KB_AGENT_KEY_REJECTED: 'Nexus 不认这把调用密钥，请在『Agent 接入』页换钥匙',
-  KB_AGENT_REPLY_INVALID: '文档管家的回复不合格，这次没有完成',
-  KB_UNAVAILABLE: '文档管家暂时连不上，或没在限定时间内答完：稍后再试（入库的话先看一下制度清单，可能已经写完）。',
+  KB_AGENT_NOT_CONFIGURED: '知识库 Agent 还没配置：部署配置里缺发布编号',
+  KB_OP_UNSUPPORTED: '这个知识库 Agent 不支持这个操作',
 });
-const STATUS = Object.freeze({ KB_AGENT_NOT_READY: 409, KB_AGENT_KEY_REJECTED: 409, KB_AGENT_REPLY_INVALID: 502, KB_UNAVAILABLE: 503 });
-const INTERRUPTED = Object.freeze({ code: 'KB_INGEST_INTERRUPTED', message: '外壳在入库途中重启了：文档管家那边可能已经写完，先看一下制度清单，没有就重新上传。' });
+const STATUS = Object.freeze({ KB_AGENT_NOT_READY: 409, KB_AGENT_KEY_REJECTED: 409, KB_AGENT_NOT_CONFIGURED: 409, KB_OP_UNSUPPORTED: 409,
+  KB_AGENT_REPLY_INVALID: 502, KB_UNAVAILABLE: 503 });
 const fail = (code, status) => { throw Object.assign(new Error(code), { code, status }); };
 const send = (res, status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); };
 const chars = text => [...text].length;
+
+/** 这种方式下接口的错误文案：通用的加上带 Agent 名字的几条。 */
+function messagesFor({ name, lead }) {
+  return Object.freeze({ ...COMMON_MESSAGES,
+    KB_AGENT_NOT_READY: `先在『Agent 接入』页启用${name}`,
+    KB_AGENT_REPLY_INVALID: `${lead}的回复不合格，这次没有完成`,
+    KB_UNAVAILABLE: `${lead}暂时连不上，或没在限定时间内答完：稍后再试（入库的话先看一下制度清单，可能已经写完）。`,
+  });
+}
 
 /**
  * 上传历史（单进程，内存里一份）：改动按顺序排队，整份先写临时文件再改名成 history.json（0600），写成了才换进内存，
@@ -52,7 +68,7 @@ function createHistory(file, log) {
     try {
       const saved = JSON.parse(await readFile(file, 'utf8'));
       if (Number.isInteger(saved?.nextId) && Array.isArray(saved?.items)) state = saved;
-    } catch (error) { if (error?.code !== 'ENOENT') log('POC_KB_S3V_HISTORY_UNREADABLE'); }
+    } catch (error) { if (error?.code !== 'ENOENT') log('POC_KB_HISTORY_UNREADABLE'); }
   }
   async function persist(next) {
     await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -83,7 +99,7 @@ function createHistory(file, log) {
   };
 }
 
-/** 文档管家对 ingest 的回复 → 历史里这一条的结果。 */
+/** Agent 对 ingest 的回复 → 历史里这一条的结果。 */
 function outcome(result) {
   if (result.success) {
     return { status: result.status, rulesTotal: result.rules_total, written: result.written, removed: result.removed, unchanged: result.unchanged,
@@ -91,16 +107,26 @@ function outcome(result) {
   }
   const report = result.report ?? null;
   if (Array.isArray(result.conflicts) && result.conflicts.length) {
-    return { status: 'failed', conflicts: result.conflicts, report, error: { code: 'KB_RULE_CONFLICT', message: MESSAGES.KB_RULE_CONFLICT, type: result.error_type } };
+    return { status: 'failed', conflicts: result.conflicts, report, error: { code: 'KB_RULE_CONFLICT', message: COMMON_MESSAGES.KB_RULE_CONFLICT, type: result.error_type } };
   }
   return { status: 'failed', report, error: { code: 'KB_INGEST_FAILED', type: result.error_type, message: result.message.slice(0, 500),
     ...(typeof result.suggestion === 'string' && result.suggestion ? { suggestion: result.suggestion.slice(0, 500) } : {}) } };
 }
 
-export function createKbStewardRoutes({ client, uploadsDir, maxBytes = 20 * 1024 * 1024, log = () => {}, now = Date.now }) {
+export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 * 1024 * 1024, log = () => {}, now = Date.now }) {
+  if (!Object.hasOwn(AGENTS, mode)) throw new TypeError(`kb mode must be pg or s3vectors: ${mode}`);
+  const MESSAGES = messagesFor(AGENTS[mode]);
+  const INTERRUPTED = Object.freeze({ code: 'KB_INGEST_INTERRUPTED',
+    message: `外壳在入库途中重启了：${AGENTS[mode].lead}那边可能已经写完，先看一下制度清单，没有就重新上传。` });
   const history = createHistory(path.join(uploadsDir, 'history.json'), log);
   let busy = false;
   const iso = ms => new Date(ms).toISOString();
+
+  async function describeMode() {
+    if (!client.configured) return { mode, configured: false, ready: false, ops: [] };
+    if (!(await client.ready())) return { mode, configured: true, ready: false, ops: [] };
+    return { mode, configured: true, ready: true, ops: [...(await client.describe()).ops] };
+  }
 
   function meta(params) {
     const sourceId = String(params.get('sourceId') ?? '').trim(), sourceVersion = String(params.get('sourceVersion') ?? '').trim(),
@@ -134,17 +160,23 @@ export function createKbStewardRoutes({ client, uploadsDir, maxBytes = 20 * 1024
       const result = await client.request('ingest', { source_id: input.sourceId, source_version: input.sourceVersion, title: input.title },
         { name: file.name, bytes: file.bytes });
       patch = outcome(result);
-      if (patch.error) log(`POC_KB_S3V_INGEST_FAILED ${item.id} ${patch.error.code}`);
+      if (patch.error) log(`POC_KB_INGEST_FAILED ${item.id} ${patch.error.code}`);
     } catch (error) {
       const code = Object.hasOwn(MESSAGES, error?.code) ? error.code : 'KB_UNAVAILABLE';
-      log(`POC_KB_S3V_INGEST_FAILED ${item.id} ${code}${error?.reason ? ` ${error.reason}` : ''}`);
+      log(`POC_KB_INGEST_FAILED ${item.id} ${code}${error?.reason ? ` ${error.reason}` : ''}`);
       patch = { status: 'failed', error: { code, message: MESSAGES[code] } };
     }
     try {
       const finished = now();
       await history.update(item.id, { ...patch, finishedAt: iso(finished), elapsedMs: finished - started });
-    } catch { log(`POC_KB_S3V_HISTORY_WRITE_FAILED ${item.id}`); }
+    } catch { log(`POC_KB_HISTORY_WRITE_FAILED ${item.id}`); }
     finally { busy = false; }
+  }
+
+  /** 一份制度的详情、下线、恢复、删除；下线、恢复先看 describe 的 ops（缓存 5 分钟），不支持就不调。 */
+  async function manage(op, sourceId) {
+    if (OPTIONAL_OPS.has(op) && !(await client.describe()).ops.includes(op)) fail('KB_OP_UNSUPPORTED', 409);
+    return client.request(op, { source_id: sourceId });
   }
 
   function search(params) {
@@ -156,23 +188,33 @@ export function createKbStewardRoutes({ client, uploadsDir, maxBytes = 20 * 1024
     return client.request('search', { question, ...(segment ? { segment } : {}), ...(amount ? { amount: Number(amount) } : {}), top_k: k });
   }
 
-  async function route(method, url, req, user) {
+  /** 除 /mode 以外的路径 → 处理函数；不认识的路径回 null（交还九安）。 */
+  function pick(method, url, req, user) {
     const route = url.pathname.slice(BASE.length);
-    if (method === 'GET' && route === '/mode') return [200, { mode: 's3vectors', ready: await client.ready() }];
-    if (method === 'POST' && route === '/sources') return [202, await upload(user, req, url.searchParams)];
-    if (method === 'GET' && route === '/uploads') return [200, { items: history.list().slice(0, 50) }];
+    if (method === 'POST' && route === '/sources') return async () => [202, await upload(user, req, url.searchParams)];
+    if (method === 'GET' && route === '/uploads') return async () => [200, { items: history.list().slice(0, 50) }];
     const entry = /^\/uploads\/(\d{1,12})$/.exec(route);
-    if (entry && method === 'GET') return [200, history.get(Number(entry[1])) ?? fail('KB_NOT_FOUND', 404)];
-    if (method === 'GET' && route === '/sources') return [200, await client.request('list', {})];
+    if (entry && method === 'GET') return async () => [200, history.get(Number(entry[1])) ?? fail('KB_NOT_FOUND', 404)];
+    if (method === 'GET' && route === '/sources') return async () => [200, await client.request('list', {})];
     const one = /^\/sources\/([^/]+)(?:\/(deactivate|restore|delete))?$/.exec(route);
     if (one && ((method === 'GET' && !one[2]) || (method === 'POST' && one[2]))) {
-      let sourceId = '';
-      try { sourceId = decodeURIComponent(one[1]); } catch { sourceId = ''; }
-      if (!SOURCE_ID.test(sourceId)) fail('KB_REQUEST_INVALID', 400);
-      return [200, await client.request(one[2] ?? 'detail', { source_id: sourceId })];
+      return async () => {
+        let sourceId = '';
+        try { sourceId = decodeURIComponent(one[1]); } catch { sourceId = ''; }
+        if (!SOURCE_ID.test(sourceId)) fail('KB_REQUEST_INVALID', 400);
+        return [200, await manage(one[2] ?? 'detail', sourceId)];
+      };
     }
-    if (method === 'GET' && route === '/search') return [200, await search(url.searchParams)];
+    if (method === 'GET' && route === '/search') return async () => [200, await search(url.searchParams)];
     return null;
+  }
+
+  async function route(method, url, req, user) {
+    if (method === 'GET' && url.pathname === `${BASE}/mode`) return [200, await describeMode()];
+    const run = pick(method, url, req, user);
+    if (!run) return null;
+    if (!client.configured) fail('KB_AGENT_NOT_CONFIGURED', 409);
+    return run();
   }
 
   return {
@@ -182,8 +224,8 @@ export function createKbStewardRoutes({ client, uploadsDir, maxBytes = 20 * 1024
       try {
         const stale = history.list().filter(item => item.status === 'ingesting');
         for (const item of stale) await history.update(item.id, { status: 'failed', error: { ...INTERRUPTED } });
-        if (stale.length) log(`POC_KB_S3V_RECOVERED ${stale.length}`);
-      } catch { log('POC_KB_S3V_RECOVER_FAILED'); }
+        if (stale.length) log(`POC_KB_RECOVERED ${stale.length}`);
+      } catch { log('POC_KB_RECOVER_FAILED'); }
     },
     async handle({ req, url, path: pathname, session, res }) {
       const where = url ?? new URL(pathname, 'http://localhost');
@@ -197,7 +239,7 @@ export function createKbStewardRoutes({ client, uploadsDir, maxBytes = 20 * 1024
       } catch (error) {
         const known = Object.hasOwn(MESSAGES, error?.code);
         const code = known ? error.code : 'KB_UNAVAILABLE';
-        if (!known || STATUS[code] >= 500) log(`POC_KB_S3V_FAILED ${error?.code || ''}${error?.reason ? ` ${error.reason}` : ''}`.slice(0, 120));
+        if (!known || STATUS[code] >= 500) log(`POC_KB_FAILED ${error?.code || ''}${error?.reason ? ` ${error.reason}` : ''}`.slice(0, 120));
         send(res, known ? (error.status ?? STATUS[code] ?? 503) : 503, { error: { code, message: MESSAGES[code] } });
       }
       return true;
