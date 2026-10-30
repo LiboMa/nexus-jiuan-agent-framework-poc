@@ -4,7 +4,8 @@
     "literal.env": { "STACK": "s", "AWS_REGION": "us-east-1", "DOMAIN_NAME": "$(touch /tmp/deploy-env-pwned)", "NEXUS_PROFILE": "`touch /tmp/deploy-env-pwned`", "CERTIFICATE_ARN": "${HOME}/x" },
     "s3v.env": { "STACK": "s", "AWS_REGION": "us-east-1", "KB_MODE": "s3vectors", "KB_S3V_BUCKET": "knowbase-s3v-example", "KB_S3V_RULES_INDEX": "rules", "RULES_TOOL_DIR": "kb_s3v_rules_0a1b2c3d", "KB_S3V_KEY_ID": "key-0123456789ab", "KB_S3V_PUBLICATION_ID": "pub_0123456789abcdef" },
     "kb-pg.env": { "STACK": "s", "AWS_REGION": "us-east-1", "KB_MODE": "pg" },
-    "kb-empty.env": { "STACK": "s", "AWS_REGION": "us-east-1", "KB_S3V_KEY_ID": "key-0123456789ab" }
+    "kb-empty.env": { "STACK": "s", "AWS_REGION": "us-east-1", "KB_S3V_KEY_ID": "key-0123456789ab" },
+    "kb-pg-pub.env": { "STACK": "s", "AWS_REGION": "us-east-1", "KB_MODE": "pg", "KB_PG_PUBLICATION_ID": "pub_fedcba9876543210" }
   },
   "errors": {
     "unknown.env": { "line": 3, "text": "DOMIAN_NAME" },
@@ -13,6 +14,7 @@
     "nokey.env": { "line": 1, "text": "STACK" },
     "nostack.env": { "line": 0, "text": "STACK" },
     "badmode.env": { "line": 3, "text": "KB_MODE 只能是 pg 或 s3vectors：mongo" },
+    "kb-pg-badpub.env": { "line": 3, "text": "KB_PG_PUBLICATION_ID 应是 PG 知识库 Agent 的发布编号（pub_ 加 16 位十六进制）：pub_0123" },
     "s3v-missing.env": { "line": 0, "text": "KB_MODE=s3vectors 时还要写：KB_S3V_KEY_ID（" },
     "s3v-bare.env": { "line": 0, "text": "KB_MODE=s3vectors 时还要写：KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TOOL_DIR、KB_S3V_KEY_ID、KB_S3V_PUBLICATION_ID（" }
   },

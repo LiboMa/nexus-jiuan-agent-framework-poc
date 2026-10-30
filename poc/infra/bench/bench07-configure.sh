@@ -6,13 +6,14 @@
 #   3. MySQL：在 jiuan-mysql 里建库 jiuan07 和只能看这个库的账号 jiuan07_app（密码只经标准输入进容器）；
 #   4. /etc/hosts 堵掉九安代码里写死的外部地址（整段带标记，可以整段删）；
 #   5. systemd 单元 andon-jiuan07.service；PoC 服务按 Host 转发的设置（jiuan07-forward.env + 补充配置）。
-# 用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<文档管家发布编号>]]。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
-#   kb 方式：pg（缺省，知识库在本机的 PG 容器）或 s3vectors（经知识库文档管家读写 S3 Vectors；这时要给文档管家的发布编号，它的调用密钥在「Agent 接入」页上启用，不经过这里）。
+# 用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<知识库 Agent 发布编号>]]。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
+#   kb 方式：pg（缺省，PG 知识库 Agent）或 s3vectors（知识库文档管家，读写 S3 Vectors）。两种方式「制度知识库」页都经 Nexus 上的这个 Agent（A2A），
+#   测试台不直连 PG；发布编号可以不给（页面说「知识库 Agent 还没配置」），给了就要是 pub_ 加 16 位十六进制。Agent 的调用密钥在「Agent 接入」页上启用，不经过这里。
 set -euo pipefail
 DOMAIN="${1:-}"; NEXUS="${2:-}"; KB_MODE="${3:-pg}"; KB_PUBLICATION="${4:-}"
-[[ "$DOMAIN" =~ ^[a-z0-9.-]+$ && "$NEXUS" =~ ^https://[a-z0-9.-]+$ ]] || { echo "用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<文档管家发布编号>]]" >&2; exit 2; }
+[[ "$DOMAIN" =~ ^[a-z0-9.-]+$ && "$NEXUS" =~ ^https://[a-z0-9.-]+$ ]] || { echo "用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<知识库 Agent 发布编号>]]" >&2; exit 2; }
 [[ "$KB_MODE" == pg || "$KB_MODE" == s3vectors ]] || { echo "kb 方式只能是 pg 或 s3vectors" >&2; exit 2; }
-[[ "$KB_MODE" == pg || "$KB_PUBLICATION" =~ ^pub_[0-9a-f]{16}$ ]] || { echo "s3vectors 方式要给文档管家的发布编号（pub_ 加 16 位十六进制）" >&2; exit 2; }
+[[ -z "$KB_PUBLICATION" || "$KB_PUBLICATION" =~ ^pub_[0-9a-f]{16}$ ]] || { echo "知识库 Agent 的发布编号应是 pub_ 加 16 位十六进制" >&2; exit 2; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECRETS=/etc/andon-finance/secrets.env
 DIR=/etc/andon-finance/jiuan07
@@ -47,38 +48,13 @@ write_secret hly_app_secret fake-hly-app-secret-jiuan07
 # <<< jiuan07-secret-files
 
 # >>> jiuan07-kb
-# 「规则库 › 制度知识库」按 kb 方式（服务的 env 里写 POC07_KB_MODE）：
-# s3vectors：经知识库文档管家（发布 POC07_KB_S3V_PUBLICATION_ID）读写 S3 Vectors；只建上传文件目录 /var/lib/jiuan07/kb-uploads（0700），
-#   不读 PG 主机的 .env、不写任何密钥文件（文档管家的调用密钥在「Agent 接入」页上启用）。
-# pg：知识库（kb/）的 PG 容器在本机，由 infra/kb.sh 部署。只有它已部署（PG 主机的 .env 在）才开这个功能：
-#   连库密码从 PG 主机的 .env 复制成 kb_pg_password（root:jiuan07 0640），不打印；上传文件目录 /var/lib/jiuan07/kb-uploads（0700）；
-#   入库进程用的 Python venv（钉 psycopg 版本，Bedrock 由库里的 kb_embed 调，这里不需要 boto3）。
-KB_ENV=/opt/nexus-pgvector/.env
+# 「规则库 › 制度知识库」两种 kb 方式一个样（服务的 env 里写 POC07_KB_MODE，给了发布编号就写 POC07_KB_PUBLICATION_ID）：
+# 只建上传文件目录 /var/lib/jiuan07/kb-uploads（0700）。不读 PG 主机的配置、不写任何密钥文件、不建 Python 环境
+# （Agent 的调用密钥在「Agent 接入」页上启用）；以前直连 PG 时留下的连库密码文件有就删掉。
+install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads
+rm -f "$DIR/kb_pg_password"
 KB_LINES=""
-if [[ "$KB_MODE" == s3vectors ]]; then
-  install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads
-  KB_LINES="POC07_KB_S3V_PUBLICATION_ID=$KB_PUBLICATION"
-elif [[ -s "$KB_ENV" ]]; then
-  kb_pw="$(sed -n 's/^NEXUS_DB_PASSWORD=//p' "$KB_ENV" | head -1)"
-  kb_user="$(sed -n 's/^NEXUS_DB_USER=//p' "$KB_ENV" | head -1)"
-  kb_db="$(sed -n 's/^NEXUS_DB_NAME=//p' "$KB_ENV" | head -1)"
-  [[ -n "$kb_pw" && -n "$kb_user" && -n "$kb_db" ]] || { echo "$KB_ENV 缺 NEXUS_DB_USER / NEXUS_DB_PASSWORD / NEXUS_DB_NAME" >&2; exit 1; }
-  write_secret kb_pg_password "$kb_pw"
-  unset kb_pw
-  install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads
-  if ! /opt/andon-finance/kb-venv/bin/python -c 'import psycopg' >/dev/null 2>&1; then
-    python3 -m venv /opt/andon-finance/kb-venv
-    /opt/andon-finance/kb-venv/bin/pip install -q --disable-pip-version-check 'psycopg[binary]==3.2.9'
-  fi
-  kb_token="$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')"
-  kb_host="$(curl -sf -H "X-aws-ec2-metadata-token: $kb_token" http://169.254.169.254/latest/meta-data/local-ipv4)"
-  [[ -n "$kb_host" ]] || { echo "从 IMDS 取不到私网 IP（知识库的 PG 只绑这个地址）" >&2; exit 1; }
-  KB_LINES="POC07_KB_PG_HOST=$kb_host
-POC07_KB_USER=$kb_user
-POC07_KB_DB=$kb_db
-POC07_KB_DIR=/opt/andon-finance/current/kb
-POC07_KB_PYTHON=/opt/andon-finance/kb-venv/bin/python"
-fi
+[[ -z "$KB_PUBLICATION" ]] || KB_LINES="POC07_KB_PUBLICATION_ID=$KB_PUBLICATION"
 # <<< jiuan07-kb
 
 cat > "$DIR/env.new" <<ENV

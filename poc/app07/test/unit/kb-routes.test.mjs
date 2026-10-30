@@ -7,7 +7,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createKbRoutes } from '../../kb-routes.mjs';
 import { createKbRunner } from '../../kb-runner.mjs';
-import { readSettings } from '../../settings.mjs';
 
 // 「规则库 › 制度知识库」页的接口：上传 .docx → 校验 → 解析 → 入库预览 → 确认入库；历史、检索、检索日志。runner 是假的。
 const BASE = '/api/analysis/v1/poc/kb';
@@ -174,7 +173,7 @@ test('历史、详情（带这一版的规则）、检索、检索日志；启�
   assert.equal(other, false);
 });
 
-test('runner：解析读 REPORT 行；入库和预览用 --embed sql，密码只以 --password-file 传；设置里没有知识库主机就不开这个功能', async () => {
+test('runner：解析读 REPORT 行；入库和预览用 --embed sql，密码只以 --password-file 传', async () => {
   const calls = [];
   const execFile = async (file, args) => {
     calls.push([file, ...args]);
@@ -189,11 +188,6 @@ test('runner：解析读 REPORT 行；入库和预览用 --embed sql，密码只
   assert.ok(preview.includes('-I'), '以隔离模式跑 Python');
   await runner.ingest('/u/a.json', { sourceTag: 't', sourceDoc: 'a.docx', sourceVersion: 'V1' });
   assert.ok(!calls.at(-1).includes('--dry-run'));
-  assert.equal(readSettings({ POC07_ORIGIN: 'https://jiuan.example', NEXUS_ORIGIN: 'https://nexus.example', NEXUS_OPERATOR: '/opt/nexus.py' }).kb, null);
-  const kb = readSettings({ POC07_ORIGIN: 'https://jiuan.example', NEXUS_ORIGIN: 'https://nexus.example', NEXUS_OPERATOR: '/opt/nexus.py', POC07_KB_PG_HOST: '10.0.1.10',
-    POC07_KB_DIR: '/opt/andon-finance/current/kb', POC07_KB_PYTHON: '/opt/andon-finance/kb-venv/bin/python' }).kb;
-  assert.deepEqual(kb, { mode: 'pg', dir: '/opt/andon-finance/current/kb', python: '/opt/andon-finance/kb-venv/bin/python', uploadsDir: '/var/lib/jiuan07/kb-uploads',
-    pg: { host: '10.0.1.10', port: 5432, db: 'nexus', user: 'nexus', passwordFile: '/etc/andon-finance/jiuan07/kb_pg_password' } });
 });
 
 test('GET /mode：PG 方式回 { mode: pg, ready: true }（页面据此画「公司制度」块）；只给管理员', async t => {

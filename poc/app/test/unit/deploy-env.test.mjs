@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -113,4 +114,37 @@ test('KB_MODE=s3vectors：五项（KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TO
   const bare = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, 's3v-bare.env') });
   assert.equal(bare.code, 2);
   assert.ok(bare.stderr.includes('还要写：KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TOOL_DIR、KB_S3V_KEY_ID、KB_S3V_PUBLICATION_ID（'), bare.stderr);
+});
+
+test('KB_PG_PUBLICATION_ID（PG 知识库 Agent 的发布）：只核对格式（pub_ 加 16 位小写十六进制，不对就报错带行号），不强制——pg 方式没写也照常读', async t => {
+  const pg = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, 'kb-pg-pub.env') });
+  assert.equal(pg.code, 0, pg.stderr);
+  assert.equal(values(pg.stdout).KB_PG_PUBLICATION_ID, 'pub_fedcba9876543210');
+  for (const name of ['kb-pg.env', 'basic.env', 's3v.env']) {
+    const result = await bash(DUMP, { DEPLOY_ENV: path.join(FIXTURES, name) });
+    assert.equal(result.code, 0, `${name}：${result.stderr}`);
+    assert.equal('KB_PG_PUBLICATION_ID' in values(result.stdout), false, name);
+  }
+  const dir = await mkdtemp(path.join(tmpdir(), 'deploy-env-pgpub-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  for (const bad of ['pub_0123456789ABCDEF', 'pub_0123456789abcdef0', 'pub_0123456789abcde', 'agent_0123456789abcdef', 'pub_0123456789abcdef x', "pub_0123456789abcdef' && reboot '"]) {
+    const file = path.join(dir, 'bad.env');
+    await writeFile(file, `STACK=s\nAWS_REGION=us-east-1\nKB_MODE=pg\nKB_PG_PUBLICATION_ID=${bad}\n`);
+    const result = await bash(`${DUMP}; echo SHOULD-NOT-REACH`, { DEPLOY_ENV: file });
+    assert.equal(result.code, 2, bad);
+    assert.doesNotMatch(result.stdout, /SHOULD-NOT-REACH/);
+    assert.ok(result.stderr.includes(`${file}:4：KB_PG_PUBLICATION_ID 应是 PG 知识库 Agent 的发布编号`), result.stderr);
+  }
+});
+
+test('example.env：两个知识库 Agent 的发布、规则工具目录、写入密钥编号都留空，注释写清形状（不放像真值的示例）', async () => {
+  const lines = (await readFile(path.join(ROOT, 'poc/infra/env/example.env'), 'utf8')).split('\n');
+  const shapes = { KB_PG_PUBLICATION_ID: /pub_ 加 16 位十六进制/, RULES_TOOL_DIR: /kb_s3v_rules_/, KB_S3V_KEY_ID: /key- 加 12 位十六进制/, KB_S3V_PUBLICATION_ID: /pub_ 加 16 位十六进制/ };
+  for (const [key, shape] of Object.entries(shapes)) {
+    const at = lines.indexOf(`${key}=`);
+    assert.ok(at > 0, `example.env 里 ${key} 应留空`);
+    assert.match(lines[at - 1], /^# /, `${key} 上面要有注释`);
+    assert.match(lines[at - 1], shape, `${key} 的注释要写形状`);
+  }
+  assert.ok(lines.indexOf('KB_PG_PUBLICATION_ID=') > lines.indexOf('CONNECTOR_ID='), 'PG 方式的几项放在一起');
 });

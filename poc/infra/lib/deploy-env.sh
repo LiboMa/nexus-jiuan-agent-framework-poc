@@ -5,10 +5,11 @@
 # 空值等于没写。给了 DEPLOY_ENV 时 STACK 和 AWS_REGION 必须写明；文件里写了的键压过 shell 里同名的环境变量。
 # KB_MODE（知识库的部署方式）只能是 pg 或 s3vectors，不写就是 pg；KB_MODE=s3vectors 时 DEPLOY_ENV_S3V_KEYS 这五项都要写，
 # 缺了就报错并一次列出缺哪几项（只看文件里写的，和 STACK / AWS_REGION 一样）。
+# KB_PG_PUBLICATION_ID（pg 方式「制度知识库」页经的 PG 知识库 Agent 的发布）写了就要是 pub_ 加 16 位小写十六进制（报错带行号），不写也行。
 
 DEPLOY_ENV_KEYS=(STACK AWS_REGION VPC_ID SUBNET_ID INSTANCE_TYPE DOMAIN_NAME ORIGIN_DOMAIN_NAME JIUAN07_DOMAIN_NAME HOSTED_ZONE_ID
   CERTIFICATE_ARN CLOUDFRONT_PREFIX_LIST_ID NEXUS_ORIGIN NEXUS_PROFILE ADVISORY_PUBLICATION_ID KB_MODE KB_ALLOWED_CIDR KB_SETTINGS CONNECTOR_ID
-  KB_S3V_BUCKET KB_S3V_RULES_INDEX RULES_TOOL_DIR KB_S3V_KEY_ID KB_S3V_PUBLICATION_ID
+  KB_PG_PUBLICATION_ID KB_S3V_BUCKET KB_S3V_RULES_INDEX RULES_TOOL_DIR KB_S3V_KEY_ID KB_S3V_PUBLICATION_ID
   AGENT_NAME AGENT_DISPLAY_NAME AGENT_MODEL AGENT_ID PUBLICATION_ID)
 # KB_MODE=s3vectors 时必须写的几项（S3 Vectors 方式：向量桶、规则索引、规则工具目录、文档管家的写入密钥编号和发布）
 DEPLOY_ENV_S3V_KEYS=(KB_S3V_BUCKET KB_S3V_RULES_INDEX RULES_TOOL_DIR KB_S3V_KEY_ID KB_S3V_PUBLICATION_ID)
@@ -23,7 +24,7 @@ deploy_env_fail() { echo "$1" >&2; exit 2; }
 load_deploy_env() {
   [[ -n "${DEPLOY_ENV:-}" ]] || return 0
   local file="$DEPLOY_ENV" line key value n=0 seen=" " known k missing=""
-  local line_re='^([A-Z][A-Z0-9_]*)=(.*)$' double_re='^"(.*)"$' single_re="^'(.*)'\$"
+  local line_re='^([A-Z][A-Z0-9_]*)=(.*)$' double_re='^"(.*)"$' single_re="^'(.*)'\$" publication_re='^pub_[0-9a-f]{16}$'
   [[ -f "$file" ]] || deploy_env_fail "DEPLOY_ENV=${file}：找不到这个文件（从 poc/infra/env/example.env 复制一份再改）"
   while IFS= read -r line || [[ -n "$line" ]]; do
     n=$((n + 1))
@@ -38,6 +39,8 @@ load_deploy_env() {
     seen+="$key "
     if [[ "$value" =~ $double_re || "$value" =~ $single_re ]]; then value="${BASH_REMATCH[1]}"; fi
     [[ "$key" != KB_MODE || -z "$value" || "$value" == pg || "$value" == s3vectors ]] || deploy_env_fail "${file}:${n}：KB_MODE 只能是 pg 或 s3vectors：${value}"
+    [[ "$key" != KB_PG_PUBLICATION_ID || -z "$value" || "$value" =~ $publication_re ]] \
+      || deploy_env_fail "${file}:${n}：KB_PG_PUBLICATION_ID 应是 PG 知识库 Agent 的发布编号（pub_ 加 16 位十六进制）：${value}"
     [[ -n "$value" ]] || continue
     printf -v "$key" '%s' "$value"
     export "${key?}"

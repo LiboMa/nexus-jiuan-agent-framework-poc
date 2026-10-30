@@ -21,8 +21,6 @@ import { createOperatorCli } from '../app/nexus/cli.mjs';
 import { agentCallRoutes, everyDocument } from './agent-calls.mjs';
 import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
-import { createKbRoutes } from './kb-routes.mjs';
-import { createKbRunner } from './kb-runner.mjs';
 import { createKbS3vClient } from './kb-s3v-client.mjs';
 import { createKbS3vRoutes } from './kb-s3v-routes.mjs';
 import { createCustomRules, customRulesRoutes, docxToText } from './custom-rules.mjs';
@@ -153,13 +151,14 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
   listAdviceSummaries: runtimeRegistry.listAdviceSummaries, close: runtimeRegistry.close };
 
 const intake = intakeRoutes({ fake });
-// 「规则库 › 制度知识库」按 POC07_KB_MODE 挂其中一套（同一个前缀，两套不同时挂）：
-// - pg：上传审批矩阵 .docx → 解析 → 入库预览 → 确认入库；历史、检索、检索日志（知识库 kb/ 在同一台实例的 PG 容器里）
+// 「规则库 › 制度知识库」按 POC07_KB_MODE；测试台不直连 PG，两种方式都经 Nexus 上的知识库 Agent（A2A）：
 // - s3vectors：经 A2A 调知识库文档管家的发布读写 S3 Vectors；调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效
-const kb = settings.kb?.mode === 's3vectors'
+// - pg：经 PG 知识库 Agent 的接口还没接上（下一步两种方式共用一套），这时不挂「公司制度」的接口，启动时记一行 POC_KB_PG_AGENT_NOT_WIRED
+const kb = settings.kb.mode === 's3vectors'
   ? createKbS3vRoutes({ client: createKbS3vClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
     credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log })
-  : settings.kb?.mode === 'pg' ? createKbRoutes({ runner: createKbRunner({ python: settings.kb.python, dir: settings.kb.dir, pg: settings.kb.pg }), uploadsDir: settings.kb.uploadsDir, log }) : null;
+  : null;
+if (settings.kb.mode === 'pg') log('POC_KB_PG_AGENT_NOT_WIRED');
 if (kb) await kb.start();
 const myRules = customRulesRoutes({ rules: customRules, log });
 // 「Agent 接入」页的 Nexus 发布列表（补丁 0001 的后端）：管理员连一次 Nexus，列出已发布的 Agent；启用仍走九安原有的接口

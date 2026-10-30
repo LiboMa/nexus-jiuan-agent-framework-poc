@@ -51,23 +51,17 @@ export function readSettings(env = process.env) {
 const PUBLICATION_ID = /^pub_[0-9a-f]{16}$/;
 
 /**
- * 「规则库 › 制度知识库」按 POC07_KB_MODE（不写就是 pg）：
- * - pg：知识库（kb/）在同一台实例的 PG 容器里；没配 POC07_KB_PG_HOST 就不开这个功能。
- * - s3vectors：经知识库文档管家（Nexus 上的发布 POC07_KB_S3V_PUBLICATION_ID）读写 S3 Vectors；调用密钥由「Agent 接入」页启用，不在设置里。
+ * 「规则库 › 制度知识库」按 POC07_KB_MODE（不写就是 pg）；两种方式都经 Nexus 上的知识库 Agent（A2A），测试台不直连 PG：
+ * - pg：PG 知识库 Agent；s3vectors：知识库文档管家（读写 S3 Vectors）。
+ * - 发布编号 POC07_KB_PUBLICATION_ID 可以不配（publishId 为 null，页面说「知识库 Agent 还没配置」）；配了就必须是 pub_ 加 16 位十六进制，否则启动失败。
+ * 调用密钥由「Agent 接入」页启用，不在设置里。
  */
 function kbSettings(env, stateDir) {
   const mode = env.POC07_KB_MODE || 'pg';
   if (mode !== 'pg' && mode !== 's3vectors') throw invalid('POC07_KB_MODE 只能是 pg 或 s3vectors');
-  if (mode === 's3vectors') {
-    const publishId = String(env.POC07_KB_S3V_PUBLICATION_ID ?? '');
-    if (!PUBLICATION_ID.test(publishId)) throw invalid('POC07_KB_S3V_PUBLICATION_ID 应是知识库文档管家的发布编号（pub_ 加 16 位十六进制）');
-    return { mode, publishId, uploadsDir: path.join(stateDir, 'kb-uploads') };
-  }
-  if (!env.POC07_KB_PG_HOST) return null;
-  const secretsDir = absolute(env, 'POC07_SECRETS_DIR', '/etc/andon-finance/jiuan07');
-  return { mode, dir: absolute(env, 'POC07_KB_DIR'), python: absolute(env, 'POC07_KB_PYTHON'), uploadsDir: path.join(stateDir, 'kb-uploads'),
-    pg: { host: String(env.POC07_KB_PG_HOST), port: portOf(env, 'POC07_KB_PG_PORT', 5432), db: env.POC07_KB_DB || 'nexus', user: env.POC07_KB_USER || 'nexus',
-      passwordFile: path.join(secretsDir, 'kb_pg_password') } };
+  const publishId = env.POC07_KB_PUBLICATION_ID ? String(env.POC07_KB_PUBLICATION_ID) : null;
+  if (publishId !== null && !PUBLICATION_ID.test(publishId)) throw invalid('POC07_KB_PUBLICATION_ID 应是知识库 Agent 的发布编号（pub_ 加 16 位十六进制）');
+  return { mode, publishId, uploadsDir: path.join(stateDir, 'kb-uploads') };
 }
 
 const deepFreeze = value => {

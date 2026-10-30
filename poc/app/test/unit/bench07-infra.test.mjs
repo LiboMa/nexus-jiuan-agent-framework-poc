@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,98 +93,107 @@ test('deploy.sh：构建 v0.7.10 副本、把 app07 和副本打进发布包；�
   assert.doesNotMatch(install.slice(install.indexOf('bench07-configure.sh'), install.indexOf('systemctl restart andon-finance-poc')), /AdvisoryPublicationId/, 'v0.7.10 不接收发布编号');
 });
 
-// ---- 知识库两种方式（KB_MODE=pg|s3vectors，不写就是 pg）：deploy.sh 把方式和文档管家的发布交给 bench07-configure.sh ----
+// ---- 知识库两种方式（KB_MODE=pg|s3vectors，不写就是 pg）：「制度知识库」页都经 Nexus 上的知识库 Agent（A2A），测试台不直连 PG。
+// deploy.sh 把方式和当前方式的知识库 Agent 发布（pg：KB_PG_PUBLICATION_ID；s3vectors：KB_S3V_PUBLICATION_ID）交给 bench07-configure.sh ----
 const KB_PUB = 'pub_0123456789abcdef';
+const PG_PUB = 'pub_fedcba9876543210';
 const SITE = ['jiuan.example.com', 'https://nexus.example.com'];
+const deployPrelude = deploy => deploy.slice(0, deploy.indexOf('\nsay() ')).replace(/^#!.*\n/, '');
 
-// 照 deploy.sh 拼 SSM 命令（栈参数换成假的），再看 bench07-configure.sh 实际收到哪几个参数
+// 照 deploy.sh 拼 SSM 命令（先跑它开头的检查，栈参数换成假的），再看 bench07-configure.sh 实际收到哪几个参数
 async function configureArgs(env) {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   const line = prefix => deploy.split('\n').find(text => text.startsWith(prefix));
-  const script = ['set -euo pipefail', 'param() { echo https://nexus.example.com; }', 'BUCKET=b REGION=us-east-1 ENV_B64=e30= POC_STORE=mysql J07_DOMAIN=jiuan.example.com',
+  const script = [deployPrelude(deploy), 'param() { echo https://nexus.example.com; }', 'BUCKET=b REGION=us-east-1 ENV_B64=e30= POC_STORE=mysql J07_DOMAIN=jiuan.example.com',
     line('INSTALL='), line('COMMANDS='), 'printf "%s" "$COMMANDS"'].join('\n');
-  const { stdout } = await run('bash', ['-c', script], { env: { PATH: process.env.PATH, ...env } });
+  const { stdout } = await run('bash', ['-c', script], { cwd: infra('.'), env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } });
   const [install] = JSON.parse(stdout).commands;
   const start = install.indexOf('bench07-configure.sh ') + 'bench07-configure.sh '.length;
   const call = install.slice(start, install.indexOf(' && systemctl restart andon-finance-poc', start));
   return (await run('bash', ['-c', `printf '[%s]' ${call}`])).stdout;
 }
 
-test('deploy.sh：KB_MODE（缺省 pg）和 KB_S3V_PUBLICATION_ID 是 bench07-configure.sh 的第 3、4 个参数；SSM 命令仍是合法 JSON', async () => {
+test('deploy.sh：KB_MODE（缺省 pg）和当前方式的知识库 Agent 发布是 bench07-configure.sh 的第 3、4 个参数（pg 用 KB_PG_PUBLICATION_ID，s3vectors 用 KB_S3V_PUBLICATION_ID）；SSM 命令仍是合法 JSON', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   assert.match(deploy.split('\n').find(text => text.startsWith('INSTALL=')),
-    /\/bench\/bench07-configure\.sh \$J07_DOMAIN \$\(param NexusOrigin\) '\$\{KB_MODE:-pg\}' '\$\{KB_S3V_PUBLICATION_ID:-\}' && /);
+    /\/bench\/bench07-configure\.sh \$J07_DOMAIN \$\(param NexusOrigin\) '\$\{KB_MODE:-pg\}' '\$KB_PUBLICATION' && /);
   assert.equal(await configureArgs({}), '[jiuan.example.com][https://nexus.example.com][pg][]');
+  assert.equal(await configureArgs({ KB_PG_PUBLICATION_ID: PG_PUB }), `[jiuan.example.com][https://nexus.example.com][pg][${PG_PUB}]`);
+  assert.equal(await configureArgs({ KB_MODE: 'pg', KB_PG_PUBLICATION_ID: PG_PUB, KB_S3V_PUBLICATION_ID: KB_PUB }), `[jiuan.example.com][https://nexus.example.com][pg][${PG_PUB}]`);
+  assert.equal(await configureArgs({ KB_MODE: 'pg', KB_S3V_PUBLICATION_ID: KB_PUB }), '[jiuan.example.com][https://nexus.example.com][pg][]', 'pg 方式不拿文档管家的发布');
   assert.equal(await configureArgs({ KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: KB_PUB }), `[jiuan.example.com][https://nexus.example.com][s3vectors][${KB_PUB}]`);
+  assert.equal(await configureArgs({ KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: KB_PUB, KB_PG_PUBLICATION_ID: PG_PUB }), `[jiuan.example.com][https://nexus.example.com][s3vectors][${KB_PUB}]`);
 });
 
-test('deploy.sh：KB_MODE 只能是 pg 或 s3vectors，s3vectors 时要有 KB_S3V_PUBLICATION_ID，发布编号格式不对也不行——在动任何 AWS 资源之前就停（exit 2）', async () => {
+test('deploy.sh：KB_MODE 只能是 pg 或 s3vectors，s3vectors 时要有 KB_S3V_PUBLICATION_ID，两个发布编号给了就要合格式（pg 的不强制）——在动任何 AWS 资源之前就停（exit 2）', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
-  const prelude = deploy.slice(0, deploy.indexOf('\nsay() ')).replace(/^#!.*\n/, '');
+  const prelude = deployPrelude(deploy);
   const runPrelude = env => run('bash', ['-c', `${prelude}\necho PRELUDE_OK`], { cwd: infra('.'), env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } });
-  for (const env of [{}, { KB_MODE: 'pg' }, { KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: KB_PUB }]) assert.equal((await runPrelude(env)).stdout, 'PRELUDE_OK\n', JSON.stringify(env));
+  for (const env of [{}, { KB_MODE: 'pg' }, { KB_PG_PUBLICATION_ID: PG_PUB }, { KB_MODE: 'pg', KB_PG_PUBLICATION_ID: PG_PUB },
+    { KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: KB_PUB }]) assert.equal((await runPrelude(env)).stdout, 'PRELUDE_OK\n', JSON.stringify(env));
   for (const env of [{ KB_MODE: 'mongo' }, { KB_MODE: 's3vectors' }, { KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: 'pub_0123' },
     { KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: `${KB_PUB}' && reboot '` }, { KB_S3V_PUBLICATION_ID: "pub_x'" }]) {
     await assert.rejects(runPrelude(env), error => error.code === 2 && !error.stdout.includes('PRELUDE_OK') && /KB_MODE|KB_S3V_PUBLICATION_ID/.test(error.stderr), JSON.stringify(env));
   }
+  for (const env of [{ KB_PG_PUBLICATION_ID: 'pub_0123' }, { KB_MODE: 'pg', KB_PG_PUBLICATION_ID: PG_PUB.toUpperCase() }, { KB_PG_PUBLICATION_ID: `${PG_PUB}' && reboot '` },
+    { KB_MODE: 's3vectors', KB_S3V_PUBLICATION_ID: KB_PUB, KB_PG_PUBLICATION_ID: "pub_x'" }]) {
+    await assert.rejects(runPrelude(env), error => error.code === 2 && !error.stdout.includes('PRELUDE_OK') && /KB_PG_PUBLICATION_ID/.test(error.stderr), JSON.stringify(env));
+  }
 });
 
-// 跑 bench07-configure.sh 的参数检查 + jiuan07-kb 段 + 写 env 那段：install / write_secret / sed / curl 换成只记账的桩，
-// PG 主机的 .env 和 kb-venv 指到临时目录（其余一字不改）
-async function configureKb(t, args, { pgEnv = null } = {}) {
+// 跑 bench07-configure.sh 的参数检查 + jiuan07-kb 段 + 写 env 那段：install / write_secret / sed / curl / python3 换成只记账的桩，
+// DIR 指到临时目录（里面放一份旧的 kb_pg_password）；PG 主机的 .env 也在（看它碰不碰）
+async function configureKb(t, args, { oldPassword = true } = {}) {
   const script = await readFile(infra('bench/bench07-configure.sh'), 'utf8');
   const dir = await mkdtemp(path.join(tmpdir(), 'bench07-kb-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const kbEnv = path.join(dir, 'nexus-pgvector.env'), venv = path.join(dir, 'kb-venv'), log = path.join(dir, 'calls.log');
-  if (pgEnv) await writeFile(kbEnv, pgEnv);
-  await mkdir(path.join(venv, 'bin'), { recursive: true });
-  await writeFile(path.join(venv, 'bin/python'), '#!/bin/sh\nexit 0\n');
-  await chmod(path.join(venv, 'bin/python'), 0o755);
+  const log = path.join(dir, 'calls.log');
+  if (oldPassword) await writeFile(path.join(dir, 'kb_pg_password'), 'not-a-real-password');
   const between = (start, end) => {
     const from = script.indexOf(start), to = script.indexOf(end, from);
     assert.ok(from >= 0 && to > from, `bench07-configure.sh 里没有 ${start}`);
     return script.slice(from, to + end.length);
   };
   const prelude = script.slice(0, script.indexOf('\nHERE=')).replace(/^#!.*\n/, '');
-  const kb = between('# >>> jiuan07-kb', '# <<< jiuan07-kb').replace('KB_ENV=/opt/nexus-pgvector/.env', `KB_ENV=${JSON.stringify(kbEnv)}`).replaceAll('/opt/andon-finance/kb-venv', venv);
   const stubs = [`LOG=${JSON.stringify(log)}; DIR=${JSON.stringify(dir)}; : > "$LOG"`,
     `install() { printf 'install %s\\n' "$*" >> "$LOG"; }`, `write_secret() { printf 'write_secret %s\\n' "$1" >> "$LOG"; }`,
     `sed() { printf 'sed %s\\n' "$*" >> "$LOG"; command sed "$@"; }`, `curl() { printf 'curl\\n' >> "$LOG"; echo 10.0.0.5; }`,
     `python3() { printf 'python3 %s\\n' "$*" >> "$LOG"; }`].join('\n');
+  const leftover = () => readFile(path.join(dir, 'kb_pg_password'), 'utf8').then(() => true, () => false);
   try {
-    await run('bash', ['-c', [prelude, stubs, kb, between('cat > "$DIR/env.new" <<ENV', '\nENV\n')].join('\n'), 'bench07-configure.sh', ...args]);
-  } catch (error) { return { code: error.code, stderr: error.stderr, wrote: await readFile(path.join(dir, 'env.new'), 'utf8').then(() => true, () => false) }; }
-  return { code: 0, env: await readFile(path.join(dir, 'env.new'), 'utf8'), calls: (await readFile(log, 'utf8')).split('\n').filter(Boolean) };
+    await run('bash', ['-c', [prelude, stubs, between('# >>> jiuan07-kb', '# <<< jiuan07-kb'), between('cat > "$DIR/env.new" <<ENV', '\nENV\n')].join('\n'), 'bench07-configure.sh', ...args]);
+  } catch (error) { return { code: error.code, stderr: error.stderr, wrote: await readFile(path.join(dir, 'env.new'), 'utf8').then(() => true, () => false), leftover: await leftover() }; }
+  return { code: 0, env: await readFile(path.join(dir, 'env.new'), 'utf8'), calls: (await readFile(log, 'utf8')).split('\n').filter(Boolean), leftover: await leftover() };
 }
-const PG_ENV = 'NEXUS_DB_USER=kbuser\nNEXUS_DB_PASSWORD=not-a-real-password\nNEXUS_DB_NAME=kbdb\n';
+const UPLOADS = 'install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads';
+const NO_PG = /POC07_KB_PG_HOST|POC07_KB_USER|POC07_KB_DB|POC07_KB_DIR|POC07_KB_PYTHON|POC07_KB_S3V_PUBLICATION_ID|not-a-real-password/;
 
-test('bench07-configure.sh s3vectors：写 POC07_KB_MODE=s3vectors 和文档管家的发布，建上传目录；不读 PG 主机的 .env、不写 kb_pg_password（也不写别的密钥文件），不碰 IMDS', async t => {
-  const result = await configureKb(t, [...SITE, 's3vectors', KB_PUB], { pgEnv: PG_ENV });
-  assert.equal(result.code, 0, result.stderr);
-  assert.match(result.env, /^POC07_KB_MODE=s3vectors$/m);
-  assert.match(result.env, new RegExp(`^POC07_KB_S3V_PUBLICATION_ID=${KB_PUB}$`, 'm'));
-  assert.doesNotMatch(result.env, /POC07_KB_PG_HOST|POC07_KB_PYTHON|not-a-real-password/);
-  assert.deepEqual(result.calls, ['install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads']);
+test('bench07-configure.sh 两种方式一个样：写 POC07_KB_MODE 和知识库 Agent 的发布 POC07_KB_PUBLICATION_ID，只建上传目录；不读 PG 主机的 .env、不写任何密钥文件、不建 venv、不碰 IMDS，旧的 kb_pg_password 删掉', async t => {
+  for (const [mode, id] of [['s3vectors', KB_PUB], ['pg', PG_PUB]]) {
+    const result = await configureKb(t, [...SITE, mode, id]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.env, new RegExp(`^POC07_KB_MODE=${mode}\\nPOC07_KB_PUBLICATION_ID=${id}$`, 'm'), mode);
+    assert.doesNotMatch(result.env, NO_PG, mode);
+    assert.deepEqual(result.calls, [UPLOADS], mode);
+    assert.equal(result.leftover, false, `${mode}：实例上留下的连库密码文件要删掉`);
+  }
 });
 
-test('bench07-configure.sh pg：写 POC07_KB_MODE=pg，知识库的设置照旧（PG 主机的 .env 在才写 kb_pg_password 和 POC07_KB_*）；pg 时给了发布编号也不写', async t => {
-  const deployed = await configureKb(t, [...SITE, 'pg', KB_PUB], { pgEnv: PG_ENV });
-  assert.equal(deployed.code, 0, deployed.stderr);
-  assert.match(deployed.env, /^POC07_KB_MODE=pg\nPOC07_KB_PG_HOST=10\.0\.0\.5\nPOC07_KB_USER=kbuser\nPOC07_KB_DB=kbdb\nPOC07_KB_DIR=\/opt\/andon-finance\/current\/kb\nPOC07_KB_PYTHON=/m);
-  assert.doesNotMatch(deployed.env, /POC07_KB_S3V_PUBLICATION_ID|pub_/);
-  assert.ok(deployed.calls.includes('write_secret kb_pg_password'), deployed.calls.join('\n'));
-  assert.ok(deployed.calls.includes('install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads'));
-  // 不给第 3 个参数（旧的调用方式）就是 pg；PG 主机的 .env 不在就不开知识库
-  const plain = await configureKb(t, SITE);
-  assert.equal(plain.code, 0, plain.stderr);
-  assert.match(plain.env, /^POC07_KB_MODE=pg$/m);
-  assert.doesNotMatch(plain.env, /POC07_KB_PG_HOST|POC07_KB_S3V/);
-  assert.deepEqual(plain.calls, []);
+test('bench07-configure.sh：没给发布编号（或不给第 3 个参数，旧的调用方式就是 pg）也照常配置，env 里不写 POC07_KB_PUBLICATION_ID（页面说「知识库 Agent 还没配置」）；没有旧密码文件也不出错', async t => {
+  for (const args of [SITE, [...SITE, 'pg'], [...SITE, 'pg', ''], [...SITE, 's3vectors', '']]) {
+    const result = await configureKb(t, args, { oldPassword: args.length === 2 });
+    assert.equal(result.code, 0, `${JSON.stringify(args)}：${result.stderr}`);
+    assert.match(result.env, new RegExp(`^POC07_KB_MODE=${args[2] || 'pg'}$`, 'm'));
+    assert.doesNotMatch(result.env, /POC07_KB_PUBLICATION_ID/);
+    assert.doesNotMatch(result.env, NO_PG);
+    assert.deepEqual(result.calls, [UPLOADS]);
+    assert.equal(result.leftover, false);
+  }
 });
 
-test('bench07-configure.sh：kb 方式只能是 pg 或 s3vectors，s3vectors 的发布编号要是 pub_ 加 16 位十六进制；不合格就退出（2），env 一个字不写', async t => {
-  for (const args of [[...SITE, 'mongo'], [...SITE, 's3vectors'], [...SITE, 's3vectors', ''], [...SITE, 's3vectors', 'pub_0123'], [...SITE, 's3vectors', KB_PUB.toUpperCase()],
-    [...SITE, 's3vectors', `${KB_PUB}x`], [...SITE, 's3vectors', `${KB_PUB}\nPOC07_KB_PG_HOST=evil`]]) {
+test('bench07-configure.sh：kb 方式只能是 pg 或 s3vectors，发布编号给了就要是 pub_ 加 16 位十六进制（两种方式都是）；不合格就退出（2），env 一个字不写', async t => {
+  const bad = ['pub_0123', KB_PUB.toUpperCase(), `${KB_PUB}x`, `${KB_PUB}\nPOC07_KB_PG_HOST=evil`, ' ', `${KB_PUB}' && reboot '`];
+  for (const args of [[...SITE, 'mongo'], ...bad.flatMap(id => [[...SITE, 's3vectors', id], [...SITE, 'pg', id]])]) {
     const result = await configureKb(t, args);
     assert.equal(result.code, 2, JSON.stringify(args));
     assert.match(result.stderr, /pg 或 s3vectors|发布编号/, JSON.stringify(args));
@@ -192,16 +201,15 @@ test('bench07-configure.sh：kb 方式只能是 pg 或 s3vectors，s3vectors 的
   }
 });
 
-test('bench07-configure.sh：pg 方式知识库那段一字不改（和改动前的提交比）；两种方式都建 /var/lib/jiuan07/custom-rules（jiuan07 0700，不在任何分支里）', async () => {
+test('bench07-configure.sh：测试台不直连 PG——整份脚本不读 PG 主机的 .env、不写 kb_pg_password、不建 kb-venv、不取私网 IP；两种方式都建 /var/lib/jiuan07/custom-rules（jiuan07 0700，不在任何分支里）', async () => {
   const script = await readFile(infra('bench/bench07-configure.sh'), 'utf8');
-  const { stdout: before } = await run('git', ['show', '50b5470:poc/infra/bench/bench07-configure.sh'], { cwd: infra('.') });
-  const pgBody = text => {
-    const head = 'if [[ -s "$KB_ENV" ]]; then\n';
-    return text.slice(text.indexOf(head) + head.length, text.indexOf('\nfi\n# <<< jiuan07-kb'));
-  };
-  assert.ok(pgBody(before).length > 500);
-  assert.equal(pgBody(script), pgBody(before));
+  for (const gone of ['/opt/nexus-pgvector', 'NEXUS_DB_PASSWORD', 'write_secret kb_pg_password', 'kb-venv', 'psycopg', '169.254.169.254', 'local-ipv4',
+    'POC07_KB_PG_HOST', 'POC07_KB_USER', 'POC07_KB_DB', 'POC07_KB_DIR', 'POC07_KB_PYTHON', 'POC07_KB_S3V_PUBLICATION_ID']) assert.ok(!script.includes(gone), `还有 ${gone}`);
+  const kb = script.slice(script.indexOf('# >>> jiuan07-kb'), script.indexOf('# <<< jiuan07-kb'));
+  assert.match(kb, /^rm -f "\$DIR\/kb_pg_password"$/m);
+  assert.match(kb, /^install -d -o jiuan07 -g jiuan07 -m 0700 \/var\/lib\/jiuan07\/kb-uploads$/m, '上传目录不在任何分支里');
+  assert.doesNotMatch(kb, /^(if|elif) /m, 'kb 段不再按方式分支');
   const dirs = script.indexOf('\ninstall -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07 /var/lib/jiuan07/nexus /var/lib/jiuan07/custom-rules\n');
   assert.ok(dirs > 0 && dirs < script.indexOf('# >>> jiuan07-kb'), '数据目录在一开始就建好，和 kb 方式无关');
-  assert.match(script, /^# 用法：bench07-configure\.sh <站点主机名> <Nexus 地址> \[<kb 方式> \[<文档管家发布编号>\]\]/m);
+  assert.match(script, /^# 用法：bench07-configure\.sh <站点主机名> <Nexus 地址> \[<kb 方式> \[<知识库 Agent 发布编号>\]\]/m);
 });

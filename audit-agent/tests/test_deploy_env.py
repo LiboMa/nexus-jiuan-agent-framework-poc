@@ -1,6 +1,7 @@
 """audit-agent/deploy_env.py：和 poc/infra/lib/deploy-env.sh 同一套规则读配置文件；fixtures 与 expected.json 两边共用。"""
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,6 +45,19 @@ class DeployEnvTest(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             deploy_env.read_deploy_env(str(FIXTURES / "s3v-bare.env"))
         self.assertIn("还要写：KB_S3V_BUCKET、KB_S3V_RULES_INDEX、RULES_TOOL_DIR、KB_S3V_KEY_ID、KB_S3V_PUBLICATION_ID（", str(caught.exception))
+
+    def test_kb_pg_publication_id_is_format_checked_but_not_required(self):
+        self.assertEqual(deploy_env.read_deploy_env(str(FIXTURES / "kb-pg-pub.env"))["KB_PG_PUBLICATION_ID"], "pub_fedcba9876543210")
+        for name in ("kb-pg.env", "basic.env", "s3v.env"):
+            self.assertNotIn("KB_PG_PUBLICATION_ID", deploy_env.read_deploy_env(str(FIXTURES / name)), name)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.env"
+            for bad in ("pub_0123456789ABCDEF", "pub_0123456789abcdef0", "pub_0123456789abcde", "agent_0123456789abcdef",
+                        "pub_0123456789abcdef x", "pub_0123456789abcdef' && reboot '"):
+                path.write_text(f"STACK=s\nAWS_REGION=us-east-1\nKB_MODE=pg\nKB_PG_PUBLICATION_ID={bad}\n", encoding="utf-8")
+                with self.assertRaises(ValueError, msg=bad) as caught:
+                    deploy_env.read_deploy_env(str(path))
+                self.assertIn(f"{path}:4：KB_PG_PUBLICATION_ID 应是 PG 知识库 Agent 的发布编号", str(caught.exception))
 
     def test_keys_are_the_ones_in_example_env(self):
         lines = (ROOT / "poc/infra/env/example.env").read_text(encoding="utf-8").splitlines()
