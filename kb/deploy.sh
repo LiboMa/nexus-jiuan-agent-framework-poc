@@ -8,17 +8,22 @@
 # 阶段（all = preflight,host,db,network,egress,connector,ingest,agent,verify）:
 #   preflight   只读预检：工具、AWS 身份、Nexus 登录、目标主机、Sandbox 节点、Bedrock、规则文档、Agent
 #   host        create 模式：CloudFormation 新建专用 PG 主机（只建一次，之后不更新；existing 模式跳过）
-#   db          在 PG 主机上起 PostgreSQL + pgvector 容器，确保库 / 用户 / vector 扩展
+#   db          在 PG 主机上起 PostgreSQL + pgvector 容器，确保库 / 用户 / vector 扩展，建库内语义检索（kb_embed / kb_search）。
+#               先读库里登记的向量模型：与 EMBED_MODEL_ID 不同就停（防混用），换模型要显式加 --migrate-embeddings
 #   network     existing 模式：CloudFormation 给 PG 主机安全组加入站规则（已有等价规则则跳过）
 #   egress      Nexus 配置 vm_egress.allow_cidrs 并入 VM_EGRESS_ALLOW_CIDRS（Sandbox VM 才能连私网 PG）
 #   connector   Nexus 里建 / 同步数据库凭证密钥与 PostgreSQL 数据连接器，并做连接测试
-#   ingest      解析规则 .docx → 生成向量 → 写入规则表（没变的行不重写）
+#   ingest      解析规则 .docx → 写入规则表（没变的行不重写）；向量由库里的 kb_embed_batch 生成（--embed sql）
 #   agent       给审核 Agent 提示词打补丁（第 4 条括注 + 第 7、8 条），改前自动备份
 #   verify      只读核对各层状态；加 --e2e 再经 API 跑规则问答与 A2A 三段式回归
 #   status      打印状态文件与快速检查
 #   destroy     按相反顺序只撤销本工具做的改动（交互确认，--yes 跳过；--purge-data 才删数据）
 #   rotate-db-password  轮换应用用户密码：主机 .env 换新值 → db（ALTER ROLE）→ connector（同步密钥）（交互确认）
 #   api <path>  调试：以管理员身份 GET /api/v2/<path>，输出 JSON（拒绝 /secret 等机密接口）
+#   regress     检索回归（单独跑）：--questions-dir <目录> --label <名字> [--out <目录>]。经端口转发以应用用户把题库里的两套题
+#               （questions.json、questions_robust.json）逐题调 kb_search（每分钟 ≤ 50 次），结果写到仓库外
+#               （缺省 ~/Documents/pgkb-regression/<名字>.json，只有题号、规则编号和计数）
+#   regress --compare <a.json> <b.json>   只对比两次结果（不读配置、不连库）：哪一套题的 hit5 变低、已知问题不过 → 退出码 1
 #
 # 选项:
 #   --config <file>   配置文件（默认 ./deploy.env）
@@ -26,6 +31,10 @@
 #   --e2e             verify 时加跑端到端对话测试（会建测试会话，结束后移到回收站）
 #   --yes             destroy 不再交互确认
 #   --purge-data      destroy 时同时删除本工具建的数据卷、主机密码目录与 create 模式的主机（不可恢复）
+#   --migrate-embeddings  db：库里是 Titan、EMBED_MODEL_ID 是另一个模型时换模型——旧向量备份进 <表>_titan_backup，
+#                     用新模型重算规则表和归档表的全部向量，登记 kb_meta（与新的 kb_search.sql 同一个事务）
+#   --restore-embeddings  db：换模型后回退（EMBED_MODEL_ID 先改回 Titan）——拷回备份的旧向量，kb_meta 改回 Titan
+#   --questions-dir <目录> / --label <名字> / --out <目录>   regress 用（见上）
 #   -h, --help
 #
 # 详细说明：GUIDE.md
@@ -35,22 +44,46 @@ PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$PKG_DIR/lib/common.sh"
 
+# 用法 = 文件开头的注释块
+usage() { awk 'NR == 1 { next } /^#/ { print; next } { exit }' "${BASH_SOURCE[0]}"; }
 CONFIG="$PKG_DIR/deploy.env"; DRY_RUN=false; E2E=false; YES=false; PURGE=false; PHASES=""; API_PATH=""
+MIGRATE_EMB=false; RESTORE_EMB=false; REG_QDIR=""; REG_LABEL=""; REG_OUT=""; CMP_A=""; CMP_B=""; REG_OPTS=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --config)     CONFIG="$2"; shift ;;
+    --config)     CONFIG="${2:-}"; shift ;;
     --dry-run)    DRY_RUN=true ;;
     --e2e)        E2E=true ;;
     --yes)        YES=true ;;
     --purge-data) PURGE=true ;;
-    -h|--help)    sed -n '2,34p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --migrate-embeddings) MIGRATE_EMB=true ;;
+    --restore-embeddings) RESTORE_EMB=true ;;
+    --questions-dir) REG_QDIR="${2:-}"; REG_OPTS="$REG_OPTS $1"; shift ;;
+    --label)      REG_LABEL="${2:-}"; REG_OPTS="$REG_OPTS $1"; shift ;;
+    --out)        REG_OUT="${2:-}"; REG_OPTS="$REG_OPTS $1"; shift ;;
+    --compare)    CMP_A="${2:-}"; CMP_B="${3:-}"; REG_OPTS="$REG_OPTS $1"
+                  case "$CMP_A$CMP_B" in -*|"") die "用法：./deploy.sh regress --compare <a.json> <b.json>" ;; esac
+                  case "$CMP_B" in -*|"") die "用法：./deploy.sh regress --compare <a.json> <b.json>" ;; esac
+                  shift 2 ;;
+    -h|--help)    usage; exit 0 ;;
     -*)           die "未知选项 $1（./deploy.sh --help）" ;;
     *)            if [ "$PHASES" = "api" ] && [ -z "$API_PATH" ]; then API_PATH="$1"; else PHASES="$1"; fi ;;
   esac
   shift
 done
-[ -n "$PHASES" ] || { sed -n '2,34p' "${BASH_SOURCE[0]}"; exit 2; }
+[ -n "$PHASES" ] || { usage; exit 2; }
 [ "$PHASES" = "all" ] && PHASES="preflight,host,db,network,egress,connector,ingest,agent,verify"
+# 只配某个阶段的选项：在读配置之前查，用错了不碰任何东西
+if $MIGRATE_EMB || $RESTORE_EMB; then
+  case ",$PHASES," in *,db,*) ;; *) die "--migrate-embeddings / --restore-embeddings 只用于 db 阶段（./deploy.sh db --migrate-embeddings）" ;; esac
+  if $MIGRATE_EMB && $RESTORE_EMB; then die "--migrate-embeddings 和 --restore-embeddings 不能同时给"; fi
+fi
+if [ -n "$REG_OPTS" ] && [ "$PHASES" != "regress" ]; then die "${REG_OPTS# } 只用于 regress（单独跑：./deploy.sh regress …）"; fi
+case ",$PHASES," in *,regress,*) [ "$PHASES" = "regress" ] || die "regress 要单独跑（./deploy.sh regress --questions-dir <目录> --label <名字>）" ;; esac
+# regress --compare：只比两个结果文件，不读配置、不连库
+if [ -n "$CMP_A" ]; then
+  [ -z "$REG_QDIR$REG_LABEL$REG_OUT" ] || die "regress --compare 不和 --questions-dir / --label / --out 一起用"
+  py kb_regression.py --compare "$CMP_A" "$CMP_B"; exit $?
+fi
 export DRY_RUN
 trap cleanup EXIT
 load_config "$CONFIG"
@@ -124,6 +157,8 @@ for k in sys.argv[1].split("."):
     d = d.get(k) if isinstance(d, dict) else None
 print("" if d is None else ("true" if d is True else "false" if d is False else (json.dumps(d, ensure_ascii=False) if isinstance(d,(dict,list)) else d)))' "$1"; }
 result_of() { sed -n "s/^RESULT $1=//p" | tail -1; }
+first_of() { awk -v k="RESULT $1=" 'index($0, k) == 1 && !n++ { print substr($0, length(k) + 1) }'; }
+st_of() { printf '%s\n' "$1" | result_of "$2"; }   # st_of <远端输出> <键>
 # read_db_password <out-file>：经 SSM 读应用密码（只传密文）
 read_db_password() { ssm_read_secret "$TGT_ID" "$PKG_DIR/host/read-db-password.sh" "$1" "PG_BASE_DIR=$PG_BASE_DIR"; }
 
@@ -202,10 +237,16 @@ phase_preflight() {
     require_vars RULES_DOCX
     [ -f "$RULES_DOCX" ] || die "找不到规则文档 RULES_DOCX=$RULES_DOCX"
     ok "规则文档 $(basename "$RULES_DOCX")（$(wc -c < "$RULES_DOCX" | xargs) 字节）"
-    local probe; probe="$(secret_file bedrock-probe.json)"
+    # 以本机身份探一次模型（入库的向量由 PG 主机的实例角色在库里算，这里只确认模型 id、区域、模型访问都对）。请求体照模型族发
+    local probe body; probe="$(secret_file bedrock-probe.json)"
+    case "$EMBED_MODEL_ID" in
+      *cohere*) body="{\"texts\":[\"ping\"],\"input_type\":\"search_query\",\"embedding_types\":[\"float\"],\"output_dimension\":$EMBED_DIM,\"truncate\":\"END\"}" ;;
+      *titan*)  body="{\"inputText\":\"ping\",\"dimensions\":$EMBED_DIM,\"normalize\":true}" ;;
+      *) die "EMBED_MODEL_ID=${EMBED_MODEL_ID}：库里的 kb_embed 只支持 Cohere Embed v4 和 Titan v2" ;;
+    esac
     aws_cli bedrock-runtime invoke-model --model-id "$EMBED_MODEL_ID" --content-type application/json --accept application/json \
-      --cli-binary-format raw-in-base64-out --body "{\"inputText\":\"ping\",\"dimensions\":$EMBED_DIM,\"normalize\":true}" "$probe" >/dev/null \
-      || die "调用 Bedrock $EMBED_MODEL_ID 失败（检查模型访问权限与 bedrock:InvokeModel）"
+      --cli-binary-format raw-in-base64-out --body "$body" "$probe" >/dev/null \
+      || die "调用 Bedrock $EMBED_MODEL_ID 失败（检查模型访问权限与 bedrock:InvokeModel；us. 开头的推理配置文件还要它路由到的各区域的基础模型）"
     ok "Bedrock 向量模型 $EMBED_MODEL_ID 可用（$EMBED_DIM 维）" ;;
   esac
   if [ "$AGENT_PATCH_PROMPT" = "true" ]; then
@@ -250,40 +291,102 @@ phase_host() {
   ok "PG 主机 $iid 已就绪（栈 $stack，AMI $ami）"
 }
 
+# db_status：只读，经 SSM 跑 host/pgvector-status.sh（容器、规则表和归档表、库里登记的向量模型）
+db_status() {
+  ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" || true
+}
+# db_up [<apply|migrate|restore> <库里登记的>]：经 SSM 跑 host/pgvector-up.sh。不给动作 = 只起容器、建库 / 用户 / 扩展，不碰 kb_search.sql。
+#   migrate / restore：sql/migrate_embeddings.sql 或 sql/restore_embeddings.sql 拼在 kb_search.sql 后面，一个事务（psql -1）
+db_up() {
+  local extra=()
+  if [ -n "${1:-}" ]; then
+    extra=("KB_SEARCH_SQL_B64=$(base64 < "$PKG_DIR/sql/kb_search.sql" | tr -d '\n')" "EMBED_MODEL_ID=$EMBED_MODEL_ID" "EMBED_DIM=$EMBED_DIM"
+           "AWS_REGION=$AWS_REGION" "EMBED_ACTION=$1" "EMBED_EXPECT=$2" "EMBED_MODEL_FAMILY=$(model_family "$EMBED_MODEL_ID")")
+    case "$1" in
+      migrate) extra+=("EMBED_SQL_B64=$(base64 < "$PKG_DIR/sql/migrate_embeddings.sql" | tr -d '\n')") ;;
+      restore) extra+=("EMBED_SQL_B64=$(base64 < "$PKG_DIR/sql/restore_embeddings.sql" | tr -d '\n')") ;;
+    esac
+  fi
+  ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-up.sh" 900 \
+    "PG_IMAGE=$PG_IMAGE" "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_PORT=$PG_PORT" "PG_BIND_IP=$TGT_BIND_IP" \
+    "PG_DATA_VOLUME=$PG_DATA_VOLUME" "PG_MEMORY_LIMIT=$PG_MEMORY_LIMIT" "PG_BASE_DIR=$PG_BASE_DIR" \
+    "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "PG_INSTALL_DOCKER=$PG_INSTALL_DOCKER" "RULES_TABLE=$RULES_TABLE" \
+    ${extra[@]+"${extra[@]}"}
+}
+# db_record <远端输出>：只有本工具新建的东西，destroy 才会删
+db_record() {
+  [ "$(st_of "$1" container_action)" = "created" ] && state_set DB_CONTAINER_CREATED 1
+  [ "$(st_of "$1" volume_action)" = "created" ] && state_set DB_VOLUME_CREATED 1
+  [ "$(st_of "$1" env_file)" = "created" ] && state_set DB_BASEDIR_CREATED 1
+  return 0
+}
+# db_embed_plan <status 输出> <embed_guard 的结果>：dry-run 打印登记的 / 配置的模型、两张表各多少行、实跑时做哪一种
+db_embed_plan() {
+  local st="$1" act="$2" reg cfg t1 t2
+  reg="$(st_of "$st" embed_model)"; cfg="$(model_family "$EMBED_MODEL_ID")"
+  plan "向量模型：库里登记 ${reg:-（读不到）}$([ "$reg" = titan-inferred ] && printf '（没有 kb_meta、表里已有向量：按 %s 算）' "$TITAN_FAMILY")，配置 ${cfg}（EMBED_MODEL_ID=${EMBED_MODEL_ID}）"
+  if [ "$(st_of "$st" rules_table)" = present ]; then t1="$(st_of "$st" rules_rows) 行（有向量 $(st_of "$st" rules_embedded)）"; else t1="还没有"; fi
+  if [ "$(st_of "$st" archive_table)" = present ]; then t2="$(st_of "$st" archive_rows) 行（有向量 $(st_of "$st" archive_embedded)）"; else t2="没有"; fi
+  plan "规则表 ${RULES_TABLE}：${t1}；归档表 ${RULES_TABLE}_archive：${t2}；备份表 ${RULES_TABLE}_titan_backup：$(st_of "$st" titan_backup)"
+  case "$act" in
+    apply)   plan "实跑时 apply：照 sql/kb_search.sql（${cfg}）幂等重建函数，不动向量$([ "$reg" = none ] && printf '；新库登记 kb_meta = %s' "$cfg")" ;;
+    migrate) plan "实跑时 migrate（一个事务）：新的 kb_search.sql（${cfg}）→ 旧向量备份进 ${RULES_TABLE}_titan_backup → 两张表全部用 $cfg 重算 → kb_meta 登记 $cfg"
+             [ "$(st_of "$st" titan_backup)" = absent ] || warn "备份表 ${RULES_TABLE}_titan_backup 已存在（上一次换模型的）：迁移会被拒绝。确认不再回退后先删掉它（GUIDE.md 7.6）" ;;
+    restore) plan "实跑时 restore（一个事务）：旧配置的 kb_search.sql（${cfg}）→ 内容没变的行拷回 ${RULES_TABLE}_titan_backup 里的旧向量、其余用 $cfg 重算 → kb_meta 改回 $cfg"
+             [ "$(st_of "$st" titan_backup)" = present ] || warn "没有备份表 ${RULES_TABLE}_titan_backup：回退会失败" ;;
+    *)       warn "实跑时会停下：${act#refuse:}" ;;
+  esac
+}
+
 phase_db() {
   log "db：PostgreSQL + pgvector 容器"
   need_target db || return 0
+  local st cs reg act outp pre="" first=false
+  st="$(db_status)"; cs="$(st_of "$st" container_state)"
+  # 读不到登记：容器没在运行（还没建、删了重建、已停止），或库 / 应用用户还没建（接管别人起的容器）。先做不碰 kb_search.sql
+  # 的那部分（起容器、建库 / 用户 / 扩展），再读
+  { [ "$cs" != running ] || [ "$(st_of "$st" embed_model)" = error ]; } && first=true
   if $DRY_RUN; then
-    local st cs
-    st="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" || true)"
-    cs="$(printf '%s\n' "$st" | result_of container_state)"
     case "$cs" in
-      running) skip "容器 $PG_CONTAINER_NAME 已在运行（$(printf '%s\n' "$st" | result_of port_binding)）；实跑时以主机 .env 的密码执行幂等 SQL（用户 / 库 / 扩展）" ;;
+      running) skip "容器 $PG_CONTAINER_NAME 已在运行（$(st_of "$st" port_binding)）；实跑时以主机 .env 的密码执行幂等 SQL（用户 / 库 / 扩展）" ;;
       absent|"") plan "在 $TGT_ID 上启动 $PG_IMAGE，绑定 $TGT_BIND_IP:$PG_PORT，库 $PG_DB_NAME / 用户 $PG_DB_USER" ;;
       *) plan "容器 $PG_CONTAINER_NAME 当前 $cs，实跑时 docker start" ;;
     esac
-    case "$(printf '%s\n' "$st" | result_of kb_search)" in
-      ready) skip "库内语义检索 kb_search 已可用；实跑时照 sql/kb_search.sql 幂等重建函数" ;;
-      *) plan "在容器 $PG_CONTAINER_NAME 里装 PL/Python（不重启）并建 kb_embed / kb_search、上传历史、检索日志" ;;
-    esac
+    if ! $first; then
+      case "$(st_of "$st" kb_search)" in
+        ready) skip "库内语义检索 kb_search 已可用" ;;
+        *) plan "在容器 $PG_CONTAINER_NAME 里装 PL/Python（不重启）并建 kb_embed / kb_search、上传历史、检索日志" ;;
+      esac
+      db_embed_plan "$st" "$(embed_guard "$(st_of "$st" embed_model)" "$EMBED_MODEL_ID" "$MIGRATE_EMB" "$RESTORE_EMB")"
+    else
+      plan "读不到库里登记的向量模型（容器 ${cs:-absent}，或库 / 应用用户还没建）：实跑时先起容器、建库 / 用户 / 扩展，再读登记（数据卷里可能已有向量），照它决定重建 kb_search.sql、迁移、回退，或者停下"
+    fi
     return 0
   fi
-  local outp
-  outp="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-up.sh" 900 \
-    "PG_IMAGE=$PG_IMAGE" "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_PORT=$PG_PORT" "PG_BIND_IP=$TGT_BIND_IP" \
-    "PG_DATA_VOLUME=$PG_DATA_VOLUME" "PG_MEMORY_LIMIT=$PG_MEMORY_LIMIT" "PG_BASE_DIR=$PG_BASE_DIR" \
-    "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "PG_INSTALL_DOCKER=$PG_INSTALL_DOCKER" \
-    "KB_SEARCH_SQL_B64=$(base64 < "$PKG_DIR/sql/kb_search.sql" | tr -d '\n')" "EMBED_MODEL_ID=$EMBED_MODEL_ID" "EMBED_DIM=$EMBED_DIM" \
-    "AWS_REGION=$AWS_REGION" "RULES_TABLE=$RULES_TABLE")" || { printf '%s\n' "$outp"; die "db 阶段在 $TGT_ID 上失败（原因见上方远端输出）"; }
+  if $first; then
+    pre="$(db_up)" || { printf '%s\n' "$pre"; die "db 阶段在 $TGT_ID 上起容器 / 建库失败（原因见上方远端输出）"; }
+    printf '%s\n' "$pre" | grep -E '^\[host\]' || true
+    db_record "$pre"
+    st="$(db_status)"
+  fi
+  # 防混用：库里登记的向量模型与配置的不同，就停下，不重新应用 kb_search.sql（换模型 / 回退要显式加参数）
+  reg="$(st_of "$st" embed_model)"
+  act="$(embed_guard "$reg" "$EMBED_MODEL_ID" "$MIGRATE_EMB" "$RESTORE_EMB")"
+  case "$act" in refuse:*) die "db：${act#refuse:}" ;; esac
+  ok "向量模型：库里登记 ${reg}，配置 $(model_family "$EMBED_MODEL_ID") → $act"
+  outp="$(db_up "$act" "$reg")" || { printf '%s\n' "$outp"; die "db 阶段在 $TGT_ID 上失败（原因见上方远端输出；migrate / restore 失败时整段已回滚）"; }
   printf '%s\n' "$outp" | grep -E '^\[host\]' || true
-  local action; action="$(printf '%s\n' "$outp" | result_of container_action)"
+  db_record "$outp"
+  local action; action="$(printf '%s\n%s\n' "$pre" "$outp" | first_of container_action)"
   case "$action" in unchanged) skip "容器 $PG_CONTAINER_NAME 已在运行" ;; *) ok "容器 $PG_CONTAINER_NAME：$action" ;; esac
-  # 只有本工具新建的东西，destroy 才会删
-  [ "$action" = "created" ] && state_set DB_CONTAINER_CREATED 1
-  [ "$(printf '%s\n' "$outp" | result_of volume_action)" = "created" ] && state_set DB_VOLUME_CREATED 1
-  [ "$(printf '%s\n' "$outp" | result_of env_file)" = "created" ] && state_set DB_BASEDIR_CREATED 1
-  ok "PostgreSQL $(printf '%s\n' "$outp" | result_of pg_version) + vector $(printf '%s\n' "$outp" | result_of vector_version)，监听 $(printf '%s\n' "$outp" | result_of listen)，密码文件 $(printf '%s\n' "$outp" | result_of env_file)"
-  ok "库内语义检索：PL/Python $(printf '%s\n' "$outp" | result_of plpython)，kb_search $(printf '%s\n' "$outp" | result_of kb_search)"
+  ok "PostgreSQL $(st_of "$outp" pg_version) + vector $(st_of "$outp" vector_version)，监听 $(st_of "$outp" listen)，密码文件 $(printf '%s\n%s\n' "$pre" "$outp" | first_of env_file)"
+  ok "库内语义检索：PL/Python $(st_of "$outp" plpython)，kb_search $(st_of "$outp" kb_search)"
+  case "$act" in
+    apply)   ok "向量模型 $(st_of "$outp" embed_model)：kb_search.sql 照配置重建，向量没动" ;;
+    migrate) ok "换模型完成：两张表的向量已用 $(st_of "$outp" embed_model) 重算，kb_meta 已登记"
+             warn "旧向量备份在 ${RULES_TABLE}_titan_backup：regress 对比、verify --e2e 验收通过后再手工删（删之前随时可以 --restore-embeddings 回退，GUIDE.md 7.6）" ;;
+    restore) ok "已回退：向量与 kb_meta 回到 $(st_of "$outp" embed_model)；备份表 ${RULES_TABLE}_titan_backup 留着，确认后手工删" ;;
+  esac
   state_set PG_HOST_IP "$TGT_IP"; state_set PG_BIND "$TGT_BIND_IP:$PG_PORT"
 }
 
@@ -400,7 +503,7 @@ phase_ingest() {
   r="$(py ingest_rules.py --rules "$json" --port "$INGEST_LOCAL_PORT" --db "$PG_DB_NAME" --user "$PG_DB_USER" \
         --password-file "$pwf" --table "$RULES_TABLE" --ddl "$PKG_DIR/sql/approval_rules.sql" \
         --source-tag "$RULES_SOURCE_TAG" --source-doc "$(basename "$RULES_DOCX")" --source-version "$RULES_SOURCE_VERSION" \
-        --model "$EMBED_MODEL_ID" --dim "$EMBED_DIM" --region "$AWS_REGION" $prune $dr \
+        --model "$EMBED_MODEL_ID" --dim "$EMBED_DIM" --region "$AWS_REGION" --embed sql $prune $dr \
         --smoke-question "$E2E_QUESTION" | tail -1)" || { pf_stop; die "入库失败（原因见上方）"; }
   pf_stop
   local ins upd unc prn ret
@@ -632,6 +735,9 @@ phase_rotate_db_password() {
   log "rotate-db-password：轮换应用用户 $PG_DB_USER 的密码"
   need_target rotate-db-password || return 0
   if $DRY_RUN; then plan "主机 $PG_BASE_DIR/.env 换新密码（旧文件备份）→ db 阶段 ALTER ROLE → connector 阶段同步 Nexus 密钥"; return 0; fi
+  # 先确认 db 阶段不会被防混用拦下：不然 .env 换了新密码，库里还是旧的
+  local act; act="$(embed_guard "$(st_of "$(db_status)" embed_model)" "$EMBED_MODEL_ID" false false)"
+  case "$act" in refuse:*) die "轮换要跑 db 阶段，而它会停下：${act#refuse:}（密码还没换）" ;; esac
   if ! $YES; then
     printf '轮换期间（约 30 秒）连接器会短暂认证失败。输入 %s 确认：' "$DEPLOY_NAME"
     local ans; read -r ans; [ "$ans" = "$DEPLOY_NAME" ] || die "已取消"
@@ -641,6 +747,25 @@ phase_rotate_db_password() {
   phase_db
   phase_connector
   ok "密码轮换完成：库与 Nexus 密钥都已是新密码"
+}
+
+phase_regress() {
+  log "regress：检索回归 ${REG_LABEL}（kb_search，与审核 Agent 同一个函数）"
+  [ -n "$REG_QDIR" ] && [ -n "$REG_LABEL" ] \
+    || die "用法：./deploy.sh regress --questions-dir <目录> --label <名字> [--out <目录>]；只对比：./deploy.sh regress --compare <a.json> <b.json>"
+  local args=(--questions-dir "$REG_QDIR" --label "$REG_LABEL") chk pwf
+  [ -z "$REG_OUT" ] || args+=(--out "$REG_OUT")
+  # 先只校验、不连库：题库读得出、题库和结果目录都不在仓库里、同名结果不覆盖
+  chk="$(py kb_regression.py "${args[@]}" --check)" || die "regress：题库或结果目录不对（原因见上方）"
+  need_target regress || return 0
+  if $DRY_RUN; then plan "${chk}；经端口转发以应用用户 $PG_DB_USER 逐题调 kb_search（每分钟 ≤ 50 次，检索日志里记 caller=kb-regression）"; return 0; fi
+  ok "$chk"
+  pwf="$(secret_file db-app-password)"
+  read_db_password "$pwf" || die "读不到应用密码（先跑 db 阶段）"
+  pf_start "$INGEST_LOCAL_PORT" "$TGT_ID" "$TGT_BIND_IP" "$PG_PORT"
+  py kb_regression.py --host 127.0.0.1 --port "$INGEST_LOCAL_PORT" --db "$PG_DB_NAME" --user "$PG_DB_USER" --password-file "$pwf" \
+    --table "$RULES_TABLE" "${args[@]}" || { pf_stop; die "回归没跑完（原因见上方），没写结果文件"; }
+  pf_stop
 }
 
 # ============================================================================
@@ -656,6 +781,7 @@ for p in ${PHASES//,/ }; do
   case "$p" in
     preflight|host|db|network|egress|connector|ingest|agent|verify|status|destroy) "phase_$p" ;;
     rotate-db-password) phase_rotate_db_password ;;
+    regress) phase_regress ;;
     *) die "未知阶段 $p（./deploy.sh --help）" ;;
   esac
 done

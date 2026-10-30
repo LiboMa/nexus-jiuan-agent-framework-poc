@@ -152,6 +152,8 @@ bash scripts/admin_run.sh verify --dir <DIR_NAME>              # 4 个工具都�
 
 - 一个绑定覆盖模块里的全部四个工具。
 - 绑定是「每个人自己的」：别的同事要用这个 Agent，可以绑自己的密钥。不绑的话，平台会退回用工具创建者的绑定，前提是对方有权使用那把密钥。
+- 管理员本人就是这个 Agent 和发布的属主时，也可以用脚本绑：`bash scripts/admin_run.sh bind --key-id <KEY_ID>`（模块路径取 `.state/import.json`，密钥名取包描述里声明的 `s3vectors_kb`）。别人的 Agent 请属主自己绑。
+- `render.py prompt` 带 `--rules-tool-dir`（规则模块）时，「规则请求」一节的通用规则读两个文档管家共用的片段 `../kb/prompt/kb_rules_v1.zh.md`：本包要和 `kb/` 并列放在同一个仓库里，单独拷走时把 `kb/prompt/` 一起带上。
 
 ## 7　建只读连接器
 
@@ -365,10 +367,12 @@ bash infra/aws_teardown.sh --confirm <VECTOR_BUCKET> --apply    # 删除三个�
 |---|---|
 | 本机测试 | `uv run --no-project --with boto3 --with python-docx --with openpyxl --with pdfplumber python -I tests/local_test.py` |
 | 生成工具文件 / 提示词 / 连接器请求体 | `python3 -I scripts/render.py tools`、`prompt --tool-dir <DIR_NAME>`、`connector` |
-| 管理员操作 | `bash scripts/admin_run.sh import \| check \| publish \| verify \| key-create \| issue-call-key …` |
+| 管理员操作 | `bash scripts/admin_run.sh import \| check \| publish \| verify \| bind \| key-create \| issue-call-key …` |
 | 发布工具新版本 | `admin_run.sh check --tool-id <TOOL_ID> --expect-version N`，再 `publish` 同样参数 |
 | 直连命令行 | `uv run --no-project --with boto3 --with python-docx --with openpyxl --with pdfplumber python -I frontend/kb_cli.py <子命令>` |
 | A2A 示例 | `node frontend/a2a_kb_client.mjs ingest <文件> \| ask "<问题>" \| stats` |
+
+管理员脚本（`admin_run.sh`、`nexus_admin.py`、`render.py`）与 PG 版文档管家共用，按包描述 `nexus-package.json` 办事：`admin_run.sh` 自动带上 `--package <本包>`；直接跑 `nexus_admin.py`、`render.py` 时 `--package` 缺省也是本包。PG 版的用法见 `../knowledgebase-writer-agent-pg/README.md`。
 
 ## 附录 B　权限清单
 

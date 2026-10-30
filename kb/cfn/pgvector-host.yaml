@@ -37,8 +37,16 @@ Parameters:
       replace the instance - the data lives on the root volume.
   EmbedModelId:
     Type: String
-    Default: amazon.titan-embed-text-v2:0
-    Description: Bedrock embedding model that kb_embed() in the PG container may invoke (the instance role allows only this one).
+    Default: us.cohere.embed-v4:0
+    Description: >-
+      Bedrock embedding model that kb_embed() in the PG container may invoke (the instance role allows only this one).
+      An id starting with "us." is a cross-region inference profile: the role then allows the profile plus its foundation
+      model in us-east-1, us-east-2 and us-west-2 (where the profile routes requests); otherwise only this region's
+      foundation model.
+
+Conditions:
+  # CloudFormation has no "starts with": compare the first dot-separated part of the id
+  EmbedViaUsProfile: !Equals [!Select [0, !Split ['.', !Ref EmbedModelId]], 'us']
 
 Resources:
   HostSecurityGroup:
@@ -71,7 +79,9 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
-      # 库内语义检索：PG 容器里的 kb_embed()（sql/kb_search.sql）用实例角色调 Bedrock，只许这一个嵌入模型
+      # 库内语义检索：PG 容器里的 kb_embed()（sql/kb_search.sql）用实例角色调 Bedrock，只许这一个嵌入模型。
+      # us. 开头的是推理配置文件：许它本身，加上它路由到的三个美国区域的基础模型（id 去掉 us. 前缀）。
+      # 拆之前补两个点：不走这一支的 id（amazon.titan-… 只有两段）取第 3 段也不越界
       Policies:
         - PolicyName: kb-embeddings
           PolicyDocument:
@@ -79,7 +89,19 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: bedrock:InvokeModel
-                Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbedModelId}'
+                Resource: !If
+                  - EmbedViaUsProfile
+                  - - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${EmbedModelId}'
+                    - !Sub
+                      - 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${Base}'
+                      - Base: !Join ['.', [!Select [1, !Split ['.', !Sub '${EmbedModelId}..']], !Select [2, !Split ['.', !Sub '${EmbedModelId}..']]]]
+                    - !Sub
+                      - 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${Base}'
+                      - Base: !Join ['.', [!Select [1, !Split ['.', !Sub '${EmbedModelId}..']], !Select [2, !Split ['.', !Sub '${EmbedModelId}..']]]]
+                    - !Sub
+                      - 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${Base}'
+                      - Base: !Join ['.', [!Select [1, !Split ['.', !Sub '${EmbedModelId}..']], !Select [2, !Split ['.', !Sub '${EmbedModelId}..']]]]
+                  - - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbedModelId}'
       Tags:
         - { Key: managed-by, Value: pgvector-rules-kb }
 

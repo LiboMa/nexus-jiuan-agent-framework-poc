@@ -17,7 +17,8 @@ const infra = name => fileURLToPath(new URL(`../../../infra/${name}`, import.met
 test('模板里的 Fn::Sub 只引用模板自己的参数、资源与伪参数（用户数据里的 shell 变量一律不带花括号）', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   const tokens = [...new Set([...template.matchAll(/\$\{([^}]+)\}/g)].map(match => match[1]))].sort();
-  assert.deepEqual(tokens, ['AWS::Partition', 'AWS::Region', 'AdvisoryPublicationId', 'AppPort', 'ArtifactBucket', 'ArtifactBucket.Arn',
+  // AWS::AccountId：KbBedrockPolicy 里 Cohere v4 推理配置文件的 ARN 带账号
+  assert.deepEqual(tokens, ['AWS::AccountId', 'AWS::Partition', 'AWS::Region', 'AdvisoryPublicationId', 'AppPort', 'ArtifactBucket', 'ArtifactBucket.Arn',
     'DomainName', 'Jiuan07DomainName', 'NexusOrigin']);
 });
 

@@ -6,7 +6,11 @@
 #   PG_IMAGE PG_CONTAINER_NAME PG_PORT PG_BIND_IP PG_DATA_VOLUME PG_MEMORY_LIMIT PG_BASE_DIR
 #   PG_DB_NAME PG_DB_USER PG_INSTALL_DOCKER
 #   可选：KB_SEARCH_SQL_B64（sql/kb_search.sql 的 base64）+ EMBED_MODEL_ID EMBED_DIM AWS_REGION RULES_TABLE：
-#         装 PL/Python（容器里就地装，不重启）并建库内语义检索 kb_embed / kb_search、上传历史、检索日志
+#         装 PL/Python（容器里就地装，不重启）并建库内语义检索 kb_embed / kb_search、上传历史、检索日志。这时还要：
+#         EMBED_ACTION=apply|migrate|restore（deploy.sh 的 embed_guard 定的）、EMBED_EXPECT（它据以判断的库里登记的模型，
+#         同 pgvector-status.sh 的 embed_model）、EMBED_MODEL_FAMILY（配置的模型族）；migrate / restore 另给
+#         EMBED_SQL_B64（sql/migrate_embeddings.sql 或 sql/restore_embeddings.sql 的 base64），拼在 kb_search.sql 后面一个事务执行。
+#         没给 KB_SEARCH_SQL_B64：只起容器、建库 / 用户 / 扩展（deploy.sh 在容器没运行、读不到登记时先这样跑一次）。
 #
 # 行为：
 #   - 新建的主机（create 模式）先等 cloud-init（user data 装 Docker）结束。
@@ -20,6 +24,9 @@
 #   - 本脚本新建的容器与数据卷带 label managed-by=pgvector-rules-kb（destroy 只删带 label 的）。
 #   - 每次都执行幂等 SQL：建应用用户（已存在则把密码同步为 .env 里的值）、建库（owner = 应用用户）、建 vector 扩展。
 #     密码经 stdin 传给 psql，不出现在进程参数里。
+#
+#   - 防混用：执行 SQL 前以应用用户再读一次库里登记的向量模型，与 EMBED_EXPECT 不同（deploy.sh 读过之后有人迁移 / 回退 /
+#     入库了）就停，什么都不执行。
 #
 # 输出：以 "RESULT key=value" 开头的行供 deploy.sh 解析；不输出任何密码。
 set -euo pipefail
@@ -134,11 +141,41 @@ SQL
 } | docker exec -i -e APP_USER="$PG_DB_USER" -e APP_DB="$PG_DB_NAME" "$PG_CONTAINER_NAME" sh -c \
   'psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -v app_user="$APP_USER" -v app_db="$APP_DB"'
 
+# 以应用用户查（容器内本地 socket，同 pgvector-status.sh）：规则表、归档表归它，超级用户会话里去读等于把超级用户交出去
+q() { docker exec "$PG_CONTAINER_NAME" psql -X -At -U "$PG_DB_USER" -d "$PG_DB_NAME" -c "$1" 2>/dev/null; }
+# >>> embed_model
+# 库里登记的向量模型（防混用；host/pgvector-status.sh 与 host/pgvector-up.sh 里这一段相同，tests/test_embed_guard.sh 核对）：
+#   kb_meta 的 embed_model；没登记、但规则表或归档表里已有向量 = titan-inferred（Titan 时代建的库）；都没有 = none。
+#   任何一步查询出错都报 error，不能当成 none：那样 db 会在 Titan 的库上装别的模型的 kb_embed。以应用用户查（同 q）
+qb() { local v; v="$(q "$1")" || return 1; case "$v" in t|f) printf '%s' "$v" ;; *) return 1 ;; esac; }
+embed_model() {
+  local t v
+  v="$(qb "select to_regclass('public.kb_meta') is not null")" || { echo error; return 0; }
+  if [ "$v" = t ]; then
+    v="$(q "select value from kb_meta where key = 'embed_model'")" || { echo error; return 0; }
+    if [ -n "$v" ]; then echo "$v"; return 0; fi
+  fi
+  for t in "$RULES_TABLE" "${RULES_TABLE}_archive"; do
+    v="$(qb "select to_regclass('public.${t}') is not null")" || { echo error; return 0; }
+    [ "$v" = t ] || continue
+    v="$(qb "select exists (select 1 from ${t} where embedding is not null)")" || { echo error; return 0; }
+    if [ "$v" = t ]; then echo titan-inferred; return 0; fi
+  done
+  echo none
+}
+# <<< embed_model
+
 # ---- 6b. 库内语义检索（sql/kb_search.sql）：给了 KB_SEARCH_SQL_B64 才做 ----
 # 官方镜像不带 PL/Python：没有就在运行中的容器里用 apt 装（PGDG 源镜像里已配好）。PG 在 CREATE EXTENSION 时才加载它，
 # 不重启、不停机，数据卷和端口绑定都不动。装的东西在容器的可写层里：容器被重建后，下一次 db 阶段会再装。
 if [ -n "${KB_SEARCH_SQL_B64:-}" ]; then
   : "${EMBED_MODEL_ID:?}" "${EMBED_DIM:?}" "${AWS_REGION:?}" "${RULES_TABLE:?}"
+  : "${EMBED_ACTION:?}" "${EMBED_EXPECT:?}" "${EMBED_MODEL_FAMILY:?}" "${EMBED_SQL_B64:=}"
+  case "$EMBED_ACTION:${EMBED_SQL_B64:+sql}" in
+    apply:|migrate:sql|restore:sql) ;;
+    *) echo "EMBED_ACTION=$EMBED_ACTION 与 EMBED_SQL_B64 对不上：apply 不带它，migrate / restore 必须带" >&2; exit 1 ;;
+  esac
+  case "$EMBED_MODEL_FAMILY" in *[!A-Za-z0-9._:-]*) echo "EMBED_MODEL_FAMILY 不合规：$EMBED_MODEL_FAMILY" >&2; exit 1 ;; esac
   avail="$(docker exec "$PG_CONTAINER_NAME" psql -X -At -U postgres -d "$PG_DB_NAME" -c "SELECT count(*) FROM pg_available_extensions WHERE name = 'plpython3u'")"
   if [ "$avail" = "0" ]; then
     say "在容器里装 PL/Python（postgresql-plpython3-17、python3-boto3；不重启 PostgreSQL）"
@@ -147,10 +184,29 @@ if [ -n "${KB_SEARCH_SQL_B64:-}" ]; then
   else
     result plpython present
   fi
-  printf '%s' "$KB_SEARCH_SQL_B64" | base64 -d \
+  # 防混用：deploy.sh 读过登记之后、这里执行之前，有人迁移 / 回退 / 往空库里入了库，登记就变了：停下，什么都不执行
+  now="$(embed_model)"
+  if [ "$now" != "$EMBED_EXPECT" ]; then
+    echo "库里登记的向量模型变了：deploy.sh 判断时是 ${EMBED_EXPECT}，现在是 ${now}。没有执行 kb_search.sql（${EMBED_ACTION}），重跑 ./deploy.sh db" >&2
+    exit 1
+  fi
+  # 一个事务（psql -1）：kb_search.sql 的第一句拿入库锁；migrate / restore 的脚本紧跟在后面，任何一步出错整段回滚，
+  # 库里还是原来的函数、向量和登记。脚本的 NOTICE（每张表重算 / 拷回多少行）转成 [host] 行
+  sqlerr="$(mktemp)"
+  if ! { printf '%s' "$KB_SEARCH_SQL_B64" | base64 -d
+         if [ "$EMBED_ACTION" != apply ]; then printf '\n'; printf '%s' "$EMBED_SQL_B64" | base64 -d; fi; } \
     | sed -e "s/{table}/$RULES_TABLE/g" -e "s/{dim}/$EMBED_DIM/g" -e "s|{model}|$EMBED_MODEL_ID|g" -e "s/{region}/$AWS_REGION/g" -e "s/{app_user}/$PG_DB_USER/g" \
-    | docker exec -i "$PG_CONTAINER_NAME" psql -X -q -1 -U postgres -d "$PG_DB_NAME" -v ON_ERROR_STOP=1 >/dev/null
+          -e "s/{model_family}/$EMBED_MODEL_FAMILY/g" \
+    | docker exec -i "$PG_CONTAINER_NAME" psql -X -q -1 -U postgres -d "$PG_DB_NAME" -v ON_ERROR_STOP=1 >/dev/null 2>"$sqlerr"; then
+    { grep -v 'NOTICE: ' "$sqlerr" || true; } | tail -15 >&2; rm -f "$sqlerr"
+    echo "kb_search.sql（${EMBED_ACTION}）执行失败，整段已回滚" >&2
+    exit 1
+  fi
+  { grep -E 'NOTICE: +(migrate|restore)_embeddings' "$sqlerr" || true; } | sed 's/^.*NOTICE: */[host] /'
+  rm -f "$sqlerr"
   result kb_search ready
+  result embed_action "$EMBED_ACTION"
+  result embed_model "$(embed_model)"
 fi
 
 # ---- 7. 自检：用应用用户经 TCP（SCRAM）登录，密码取自 .env，经 stdin 传入 ----

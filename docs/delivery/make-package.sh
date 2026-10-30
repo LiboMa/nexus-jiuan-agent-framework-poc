@@ -43,6 +43,10 @@ if $CHECKS; then
   S3V="$ROOT/knowbase-s3vectors-agent"
   for f in "$S3V"/infra/*.sh "$S3V"/scripts/*.sh; do bash -n "$f"; done
   python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$S3V"/{tools,scripts,frontend,tests,build}/*.py && node --check "$S3V"/frontend/*.mjs && echo "文档管家的语法检查通过"
+  # 文档管家（PG 版）：脚本语法、Python 编译与 Node 语法检查（它的本地测试要 PGlite 等依赖，见 knowledgebase-writer-agent-pg/README.md）
+  PGA="$ROOT/knowledgebase-writer-agent-pg"
+  for f in "$PGA"/scripts/*.sh; do bash -n "$f"; done
+  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$PGA"/{tools,scripts,probe,tests}/*.py && for f in "$PGA"/scripts/*.mjs "$PGA"/tests/*.mjs; do node --check "$f"; done && echo "文档管家（PG 版）的语法检查通过"
   (cd "$ROOT" && python3 -B -m unittest discover -s audit-agent/tests >/dev/null 2>&1) && echo "审核 Agent 下发脚本的单元测试通过"
   (cd "$ROOT" && python3 -B -m unittest discover -s skills/agent-access/tests >/dev/null 2>&1) && echo "命令行测试通过"
   say "图和 HTML 是不是最新的"
@@ -78,6 +82,12 @@ copy kb --exclude /kb/.state --exclude /kb/.build --exclude /kb/deploy.env --inc
 # 文档管家（S3 Vectors 版）：部署人的设置、状态（含 A2A 调用密钥）、生成物不出包；制度原文（.docx）不出包，tests/fixtures 的仿真文档除外
 copy knowbase-s3vectors-agent --exclude /knowbase-s3vectors-agent/.state --exclude /knowbase-s3vectors-agent/.build --exclude /knowbase-s3vectors-agent/build/out \
   --exclude /knowbase-s3vectors-agent/deploy.env --include '/knowbase-s3vectors-agent/tests/fixtures/*.docx' --exclude '*.docx' --exclude '*.doc'
+# 文档管家（PG 版）：部署人的设置、状态（导入结果、A2A 调用密钥）、生成物（拼装出的工具、压缩包、端到端测试文档）不出包；
+# 制度原文（.docx）不出包（本包没有仿真 .docx）
+copy knowledgebase-writer-agent-pg --exclude /knowledgebase-writer-agent-pg/.state --exclude /knowledgebase-writer-agent-pg/.build \
+  --exclude /knowledgebase-writer-agent-pg/deploy.env --exclude '*.docx' --exclude '*.doc'
+# 两个文档管家的提示词共用片段在 kb/prompt（render.py 从包旁边的 ../kb/prompt 读），随上面的 kb 出包；少了就渲染不出提示词
+[[ -f "$stage/kb/prompt/kb_rules_v1.zh.md" ]] || { echo "暂存目录里没有 kb/prompt/kb_rules_v1.zh.md（文档管家的提示词共用片段）" >&2; exit 1; }
 copy poc/infra --exclude secrets.env --exclude kb.env --include /infra/env/example.env --exclude '/infra/env/*.env' --exclude design-jiuan-nexus-integrate.md
 copy poc/tools
 copy poc/README.md
@@ -100,6 +110,10 @@ knowbase-s3vectors-agent/deploy.env
 knowbase-s3vectors-agent/.state/
 knowbase-s3vectors-agent/.build/
 knowbase-s3vectors-agent/build/out/
+# 文档管家（PG 版）：部署人的设置、状态（含 A2A 调用密钥）、生成物
+knowledgebase-writer-agent-pg/deploy.env
+knowledgebase-writer-agent-pg/.state/
+knowledgebase-writer-agent-pg/.build/
 # 九安开发包：第三方代码，按版本号另行存放
 source/
 # 生成物与依赖

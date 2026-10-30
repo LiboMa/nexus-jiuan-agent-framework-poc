@@ -9,6 +9,7 @@
 #   SSM         ssm_run / ssm_read_secret / ssm_wait_online
 #   端口转发    pf_start / pf_stop
 #   Python      py <script> [args]                      → uv 临时环境，-I 隔离模式
+#   向量模型    model_family / embed_guard               → db 阶段防混用
 #
 # 兼容 bash 3.2（macOS 自带）：不用关联数组、mapfile、${var,,}。
 
@@ -52,7 +53,7 @@ load_config() {
   : "${CONNECTOR_MAX_ROWS:=1000}"
   : "${RULES_TABLE:=approval_rules}"
   : "${RULES_SOURCE_TAG:=finance-approval-v4}"
-  : "${EMBED_MODEL_ID:=amazon.titan-embed-text-v2:0}"
+  : "${EMBED_MODEL_ID:=us.cohere.embed-v4:0}"
   : "${EMBED_DIM:=1024}"
   : "${INGEST_LOCAL_PORT:=15432}"
   : "${INGEST_PRUNE:=true}"
@@ -239,6 +240,63 @@ py() {
   uv run --quiet --no-project --python 3.12 \
     --with 'boto3>=1.34' --with 'psycopg[binary]>=3.1' --with 'pyyaml>=6' --with 'cryptography>=42' \
     python -I "$PKG_DIR/lib/$script" "$@"
+}
+
+# ---------- 向量模型（防混用）----------
+# 库里的向量只能出自一个模型：kb_embed / kb_search 换成另一个模型，而表里还是旧模型的向量，检索就是拿两种向量比距离。
+# db 阶段先读库里登记的模型（host/pgvector-status.sh 的 embed_model），再由 embed_guard 决定做什么。
+TITAN_FAMILY="amazon.titan-embed-text-v2:0"
+
+# model_family <模型 id>：kb_meta.embed_model 记的模型族——去掉推理配置文件的区域前缀（us. / global. / eu. / apac.）
+model_family() {
+  case "$1" in us.*|global.*|eu.*|apac.*) printf '%s' "${1#*.}" ;; *) printf '%s' "$1" ;; esac
+}
+
+# embed_guard <登记的> <配置的模型族> <migrate:true|false> <restore:true|false>：只判断，不改任何东西。输出一行：
+#   apply           照配置（重新）应用 sql/kb_search.sql：库里还没有向量，或登记的就是配置的模型
+#   migrate         --migrate-embeddings：库里是 Titan，备份旧向量后用配置的模型整库重算（sql/migrate_embeddings.sql）
+#   restore         --restore-embeddings：换模型后回退到 Titan，拷回备份的旧向量（sql/restore_embeddings.sql）
+#   refuse:<原因>   其余情况：停下，不重新应用 kb_search.sql
+# 登记的：模型族；titan-inferred（没有 kb_meta、表里已有向量：Titan 时代建的库）；none（还没有向量）。读不到（error、空）就停。
+# 备份表叫 <表>_titan_backup：迁移只从 Titan 迁出，回退只回到 Titan。
+embed_guard() {
+  local reg="$1" cfg m="$3" r="$4" shown
+  cfg="$(model_family "$2")"
+  case "$m$r" in
+    truetrue) echo "refuse:--migrate-embeddings 和 --restore-embeddings 不能同时给"; return 0 ;;
+    truefalse|falsetrue|falsefalse) ;;
+    *) echo "refuse:embed_guard 的 migrate / restore 只能是 true 或 false（给的是 $m / ${r}）"; return 0 ;;
+  esac
+  shown="$reg"
+  case "$reg" in
+    none) ;;
+    titan-inferred) reg="$TITAN_FAMILY"; shown="${TITAN_FAMILY}（没有 kb_meta、表里已有向量，按 Titan 算）" ;;
+    ""|error|*[!A-Za-z0-9._:-]*)
+      echo "refuse:读不到库里登记的向量模型（${reg:-空}），不动 kb_search：先看 verify 的 [db] 行，容器和库都正常后重跑"; return 0 ;;
+    *) reg="$(model_family "$reg")"; shown="$reg" ;;
+  esac
+  if [ "$reg" = none ]; then
+    if [ "$m" = true ]; then echo "refuse:库里还没有向量，不用迁移：去掉 --migrate-embeddings 再跑 db"
+    elif [ "$r" = true ]; then echo "refuse:库里还没有向量，没有可回退的：去掉 --restore-embeddings 再跑 db"
+    else echo apply; fi
+    return 0
+  fi
+  if [ "$reg" = "$cfg" ]; then
+    if [ "$m" = true ]; then echo "refuse:库里已经是 ${cfg}，不用迁移：去掉 --migrate-embeddings"
+    elif [ "$r" = true ]; then echo "refuse:库里已经是 ${cfg}，没有可回退的：去掉 --restore-embeddings"
+    else echo apply; fi
+    return 0
+  fi
+  if [ "$m" = true ]; then
+    if [ "$reg" = "$TITAN_FAMILY" ]; then echo migrate
+    else echo "refuse:迁移只从 Titan 迁出（备份表 <表>_titan_backup），库里是 ${shown}；要回到 Titan 用 --restore-embeddings"; fi
+  elif [ "$r" = true ]; then
+    if [ "$cfg" = "$TITAN_FAMILY" ]; then echo restore
+    else echo "refuse:回退只回到 Titan（备份表里是 Titan 的向量），配置的是 ${cfg}：先把 EMBED_MODEL_ID 改回 $TITAN_FAMILY"; fi
+  else
+    echo "refuse:库里登记的向量模型是 ${shown}，配置的是 ${cfg}：不重新应用 kb_search.sql，免得新旧向量混用。换模型加 --migrate-embeddings，回退加 --restore-embeddings（GUIDE.md 7.6）"
+  fi
+  return 0
 }
 
 # ---------- 退出清理 ----------

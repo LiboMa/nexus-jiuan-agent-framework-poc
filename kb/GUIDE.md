@@ -70,7 +70,7 @@
 1. **API Server**：界面上的「测试连接」、Schema 浏览，在 API 进程里直连数据库。只需要安全组放行。
 2. **Sandbox VM**：Agent 对话里调用 `data_connector_query` 等工具，是在 Firecracker VM 里直连数据库。VM 的出站规则（nftables）**默认丢弃所有私网目标**（10/8、172.16/12、192.168/16、100.64/10），所以除了安全组，还必须把 PG 所在网段加进 `nexus_ai.sandbox.network.vm_egress.allow_cidrs`。漏了这一步的典型症状：界面「测试连接」成功，Agent 在对话里却连不上（见 9.2）。
 
-另有一条出站：`kb_search` 把问题向量化时，PG 容器里的 `kb_embed()` 用 **PG 主机的实例角色**经 HTTPS 调 Bedrock（Titan v2）。所以实例角色要有 `bedrock:InvokeModel`，容器要取得到实例角色凭证（IMDS 跳数 ≥ 2），见 2.4。
+另有一条出站：`kb_search` 把问题向量化、入库给规则算向量时，PG 容器里的 `kb_embed()` / `kb_embed_batch()` 用 **PG 主机的实例角色**经 HTTPS 调 Bedrock（`EMBED_MODEL_ID`，缺省 Cohere Embed v4；Titan 时代建的库换模型见 7.6）。所以实例角色要有 `bedrock:InvokeModel`，容器要取得到实例角色凭证（IMDS 跳数 ≥ 2），见 2.4。
 
 ### 1.3 关键设计决定（以及为什么）
 
@@ -106,7 +106,7 @@
 - EC2：`Describe*`（实例、VPC、子网、路由表、安全组规则）。
 - SSM：`SendCommand`、`GetCommandInvocation`、`DescribeInstanceInformation`、`StartSession`（文档 `AWS-RunShellScript`、`AWS-StartPortForwardingSessionToRemoteHost`）。
 - CloudFormation：`CreateStack/UpdateStack/DeleteStack/DescribeStacks/CreateChangeSet/ExecuteChangeSet` 等（`aws cloudformation deploy` 所需）；以及栈里资源的权限：`ec2:AuthorizeSecurityGroupIngress/RevokeSecurityGroupIngress`；create 模式另需 `ec2:RunInstances/CreateSecurityGroup…`、`iam:CreateRole/CreateInstanceProfile/PassRole…`（模板用 `CAPABILITY_IAM`）、`ssm:GetParameters`（取 AMI）。
-- Bedrock：`bedrock:InvokeModel` 于 `amazon.titan-embed-text-v2:0`（并已在 Bedrock 控制台开通该模型访问）。
+- Bedrock（只有 `preflight` 用：以本机身份探一次模型，入库和检索的向量都在库里算）：`bedrock:InvokeModel` 于 `EMBED_MODEL_ID`（并已开通该模型访问）。缺省的 `us.cohere.embed-v4:0` 是推理配置文件，要许它本身和它路由到的 us-east-1 / us-east-2 / us-west-2 的基础模型 `cohere.embed-v4:0`。
 
 ### 2.3 Nexus
 
@@ -118,7 +118,7 @@
 
 - **existing 模式**：SSM 在线（`PingStatus=Online`、Linux）；与 Nexus API Server、Sandbox 节点私网互通（同 VPC 最简单）；能出网拉镜像（或预先 `docker pull`）；有 Docker，或允许用 dnf/yum 安装（`PG_INSTALL_DOCKER=true`）。在 Amazon Linux 2023 上验证。主机上若还跑着别的业务，留意内存：容器默认限 `2g`。
 - **create 模式**：Nexus VPC 里的一个**私有子网**，路由表有 `0.0.0.0/0 → NAT`（拉镜像、SSM）。新主机无公网 IP、无 SSH，只经 SSM 管理。
-- **库内语义检索**（两种模式都要）：PG 主机的实例角色有 `bedrock:InvokeModel`（只需 `EMBED_MODEL_ID` 这一个模型）；IMDSv2 跳数 ≥ 2（`HttpPutResponseHopLimit`：PG 容器经 Docker 网桥多一跳取凭证；AL2023 AMI 默认是 2）；容器能连上 Debian 软件源（`db` 阶段在容器里 `apt-get install postgresql-plpython3-17 python3-boto3`）。create 模式的模板（`cfn/pgvector-host.yaml`）已包含前两项；existing 模式请自行确认，`verify` 的 `[search]` 行会显示 PG 报的错误（9.10）。
+- **库内语义检索**（两种模式都要）：PG 主机的实例角色有 `bedrock:InvokeModel`（只需 `EMBED_MODEL_ID` 这一个模型；`us.` 开头的推理配置文件另要它路由到的三个美国区域的基础模型，同 2.2）；IMDSv2 跳数 ≥ 2（`HttpPutResponseHopLimit`：PG 容器经 Docker 网桥多一跳取凭证；AL2023 AMI 默认是 2）；容器能连上 Debian 软件源（`db` 阶段在容器里 `apt-get install postgresql-plpython3-17 python3-boto3`）。create 模式的模板（`cfn/pgvector-host.yaml`）已包含前两项；existing 模式请自行确认，`verify` 的 `[search]` 行会显示 PG 报的错误（9.10）。
 
 ---
 
@@ -196,7 +196,7 @@
 | `RULES_DOC_TITLE` | 见示例 | 写进 Agent 第 8 条的「来源」。 |
 | `RULES_SOURCE_VERSION` | 见示例 | 存进每行 `source_version`。 |
 | `RULES_SEGMENTS_HINT` | `九安 / 柯顿 / 新零售 / O+O 等` | 写进 Agent 第 8 条：板块不明确时列出这些请用户确认。 |
-| `EMBED_MODEL_ID` / `EMBED_DIM` | `amazon.titan-embed-text-v2:0` / `1024` | 向量模型与维度。改维度必须新表（列类型是 `vector(1024)`）。 |
+| `EMBED_MODEL_ID` / `EMBED_DIM` | `us.cohere.embed-v4:0` / `1024` | 向量模型与维度（库里的 `kb_embed` 用）。只支持 Cohere Embed v4 和 Titan v2（`amazon.titan-embed-text-v2:0`）。库里已有另一个模型的向量时 `db` 会停下，换模型见 7.6。改维度必须新表（列类型是 `vector(1024)`）。 |
 | `INGEST_LOCAL_PORT` | `15432` | 端口转发用的本机端口。 |
 | `INGEST_PRUNE` | `true` | 是否删除同标签下新版本里已不存在的规则。 |
 
@@ -238,7 +238,7 @@ vi deploy.env                     # 至少填：NEXUS_URL、管理员密码来�
 
 ### 5.1 preflight（只读）
 
-检查：本机工具；AWS 身份；Nexus 管理员登录；PG 主机 running + SSM Online + Linux，并打印它的私网 IP / VPC / CIDR / 安全组；create 模式下子网与 NAT；`NEXUS_ENV_ID` 对应的 Sandbox 节点（并提示是否与 PG 主机同 VPC）；阶段里含 `ingest` 时检查 `RULES_DOCX` 存在、Bedrock 模型可调用；`AGENT_PATCH_PROMPT=true` 时检查 Agent 存在。
+检查：本机工具；AWS 身份；Nexus 管理员登录；PG 主机 running + SSM Online + Linux，并打印它的私网 IP / VPC / CIDR / 安全组；create 模式下子网与 NAT；`NEXUS_ENV_ID` 对应的 Sandbox 节点（并提示是否与 PG 主机同 VPC）；阶段里含 `ingest` 时检查 `RULES_DOCX` 存在、Bedrock 模型可调用（以本机身份；Cohere 发 Cohere 的请求体，Titan 发 Titan 的）；`AGENT_PATCH_PROMPT=true` 时检查 Agent 存在。
 
 任何一项 `✗` 都先修好再继续。
 
@@ -250,7 +250,7 @@ vi deploy.env                     # 至少填：NEXUS_URL、管理员密码来�
 
 ### 5.3 db
 
-经 SSM 在 PG 主机上以 root 执行 `host/pgvector-up.sh`：
+先经 SSM 跑一次只读的 `host/pgvector-status.sh`，读出**库里登记的向量模型**（防混用，见下面第 7 步与 7.6）；再在 PG 主机上以 root 执行 `host/pgvector-up.sh`：
 
 1. 没有 Docker → 安装（`PG_INSTALL_DOCKER=true`）。
 2. 绑定地址：`PG_BIND_IP`，空则取 IMDS 私网 IP。
@@ -258,8 +258,13 @@ vi deploy.env                     # 至少填：NEXUS_URL、管理员密码来�
 4. 容器：已存在且运行 → 不动；已停止 → `docker start`；不存在 → 检查端口未被占用后建数据卷（若不存在）并 `docker run`（`--restart unless-stopped`、`--memory`、`-p <私网IP>:<端口>:5432`、`--env-file .env`、命名卷）。本工具新建的容器与数据卷带 label `managed-by=pgvector-rules-kb`。已存在容器的镜像或端口绑定与配置不同时**只告警不重建**。
 5. 等 `pg_isready`（最长 120 秒）；新主机先等 cloud-init（user data 装 Docker）结束。
 6. 幂等 SQL（容器内本地 socket，以 postgres 超级用户；密码经 stdin 传入，不进进程参数）：应用用户不存在则建，存在则把密码同步为 `.env` 里的值；应用库不存在则建（owner = 应用用户）；`CREATE EXTENSION IF NOT EXISTS vector`。
-7. 库内语义检索：容器里没有 `plpython3u` 时以 root `apt-get install postgresql-plpython3-17 python3-boto3`（**不重启 PG**）；再以 postgres 执行 `sql/kb_search.sql`（幂等）：扩展 `plpython3u`；`public` 模式改归超级用户、应用用户留 `USAGE, CREATE`（见 11.7）；表 `kb_embed_cache`（向量缓存）、`kb_documents`（上传历史）、`kb_search_log`（检索日志，只追加）；函数 `kb_embed` / `kb_log_search` / `kb_search`（6.3）。apt 装的包在容器层里，容器重建（9.8）后会丢，重跑 `db` 会再装。
-8. 自检：用应用用户、`.env` 里的密码经 TCP + SCRAM 登录，取 PG 版本、vector 版本。
+7. 防混用：库里登记的模型是 `kb_meta.embed_model`；没有 `kb_meta`、表里却已有向量，按 Titan 算（`titan-inferred`）；都没有是 `none`。由 `lib/common.sh` 的 `embed_guard` 决定：
+   - 还没有向量，或登记的就是 `EMBED_MODEL_ID` 的模型族（去掉 `us.` 前缀）→ 照常执行下一步；
+   - 登记的与配置的不同 → **停下报错，不重新应用 `kb_search.sql`**（否则检索拿新模型的问题向量去比旧模型的规则向量）。换模型加 `--migrate-embeddings`，回退加 `--restore-embeddings`（7.6）；
+   - 读不到登记（查询出错）也停。容器没在运行（新主机、删了重建、已停止）时读不到，先起容器、建库 / 用户 / 扩展，再读。`pgvector-up.sh` 执行 SQL 前再读一次，和 `deploy.sh` 判断时不同就停（中途有人迁移、回退过）。
+   `--dry-run` 打印登记的和配置的模型、规则表与归档表各多少行（多少行有向量）、实跑时做哪一种。
+8. 库内语义检索：容器里没有 `plpython3u` 时以 root `apt-get install postgresql-plpython3-17 python3-boto3`（**不重启 PG**）；再以 postgres 执行 `sql/kb_search.sql`（幂等）：扩展 `plpython3u`；`public` 模式改归超级用户、应用用户留 `USAGE, CREATE`（见 11.7）；表 `kb_embed_cache`（向量缓存）、`kb_documents`（上传历史）、`kb_search_log`（检索日志，只追加）；函数 `kb_embed` / `kb_log_search` / `kb_search`（6.3）。apt 装的包在容器层里，容器重建（9.8）后会丢，重跑 `db` 会再装。
+9. 自检：用应用用户、`.env` 里的密码经 TCP + SCRAM 登录，取 PG 版本、vector 版本。
 
 状态文件记下「容器 / 数据卷 / 密码目录是不是本次新建的」（`DB_CONTAINER_CREATED`、`DB_VOLUME_CREATED`、`DB_BASEDIR_CREATED`），`destroy` 据此决定删不删。
 
@@ -296,7 +301,7 @@ vi deploy.env                     # 至少填：NEXUS_URL、管理员密码来�
 3. `lib/ingest_rules.py`：表已存在时先检查 owner 是当前应用用户（否则补列 / 建索引会失败，dry-run 也会报）；执行 `sql/approval_rules.sql`（建表、补列、建 HNSW 与普通索引，全部幂等）；按 `record_sha256`（除向量外全部列的哈希）逐行比对：
    - 全部列都没变且已有向量 → 不写；
    - `content` 没变、其他列（元数据、章节说明等）变了 → 只更新这些列，**不重新生成向量**；
-   - 新规则或 `content` 变了 → 调 Bedrock 生成向量后 upsert（本工具在本机调；九安测试台的页面上传用 `--embed sql`，由库里的 `kb_embed()` 生成，7.5）；
+   - 新规则或 `content` 变了 → 由库里的 `kb_embed_batch()` 生成向量后 upsert（`--embed sql`：和页面上传、Agent 入库同一个模型，就是库里登记的那个；本机不调 Bedrock）；
    - `INGEST_PRUNE=true` → 删除同 `source_tag` 下、本次文档里已不存在的 `rule_id`（dry-run 会列出这些编号；没有标签的行只计数不删）；
    - 规则编号已属于库里**另一份文档**（别的 `source_tag`；或没有标签、`source_doc` 不同的行）→ 计入 `conflicts`：dry-run 告警并列出编号，实跑**拒绝入库、一条不写**（`rule_id` 是主键，写进去就覆盖了那份文档的规则，见 7.2）。
 4. 用 `E2E_QUESTION` 做一次语义检索冒烟，打印 top3。
@@ -435,7 +440,7 @@ aws ssm send-command --region <region> --instance-ids <PG主机实例ID> --docum
 - 每章一张表，表头第一列是「序号」；固定列为 序号 / 业务事项 / 板块 / 金额档 / 触发情形 / 适用范围与控制要点；
 - 其余列里出现过 ①…⑩、√、▲、「不适用」的是审批角色列，没出现过的是说明列。
 
-换文档时先单独跑解析器看统计：
+换文档不涉及向量模型（向量都由库里登记的模型算）；要换模型见 7.6。换文档时先单独跑解析器看统计：
 
 ```bash
 mkdir -p .build/try && cp <新文档>.docx .build/try/input.docx
@@ -456,6 +461,26 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 6. **检索日志**：最近 50 次 `kb_search`：审核 Agent 审单时查了什么、命中了哪些规则；页面检索、部署核对、入库冒烟也在这里。
 
 接口在测试台外壳的 `/api/analysis/v1/poc/kb/*`（只给管理员；会话、来源、CSRF 由九安校验），读写库经 `lib/kb_admin.py`（历史、标签、检索、日志）和 `lib/ingest_rules.py`，连库密码只以 `--password-file` 传。测试台部署（`poc/infra/deploy.sh`）把 `kb/lib`、`kb/sql` 带进构件；`bench07-configure.sh` 在 `/opt/nexus-pgvector/.env` 存在时写好密码文件、上传目录、Python venv（钉 `psycopg[binary]==3.2.9`）和 `POC07_KB_*` 设置。没有这些设置时外壳不挂这组接口，页面上的操作都会失败（接口回 404）。所以顺序是先 `poc/infra/kb.sh db`（建容器、`.env`、上传历史表），再 `poc/infra/deploy.sh`（写设置、重启服务）。
+
+### 7.6 换向量模型（Titan v2 → Cohere v4）：防混用、迁移、回退、回归
+
+库里的向量只能出自一个模型。`db` 阶段先读库里登记的模型，与 `EMBED_MODEL_ID` 不同就停下（5.3 第 7 步）。已知只有九安测试台那一套是 Titan（`titan-inferred`）。新建的库按配置登记，不用迁移。
+
+1. **基线**（换之前，用 Titan）：`./deploy.sh regress --questions-dir <题库目录> --label titan`。库里的 `kb_search.sql` 若还是旧版，先以 `EMBED_MODEL_ID=amazon.titan-embed-text-v2:0` 跑一次 `db`（apply，不动向量），基线和切换后用同一版排序，对比只反映模型的差别。
+   - 题库目录里要有 `questions.json`、`questions_robust.json`（`[{id, q, gold, cat, seg, amt}]`，`gold` 是规则编号的列表）。题库由真实制度派生，放在仓库外，`regress` 在仓库里就拒绝。
+   - 经端口转发以应用用户逐题调 `kb_search(q, 8, NULL, 'kb-regression')`，每分钟至多 50 次（全库上限 60 次，与审核 Agent 共用；撞上了等一分钟再问同一题），约 2 分钟。另问两道已知问题：「30万合同用印」C03-1.2 要在前 3，「房租 年度框架合同 九安」C05-3.3 与 C05-3.4 都要在前 2（两条只差金额档，问题里没有金额）。
+   - 结果写到 `~/Documents/pgkb-regression/titan.json`（`--out` 可改，也不能在仓库里；同名的不覆盖）：每套题的题数、第 1 名命中数 `hit1`、前 5 名命中数 `hit5`，逐题的前 8 名编号和名次。只有题号、规则编号和计数，不含题目文字。检索日志里会记下这些问题（caller=`kb-regression`）：题目由真实制度派生，跑完以超级用户删掉这些行（`DELETE FROM kb_search_log WHERE caller = 'kb-regression'`）。
+2. **切换**：`deploy.env` 里 `EMBED_MODEL_ID=us.cohere.embed-v4:0`（缺省就是），先给 PG 主机的实例角色加上 Cohere 的权限（2.4；九安测试台由测试台栈的 `KbBedrockPolicy` 给），再：
+   ```bash
+   ./deploy.sh db --dry-run --migrate-embeddings   # 看登记的 / 配置的模型、两张表的行数，应是「实跑时 migrate」
+   ./deploy.sh db --migrate-embeddings
+   ```
+   一个事务里：新的 `kb_search.sql` → 检查并锁住规则表、归档表（挂着触发器、规则、行级安全、CHECK / 外键约束、表达式索引等会执行代码的附加物就拒绝，9.10）→ 两张表的旧向量备份进 `<表>_titan_backup` → 两张表全部用新模型重算 → `kb_meta` 登记 `cohere.embed-v4:0`、`1024`。任何一步失败（Bedrock 报错、备份表已存在、表上有附加物……）整段回滚，库里还是 Titan。迁移时入库要等它做完。
+3. **对比**：`./deploy.sh regress --questions-dir <题库目录> --label cohere`，再 `./deploy.sh regress --compare ~/Documents/pgkb-regression/titan.json ~/Documents/pgkb-regression/cohere.json`。哪一套题的 `hit5` 变低、题数不同，或已知问题不过，退出码 1，并逐题列出名次的变化（只有题号和名次）。`--compare` 不读配置、不连库。然后 `./deploy.sh verify --e2e`；九安测试台另跑 PG 方式的端到端（`run07.sh`）。
+4. **回退**（对比或端到端不过）：`EMBED_MODEL_ID` 改回 `amazon.titan-embed-text-v2:0`，`./deploy.sh db --dry-run --restore-embeddings` 看过再 `./deploy.sh db --restore-embeddings`：旧配置的 `kb_search.sql` + 内容没变的行拷回备份里的旧向量、迁移后新增或改过的行用 Titan 重算 + `kb_meta` 改回 Titan，同样一个事务。
+5. **收尾**：验收通过、确认不再回退后，手工删备份表（`DROP TABLE <表>_titan_backup`，以 postgres 在主机上执行）；不删就不能再迁移一次。
+
+不支持的组合都会停下并说明：库里还没有向量时给迁移 / 回退参数、已经是目标模型、两个参数同时给、从非 Titan 迁出、回退到非 Titan。迁移、回退参数只用于 `db` 阶段；`rotate-db-password` 也要跑 `db`，库里的模型与配置不同时它在换密码之前就停下。
 
 ---
 
@@ -588,7 +613,12 @@ docker rm -f nexus-pgvector
 | `db` 阶段装 PL/Python 失败 | 容器连不上 Debian 软件源（主机出网 / 代理）：在主机上 `docker exec -u 0 nexus-pgvector apt-get update` 看报错。镜像须是 Debian 系的 `pgvector/pgvector:pg17` |
 | `UnknownServiceError: Unknown service: 'bedrock-runtime'` | 库里还是早期版本的 `kb_embed`（用 `boto3.client`）：重跑 `./deploy.sh db` |
 | `kb_embed：拿不到实例角色的凭证` | PG 主机没有实例角色，或 IMDS 跳数是 1（容器经 Docker 网桥多一跳）：`aws ec2 modify-instance-metadata-options --instance-id <id> --http-put-response-hop-limit 2` |
-| `kb_embed：Bedrock 返回 403 …` | 实例角色缺 `bedrock:InvokeModel`（资源 `arn:aws:bedrock:<区域>::foundation-model/<EMBED_MODEL_ID>`），或该区域没开通模型访问。九安测试台由测试台栈的 `KbBedrockPolicy` 给；create 模式由 `cfn/pgvector-host.yaml` 给 |
+| `kb_embed：Bedrock 返回 403 …` | 实例角色缺 `bedrock:InvokeModel`（资源 `arn:aws:bedrock:<区域>::foundation-model/<EMBED_MODEL_ID>`；`us.` 开头的推理配置文件是 `arn:aws:bedrock:<区域>:<账号>:inference-profile/<EMBED_MODEL_ID>` 加 us-east-1 / us-east-2 / us-west-2 的基础模型），或该区域没开通模型访问。九安测试台由测试台栈的 `KbBedrockPolicy` 给；create 模式由 `cfn/pgvector-host.yaml` 给 |
+| `db` 报「库里登记的向量模型是 …，配置的是 …」 | 防混用（5.3 第 7 步）：库里的向量出自另一个模型。确实要换就按 7.6 加 `--migrate-embeddings`（或回退 `--restore-embeddings`）；否则把 `EMBED_MODEL_ID` 改成库里的模型 |
+| `db` 报「库里登记的向量模型变了」 | `deploy.sh` 读过登记之后、执行之前有人迁移 / 回退 / 往空库里入了库：什么都没执行，重跑 `./deploy.sh db` |
+| `迁移…备份表 … 已存在` | 上一次换模型的备份还在：确认不再回退后先删掉它（7.6 第 5 步） |
+| `<表> 带着会执行代码的附加物（触发器 …、CHECK 约束 …），不碰它`（`migrate_embeddings` / `restore_embeddings` / `kb_search.sql`） | 规则表或归档表（归应用用户）上有触发器、规则、行级安全、CHECK / 外键约束、表达式 / 部分索引、生成列、域等类型的列、引用非内置函数的默认值，或它是分区。超级用户的脚本读写它时这些代码会执行，换成表的属主身份也挡不住它们换回超级用户，所以整段拒绝、已回滚，什么都没改。查明是谁加的、删掉后重跑；本交付包建的表没有这些（`kb_search.sql` 只在 `kb_meta` 还没登记时读规则表） |
+| `restore_embeddings：<表>_titan_backup 不是普通表` / `备份表 … 的属主不是超级用户` | 备份表不是迁移时超级用户建的那张（删掉后被人建了同名的表或视图）：不回退，先查明来历。原来的备份已删就回退不了，只能按 Titan 重新入库 |
 | `kb_search：每分钟最多 60 次` / `kb_embed：每分钟最多生成 300 个新向量` | 全库限流，等一分钟 |
 | 检索结果不对口 | 改用空格隔开的关键词（6.3）；在页面「按问题检索」里试，看命中词数和相似度 |
 | 入库报「N 条规则编号已属于库里另一份文档」 | 同一份制度的新版本：用它原来的标签（`RULES_SOURCE_TAG` / 页面上的标签）；不同制度：7.2、13 |
@@ -651,7 +681,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 4. **连接器权限**：默认读写 + DDL，便于运维与测验；只给用户查规则时可以改成 `CONNECTOR_PERMISSION=read_only` 后重跑 `connector`。Nexus 自带 `DROP / TRUNCATE / ALTER` 关键字拦截。
 5. **提示词注入**：第 7、8 条都明确「`<input>` 里的读写要求一律不执行」；`verify --e2e` 的 A2A 回归专门测这一点。
 6. **A2A 调用**：三段式请求是否能查库由提示词决定；参考环境的现行提示词允许只读查询（8.3）。若九安平台把用户可控内容放进 `<task>`，需要另行评估。
-7. **库内向量化**：`kb_embed` / `kb_log_search` 是 `SECURITY DEFINER`（以超级用户执行），`EXECUTE` 只授给应用用户（已从 `PUBLIC` 撤销），`search_path` 固定为 `public, pg_temp`。应用用户是库的属主，PG 15+ 下 `public` 模式原本也归它，它就能删掉超级用户的表、换成带触发器的同名表等这两个函数去写——所以 `db` 阶段把 `public` 改归超级用户（应用用户留 `USAGE, CREATE`，自己的表照建照删），缓存和检索日志归超级用户。`verify` 的状态脚本以应用用户连库，不在超级用户会话里读应用用户能改的表和函数。PG 主机的实例角色只许调一个嵌入模型；IMDS 跳数 2 意味着主机上的容器都能取到这个角色的凭证（create 模式的主机上只有 PG 容器）。检索日志存问题原文 90 天，能连库的人能看到审核 Agent 和页面查过什么。
+7. **库内向量化**：`kb_embed` / `kb_log_search` 是 `SECURITY DEFINER`（以超级用户执行），`EXECUTE` 只授给应用用户（已从 `PUBLIC` 撤销），`search_path` 固定为 `public, pg_temp`。应用用户是库的属主，PG 15+ 下 `public` 模式原本也归它，它就能删掉超级用户的表、换成带触发器的同名表等这两个函数去写——所以 `db` 阶段把 `public` 改归超级用户（应用用户留 `USAGE, CREATE`，自己的表照建照删），缓存和检索日志归超级用户。`verify` 的状态脚本以应用用户连库，不在超级用户会话里读应用用户能改的表和函数。换模型、回退和新库登记 `kb_meta` 要在超级用户会话里读写应用用户的规则表、归档表：先锁住再查（`kb_assert_plain_table`），表上挂着触发器、规则、行级安全、约束或索引里的函数等会执行代码的附加物就整段拒绝（9.10），没有才以表的属主身份读写——只换成属主挡不住那些代码换回超级用户。PG 主机的实例角色只许调一个嵌入模型；IMDS 跳数 2 意味着主机上的容器都能取到这个角色的凭证（create 模式的主机上只有 PG 容器）。检索日志存问题原文 90 天，能连库的人能看到审核 Agent 和页面查过什么。
 8. **页面上传**：只给九安管理员；原文件和解析结果在测试台上 600 存放，不进仓库；制度原文是客户资料，测试与截图只用仿真文档（`tests/fixtures/sample-matrix.docx`）。
 
 ---
@@ -665,7 +695,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 3. **以 `verify` 为准，不凭推测。** 报告「已通」前要有 `verify` 的 `✓` 行，或 `verify --e2e` 的结果文件。
 4. **排错先看真实错误。** `Query execution failed` 一类是脱敏后的笼统错误，先看 PG 日志（9.3）；连不上先看 Sandbox 节点上的 nft 集合（9.2）。
 5. **不改受管范围之外的提示词内容。** Agent 提示词可能被别人扩展过（8.3）；需要改规则文本时改 `agent/prompt-rules.txt` 再跑 `agent`，并跑 `verify --e2e` 回归。
-6. **不把环境信息写进仓库。** `deploy.env`、`.state/`、`.build/`、`*.docx` 已被忽略；文档里只用占位符（账号 ID、实例 ID、IP、域名都不写）。
+6. **不把环境信息写进仓库。** `deploy.env`、`.state/`、`.build/`、`*.docx` 已被忽略；文档里只用占位符（账号 ID、实例 ID、IP、域名都不写）。检索题库和 `regress` 的结果只放在仓库外，对话里只报计数和规则编号（7.6）。
 7. **本机是 zsh。** 在 zsh 里直接拼命令时：变量后紧跟 `:` 要写成 `${var}:`；不要用 `path` 做变量名；`--include=*.py` 这类通配要加引号。`deploy.sh` 本身由 bash 执行，不受影响。
 8. **提交前**：先完成 E2E 并经用户确认，再提交 / 推送。
 
@@ -676,7 +706,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 1. **连接器按会话绑定。** Nexus 不支持把连接器挂到 Agent 上让所有对话默认带；每个新会话要在 Dynamic config 里勾选（或选一份已保存配置复用）。
 2. **A2A / MCP 调用默认不带连接器。** 发布（publication）可以绑定能力配置，绑定后该发布的每次调用都带上连接器；调用方不能逐次指定。参考环境的现行提示词另外静态声明了 `data_connector_*` 工具（8.3），其在 A2A 路径上的效果不在本工具的验证范围内。
 3. **普通用户的可见性。** 连接器与密钥默认只有创建者（管理员）可见。有普通用户时，需要把连接器共享出去：`POST /api/v2/resources/connector/<connector_id>/shares`，body `{"principal_type":"everyone","principal_id":"*","permission":"viewer"}`（或按用户 / 用户组）；Agent 本身的可见性同理（`resource_type=agent`）。本工具未自动做。
-4. **检索质量。** `kb_search` 先按关键词命中数、再按语义排序（6.3）；Titan v2 对整段中文的区分度不大，整句问话不如空格隔开的关键词准。Agent 仍保留 `ILIKE` 补查。
+4. **检索质量。** `kb_search` 先按关键词命中数、再按语义排序（6.3）；Titan v2 对整段中文的区分度不大，整句问话不如空格隔开的关键词准，所以换 Cohere v4（7.6，换前换后用 `regress` 对比）。Agent 仍保留 `ILIKE` 补查。
 5. **速度。** 一个规则问题或一张单据大约 1~3 分钟，主要花在多轮查库上；可以在第 8 条里给一条固定的检索 SQL 来减少往返（参考环境第 9 条的做法）。
 6. **解析器针对审批矩阵格式。** 其他结构的制度需要改解析器（7.4）。
 7. **数据库是单机容器。** 没有自动备份与高可用。生产使用前建议：主机上定时 `pg_dump` 到 S3，或迁到 RDS / Aurora PostgreSQL（同样支持 pgvector，连接器只需改 host；但 RDS / Aurora 不支持 `plpython3u`，库内向量化要换别的办法，例如 Aurora 的 `aws_ml` 扩展）。
@@ -698,6 +728,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 | 2026-10-26 | 九安测试台「规则库 › 制度知识库」页上传 | 仿真文档：预览出 10 条规则编号与库里制度相同 → 加冲突保护后红字列出、不能入库；真实制度：只更新说明 102、删除 0，1 秒入库；「房租 年度框架合同 九安」第 1 名 C05-3.4 |
 | 2026-10-26 | 审核 Agent 第 8、9 条改为先 `kb_search` | `verify --e2e`：规则问答命中 C03-1.2（45 秒，工具 5 次，Agent 的检索记进日志，caller=agent）；A2A 三段式纯 JSON、未写库。九安 v0.7.10 端到端 9/9：四张对公付款单结论不变、引用的规则编号都在库里 |
 | 2026-10-26 | 独立代码评审（3 高 / 10 中 / 14 低）后修复，再回归 | 修复：destroy 只删本工具建的（label / 标记文件 / 状态）；create 模式钉 AMI、栈只建不更新；`.env` 作为密码唯一来源、密码经 stdin；SSM 读密码改为一次性公钥加密（SSM 历史里核对过只有 344 字符密文）；API 错误脱敏；egress 只撤销自己加的项；dry-run 不再写（含 e2e、连接测试）等。回归：`all --dry-run`、`destroy --dry-run`（接管来的资源全部「不动」）、`verify --e2e` 全部通过 |
+| 2026-10-30 | 换向量模型 Titan v2 → Cohere v4（7.6）：先更新实例角色的 `KbBedrockPolicy`（按线上模板建的变更集只改这一项），再 `db --migrate-embeddings` | 一个事务重算 102 行，`kb_meta` 登记 `cohere.embed-v4:0` / `1024`；旧向量的备份表 `<表>_titan_backup` 留着（102 行，验收后另行确认再删）。策略改完约 9 分钟内 Bedrock 间歇 403（IAM 生效延迟），第一次回归中途失败、没写结果；生效后回归：前 5 命中 主题 46 → 49 / 58、改写 20 → 22 / 26，两道已知问题都过（第二题改成两条都在前 2，7.6 第 1 步）；`verify --e2e` 通过 |
 
 ---
 
@@ -705,14 +736,15 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 
 | 路径 | 说明 |
 |---|---|
-| `deploy.sh` | 编排入口（阶段、dry-run、状态、destroy、api 调试） |
+| `deploy.sh` | 编排入口（阶段、dry-run、状态、destroy、api 调试、regress 检索回归） |
 | `deploy.env.example` | 配置模板（复制为 `deploy.env`） |
-| `lib/common.sh` | 日志、配置、状态文件、临时密钥、SSM 执行、端口转发 |
+| `lib/common.sh` | 日志、配置、状态文件、临时密钥、SSM 执行、端口转发、防混用 `embed_guard` |
+| `lib/kb_regression.py` | 检索回归：两套题逐题调 `kb_search`、计分、`--compare`（7.6） |
 | `lib/nexus_api.py` | Nexus API 客户端：登录、白名单、密钥 / 连接器、Agent 补丁、E2E |
 | `lib/parse_rules.py` | docx → 规则 JSON（标准库，`-I` 运行） |
 | `lib/ingest_rules.py` | 规则 JSON → pgvector（幂等、向量、清理） |
 | `host/pgvector-up.sh` | 主机上：Docker、容器、库 / 用户 / 扩展 |
-| `host/pgvector-status.sh` | 主机上：只读状态 |
+| `host/pgvector-status.sh` | 主机上：只读状态（含库里登记的向量模型、两张表的行数） |
 | `host/pgvector-down.sh` | 主机上：删容器（可选删数据） |
 | `host/read-db-password.sh` | 主机上：读应用密码，加密后输出（本机解密到临时文件） |
 | `host/read-admin-password.sh` | deployer 上：从 deploy.yaml 取 `auth_password`，加密后输出 |
@@ -722,6 +754,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 | `cfn/pgvector-host.yaml` | create 模式：专用 PG 主机 |
 | `sql/approval_rules.sql` | 规则表 DDL（幂等） |
 | `sql/kb_search.sql` | 库内语义检索：PL/Python、`kb_embed` / `kb_search`、问题向量缓存、上传历史、检索日志（幂等） |
+| `sql/migrate_embeddings.sql` / `sql/restore_embeddings.sql` | 换向量模型 / 回退（`db --migrate-embeddings` / `--restore-embeddings`，7.6） |
 | `lib/kb_admin.py` | 九安测试台页面用的管理命令：上传历史、标签、检索、检索日志（每条命令输出一行 JSON） |
 | `tests/` | 解析器、管理命令、`--embed sql` 入库的单元测试（`python3 -B -m unittest discover -s tests`）；只用仿真文档 `fixtures/sample-matrix.docx` |
 | `agent/prompt-rules.txt` | Agent 提示词受管规则模板 |

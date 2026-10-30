@@ -1,0 +1,45 @@
+{
+  "name": "knowledgebase-writer-agent-pg",
+  "title": "知识库文档管家（PG 版）",
+  "modules": {
+    "pg": {
+      "module": "pg_kb_tools",
+      "build": ".build/pg_kb_tools.zip",
+      "manifest": "MANIFEST.json",
+      "label": "kb_pg_steward",
+      "state": ".state/import.json",
+      "render": "python3 -I scripts/build_tools.py",
+      "key": {
+        "name": "pg_kb",
+        "type": "database_credentials",
+        "fields": [
+          {"field": "host", "required": true, "description": "知识库 PostgreSQL 的私网地址（Agent 的运行环境经私网连库）"},
+          {"field": "port", "required": false, "description": "端口，不填是 5432"},
+          {"field": "database", "required": true, "description": "知识库所在的库名"},
+          {"field": "username", "required": true, "description": "应用用户（与审核 Agent 的 PG 连接器同一个）"},
+          {"field": "password", "required": true, "description": "应用用户的密码"}
+        ]
+      },
+      "tools": [
+        ["rules_writer", true, "把制度文档（.docx / .xlsx / .pdf / .md）写入 PG 规则库 approval_rules（与审核 Agent 共用）：审批矩阵一行一条规则、正文按条一条；向量由库里的 kb_embed_batch 生成；同一 source_id 再上传 = 新版本，内容没变的不重写；dry_run=true 只预览"],
+        ["rules_search", true, "按问题检索 PG 规则库：调库里的 kb_search（与审核 Agent 同一个函数），按关键词命中数、再按语义排序"],
+        ["rules_manager", true, "PG 规则库管理：支持的操作（describe）、制度清单、详情、下线、恢复、删除、一致性校验"]
+      ]
+    },
+    "probe": {
+      "module": "kb_probe_entry",
+      "title": "探针模块",
+      "build": ".build/kb_probe.zip",
+      "label": "kb_pg_probe",
+      "state": ".state/import-probe.json",
+      "render": "python3 -I scripts/build_tools.py probe",
+      "tools": [
+        ["kb_import_probe", false, "探针：同一工具目录里的相对 import 能不能用，运行环境的 Python 与 psycopg / pdfplumber / boto3 版本（不要密钥、不连任何服务）"]
+      ]
+    }
+  },
+  "prompt": {
+    "template": "prompt/knowledgebase_writer_agent_pg.yaml.tmpl",
+    "placeholders": {"TOOL_DIR": "pg"}
+  }
+}

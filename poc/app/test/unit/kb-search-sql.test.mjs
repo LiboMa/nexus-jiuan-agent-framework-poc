@@ -3,32 +3,39 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-// 库内语义检索（kb/sql/kb_search.sql）：PG 里的 kb_embed() 调 Bedrock Titan v2，kb_search() 给审核 Agent 经连接器用，
+// 库内语义检索（kb/sql/kb_search.sql）：PG 里的 kb_embed_impl() 调 Bedrock（Cohere Embed v4 或 Titan v2），应用用户只经 kb_embed() /
+// kb_embed_batch() 两个包装调到它；kb_search() 给审核 Agent 经连接器用，
 // 每次检索记进 kb_search_log。函数本身在测试台上由 kb.sh db / verify 实测（本机没有 PG）；这里核对 SQL 和装包脚本的约束。
 const kb = name => fileURLToPath(new URL(`../../../../kb/${name}`, import.meta.url));
 const render = text => text.replaceAll('{table}', 'approval_rules').replaceAll('{dim}', '1024').replaceAll('{model}', 'amazon.titan-embed-text-v2:0')
   .replaceAll('{region}', 'us-east-1').replaceAll('{app_user}', 'nexus');
 const fn = (sql, name) => { const start = sql.indexOf(`CREATE OR REPLACE FUNCTION ${name}(`); assert.ok(start >= 0, `缺函数 ${name}`); return sql.slice(start, sql.indexOf('$$;', sql.indexOf('$$', start) + 2) + 3); };
 
-test('kb_embed：plpython3u、SECURITY DEFINER、固定 search_path；Titan v2 1024 维、normalize，和库里已有的向量同一套参数；超过 2000 字拒绝；按内容缓存', async () => {
+test('kb_embed_impl：plpython3u、SECURITY DEFINER、固定 search_path；Titan v2 1024 维、normalize，和库里已有的向量同一套参数；超过 8000 字拒绝；按内容缓存；应用用户只经 kb_embed / kb_embed_batch 调到它', async () => {
   const sql = render(await readFile(kb('sql/kb_search.sql'), 'utf8'));
   assert.match(sql, /CREATE EXTENSION IF NOT EXISTS plpython3u;/);
   assert.doesNotMatch(sql, /\{(table|dim|model|region|app_user)\}/, '占位符都要被替换');
-  const embed = fn(sql, 'kb_embed');
-  assert.match(embed, /RETURNS vector\(1024\)/);
+  const embed = fn(sql, 'kb_embed_impl');
+  assert.match(embed, /RETURNS vector\(1024\)\[\]/);
   assert.match(embed, /LANGUAGE plpython3u/);
   assert.match(embed, /SECURITY DEFINER/);
   assert.match(embed, /SET search_path = public, pg_temp/);
   assert.match(embed, /"dimensions": 1024/);
   assert.match(embed, /"normalize": True/);
-  assert.match(embed, /len\(input\) > 8000[\s\S]*plpy\.error/, '入库时规则全文也经它：上限按模型给，问题的 2000 字在 kb_search 里管');
+  assert.match(embed, /len\(text\) > 8000[\s\S]*plpy\.error/, '入库时规则全文也经它：上限按模型给，问题的 2000 字在 kb_search 里管');
   assert.match(embed, /kb_embed_cache/);
-  assert.match(sql, /REVOKE ALL ON FUNCTION kb_embed\(text\) FROM PUBLIC;/);
-  assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_embed\(text\) TO nexus;/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION kb_embed_impl\(text\[\], text, text, int\) FROM PUBLIC;\s*REVOKE ALL ON FUNCTION kb_embed_impl\(text\[\], text, text, int\) FROM nexus;/);
+  assert.doesNotMatch(sql, /GRANT EXECUTE ON FUNCTION kb_embed_impl/);
+  assert.ok(sql.indexOf('DROP FUNCTION IF EXISTS kb_embed(text);') >= 0 && sql.indexOf('DROP FUNCTION IF EXISTS kb_embed(text);') < sql.indexOf('CREATE OR REPLACE FUNCTION kb_embed('),
+    '原来的单参数版先删，否则 kb_embed(…) 有歧义');
+  assert.match(sql, /REVOKE ALL ON FUNCTION kb_embed\(text, text\) FROM PUBLIC;/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_embed\(text, text\) TO nexus;/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION kb_embed_batch\(text\[\], text\) FROM PUBLIC;/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_embed_batch\(text\[\], text\) TO nexus;/);
 });
 
 test('kb_embed 怎么调 Bedrock：容器里 Debian 12 的 botocore（1.29）没有 bedrock-runtime 的服务定义，不用 boto3.client；用它的 SigV4Auth（服务名 bedrock）和实例角色凭证签名，经 HTTPS 直接调 InvokeModel，模型编号在路径里转义', async () => {
-  const embed = fn(render(await readFile(kb('sql/kb_search.sql'), 'utf8')), 'kb_embed');
+  const embed = fn(render(await readFile(kb('sql/kb_search.sql'), 'utf8')), 'kb_embed_impl');
   assert.doesNotMatch(embed, /boto3\.client\(/);
   assert.match(embed, /from botocore\.auth import SigV4Auth/);
   assert.match(embed, /SigV4Auth\(SD\["creds"\]\.get_frozen_credentials\(\), "bedrock", "us-east-1"\)/);
@@ -36,6 +43,9 @@ test('kb_embed 怎么调 Bedrock：容器里 Debian 12 的 botocore（1.29）没
   assert.match(embed, /get_frozen_credentials\(\)/);
   assert.match(embed, /urlopen\([^\n]*timeout=\d+/);
   assert.match(embed, /except urllib\.error\.HTTPError[\s\S]*plpy\.error/, 'Bedrock 拒绝时把状态码和原因报出来');
+  // Cohere Embed v4：texts / input_type / embedding_types / output_dimension / truncate，每次至多 96 条
+  assert.match(embed, /\{"texts": chunk, "input_type": purpose, "embedding_types": \["float"\], "output_dimension": 1024, "truncate": "END"\}/);
+  assert.match(embed, /range\(0, len\(todo\), 96\)/);
 });
 
 test('kb_search：先把问题向量算进变量再排序（不在 ORDER BY 里调易变函数）；k 夹在 1–20；每分钟 60 次；返回约定的列；缓存与日志写不进去（只读事务）也照样返回', async () => {
@@ -44,8 +54,8 @@ test('kb_search：先把问题向量算进变量再排序（不在 ORDER BY 里�
   assert.match(search, /kb_search\(question text, k int DEFAULT 8, segment_filter text DEFAULT NULL, caller text DEFAULT 'agent'\)/);
   assert.match(search, /RETURNS TABLE \(rule_id text, rule_type text, chapter text, business_item text, segment text, amount_tier text, approval_path_text text, final_approver text, scope_controls text, score numeric, keyword_hits int\)/);
   assert.match(search, /LANGUAGE plpgsql/);
-  assert.match(search, /q := kb_embed\(question\)/);
-  assert.match(search, /ORDER BY rhits DESC, r\.embedding <=> q/);
+  assert.match(search, /q := kb_embed\(question, 'search_query'\)/);
+  assert.match(search, /ORDER BY rhits DESC, \(r\.rule_type = 'clause'\) ASC, r\.embedding <=> q/, '命中数相同时矩阵行排在正文条款前面');
   assert.doesNotMatch(search, /ORDER BY[^;]*kb_embed\(/);
   assert.match(search, /least\(greatest\(coalesce\(k, 8\), 1\), 20\)/);
   assert.match(search, /round\(\(1 - \(r\.embedding <=> q\)\)::numeric, 4\)/);
@@ -53,7 +63,7 @@ test('kb_search：先把问题向量算进变量再排序（不在 ORDER BY 里�
   assert.match(search, /EXCEPTION WHEN read_only_sql_transaction/);
   assert.match(search, /position\(segment_filter in coalesce\(r\.segment, ''\)\) > 0/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION kb_search\(text, int, text, text\) TO nexus;/);
-  const embed = fn(sql, 'kb_embed');
+  const embed = fn(sql, 'kb_embed_impl');
   assert.match(embed, /except plpy\.spiexceptions\.ReadOnlySqlTransaction/, '缓存写不进去也照样返回向量');
 });
 
@@ -116,6 +126,10 @@ test('权限：public 模式归超级用户（应用用户只留 USAGE、CREATE�
   const sql = render(await readFile(kb('sql/kb_search.sql'), 'utf8'));
   // 库的属主是应用用户时，PG 15+ 的 public 模式归 pg_database_owner＝应用用户：它能删掉超级用户建的表、换成带触发器的同名表
   assert.match(sql, /ALTER SCHEMA public OWNER TO CURRENT_USER;\s*GRANT USAGE, CREATE ON SCHEMA public TO nexus;/);
+  // 超级用户读写应用用户的表（规则表、归档表）之前的检查：带触发器、规则、RLS 等会执行代码的附加物就拒绝。只有超级用户能执行
+  assert.match(fn(sql, 'kb_assert_plain_table'), /SET search_path = pg_catalog, pg_temp/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION kb_assert_plain_table\(regclass, text\) FROM PUBLIC;\s*REVOKE ALL ON FUNCTION kb_assert_plain_table\(regclass, text\) FROM nexus;/);
+  assert.doesNotMatch(sql, /GRANT EXECUTE ON FUNCTION kb_assert_plain_table/);
   const log = fn(sql, 'kb_log_search');
   for (const line of [/LANGUAGE plpgsql/, /SECURITY DEFINER/, /SET search_path = public, pg_temp/, /INSERT INTO kb_search_log/, /session_user/, /interval '90 days'/]) assert.match(log, line);
   // plpgsql 自带布尔变量 FOUND，会盖过同名参数（测试台上 kb_search 因此报「hits 是 jsonb、表达式是 boolean」）
@@ -127,14 +141,17 @@ test('权限：public 模式归超级用户（应用用户只留 USAGE、CREATE�
   assert.match(search, /PERFORM kb_log_search\(/);
   assert.doesNotMatch(search, /INSERT INTO kb_search_log|DELETE FROM kb_search_log/);
   assert.match(search, /char_length\(question\) > 2000/);
-  const embed = fn(sql, 'kb_embed');
-  assert.match(embed, /clock_timestamp\(\) - interval '1 minute'[\s\S]*>= 300/, '每分钟最多 300 次缓存未命中（真去调 Bedrock 的）');
-  assert.match(embed, /INSERT INTO kb_embed_cache \(sha256, embedding, created_at\) VALUES \(\$1, \$2::vector, clock_timestamp\(\)\)/);
+  const embed = fn(sql, 'kb_embed_impl');
+  assert.match(embed, /WHERE via = \$1 AND created_at > pg_catalog\.clock_timestamp\(\) - interval '1 minute'[\s\S]*recent \+ len\(todo\) > cap/, '每分钟上限只数缓存未命中（真去调 Bedrock 的），按 via 分开数');
+  assert.match(embed, /if via != "single" and plpy\.execute\(SD\["ro"\]\)\[0\]\["ro"\] == "on":\s*plpy\.error\("kb_embed：只读事务里不能生成新向量/, '只读事务里记不下用量：批量不许生成新向量');
+  assert.match(fn(sql, 'kb_embed'), /public\.kb_embed_impl\(ARRAY\[input\], purpose, 'single'::text, 300\)/, '单条每分钟 300 个');
+  assert.match(fn(sql, 'kb_embed_batch'), /public\.kb_embed_impl\(inputs, purpose, 'batch'::text, 2000\)/, '批量另算，每分钟 2000 个');
+  assert.match(embed, /INSERT INTO public\.kb_embed_cache \(sha256, embedding, via, created_at\) "\s*"VALUES \(\$1, \$2::public\.vector, \$3, pg_catalog\.clock_timestamp\(\)\)/);
   assert.match(embed, /for attempt in range\(3\)/);
   assert.match(embed, /error\.code (in|==) [^\n]*429/);
   assert.match(embed, /re\.sub\(r"arn:aws/, '错误里的 ARN 去掉');
   assert.match(embed, /re\.sub\(r"\\b\\d\{12\}\\b"/, '错误里的账号去掉');
-  assert.match(sql, /CREATE INDEX IF NOT EXISTS kb_embed_cache_created_idx ON kb_embed_cache \(created_at\);/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS kb_embed_cache_via_created_idx ON kb_embed_cache \(via, created_at\);/);
 });
 
 test('pgvector-status.sh：以应用用户（不是超级用户）查；kb_search 的探测放在只读事务里：verify / dry-run 不写日志和缓存，也顺带核对只读事务能检索', async () => {
