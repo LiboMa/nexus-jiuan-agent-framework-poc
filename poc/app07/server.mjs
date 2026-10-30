@@ -18,7 +18,9 @@ import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
 import { nexusAccessRoutes } from './nexus-access.mjs';
 import { createOperatorCli } from '../app/nexus/cli.mjs';
-import { agentCallRoutes, everyDocument } from './agent-calls.mjs';
+import { agentCallRoutes } from './agent-calls.mjs';
+import { currentAdviceReader, everyDocument } from './advice-rounds.mjs';
+import { createReviews, reviewsRoutes } from './reviews.mjs';
 import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
 import { createKbStewardClient } from './kb-steward-client.mjs';
@@ -193,9 +195,15 @@ const agentTests = createAgentTests({ ...envelopeChecks, callRaw,
 // 「Agent 接入」页的调用记录：从单据池的单据反查九安存的每一轮，加上手动测试
 const agentCalls = agentCallRoutes({ log, extraRows: () => agentTests.rows(), tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
   listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, ...page })), readState: key => store.readState(key) });
+// 复核记录（采纳 / 改判 AI 独立建议，绑定那一轮）：表 poc_review_decisions 在 jiuan07 库里，端到端测试的重置删库时随之清空；
+// 复核时只读这一张单的单据头和当前一轮
+const reviews = createReviews({ pool, readCurrentAdvice: currentAdviceReader({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
+  readState: key => store.readState(key), readDocument: id => store.getDocumentHead({ id, companyIds }) }) });
+await reviews.start();
+const reviewRoutes = reviewsRoutes({ reviews, log });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
   return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args))
-    || (await myRules.handle(args)) || (await kb.handle(args)) || jiuanRoutes.handle(args);
+    || (await myRules.handle(args)) || (await reviewRoutes.handle(args)) || (await kb.handle(args)) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。

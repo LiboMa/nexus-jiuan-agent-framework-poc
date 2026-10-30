@@ -2,9 +2,12 @@
  * 「Agent 接入」页的调用记录（挂在九安的 platformRoutes 钩子上，只给管理员）：
  *   GET /api/analysis/v1/platform/agent-access/calls  最近的 AI 任务轮次，新的在前：单据号、任务、发给哪个发布、触发方式、状态、结论、
  *                                                      用时、错误码，以及 Agent 返回的备注和逐条依据（模型自评，未核实）。
- * 九安把每张单每个任务的轮次存在状态表 agent-task:v1:<哈希>（当前一轮 + 最近 5 轮历史），键由租户、公司、任务、单据编号算出
- * （agentTaskKey，组合根注入九安自己的那个），所以这里从单据池的单据反查。只读。
+ * 九安把每张单每个任务的轮次存在状态表 agent-task:v1:<哈希>（当前一轮 + 最近 5 轮历史），从单据池的单据反查（advice-rounds.mjs 的 walkRounds，
+ * 复核和工作台读轮次也走它）。只读。
  */
+import { basisOf, everyDocument, walkRounds } from './advice-rounds.mjs';
+
+export { everyDocument };
 const PATH = '/api/analysis/v1/platform/agent-access/calls';
 const LIMIT = 50;
 
@@ -22,31 +25,14 @@ function rowOf(document, task, record) {
     errorCode: record.errorCode ?? null, declinedReason: record.declined?.reason ?? null, startedAt: record.startedAt ?? null, finishedAt: record.finishedAt ?? null,
     latencyMs: record.finishedAt ? elapsed(record.startedAt, record.finishedAt) : null, attempts: record.attempts ?? null,
     agentVersion: record.call?.agentVersion ?? null, repaired: record.call?.repaired ?? null, note: typeof output.note === 'string' ? output.note : '',
-    basis: (Array.isArray(output.basis) ? output.basis : []).map(item => ({ kind: item?.kind ?? null, ref: item?.ref ?? '', page: Number.isSafeInteger(item?.page) ? item.page : null, note: item?.note ?? '' })),
+    basis: basisOf(output),
   };
-}
-
-/** 单据池全部单据：九安的 listDocuments 每页最多 50 张（再多回 ANALYSIS_VALIDATION），按页读到不满一页为止，最多 max 张。 */
-export async function everyDocument(listPage, { pageSize = 50, max = 1000 } = {}) {
-  const items = [];
-  for (let offset = 0; offset < max; offset += pageSize) {
-    const page = (await listPage({ limit: pageSize, offset })).items ?? [];
-    items.push(...page);
-    if (page.length < pageSize) break;
-  }
-  return items;
 }
 
 /** extraRows：别处产生的调用（「Agent 接入」页的手动测试，agent-tests.mjs），和九安存的轮次合在一起按时间排。 */
 export function agentCallRoutes({ tenantId, tasks, agentTaskKey, listDocuments, readState, extraRows = () => [], log = () => {} }) {
   async function calls() {
-    const rows = [];
-    for (const document of await listDocuments()) {
-      for (const task of tasks) {
-        const state = await readState(agentTaskKey({ tenantId, companyId: document.companyId, task, subject: { kind: 'document', id: document.id } }));
-        for (const record of [state?.current, ...(Array.isArray(state?.history) ? state.history : [])]) if (record) rows.push(rowOf(document, task, record));
-      }
-    }
+    const rows = (await walkRounds({ tenantId, tasks, agentTaskKey, listDocuments, readState })).map(({ document, task, record }) => rowOf(document, task, record));
     rows.push(...extraRows());
     rows.sort((left, right) => String(right.at ?? '').localeCompare(String(left.at ?? '')));
     return { items: rows.slice(0, LIMIT) };
