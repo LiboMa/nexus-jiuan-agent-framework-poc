@@ -52,9 +52,13 @@ export function setCsrfToken(token: string | null) { csrfToken = token || null; 
 export function getCsrfToken() { return csrfToken; }
 export function setUnauthorizedHandler(handler: ((error: ApiError) => void) | null) { unauthorizedHandler = handler; }
 
+// 只查路径部分：查询串里的 ..（例如搜索 1..2）照样发；路径里的 .. 和它的 %2e 写法（URL 会把它当上一级）都不行。
+const DOT_SEGMENT = /(?:\.|%2e){2}/i;
 function resolvePath(path: string): string {
   const bad = () => new ApiError(0, 'BAD_PATH', '页面要读取的地址不对，请刷新页面重试。');
-  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('..') || path.includes('\\')) throw bad();
+  if (typeof path !== 'string') throw bad();
+  const pathPart = path.split(/[?#]/, 1)[0];
+  if (!pathPart.startsWith('/') || pathPart.startsWith('//') || DOT_SEGMENT.test(pathPart) || pathPart.includes('\\')) throw bad();
   if (path === API_BASE || path.startsWith(`${API_BASE}/`) || path.startsWith(`${API_BASE}?`)) return path;
   if (path.startsWith('/api/')) throw bad();
   return `${API_BASE}${path}`;

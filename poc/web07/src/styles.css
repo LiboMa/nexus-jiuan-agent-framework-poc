@@ -20,14 +20,17 @@
   --color-blue-50: #EEF3FF;    /* 浅蓝 */
   --color-blue-100: #DCE6FF;   /* 头像底 */
   --color-blue-200: #C9D7FF;   /* 规则标签边 */
-  --color-pass: #0E9F6E;       /* 通过 */
+  /* 状态色：基础色给图形（图标、柱、边线）；12–13 px 的状态文字用 -ink（白底和浅底上都 ≥ 4.5:1）。 */
+  --color-pass: #0E9F6E;       /* 通过（图形） */
+  --color-pass-ink: #0B7A55;   /* 通过（文字） */
   --color-pass-50: #F0FAF5;
   --color-pass-200: #BDE7D6;
-  --color-fail: #E5484D;       /* 不通过 */
+  --color-fail: #E5484D;       /* 不通过（图形） */
+  --color-fail-ink: #C4373C;   /* 不通过（文字） */
   --color-fail-50: #FDF2F2;
   --color-fail-200: #F6C9CA;
   --color-wait: #D19A2B;       /* 处理中（图形填色） */
-  --color-wait-ink: #B7791F;   /* 处理中（浅底上的文字，样稿 drafts-v2） */
+  --color-wait-ink: #9A6312;   /* 处理中（文字） */
   --color-wait-50: #FFF9EC;
   --color-wait-200: #F1DDB0;
   --color-own: #7A5AF8;        /* 我的规则（图形） */

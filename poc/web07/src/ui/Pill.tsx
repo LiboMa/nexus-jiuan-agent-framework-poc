@@ -6,14 +6,14 @@ import { cx } from './cx';
 export type Tone = 'pass' | 'fail' | 'wait' | 'neutral' | 'info' | 'own';
 
 const TONES: Record<Tone, string> = {
-  pass: 'text-pass border-pass-200 bg-pass-50',
-  fail: 'text-fail border-fail-200 bg-fail-50',
+  pass: 'text-pass-ink border-pass-200 bg-pass-50',
+  fail: 'text-fail-ink border-fail-200 bg-fail-50',
   wait: 'text-wait-ink border-wait-200 bg-wait-50',
   neutral: 'text-steel border-line bg-canvas',
   info: 'text-blue border-blue-200 bg-blue-50',
   own: 'text-own-ink border-own-200 bg-own-50',
 };
-// 状态色一律配图标和文字（红绿在色弱下区分度低）。
+// 状态色一律配图标和文字（红绿在色弱下区分度低）；文字用 -ink（Ruling T5a：基础色作 12 px 文字不到 4.5:1）。
 const DEFAULT_ICON: Partial<Record<Tone, IconName>> = { pass: 'check', fail: 'cross' };
 
 export function Pill({ tone = 'neutral', icon, children, className }: { tone?: Tone; icon?: IconName | null; children: ReactNode; className?: string }) {

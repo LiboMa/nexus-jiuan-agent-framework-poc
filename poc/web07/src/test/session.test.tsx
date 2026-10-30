@@ -55,15 +55,18 @@ describe('session and sign-in', () => {
   });
 
   it('any 401 later on sends the user to the sign-in page with 「登录已过期，请重新登录」; signing in again fetches a new CSRF token (Review Focus 1)', async () => {
+    // 单据池一打开就读 /documents：重启前它照常回答，重启后回 401，重新登录后又照常
+    const noDocuments = { body: { data: { items: [], total: 0 } } };
     const server = fakeApi({
       'GET /api/analysis/v1/session': { body: sessionBody('admin', 'csrf-old') },
-      'GET /api/analysis/v1/documents': unauthorized,
+      'GET /api/analysis/v1/documents': noDocuments,
     });
     const { user } = await startApp('#/documents');
     await screen.findByRole('heading', { level: 1, name: '单据池' });
 
     // 服务重启：会话丢了，下一次接口调用就是 401。
     server.routes['GET /api/analysis/v1/session'] = unauthorized;
+    server.routes['GET /api/analysis/v1/documents'] = unauthorized;
     await act(async () => { await api('/documents').catch(() => undefined); });
     expect(await screen.findByText('登录已过期，请重新登录')).toBeInTheDocument();
     expect(window.location.hash).toBe('#/login');
@@ -72,6 +75,7 @@ describe('session and sign-in', () => {
     server.routes['POST /api/analysis/v1/poc/login'] = loginOk;
     server.routes['POST /api/analysis/v1/auth/exchange'] = () => {
       server.routes['GET /api/analysis/v1/session'] = { body: sessionBody('admin', 'csrf-new') };
+      server.routes['GET /api/analysis/v1/documents'] = noDocuments;
       return exchangeOk;
     };
     server.routes['POST /api/analysis/v1/poc/anything'] = { body: { data: { ok: true } } };

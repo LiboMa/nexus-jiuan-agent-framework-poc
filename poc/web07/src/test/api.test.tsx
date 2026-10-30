@@ -107,4 +107,15 @@ describe('api()', () => {
     }
     expect(server.calls).toHaveLength(0);
   });
+
+  it('checks ".." in the path part only: a search for 1..2 goes through, a path with .. (or its %2e form) does not', async () => {
+    const server = fakeApi({ 'GET /api/analysis/v1/documents': { body: { data: { items: [] } } } });
+    await expect(api('/documents?q=1..2&limit=50')).resolves.toEqual({ items: [] });
+    expect(server.calls[0].search).toBe('?q=1..2&limit=50');
+    await expect(api(`/documents?q=${encodeURIComponent('a\\b..c')}`)).resolves.toEqual({ items: [] });
+    for (const path of ['/documents/../poc/login?q=1', '/documents/%2e%2e/poc/login', '/documents/.%2E/x', '/documents\\x?q=1']) {
+      await expect(api(path)).rejects.toMatchObject({ code: 'BAD_PATH' });
+    }
+    expect(server.calls).toHaveLength(2);
+  });
 });

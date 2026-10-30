@@ -6,16 +6,19 @@ import { cx } from './cx';
 /**
  * 右侧抽屉（样稿 drawer-a.html：宽 430、左分隔线、向左的阴影）：单据详情。头部标题 16 px + 副标题，正文可滚，底部可放复核区。
  * 不用 Radix 的 Dialog.Overlay（它经 react-remove-scroll 插 <style>）；样稿里抽屉本来也没有蒙层。
+ * modal={false} + closeOnOutside={false}：抽屉开着时后面的页面照样能点（单据池点另一行就换单），只有关闭按钮和 Esc 关它。
  */
-export function Drawer({ open, onOpenChange, title, subtitle, headerExtra, footer, children, width = 430, modal = true }: {
+export function Drawer({ open, onOpenChange, title, subtitle, headerExtra, footer, children, width = 430, modal = true, closeOnOutside = true, onCloseAutoFocus }: {
   open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; subtitle?: ReactNode; headerExtra?: ReactNode;
-  footer?: ReactNode; children?: ReactNode; width?: number; modal?: boolean;
+  footer?: ReactNode; children?: ReactNode; width?: number; modal?: boolean; closeOnOutside?: boolean; onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange} modal={modal}>
       <Dialog.Portal>
         <Dialog.Content
           aria-describedby={undefined}
+          onInteractOutside={closeOnOutside ? undefined : event => event.preventDefault()}
+          onCloseAutoFocus={onCloseAutoFocus}
           style={{ width, maxWidth: '100vw' }}
           className={cx(
             'fixed inset-y-0 right-0 z-30 flex flex-col border-l border-line bg-surface shadow-drawer',

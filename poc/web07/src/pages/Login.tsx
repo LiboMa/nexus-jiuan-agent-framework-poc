@@ -78,7 +78,7 @@ export function Login() {
             />
           </div>
           {error && (
-            <p role="alert" className="m-0 flex items-start gap-2 text-13 text-fail">
+            <p role="alert" className="m-0 flex items-start gap-2 text-13 text-fail-ink">
               <span className="mt-px"><Icon name="cross" size={16} /></span>{error}
             </p>
           )}

@@ -17,7 +17,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   default: 'border-line bg-surface text-ink hover:bg-canvas',
   primary: 'border-blue bg-blue text-white hover:brightness-110',
   ghost: 'border-transparent bg-transparent text-steel hover:bg-canvas hover:text-ink',
-  danger: 'border-fail bg-surface text-fail hover:bg-fail-50',
+  danger: 'border-fail bg-surface text-fail-ink hover:bg-fail-50',
 };
 
 export function Button({ variant = 'default', size = 'md', icon, busy = false, disabled, type = 'button', className, children, ...rest }: ButtonProps) {
