@@ -19,7 +19,7 @@ import { intakeRoutes } from './intake.mjs';
 import { nexusAccessRoutes } from './nexus-access.mjs';
 import { createOperatorCli } from '../app/nexus/cli.mjs';
 import { agentCallRoutes } from './agent-calls.mjs';
-import { currentAdviceReader, everyDocument } from './advice-rounds.mjs';
+import { adviceRoundsRoutes, currentAdviceReader, documentRoundsReader, everyDocument } from './advice-rounds.mjs';
 import { createReviews, reviewsRoutes } from './reviews.mjs';
 import { createDashboard, dashboardRoutes } from './dashboard.mjs';
 import { createAgentTests } from './agent-tests.mjs';
@@ -202,13 +202,16 @@ const reviews = createReviews({ pool, readCurrentAdvice: currentAdviceReader({ t
   readState: key => store.readState(key), readDocument: id => store.getDocumentHead({ id, companyIds }) }) });
 await reviews.start();
 const reviewRoutes = reviewsRoutes({ reviews, log });
+// 单据抽屉的「历史」页签：一张单的 AI 独立建议各轮（九安的 advice 接口只给当前一轮）；同样只读这一张单的单据头和状态
+const adviceRounds = adviceRoundsRoutes({ log, readRounds: documentRoundsReader({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
+  readState: key => store.readState(key), readDocument: id => store.getDocumentHead({ id, companyIds }) }) });
 // 工作台统计：对公付款单的 AI 建议轮次、复核记录、知识库的上传历史和「我的规则」；不为看板调 Agent，结果按（窗口、角色、账号）缓存 60 秒
 const dashboard = dashboardRoutes({ log, dashboard: createDashboard({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
   readState: key => store.readState(key), listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, type: 'corporate_payment', ...page })),
   reviews, customRules, kb, accounts: () => config.accounts }) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
   return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args))
-    || (await myRules.handle(args)) || (await reviewRoutes.handle(args)) || (await dashboard.handle(args)) || (await kb.handle(args)) || jiuanRoutes.handle(args);
+    || (await myRules.handle(args)) || (await reviewRoutes.handle(args)) || (await adviceRounds.handle(args)) || (await dashboard.handle(args)) || (await kb.handle(args)) || jiuanRoutes.handle(args);
 } };
 const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: null, referenceStore: null, platformRoutes,
   // 九安的 /auth/exchange 只认本机回环来源；外壳的票据只在口令校验通过后才签发，所以这里放行。
