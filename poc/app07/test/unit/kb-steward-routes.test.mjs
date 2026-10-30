@@ -45,17 +45,17 @@ async function harness({ mode = 's3vectors', answer = () => reply(INGESTED), des
   const dir = uploadsDir ?? await mkdtemp(path.join(tmpdir(), 'kb-steward-'));
   const calls = [], invalid = [], requests = [], lookups = [];
   const state = { key, clock: Date.parse('2026-10-29T08:00:00.000Z') };
+  const logs = [];
   const call = async args => {
     calls.push(args);
     const text = args.data[0].op === 'describe' ? await describe(args) : await answer(args, calls.length);
     return { text, taskId: 't', timings: {} };
   };
-  const client = createKbStewardClient({ origin: ORIGIN, publishId, call, now: () => state.clock,
+  const client = createKbStewardClient({ origin: ORIGIN, publishId, mode, call, now: () => state.clock, log: line => logs.push(line),
     credentialFor: async id => { lookups.push(id); return id === PUB ? state.key : null; },
     markInvalid: async (id, reason) => { invalid.push([id, reason]); state.key = null; } });
   const spied = { ...client, request: (...args) => { requests.push(args); return client.request(...args); } };
   let clock = Date.parse('2026-10-29T08:00:00.000Z');
-  const logs = [];
   const routes = createKbStewardRoutes({ mode, client: spied, uploadsDir: dir, log: line => logs.push(line), now: () => (clock += 1500) });
   const ask = async (method, route, { role = 'admin', body = null, headers = {} } = {}) => {
     const req = Object.assign(Readable.from([body ?? Buffer.alloc(0)]), { method, headers });
@@ -378,7 +378,7 @@ test('describe_cached：describe 的结果缓存 5 分钟（同时来的几次�
   for (const [bad, status, code] of [
     [() => reply({ ...DESCRIBED, protocol: 'kb.rules/v2' }), 502, 'KB_AGENT_REPLY_INVALID'],
     [() => reply({ success: true, backend: 'pg', ops: ALL_OPS }), 502, 'KB_AGENT_REPLY_INVALID'],
-    [() => reply({ success: false, error_type: 'invalid_parameter', message: '不支持的规则请求：describe' }), 502, 'KB_AGENT_REPLY_INVALID'],
+    [() => reply({ success: false, error_type: 'internal_error', message: '规则库暂时读不了' }), 502, 'KB_AGENT_REPLY_INVALID'],
     [() => reply({ ...DESCRIBED, ops: 'list' }), 502, 'KB_AGENT_REPLY_INVALID'],
     [() => reply({ ...DESCRIBED, ops: [1] }), 502, 'KB_AGENT_REPLY_INVALID'],
     [() => reply({ ...DESCRIBED, backend: undefined }), 502, 'KB_AGENT_REPLY_INVALID'],
@@ -478,12 +478,57 @@ test('mode_names：错误文案里的 Agent 名字按方式——pg「知识库 
   }
   assert.ok(Object.values(TEXT.pg).every(text => !text.includes('文档管家')), 'PG 方式不提文档管家');
   assert.throws(() => createKbStewardRoutes({ mode: 'mongo', client: {}, uploadsDir: tmpdir() }), TypeError);
+  assert.throws(() => createKbStewardClient({ origin: ORIGIN, publishId: PUB, mode: undefined, credentialFor: async () => KEY, markInvalid: async () => {} }), TypeError);
+});
+
+test('describe_fallback（R18）：Agent 不认识 describe（success:false、invalid_parameter）时用这种方式的缺省操作，和 describe 的结果一样缓存 5 分钟；PG 方式的缺省没有下线 / 恢复', async t => {
+  const unknown = () => reply({ success: false, error_type: 'invalid_parameter', message: '不支持的规则请求：describe' });
+  const affected = args => reply({ success: true, source_id: args.data[0].source_id, affected: 18 });
+  for (const [mode, ops] of [['s3vectors', ALL_OPS], ['pg', PG_OPS]]) {
+    const h = await harness({ mode, describe: unknown, answer: affected });
+    t.after(h.done);
+    const describes = () => h.ops().filter(op => op === 'describe').length;
+    const first = await h.ask('GET', '/mode');
+    assert.deepEqual([first.status, first.payload.data], [200, { mode, configured: true, ready: true, ops }], mode);
+    h.later(5 * MINUTE - 1);
+    assert.deepEqual((await h.ask('GET', '/mode')).payload.data.ops, ops);
+    for (const op of ['deactivate', 'restore']) {
+      const answer = await h.ask('POST', `/sources/sample-matrix/${op}`);
+      if (mode === 'pg') assert.deepEqual([answer.status, answer.payload.error.code], [409, 'KB_OP_UNSUPPORTED'], `${mode} ${op}`);
+      else assert.deepEqual([answer.status, answer.payload.data.affected], [200, 18], `${mode} ${op}`);
+    }
+    assert.deepEqual(h.ops(), mode === 'pg' ? ['describe'] : ['describe', 'deactivate', 'restore'], `${mode}：5 分钟内只问一次；PG 的缺省不发下线 / 恢复`);
+    h.later(1);
+    await h.ask('GET', '/mode');
+    assert.equal(describes(), 2, `${mode}：满 5 分钟重新问`);
+    assert.equal((await h.ask('POST', '/sources/sample-matrix/delete')).status, 200);
+    assert.ok(!h.logs.some(line => line.startsWith('POC_KB_BACKEND_MISMATCH')), '缺省的 backend 就是这种方式');
+  }
+});
+
+test('backend_mismatch：describe 回的 backend 和方式对不上时记一行 POC_KB_BACKEND_MISMATCH <方式> <backend>（缓存期间不重复记），行为不变；对得上不记', async t => {
+  const h = await harness({ mode: 'pg', describe: () => reply({ ...DESCRIBED, backend: 's3vectors' }) });
+  t.after(h.done);
+  const answer = await h.ask('GET', '/mode');
+  assert.deepEqual([answer.status, answer.payload.data], [200, { mode: 'pg', configured: true, ready: true, ops: ALL_OPS }]);
+  await h.ask('GET', '/mode');
+  assert.deepEqual(h.logs, ['POC_KB_BACKEND_MISMATCH pg s3vectors']);
+  const odd = await harness({ describe: () => reply({ ...DESCRIBED, backend: 'pg vector\nPOC_FAKE ' + 'x'.repeat(60) }) });
+  t.after(odd.done);
+  assert.equal((await odd.ask('GET', '/mode')).status, 200);
+  assert.equal(odd.logs.length, 1);
+  assert.match(odd.logs[0], /^POC_KB_BACKEND_MISMATCH s3vectors pg\?vector\?POC_FAKE\?x+$/);
+  assert.ok(odd.logs[0].length <= 'POC_KB_BACKEND_MISMATCH s3vectors '.length + 40, 'backend 只取 40 字、换掉别的字符');
+  const same = await harness({ mode: 's3vectors' });
+  t.after(same.done);
+  await same.ask('GET', '/mode');
+  assert.deepEqual(same.logs, []);
 });
 
 test('server_wiring：外壳两种方式都挂这一套接口（方式和发布编号取 settings.kb）；PG 直连的路由、子进程和它们的文件都没了', async () => {
   const here = fileURLToPath(new URL('../../', import.meta.url));
   const server = await readFile(path.join(here, 'server.mjs'), 'utf8');
-  assert.match(server, /createKbStewardRoutes\(\{ mode: settings\.kb\.mode, client: createKbStewardClient\(\{ origin: config\.agents\.nexusOrigin, publishId: settings\.kb\.publishId,/);
+  assert.match(server, /createKbStewardRoutes\(\{ mode: settings\.kb\.mode, client: createKbStewardClient\(\{ origin: config\.agents\.nexusOrigin, publishId: settings\.kb\.publishId,\n  mode: settings\.kb\.mode, log,/);
   assert.match(server, /\|\| \(await kb\.handle\(args\)\) \|\|/, '无条件挂上');
   for (const gone of ['kb-routes', 'kb-runner', 'kb-s3v', 'createKbS3v', "settings.kb.mode === 's3vectors'", 'POC_KB_PG_AGENT_NOT_WIRED', 'kb ? await kb.handle']) {
     assert.ok(!server.includes(gone), `server.mjs 里还有 ${gone}`);

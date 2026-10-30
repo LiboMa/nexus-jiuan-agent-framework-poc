@@ -5,6 +5,8 @@
  *   op：describe（这个 Agent 支持哪些操作）、ingest、list、detail、deactivate、restore、delete、check、search；ingest 限时 5 分钟，其余 2 分钟。
  *   Agent 只回工具的 JSON：这里去掉偶尔的 ```json 围栏后 JSON.parse，按 op 校验形态；不合格抛 KB_AGENT_REPLY_INVALID，不重试。
  * describe 的结果缓存 5 分钟（同时来的几次共用一轮）；protocol 不是 kb.rules/v1、工具失败都算不合格。钥匙被拒或哪一次回复不合格就清缓存，没问成的不缓存。
+ *   例外：Agent 回的是「不认识这个 op」（success=false、error_type=invalid_parameter，还没有 describe 的 Agent 都这样回）时，用这种方式的
+ *   缺省操作（FALLBACK_OPS），和 describe 的结果一样缓存。describe 回的 backend 和方式对不上时记一行 POC_KB_BACKEND_MISMATCH <方式> <backend>，别的照常。
  * 部署配置里没有发布编号（publishId 为 null）：configured 为 false，ready() 回 false，describe / request 抛 KB_AGENT_NOT_CONFIGURED——不取钥匙、不发调用。
  * 调用密钥只经「Agent 接入」页启用（credentialFor）；没有就抛 KB_AGENT_NOT_READY、不发调用。Nexus 不认这把钥匙（401 / credential_invalid）
  * 时 markInvalid 一次后抛 KB_AGENT_KEY_REJECTED；之后 credentialFor 回 null，不会反复重试。别的调用失败（超时、404、5xx）抛 KB_UNAVAILABLE。
@@ -15,6 +17,11 @@ import { DOCX } from './kb-docx.mjs';
 
 const PROTOCOL = 'kb.rules/v1';
 const KNOWN_OPS = Object.freeze(['describe', 'ingest', 'list', 'detail', 'deactivate', 'restore', 'delete', 'check', 'search']);
+/** Agent 不认识 describe 时按方式取的操作：s3vectors = 文档管家的规则工具全部支持；pg = 约定里必须有的那几个（没有下线 / 恢复）。 */
+const FALLBACK_OPS = Object.freeze({
+  s3vectors: KNOWN_OPS,
+  pg: Object.freeze(['describe', 'ingest', 'list', 'detail', 'delete', 'check', 'search']),
+});
 const DESCRIBE_TTL_MS = 5 * 60_000;
 const TIMEOUT_MS = Object.freeze({ ingest: 300_000 });
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -56,8 +63,10 @@ function readReply(op, input, text) {
   return reply;
 }
 
-export function createKbStewardClient({ origin, publishId, credentialFor, markInvalid, call = a2aCall, now = Date.now }) {
+export function createKbStewardClient({ origin, publishId, mode, credentialFor, markInvalid, call = a2aCall, now = Date.now, log = () => {} }) {
+  if (!Object.hasOwn(FALLBACK_OPS, mode)) throw new TypeError(`kb mode must be pg or s3vectors: ${mode}`);
   const configured = typeof publishId === 'string' && publishId !== '';
+  const fallback = Object.freeze({ protocol: PROTOCOL, backend: mode, ops: FALLBACK_OPS[mode] });
   let described = null;   // describe 的缓存 { at, pending }（进行中的那一轮也算）
 
   async function exchange(op, input, file) {
@@ -88,7 +97,9 @@ export function createKbStewardClient({ origin, publishId, credentialFor, markIn
       if (!configured) throw failure('KB_AGENT_NOT_CONFIGURED');
       if (described && now() - described.at < DESCRIBE_TTL_MS) return described.pending;
       const pending = exchange('describe', {}).then(reply => {
+        if (reply.success === false && reply.error_type === 'invalid_parameter') return fallback;
         if (reply.success !== true) throw failure('KB_AGENT_REPLY_INVALID', 'describe_failed');
+        if (reply.backend !== mode) log(`POC_KB_BACKEND_MISMATCH ${mode} ${reply.backend.replace(/[^A-Za-z0-9._-]/gu, '?').slice(0, 40)}`);
         return Object.freeze({ protocol: reply.protocol, backend: reply.backend, ops: Object.freeze([...new Set(reply.ops.filter(op => KNOWN_OPS.includes(op)))]) });
       });
       const entry = { at: now(), pending };

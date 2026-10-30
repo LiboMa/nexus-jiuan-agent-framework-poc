@@ -155,7 +155,8 @@ const intake = intakeRoutes({ fake });
 // （pg：PG 知识库 Agent；s3vectors：知识库文档管家）。调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效；
 // 部署配置里没有发布编号时页面说「知识库 Agent 还没配置」，启动时记一行 POC_KB_AGENT_NOT_CONFIGURED
 const kb = createKbStewardRoutes({ mode: settings.kb.mode, client: createKbStewardClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
-  credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }), uploadsDir: settings.kb.uploadsDir, log });
+  mode: settings.kb.mode, log, credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }),
+  uploadsDir: settings.kb.uploadsDir, log });
 if (!settings.kb.publishId) log(`POC_KB_AGENT_NOT_CONFIGURED ${settings.kb.mode}`);
 await kb.start();
 const myRules = customRulesRoutes({ rules: customRules, log });

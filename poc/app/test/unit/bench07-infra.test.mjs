@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,13 +142,20 @@ test('deploy.sh：KB_MODE 只能是 pg 或 s3vectors，s3vectors 时要有 KB_S3
 });
 
 // 跑 bench07-configure.sh 的参数检查 + jiuan07-kb 段 + 写 env 那段：install / write_secret / sed / curl / python3 换成只记账的桩，
-// DIR 指到临时目录（里面放一份旧的 kb_pg_password）；PG 主机的 .env 也在（看它碰不碰）
+// DIR 指到临时目录（里面放一份旧的 kb_pg_password）；上传目录 /var/lib/jiuan07/kb-uploads 换成临时目录，里面放上 PG 直连时留下的
+// <id>.rules.json（和别的文件，看它们碰不碰）；调用记录里再换回原路径
+const KB_UPLOADS = '/var/lib/jiuan07/kb-uploads';
+const UPLOAD_LEFTOVERS = ['1.rules.json', '12.rules.json', '.tmp-0a1b2c3d4e5f.rules.json'];
+const UPLOAD_KEEP = ['0123abcd.docx', '1.rules.json.bak', 'history.json', 'keep.rules.json'];
 async function configureKb(t, args, { oldPassword = true } = {}) {
   const script = await readFile(infra('bench/bench07-configure.sh'), 'utf8');
   const dir = await mkdtemp(path.join(tmpdir(), 'bench07-kb-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const log = path.join(dir, 'calls.log');
   if (oldPassword) await writeFile(path.join(dir, 'kb_pg_password'), 'not-a-real-password');
+  const uploads = path.join(dir, 'kb-uploads');
+  await mkdir(path.join(uploads, 'keep.rules.json'), { recursive: true });   // 同名的目录不删
+  for (const name of [...UPLOAD_LEFTOVERS, ...UPLOAD_KEEP.filter(name => name !== 'keep.rules.json')]) await writeFile(path.join(uploads, name), 'x');
   const between = (start, end) => {
     const from = script.indexOf(start), to = script.indexOf(end, from);
     assert.ok(from >= 0 && to > from, `bench07-configure.sh 里没有 ${start}`);
@@ -161,9 +168,11 @@ async function configureKb(t, args, { oldPassword = true } = {}) {
     `python3() { printf 'python3 %s\\n' "$*" >> "$LOG"; }`].join('\n');
   const leftover = () => readFile(path.join(dir, 'kb_pg_password'), 'utf8').then(() => true, () => false);
   try {
-    await run('bash', ['-c', [prelude, stubs, between('# >>> jiuan07-kb', '# <<< jiuan07-kb'), between('cat > "$DIR/env.new" <<ENV', '\nENV\n')].join('\n'), 'bench07-configure.sh', ...args]);
+    const kb = between('# >>> jiuan07-kb', '# <<< jiuan07-kb').replaceAll(KB_UPLOADS, uploads);
+    await run('bash', ['-c', [prelude, stubs, kb, between('cat > "$DIR/env.new" <<ENV', '\nENV\n')].join('\n'), 'bench07-configure.sh', ...args]);
   } catch (error) { return { code: error.code, stderr: error.stderr, wrote: await readFile(path.join(dir, 'env.new'), 'utf8').then(() => true, () => false), leftover: await leftover() }; }
-  return { code: 0, env: await readFile(path.join(dir, 'env.new'), 'utf8'), calls: (await readFile(log, 'utf8')).split('\n').filter(Boolean), leftover: await leftover() };
+  return { code: 0, env: await readFile(path.join(dir, 'env.new'), 'utf8'), leftover: await leftover(), uploads: (await readdir(uploads)).sort(),
+    calls: (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(line => line.replaceAll(uploads, KB_UPLOADS)) };
 }
 const UPLOADS = 'install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads';
 const NO_PG = /POC07_KB_PG_HOST|POC07_KB_USER|POC07_KB_DB|POC07_KB_DIR|POC07_KB_PYTHON|POC07_KB_S3V_PUBLICATION_ID|not-a-real-password/;
@@ -176,6 +185,7 @@ test('bench07-configure.sh 两种方式一个样：写 POC07_KB_MODE 和知识�
     assert.doesNotMatch(result.env, NO_PG, mode);
     assert.deepEqual(result.calls, [UPLOADS], mode);
     assert.equal(result.leftover, false, `${mode}：实例上留下的连库密码文件要删掉`);
+    assert.deepEqual(result.uploads, [...UPLOAD_KEEP].sort(), `${mode}：PG 直连时留下的 <id>.rules.json（从制度派生的规则）删掉，别的文件和同名目录不动`);
   }
 });
 
@@ -188,6 +198,7 @@ test('bench07-configure.sh：没给发布编号（或不给第 3 个参数，旧
     assert.doesNotMatch(result.env, NO_PG);
     assert.deepEqual(result.calls, [UPLOADS]);
     assert.equal(result.leftover, false);
+    assert.deepEqual(result.uploads, [...UPLOAD_KEEP].sort());
   }
 });
 
@@ -207,6 +218,7 @@ test('bench07-configure.sh：测试台不直连 PG——整份脚本不读 PG �
     'POC07_KB_PG_HOST', 'POC07_KB_USER', 'POC07_KB_DB', 'POC07_KB_DIR', 'POC07_KB_PYTHON', 'POC07_KB_S3V_PUBLICATION_ID']) assert.ok(!script.includes(gone), `还有 ${gone}`);
   const kb = script.slice(script.indexOf('# >>> jiuan07-kb'), script.indexOf('# <<< jiuan07-kb'));
   assert.match(kb, /^rm -f "\$DIR\/kb_pg_password"$/m);
+  assert.match(kb, /^find "\/var\/lib\/jiuan07\/kb-uploads" -maxdepth 1 -type f -name '\*\.rules\.json' -delete$/m, '只删上传目录第一层的 *.rules.json 文件');
   assert.match(kb, /^install -d -o jiuan07 -g jiuan07 -m 0700 \/var\/lib\/jiuan07\/kb-uploads$/m, '上传目录不在任何分支里');
   assert.doesNotMatch(kb, /^(if|elif) /m, 'kb 段不再按方式分支');
   const dirs = script.indexOf('\ninstall -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07 /var/lib/jiuan07/nexus /var/lib/jiuan07/custom-rules\n');

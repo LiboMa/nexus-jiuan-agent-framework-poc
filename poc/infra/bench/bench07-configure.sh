@@ -50,9 +50,11 @@ write_secret hly_app_secret fake-hly-app-secret-jiuan07
 # >>> jiuan07-kb
 # 「规则库 › 制度知识库」两种 kb 方式一个样（服务的 env 里写 POC07_KB_MODE，给了发布编号就写 POC07_KB_PUBLICATION_ID）：
 # 只建上传文件目录 /var/lib/jiuan07/kb-uploads（0700）。不读 PG 主机的配置、不写任何密钥文件、不建 Python 环境
-# （Agent 的调用密钥在「Agent 接入」页上启用）；以前直连 PG 时留下的连库密码文件有就删掉。
+# （Agent 的调用密钥在「Agent 接入」页上启用）；以前直连 PG 时留下的连库密码文件有就删掉，上传目录里那时的解析结果 <id>.rules.json
+# （从制度派生的规则全文）也删掉：只删这个目录第一层的普通文件，原文件、上传历史和别的都不动。
 install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07/kb-uploads
 rm -f "$DIR/kb_pg_password"
+find "/var/lib/jiuan07/kb-uploads" -maxdepth 1 -type f -name '*.rules.json' -delete
 KB_LINES=""
 [[ -z "$KB_PUBLICATION" ]] || KB_LINES="POC07_KB_PUBLICATION_ID=$KB_PUBLICATION"
 # <<< jiuan07-kb
