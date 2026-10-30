@@ -110,8 +110,9 @@ function parse(input) {
 }
 
 /** 当前一轮能复核：已完成、审的是单据现在的版本、结论是 pass / fail。 */
-const reviewable = advice => advice?.status === 'completed' && advice.adviceVersion === advice.documentVersion && RESULTS.has(advice.result);
-function stateOf(advice, review) {
+export const reviewable = advice => advice?.status === 'completed' && advice.adviceVersion === advice.documentVersion && RESULTS.has(advice.result);
+/** 一张单的复核状态（advice 是 currentAdviceReader / adviceOf 的样子，review 是这张单最后一次复核或 null）；工作台的「待复核」也按它数（dashboard.mjs）。 */
+export function stateOf(advice, review) {
   if (advice?.round == null) return 'no_advice';
   if (advice.status === 'running') return 'running';
   if (!reviewable(advice)) return 'no_advice';

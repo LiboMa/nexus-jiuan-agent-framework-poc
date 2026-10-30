@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { access, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -273,6 +273,55 @@ test('清单、详情、下线、恢复、删除、检索：各一次 request（
   assert.equal((await h.ask('POST', '/sources/bad%20id/restore')).status, 400);
   assert.equal((await h.ask('GET', '/uploads/99')).status, 404);
   assert.equal(h.calls.length, before);
+});
+
+test('delete_marks_history：经知识库页删除成功（Agent 回 success:true）后，这个制度标识的每一条上传历史记 removedAt（写进 history.json）；Agent 回失败不记；之后再传的一条不带；写不进去照样回 200、记一行日志', async t => {
+  const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+  let removal = () => ({ success: false, error_type: 'source_not_found', message: '规则库里没有制度「sample-matrix」' });
+  const h = await harness({ answer: args => { const { op, source_id } = args.data[0]; return reply(op === 'ingest' ? { ...INGESTED, source_id } : removal(source_id)); } });
+  t.after(async () => { await chmod(h.dir, 0o700); await h.done(); });
+  for (const [id, query] of [[1], [2], [3, 'sourceId=other-rules&sourceVersion=V1&title=x']]) { await h.upload(query ? { query } : {}); await h.settled(id); }
+  const refused = await h.ask('POST', '/sources/sample-matrix/delete');
+  assert.deepEqual([refused.status, refused.payload.data.success], [200, false]);
+  assert.ok((await h.routes.historyList()).every(item => !Object.hasOwn(item, 'removedAt')), 'Agent 没删成：不记');
+  removal = id => ({ success: true, source_id: id, affected: 18 });
+  const removed = await h.ask('POST', '/sources/sample-matrix/delete');
+  assert.deepEqual([removed.status, removed.payload.data], [200, { success: true, source_id: 'sample-matrix', affected: 18 }], '回复照旧原样给页面');
+  const list = await h.routes.historyList();
+  assert.deepEqual(list.map(item => [item.id, item.sourceId, item.status]), [[3, 'other-rules', 'ingested'], [2, 'sample-matrix', 'ingested'], [1, 'sample-matrix', 'ingested']], '全部历史，新的在前');
+  assert.equal(list[0].removedAt, undefined, '别的制度不动');
+  assert.match(list[1].removedAt, ISO);
+  assert.equal(list[2].removedAt, list[1].removedAt);
+  const saved = JSON.parse(await readFile(path.join(h.dir, 'history.json'), 'utf8'));
+  assert.deepEqual(saved.items.map(item => item.removedAt ?? null), [list[2].removedAt, list[1].removedAt, null], '写进 history.json');
+  assert.equal((await h.ask('GET', '/uploads')).payload.data.items[1].removedAt, list[1].removedAt, '上传历史页也看得到');
+  // 同一个制度再传一次：新的一条不带 removedAt，旧的照旧
+  await h.upload();
+  await h.settled(4);
+  const after = await h.routes.historyList();
+  assert.deepEqual(after.map(item => item.removedAt ?? null), [null, null, list[1].removedAt, list[1].removedAt]);
+  assert.deepEqual(h.requests.map(([op, input]) => [op, input.source_id]), [['ingest', 'sample-matrix'], ['ingest', 'sample-matrix'], ['ingest', 'other-rules'],
+    ['delete', 'sample-matrix'], ['delete', 'sample-matrix'], ['ingest', 'sample-matrix']]);
+  // 历史写不进去（目录只读）：删除照样回 200，内存里记上，日志一行
+  await chmod(h.dir, 0o500);
+  const unwritable = await h.ask('POST', '/sources/other-rules/delete');
+  assert.equal(unwritable.status, 200);
+  assert.match((await h.routes.historyList())[1].removedAt, ISO);
+  assert.ok(h.logs.includes('POC_KB_HISTORY_WRITE_FAILED delete'), h.logs.join('\n'));
+});
+
+test('status / historyList：给工作台用——方式、有没有发布编号、「Agent 接入」页有没有钥匙；不调 Agent（describe、request 都不发）', async t => {
+  const h = await harness();
+  t.after(h.done);
+  assert.deepEqual(await h.routes.status(), { mode: 's3vectors', configured: true, ready: true });
+  h.state.key = null;
+  assert.deepEqual(await h.routes.status(), { mode: 's3vectors', configured: true, ready: false });
+  assert.deepEqual(await h.routes.historyList(), []);
+  assert.deepEqual([h.calls.length, h.requests.length], [0, 0]);
+  const off = await harness({ mode: 'pg', publishId: null });
+  t.after(off.done);
+  assert.deepEqual(await off.routes.status(), { mode: 'pg', configured: false, ready: false });
+  assert.deepEqual([off.calls.length, off.lookups.length], [0, 0], '没配置：不取钥匙');
 });
 
 /** 把 zip 中央目录里第一个条目的「解压后大小」改成 4 GB：模拟 zip 炸弹（不真的造一个）。 */

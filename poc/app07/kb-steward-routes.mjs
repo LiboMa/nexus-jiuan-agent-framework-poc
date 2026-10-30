@@ -8,9 +8,12 @@
  *                                                         记一条上传历史 → 后台 ingest，先回 202 { id, status: 'ingesting' }；同一时间只跑一个
  *   GET  …/uploads、…/uploads/<id>                         上传历史（最近 50 条；<uploadsDir>/history.json，0600），页面轮询到 ingested / skipped / failed
  *   GET  …/sources、…/sources/<id>                         制度清单、一份制度的登记和规则编号
- *   POST …/sources/<id>/(deactivate|restore|delete)       下线、恢复、硬删除；下线、恢复不在 describe 的 ops 里时回 409 KB_OP_UNSUPPORTED，不调 Agent
+ *   POST …/sources/<id>/(deactivate|restore|delete)       下线、恢复、硬删除；下线、恢复不在 describe 的 ops 里时回 409 KB_OP_UNSUPPORTED，不调 Agent。
+ *                                                         删除成功（Agent 回 success:true）后，这个制度标识的每一条上传历史记上 removedAt（工作台不再算它；
+ *                                                         之后再传的那条不带）；下线、恢复不记
  *   GET  …/search?q=&segment=&amount=&k=                  按问题检索（板块、金额可空，空的不传）
  * 同步的操作各一次 A2A 调用（约 10–20 秒），回 { data: 工具的 JSON }：工具自己失败时也是 200，data.success === false，带 error_type / message / suggestion。
+ * 给工作台（dashboard.mjs）的两个函数，都不调 Agent：status() → { mode, configured, ready }（同 /mode，不带 ops），historyList() → 全部上传历史，新的在前。
  * 错误文案里的 Agent 名字按方式。日志只写错误码，不写回复、制度内容和钥匙。
  */
 import { randomBytes } from 'node:crypto';
@@ -96,6 +99,8 @@ function createHistory(file, log) {
       return { next: { nextId: current.nextId + 1, items: [...current.items, item].slice(-HISTORY_LIMIT) }, value: item };
     }),
     update: (id, patch) => commit(current => ({ next: { ...current, items: current.items.map(item => (item.id === id ? { ...item, ...patch } : item)) } }), { keep: true }),
+    /** 这个制度标识的每一条记上删除时间（已经记过的不动）。 */
+    removed: (sourceId, at) => commit(current => ({ next: { ...current, items: current.items.map(item => (item.sourceId === sourceId && !item.removedAt ? { ...item, removedAt: at } : item)) } }), { keep: true }),
   };
 }
 
@@ -173,10 +178,14 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
     finally { busy = false; }
   }
 
-  /** 一份制度的详情、下线、恢复、删除；下线、恢复先看 describe 的 ops（缓存 5 分钟），不支持就不调。 */
+  /** 一份制度的详情、下线、恢复、删除；下线、恢复先看 describe 的 ops（缓存 5 分钟），不支持就不调。删除成功后在上传历史里记上（写盘失败只记日志，照样回 Agent 的结果）。 */
   async function manage(op, sourceId) {
     if (OPTIONAL_OPS.has(op) && !(await client.describe()).ops.includes(op)) fail('KB_OP_UNSUPPORTED', 409);
-    return client.request(op, { source_id: sourceId });
+    const result = await client.request(op, { source_id: sourceId });
+    if (op === 'delete' && result.success === true) {
+      try { await history.removed(sourceId, iso(now())); } catch { log('POC_KB_HISTORY_WRITE_FAILED delete'); }
+    }
+    return result;
   }
 
   function search(params) {
@@ -218,6 +227,10 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
   }
 
   return {
+    /** 工作台用：方式、有没有发布编号、「Agent 接入」页里有没有可用的钥匙——只看配置和钥匙，不调 Agent（不问 describe）。 */
+    async status() { return { mode, configured: client.configured, ready: client.configured ? await client.ready() : false }; },
+    /** 工作台用：全部上传历史（最多 200 条），新的在前。 */
+    async historyList() { await history.ready(); return history.list(); },
     /** 读上传历史；外壳重启时还在 ingesting 的那几条改成失败（后台的那一轮已经没人等了）。 */
     async start() {
       await history.ready();
