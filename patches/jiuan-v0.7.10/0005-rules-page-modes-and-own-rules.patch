@@ -26,7 +26,7 @@
      if (tabs) main.append(tabs);
      if (kbView) {
 --- a/public/kb-page.js	2026-10-30 09:43:42
-+++ b/public/kb-page.js	2026-10-30 09:53:41
++++ b/public/kb-page.js	2026-10-30 11:34:07
 @@ -1,12 +1,36 @@
 -// 规则库 · 制度知识库（测试台补丁 0004）。管理员上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库
 -// （向量在知识库的 PostgreSQL 里由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的
@@ -457,18 +457,18 @@
 +}
 +
 +/**
-+ * 「我的规则」：只操作当前登录账号自己的；限额（10 份、2 MB、合计 20,000 字）由外壳核对，超了照它的中文提示显示。
++ * 「我的规则」：只操作当前登录账号自己的；限额（10 份、2 MB、合计 5,000 字）由外壳核对，超了照它的中文提示显示。
 + * 一次一个请求（读列表、上传、查看全文、删除）：进行中「选择文件」和每行的按钮都不可用，再选文件也不发。
 + */
 +function ownRules({ api }) {
-+  const usage = h('span', { class: 'kb-usage' }, '已用 — / 20,000 字');
++  const usage = h('span', { class: 'kb-usage' }, '已用 — / 5,000 字');
 +  const message = statusLine(), say = sayer(message), listMessage = statusLine(), sayList = sayer(listMessage);
 +  const uploaded = h('div'), listRows = h('div'), detail = h('div');
 +  let shown = null, fresh = null, busy = false, rowButtons = [];   // shown：「查看全文」打开的那份；fresh：刚上传、全文框还开着的那份
 +  const fileInput = h('input', { type: 'file', name: 'ownFile', accept: `.md,.docx,text/markdown,${DOCX}`, hidden: true });
 +  fileInput.addEventListener('change', () => pick(fileInput.files?.[0]));
 +  const choose = button('选择文件', () => fileInput.click?.(), true);
-+  const drop = dropZone('把规则文件拖到这里，或', 'Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份、合计 20,000 字', fileInput, pick, choose);
++  const drop = dropZone('把规则文件拖到这里，或', 'Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份、合计 5,000 字', fileInput, pick, choose);
 +  const textBox = (head, rule, onClose) => h('div', { class: 'kb-detail' },
 +    h('div', { class: 'kb-section-head' }, h('strong', {}, head), button('收起', onClose)), h('pre', { class: 'kb-own-text' }, rule?.text || ''));
 +  const setBusy = on => { busy = on; for (const node of [choose, fileInput, ...rowButtons]) node.disabled = on; };
@@ -512,7 +512,7 @@
 +    try {
 +      const data = await api('/poc/custom-rules');
 +      sayList('');
-+      usage.textContent = `已用 ${thousands(data?.usedChars ?? 0)} / ${thousands(data?.limitChars ?? 20000)} 字`;
++      usage.textContent = `已用 ${thousands(data?.usedChars ?? 0)} / ${thousands(data?.limitChars ?? 5000)} 字`;
 +      const items = Array.isArray(data?.items) ? data.items : [];
 +      if (shown && !items.some(item => item.id === shown)) { detail.replaceChildren(); shown = null; }
 +      if (fresh && !items.some(item => item.id === fresh)) { uploaded.replaceChildren(); fresh = null; }

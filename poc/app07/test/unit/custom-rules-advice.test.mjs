@@ -148,7 +148,9 @@ test('person_run_attached：poc-reviewer 有两份规则 → input.customRules �
   assert.equal(h.logs.length, 1);
 });
 
-test('trims_originals_not_rules：原件 3 份各 5 页、规则 20,000 字 → 按九安 fit() 从末尾逐页去原件，规则全文不动；单凭规则就超限时 AGENT_REQUEST_TOO_LARGE', async () => {
+// 附规则这一层自己不设字数上限（每人 5,000 字的上限在上传时由 custom-rules.mjs 核对），只按九安的请求上限 fit()；这里故意用远超上传上限的
+// 一份大规则，好让规则加进来整份请求就超限，测的是去原件的办法，不是产品的上限
+test('trims_originals_not_rules：原件 3 份各 5 页、加一份压测用的大规则（20,000 字，远超上传上限）→ 按九安 fit() 从末尾逐页去原件，规则全文不动；单凭规则就超限时 AGENT_REQUEST_TOO_LARGE', async () => {
   const fields = Array.from({ length: 30 }, (_, index) => ({ label: `虚构字段${index + 1}`, value: '虚'.repeat(500) }));
   const lines = Array.from({ length: 12 }, () => ({ fields: Array.from({ length: 8 }, (_, index) => ({ label: `虚构列${index + 1}`, value: '构'.repeat(200) })) }));
   const page = (file, number) => ({ page: number, text: `虚构原件 ${file} 第 ${number} 页\n`.padEnd(2000, '文字\n') });

@@ -76,7 +76,7 @@ test('md_bom_crlf：.md 带 BOM 和 CRLF（也有单独的 CR）→ 去 BOM、�
   const listed = await h.ask('GET', '');
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.payload.data, { items: [{ id: 'rule-1', title: '虚构补充要求.md', format: 'md', chars: [...text].length, uploadedAt: '2026-10-29T08:00:01.000Z' }],
-    usedChars: [...text].length, limitChars: 20000, limitFiles: 10 });
+    usedChars: [...text].length, limitChars: 5000, limitFiles: 10 });
 });
 
 test('docx_table_only：只有表格的 .docx → 每行一句「a | b」；正文段落和表格按顺序，空段落去掉，一段里的几个 run 连起来', async t => {
@@ -126,19 +126,19 @@ test('unreadable：扩展名 .docx 但不是 zip、zip 里没有 word/document.x
   assert.deepEqual((await h.ask('GET', '')).payload.data.items, []);
 });
 
-test('char_limit：已有 19,990 字时再加 11 字 → CUSTOM_RULES_CHAR_LIMIT（说明还剩 10 字），加 10 字通过（合计正好 20,000），再加 1 字也拒绝', async t => {
+test('char_limit：已有 4,990 字时再加 11 字 → CUSTOM_RULES_CHAR_LIMIT（说明合计上限 5,000 字、还剩 10 字），加 10 字通过（合计正好 5,000），再加 1 字也拒绝', async t => {
   const h = await harness();
   t.after(h.done);
-  assert.equal((await h.upload('虚构长规则.md', md('甲'.repeat(19_990)))).status, 201);
+  assert.equal((await h.upload('虚构长规则.md', md('甲'.repeat(4_990)))).status, 201);
   const over = await h.upload('多一字.md', md('乙'.repeat(11)));
   assert.deepEqual([over.status, over.payload.error.code], [409, 'CUSTOM_RULES_CHAR_LIMIT']);
-  assert.match(over.payload.error.message, /20,000 字/u);
+  assert.match(over.payload.error.message, /每人的规则合计不超过 5,000 字/u);
   assert.match(over.payload.error.message, /这份有 11 字/u);
   assert.match(over.payload.error.message, /还剩 10 字/u);
   const fits = await h.upload('正好.md', md('丙'.repeat(10)));
   assert.equal(fits.status, 201);
   const listed = (await h.ask('GET', '')).payload.data;
-  assert.equal(listed.usedChars, 20_000);
+  assert.equal(listed.usedChars, 5_000);
   assert.deepEqual(listed.items.map(item => item.title), ['虚构长规则.md', '正好.md']);
   const full = await h.upload('再一字.md', md('丁'));
   assert.deepEqual([full.status, full.payload.error.code], [409, 'CUSTOM_RULES_CHAR_LIMIT']);
@@ -160,10 +160,10 @@ test('file_limit：第 11 份 → CUSTOM_RULES_FILE_LIMIT（409），列表仍�
 test('concurrent_uploads：同一账号同时传两份，各自都在限额内、合起来超了 → 只进一份（限额按顺序核对）', async t => {
   const h = await harness();
   t.after(h.done);
-  assert.equal((await h.upload('底.md', md('甲'.repeat(10_000)))).status, 201);
-  const answers = await Promise.all([h.upload('一.md', md('乙'.repeat(6_000))), h.upload('二.md', md('丙'.repeat(6_000)))]);
+  assert.equal((await h.upload('底.md', md('甲'.repeat(2_500)))).status, 201);
+  const answers = await Promise.all([h.upload('一.md', md('乙'.repeat(1_500))), h.upload('二.md', md('丙'.repeat(1_500)))]);
   assert.deepEqual(answers.map(answer => answer.status).sort(), [201, 409]);
-  assert.equal((await h.ask('GET', '')).payload.data.usedChars, 16_000);
+  assert.equal((await h.ask('GET', '')).payload.data.usedChars, 4_000);
 });
 
 test('isolation：A 看不到、读不到、删不掉 B 的规则；forRequest 只给本人的', async t => {

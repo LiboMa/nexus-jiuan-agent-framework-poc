@@ -7,7 +7,8 @@
  *   POST …/custom-rules/<id>/delete                   删掉一份（和 /poc/kb、/poc/intake 一样走 POST）→ { id, deleted: true }
  * 只操作 session.user.id 自己的；会话、来源和 CSRF 由九安校验。这些路径不在 /platform 下，九安不替它们读请求体，这里自己读。
  * 存 <dir>/<账号>/<id>.json（文件 0600、目录 0700）：{ id, title（文件名）, format, chars, sha256, uploadedAt, text }。
- * 上限：每人 10 份、单个文件 2 MB、合计 20,000 字（按 Unicode 字符数，和九安量请求大小的办法一样）；超了在上传时就拒绝并说明。
+ * 上限：每人 10 份、单个文件 2 MB、合计 5,000 字（按 Unicode 字符数，和九安量请求大小的办法一样）；超了在上传时就拒绝并说明。
+ * 合计 5,000 字是为了一轮 AI 独立建议能在九安合同的 120 秒内跑完（review_advice@1 的 limits.timeoutMs；实测见设计文档第 9 节）。
  * .md 按 UTF-8 读（去 BOM、换行统一成 \n）；.docx 由 docx_text.py 在隔离的子进程里抽正文段落与表格行（python3 -I，只用标准库）。
  * forRequest(账号) 给人手动发起 AI 独立建议时附进请求的那一份。日志只写错误码，不写规则内容。
  */
@@ -24,7 +25,7 @@ const ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const ONE = /^\/([a-z0-9][a-z0-9-]{0,63})(\/delete)?$/u;
 const FORMATS = Object.freeze({ '.md': 'md', '.docx': 'docx' });
 const DOCX_TEXT = fileURLToPath(new URL('./docx_text.py', import.meta.url));
-export const CUSTOM_RULES_LIMITS = Object.freeze({ files: 10, chars: 20_000, bytes: 2 * 1024 * 1024 });
+export const CUSTOM_RULES_LIMITS = Object.freeze({ files: 10, chars: 5_000, bytes: 2 * 1024 * 1024 });
 export const CUSTOM_RULES_MESSAGES = Object.freeze({
   CUSTOM_RULES_FORBIDDEN: '只有管理员和分析员能用「我的规则」。',
   CUSTOM_RULES_ACCOUNT_INVALID: '这个账号的编号不能用来存「我的规则」（只认小写字母、数字和连字符）。',
@@ -33,7 +34,7 @@ export const CUSTOM_RULES_MESSAGES = Object.freeze({
   CUSTOM_RULES_EMPTY: '这个文件里没有抽出文字（空文件，或 Word 里只有图片）。',
   CUSTOM_RULES_UNREADABLE: '读不出这个文件：.docx 不是有效的 Word 文件，或 .md 不是 UTF-8 编码。',
   CUSTOM_RULES_FILE_LIMIT: '每人最多 10 份规则：先删掉一份再上传。',
-  CUSTOM_RULES_CHAR_LIMIT: '每人的规则合计不超过 20,000 字。',
+  CUSTOM_RULES_CHAR_LIMIT: '每人的规则合计不超过 5,000 字。',
   CUSTOM_RULES_NOT_FOUND: '找不到这份规则，刷新后再试。',
   CUSTOM_RULES_UNAVAILABLE: '「我的规则」暂时用不了，稍后再试。',
 });

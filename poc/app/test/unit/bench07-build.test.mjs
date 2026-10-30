@@ -353,12 +353,12 @@ function kbHelpers(root) {
 /** 「我的规则」接口的假实现（内存里一份，按账号的上传先后）。 */
 function ownRulesFake(initial = []) {
   let rules = [...initial];
-  const list = () => ({ items: rules.map(({ text, ...rest }) => rest), usedChars: rules.reduce((sum, rule) => sum + rule.chars, 0), limitChars: 20000, limitFiles: 10 });
+  const list = () => ({ items: rules.map(({ text, ...rest }) => rest), usedChars: rules.reduce((sum, rule) => sum + rule.chars, 0), limitChars: 5000, limitFiles: 10 });
   return (method, url, init) => {
     if (url.endsWith('/poc/custom-rules') && method === 'GET') return kbReply(list());
     if (url.endsWith('/poc/custom-rules') && method === 'POST') {
       const name = decodeURIComponent(init.headers['X-File-Name']);
-      if (name === '太长的规则.md') return kbReply({ code: 'CUSTOM_RULES_CHAR_LIMIT', message: '每人的规则合计不超过 20,000 字：这份有 19,500 字，现在还剩 18,800 字。' }, 409);
+      if (name === '太长的规则.md') return kbReply({ code: 'CUSTOM_RULES_CHAR_LIMIT', message: '每人的规则合计不超过 5,000 字：这份有 4,500 字，现在还剩 3,800 字。' }, 409);
       const rule = { id: `r-${rules.length + 2}`, title: name, format: name.endsWith('.docx') ? 'docx' : 'md', chars: 300, uploadedAt: '2026-10-29T09:00:00Z', text: '对公付款单金额超过 10 万元须附合同。' };
       rules.push(rule);
       return kbReply(rule, 201);
@@ -395,8 +395,11 @@ test('补丁 0005：分析员只看到「我的规则」——不问公司制度
   const root = new FakeNode('div');
   mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-reviewer', role: 'analyst' }, fetcher, pollMs: 0 });
   const { until, press, row, block, input } = kbHelpers(root);
+  // 列表回来之前和上传框的说明里写的合计上限都是 5,000 字（和外壳 custom-rules.mjs 的一致）
+  assert.match(root.textContent, /已用 — \/ 5,000 字/);
+  assert.match(block('own').textContent, /每人最多 10 份、合计 5,000 字/);
   await until(() => root.textContent.includes('房租补充要求.md'));
-  assert.match(root.textContent, /已用 1,200 \/ 20,000 字/);
+  assert.match(root.textContent, /已用 1,200 \/ 5,000 字/);
   assert.deepEqual(calls.filter(call => call[1].includes('/poc/kb/')), [], '分析员连 /poc/kb/mode 都不问');
   assert.equal(block('company'), undefined, '没有「公司制度」块');
   assert.ok(block('own'), '有「我的规则」块');
@@ -412,27 +415,27 @@ test('补丁 0005：分析员只看到「我的规则」——不问公司制度
   await file.listeners.change[0]();
   assert.equal(calls.length, before);
   assert.match(root.textContent, /只收 Markdown（\.md）或 Word（\.docx）文件/);
-  // 服务端拒绝（合计超过 20,000 字）：原样显示它的中文提示，「已用」不变
+  // 服务端拒绝（合计超过 5,000 字）：原样显示它的中文提示，「已用」不变
   file.files = [new File(['很长'], '太长的规则.md', { type: 'text/markdown' })];
   await file.listeners.change[0]();
-  await until(() => /这份有 19,500 字，现在还剩 18,800 字/.test(root.textContent));
-  assert.match(root.textContent, /已用 1,200 \/ 20,000 字/);
+  await until(() => /这份有 4,500 字，现在还剩 3,800 字/.test(root.textContent));
+  assert.match(root.textContent, /已用 1,200 \/ 5,000 字/);
   // 上传成功：显示转出来的文字，列表和「已用」刷新
   file.files = [new File(['对公付款单金额超过 10 万元须附合同。'], '合同要求.md', { type: 'text/markdown' })];
   await file.listeners.change[0]();
-  await until(() => /已用 1,500 \/ 20,000 字/.test(root.textContent));
+  await until(() => /已用 1,500 \/ 5,000 字/.test(root.textContent));
   const upload = calls.findLast(call => call[0] === 'POST' && call[1].endsWith('/poc/custom-rules'));
   assert.deepEqual([upload[2]['X-File-Name'], upload[2]['X-CSRF-Token']], [encodeURIComponent('合同要求.md'), 'tok']);
   assert.equal(upload[3], file.files[0], '请求体是文件原文');
   assert.match(root.textContent, /已上传「合同要求\.md」：300 字[\s\S]*对公付款单金额超过 10 万元须附合同。/, '上传成功后显示转出来的文字');
-  assert.doesNotMatch(root.textContent, /还剩 18,800 字/, '上一次的错误提示收起');
+  assert.doesNotMatch(root.textContent, /还剩 3,800 字/, '上一次的错误提示收起');
   // 查看全文
   await press('查看全文', row('房租补充要求.md'));
   await until(() => root.textContent.includes('须附出租方的房产证明'));
   assert.ok(calls.some(call => call[0] === 'GET' && call[1].endsWith('/poc/custom-rules/r-1')));
   // 删除：发 POST …/r-1/delete，列表和「已用」跟着变
   await press('删除', row('房租补充要求.md'));
-  await until(() => /已用 300 \/ 20,000 字/.test(root.textContent));
+  await until(() => /已用 300 \/ 5,000 字/.test(root.textContent));
   const removal = calls.find(call => call[0] === 'POST' && call[1].endsWith('/poc/custom-rules/r-1/delete'));
   assert.equal(removal[2]['X-CSRF-Token'], 'tok');
   assert.equal(row('房租补充要求.md'), undefined);
@@ -452,7 +455,7 @@ test('补丁 0005：S3 Vectors 方式、文档管家还没在「Agent 接入」�
   const root = new FakeNode('div');
   mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-admin', role: 'admin' }, fetcher, pollMs: 0 });
   const { until, block } = kbHelpers(root);
-  await until(() => root.textContent.includes('先在『Agent 接入』页启用知识库文档管家') && root.textContent.includes('已用 0 / 20,000 字'));
+  await until(() => root.textContent.includes('先在『Agent 接入』页启用知识库文档管家') && root.textContent.includes('已用 0 / 5,000 字'));
   for (let index = 0; index < 10; index += 1) await settle();
   assert.deepEqual(calls.sort(), ['GET /api/analysis/v1/poc/custom-rules', 'GET /api/analysis/v1/poc/kb/mode']);
   const company = block('company');
@@ -510,7 +513,7 @@ test('补丁 0005：S3 Vectors 方式（ready=true）：上传带制度标识（
   const { until, buttons, press, row: anyRow, block, input } = kbHelpers(root);
   // 制度清单里的一行（上传记录里也有制度标识，所以限定在清单那张卡片里找）
   const row = text => (block('sources') ? anyRow(text, block('sources')) : undefined);
-  await until(() => Boolean(row('old-policy')) && root.textContent.includes('已用 0 / 20,000 字'));
+  await until(() => Boolean(row('old-policy')) && root.textContent.includes('已用 0 / 5,000 字'));
   // 清单：标题、标识、版本、条数、状态、时间
   assert.deepEqual(row('sample-matrix').all(node => node.tagName === 'TD').slice(0, 5).map(node => node.textContent), ['仿真办法', 'sample-matrix', 'V3', '18', '有效']);
   assert.match(row('old-policy').textContent, /已下线/);
@@ -672,7 +675,7 @@ test('补丁 0005：PG 方式的「公司制度」也经知识库 Agent，和 S3
   mountKbPage({ root, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher(calls, company.handle, ownRulesFake()), pollMs: 0 });
   const { until, buttons, press, row: anyRow, block, input } = kbHelpers(root);
   const row = text => (block('sources') ? anyRow(text, block('sources')) : undefined);
-  await until(() => Boolean(row('fin-approval')) && root.textContent.includes('已用 0 / 20,000 字'));
+  await until(() => Boolean(row('fin-approval')) && root.textContent.includes('已用 0 / 5,000 字'));
   assert.deepEqual(row('fin-approval').all(node => node.tagName === 'TD').slice(0, 5).map(node => node.textContent), ['财务审批制度', 'fin-approval', 'V4.0', '118', '有效']);
   const area = block('company');
   assert.match(area.textContent, /PostgreSQL[\s\S]*「知识库 Agent」经 A2A 读写/);
@@ -762,7 +765,7 @@ test('补丁 0005（not_configured_message）：没配知识库 Agent 的发布�
     mountKbPage({ root, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher(calls, companyFake({ mode }).handle, ownRulesFake()), pollMs: 0 });
     const { until, block } = kbHelpers(root);
     const said = () => block('company').textContent.replace('公司制度', '');
-    await until(() => said() === expected && root.textContent.includes('已用 0 / 20,000 字'));
+    await until(() => said() === expected && root.textContent.includes('已用 0 / 5,000 字'));
     for (let index = 0; index < 10; index += 1) await settle();
     assert.deepEqual(calls.map(call => `${call[0]} ${call[1]}`).sort(), ['GET /api/analysis/v1/poc/custom-rules', 'GET /api/analysis/v1/poc/kb/mode'], JSON.stringify(mode));
     assert.equal(block('company').all(node => ['BUTTON', 'INPUT', 'TABLE'].includes(node.tagName)).length, 0, '整块只有那句提示');

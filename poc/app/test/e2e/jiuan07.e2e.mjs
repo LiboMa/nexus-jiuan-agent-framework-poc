@@ -10,8 +10,8 @@
  *   规则编号按方式到知识库里逐个核对（pg：经 SSM 查 nexus-pgvector 的 approval_rules；s3vectors：本机凭证对规则索引 GetVectors，只认有效的）；
  *   这几轮都没附自定义规则（外壳日志里没有 POC_CUSTOM_RULES）→ pg 方式：检索日志 kb_search_log 里有审核 Agent 审单时的检索
  * → 调用记录与「Agent 接入」页的测试 → 计入两档结论 → 没有回写 → 模拟来单一张，等九安同步、读详情后自动发起并完成
- * → 自定义规则：poc-reviewer 上传一份虚构的补充要求，手动发起 DGZF-F07-001 不通过、删掉后回到通过；再带接近 20,000 字的虚构规则发起一次，
- *   Nexus 不拒收；用例结束时不留规则 → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
+ * → 自定义规则：poc-reviewer 上传一份虚构的补充要求，手动发起 DGZF-F07-001 不通过、删掉后回到通过；再带接近每人上限 5,000 字的虚构规则发起
+ *   一次，Nexus 不拒收、在九安合同的 120 秒内跑完（记下这一轮的用时）；用例结束时不留规则 → 期间九安没有连 Nexus 以外的地址、没有调汇联易的审批写入。
  * 真实调用 Nexus：八次 AI 独立建议（四张单、模拟来单、自定义规则三轮），每次约 0.1–0.3 美元；另有「Agent 接入」页的三次测试和几次知识库 Agent 的调用。
  * 制度原文只在本机（不进仓库）；「规则库 › 制度知识库」页不截图（上面有真实制度的标题和检索出的原文）。自定义规则的文字都是虚构的。
  */
@@ -50,9 +50,10 @@ const ADVICE_TIMEOUT = 5 * 60_000;
 // 登录的账号：管理员，「我的规则」按它存，手动发起时附它的规则（外壳日志 POC_CUSTOM_RULES <单据> poc-reviewer <字数>）
 const OWNER = 'poc-reviewer';
 const CUSTOM_NOTE = `（含 ${OWNER} 的自定义规则）`;
-// 「我的规则」用的虚构规则（不是真实制度）：一份让 DGZF-F07-001（九安房租，合同、发票齐）不通过；一份接近每人合计 20,000 字的上限，只用来量请求大小
+// 「我的规则」用的虚构规则（不是真实制度）：一份让 DGZF-F07-001（九安房租，合同、发票齐）不通过；一份接近每人合计 5,000 字的上限，只用来量请求大小和用时
 const RENT_RULE = Object.freeze({ name: '九安房租补充要求.md', text: '九安板块的房租类对公付款，须附出租方的房产证明；没有的不予通过。' });
-const NEAR_LIMIT_CHARS = 19_900;
+const NEAR_LIMIT_CHARS = 4_900;
+const OWN_RULES_LIMIT = 5_000;
 const NEAR_LIMIT_RULE = Object.freeze({ name: '虚构长规则-量请求大小.md', text: (() => {
   const lines = [];
   for (let n = 1, size = 0; size < NEAR_LIMIT_CHARS; n += 1) {
@@ -426,7 +427,7 @@ test('模拟来单：管理员来一张新单，九安下一轮同步进单据�
 });
 
 // 放在两档结论、模拟来单之后：这几轮改了 DGZF-F07-001 的当前建议，最后一轮（接近上限）的结论不核对
-test('自定义规则：poc-reviewer 上传「九安房租补充要求.md」后在单据页手动发起 DGZF-F07-001——不通过，备注写明含它的自定义规则，依据里有「自定义：」那一条，外壳记了 POC_CUSTOM_RULES；删掉后再发起回到通过、不提自定义规则；再带接近 20,000 字的虚构规则发起一次，Nexus 不拒收；用例结束时不留规则', { timeout: 3 * ADVICE_TIMEOUT + 10 * 60_000 }, async () => {
+test('自定义规则：poc-reviewer 上传「九安房租补充要求.md」后在单据页手动发起 DGZF-F07-001——不通过，备注写明含它的自定义规则，依据里有「自定义：」那一条，外壳记了 POC_CUSTOM_RULES；删掉后再发起回到通过、不提自定义规则；再带接近 5,000 字（每人上限）的虚构规则发起一次，Nexus 不拒收、120 秒内跑完，记下用时；用例结束时不留规则', { timeout: 3 * ADVICE_TIMEOUT + 10 * 60_000 }, async () => {
   assert.ok(publication, '前面的用例没找到可用的审核 Agent');
   const number = 'DGZF-F07-001';
   const logged = async id => journalLines(`POC_CUSTOM_RULES ${id} ${OWNER} `);   // 外壳的一行：POC_CUSTOM_RULES <单据> <账号> <规则字数>
@@ -462,17 +463,24 @@ test('自定义规则：poc-reviewer 上传「九安房租补充要求.md」后�
     assert.doesNotMatch(plain.advice.note, /自定义规则/, '没有规则时备注不该提自定义规则');
     assert.equal((await logged(id)).length, linesBefore, '删掉规则后这一轮不该再附自定义规则');
 
-    // 3. 接近每人 20,000 字的上限（虚构的填充文字）：请求整份送到 Nexus，不被拒收（设计第 5 节风险 4）
+    // 3. 接近每人 5,000 字的上限（虚构的填充文字）：请求整份送到 Nexus，不被拒收，并在九安合同的 120 秒内跑完（设计第 5 节风险 4、第 9 节）。
+    // 上限为什么是 5,000 字见设计第 9 节（更长的规则一轮会超过 120 秒）；这里记下这一轮的用时
     const long = await uploadOwnRule(NEAR_LIMIT_RULE);
     const { usedChars, limitChars } = await ownRules();
+    assert.equal(limitChars, OWN_RULES_LIMIT, `测试台的「我的规则」合计上限应是 ${OWN_RULES_LIMIT} 字（部署的外壳是不是旧的？）`);
     assert.ok(usedChars === long.chars && limitChars - usedChars <= 200, `合计应接近上限：${usedChars} / ${limitChars}`);
-    // 只看 Nexus 收没收下这份请求：Agent 答了（completed）或婉拒（declined）都算收下；failed（如 AI_REQUEST_INVALID、请求过长、外壳的
-    // AGENT_REQUEST_TOO_LARGE）带着错误码失败
+    // 只看 Nexus 收没收下、按时答完：Agent 答了（completed）或婉拒（declined）都算；failed 带着错误码失败（如 AI_REQUEST_INVALID、请求过长、
+    // 外壳的 AGENT_REQUEST_TOO_LARGE；超过 120 秒被九安取消是 AI_UNAVAILABLE）
+    const clock = Date.now();
     const near = await runAdvice(number);
+    const waited = Math.round((Date.now() - clock) / 1000);
+    const { startedAt: began, finishedAt: ended } = near.advice;
+    const took = began && ended ? `${((Date.parse(ended) - Date.parse(began)) / 1000).toFixed(1)} 秒（九安记录的开始到结束）` : '九安没记开始、结束时间';
+    console.log(`接近上限的一轮：自定义规则 ${long.chars} 字，用时 ${took}，测试从发起到看到结果 ${waited} 秒（含每 5 秒一次的轮询）；${
+      near.advice.status === 'declined' ? `Agent 婉拒：${near.advice.declinedReason}` : near.advice.status === 'completed' ? `结论 ${near.advice.result}` : `${near.advice.status} ${near.advice.errorCode ?? ''}`}`);
     assert.ok(['completed', 'declined'].includes(near.advice.status),
-      `带 ${long.chars} 字自定义规则的这一轮没被收下（Nexus 可能拒收了请求的大小）：${near.advice.status} ${near.advice.errorCode ?? ''}`);
+      `带 ${long.chars} 字自定义规则的这一轮没有按时答完（Nexus 拒收了请求，或超过九安合同的 120 秒被取消）：${near.advice.status} ${near.advice.errorCode ?? ''}，用时 ${took}`);
     assert.ok((await logged(id)).includes(`POC_CUSTOM_RULES ${id} ${OWNER} ${long.chars}`), `外壳日志里应有 POC_CUSTOM_RULES ${id} ${OWNER} ${long.chars}（整份规则附上了）`);
-    console.log(`接近上限的一轮：自定义规则 ${long.chars} 字，${near.advice.status === 'declined' ? `Agent 婉拒：${near.advice.declinedReason}` : `结论 ${near.advice.result}`}`);
     await clearOwnRules();
   } finally {
     // 中途失败也不留规则
