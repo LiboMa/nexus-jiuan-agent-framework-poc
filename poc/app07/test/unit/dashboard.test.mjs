@@ -70,17 +70,21 @@ const reviewsOf = () => [
   review('d1', 2, 'adopt', 'poc-checker', '2026-10-30T03:10:00.000Z'),
   review('d1', 2, 'override', 'poc-reviewer', '2026-10-30T03:20:00.000Z'),
 ];
-const HISTORY = { nextId: 7, items: [
+const HISTORY = { nextId: 8, items: [
   { id: 1, sourceId: 'sample-matrix', status: 'ingested', rulesTotal: 18, finishedAt: '2026-10-20T01:00:00.000Z' },
   { id: 2, sourceId: 'sample-matrix', status: 'ingested', rulesTotal: 20, finishedAt: '2026-10-21T01:00:00.000Z' },
   { id: 3, sourceId: 'fin-rules', status: 'skipped', rulesTotal: 7, finishedAt: '2026-10-22T01:00:00.000Z' },
   { id: 4, sourceId: 'old-policy', status: 'ingested', rulesTotal: 5, finishedAt: '2026-10-23T01:00:00.000Z', removedAt: '2026-10-24T00:00:00.000Z' },
   { id: 5, sourceId: 'broken', status: 'ingested', rulesTotal: 3, finishedAt: '2026-10-19T01:00:00.000Z' },
   { id: 6, sourceId: 'broken', status: 'failed', rulesTotal: null, finishedAt: '2026-10-25T01:00:00.000Z' },
+  { id: 7, sourceId: 'sample-matrix', status: 'ingesting', rulesTotal: null, finishedAt: null },
 ] };
+const RULES = { 'poc-reviewer': { files: 2, usedChars: 1200 }, 'poc-checker': { files: 1, usedChars: 300 } };
+const LONG_TITLE = `九安房租补充要求${'很长的标题'.repeat(15)}`;
+const cap = text => [...text].slice(0, 60).join('');
 
 async function harness({ documents = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'], rounds = roundsOf(), reviews = reviewsOf(), history = HISTORY,
-  configured = true, ready = true } = {}) {
+  configured = true, ready = true, rules = RULES, accounts = ACCOUNTS } = {}) {
   const docs = documents.map(id => doc(id, id === 'd7' ? 'v2' : 'v1'));
   const states = new Map(Object.entries(rounds).filter(([id]) => documents.includes(id)).map(([id, state]) => [keyOf(doc(id)), { revision: 1, version: 1, history: [], ...state }]));
   const dir = await mkdtemp(path.join(tmpdir(), 'dashboard-'));
@@ -91,18 +95,17 @@ async function harness({ documents = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 
     request(op) { agentCalls.push(op); throw new Error(`工作台不该调 ${op}`); } };
   const kb = createKbStewardRoutes({ mode: 's3vectors', client, uploadsDir: dir, log: line => logs.push(line) });
   const state = { clock: NOW, reviews, broken: null, brokenRounds: null };
-  const RULES = { 'poc-reviewer': { files: 2, usedChars: 1200 }, 'poc-checker': { files: 1, usedChars: 300 } };
   const customRules = {
     async list(accountId) {
       ruleCalls.push(accountId);
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/u.test(accountId)) throw Object.assign(new Error('账号编号不合格'), { code: 'CUSTOM_RULES_ACCOUNT_INVALID' });
-      const mine = RULES[accountId] ?? { files: 0, usedChars: 0 };
+      const mine = rules[accountId] ?? { files: 0, usedChars: 0 };
       return { items: Array.from({ length: mine.files }, (_, index) => ({ id: `r${index}`, title: `规则${index}.md`, format: 'md', chars: 1, uploadedAt: '' })),
         usedChars: mine.usedChars, limitChars: 5000, limitFiles: 10 };
     },
   };
   const fakeReviews = { async all(options = {}) { if (state.broken) throw state.broken; assert.deepEqual(options, {}, '待复核要全部复核：不带 since'); return [...state.reviews]; } };
-  const dashboard = createDashboard({ tenantId: 't1', agentTaskKey, reviews: fakeReviews, customRules, kb, accounts: () => ACCOUNTS, now: () => state.clock,
+  const dashboard = createDashboard({ tenantId: 't1', agentTaskKey, reviews: fakeReviews, customRules, kb, accounts: () => accounts, now: () => state.clock,
     readState: async key => { if (state.brokenRounds) throw state.brokenRounds; return states.get(key) ?? null; },
     listDocuments: async () => { listCalls.push(1); return docs.map(item => ({ ...item })); } });
   const routes = dashboardRoutes({ dashboard, log: line => logs.push(line) });
@@ -147,7 +150,7 @@ test('窗口按上海时间：today 是今天 0 点到现在，14d 是今天和�
 });
 
 test('Review Focus 4：没有任何数据时全为 0 / null，结构完整；每天一项照样给', async t => {
-  const h = await harness({ documents: [], reviews: [], history: null, configured: false });
+  const h = await harness({ documents: [], reviews: [], history: null, configured: false, rules: {} });
   t.after(h.done);
   for (const [window, dates] of [['today', ['2026-10-30']], ['14d', days('2026-10-17', 14)], ['month', days('2026-10-01', 30)]]) {
     const data = await h.read(window);
@@ -156,10 +159,10 @@ test('Review Focus 4：没有任何数据时全为 0 / null，结构完整；每
       pendingReview: { count: 0, failCount: 0 },
       advice: { completed: 0, pass: 0, fail: 0, overrides: 0, passRate: null, avgDurationMs: null, maxDurationMs: null },
       daily: zeros(dates), topBasis: [], overrideRate: dates.map(date => ({ date, reviews: 0, overrides: 0 })),
-      reviewers: [{ account: 'poc-checker', name: '复核人（虚构）', reviews: 0, overrides: 0, customRules: 1 },
-        { account: 'poc-reviewer', name: '审核员（虚构）', reviews: 0, overrides: 0, customRules: 2 }],
+      reviewers: [{ account: 'poc-checker', name: '复核人（虚构）', reviews: 0, overrides: 0, customRules: 0 },
+        { account: 'poc-reviewer', name: '审核员（虚构）', reviews: 0, overrides: 0, customRules: 0 }],
       knowledge: { mode: 's3vectors', configured: false, ready: false, sources: 0, rules: 0, lastIngestAt: null },
-      topRules: [], myRules: { files: 2, usedChars: 1200, limitChars: 5000 },
+      topRules: [], myRules: { files: 0, usedChars: 0, limitChars: 5000 },
     }, window);
   }
   assert.deepEqual(h.agentCalls, [], '不调 Agent');
@@ -194,6 +197,29 @@ test('advice 和 daily：完成的轮次按 finishedAt 落在窗口里（上海�
   assert.deepEqual(month.daily[0], { date: '2026-10-01', pass: 1, fail: 0, running: 0 });
   assert.ok(month.advice.passRate > 0 && month.advice.passRate < 1, 'passRate 是 0–1 的小数，不是百分数');
   assert.deepEqual(h.agentCalls, []);
+});
+
+test('时间缺了或读不出的轮次：没有 startedAt 的照样算完成、不算用时；finishedAt 读不出的不算完成；finishedAt 早于 startedAt 的不算用时；不出 NaN、不抛错', async t => {
+  const rounds = {
+    e1: { current: done(1, 'pass', undefined, '2026-10-30T01:00:00.000Z', [rule('C05-2.3')]) },
+    e2: { current: done(1, 'fail', '2026-10-30T01:00:00.000Z', 'not-a-time', [rule('C07-7.1')]) },
+    e3: { current: round(1, { status: 'running', startedAt: 'garbage' }) },
+    e4: { current: done(1, 'pass', '2026-10-30T00:59:30.000Z', '2026-10-30T01:00:00.000Z') },
+    e5: { current: done(1, 'fail', '2026-10-30T02:00:00.000Z', '2026-10-30T01:59:00.000Z') },
+  };
+  const h = await harness({ documents: ['e1', 'e2', 'e3', 'e4', 'e5'], rounds, reviews: [] });
+  t.after(h.done);
+  const data = await h.dashboard.read({ window: 'today', user: ADMIN });
+  const numbers = [];
+  (function walk(value) { if (typeof value === 'number') numbers.push(value); else if (value && typeof value === 'object') Object.values(value).forEach(walk); })(data);
+  assert.ok(numbers.every(Number.isFinite), '没有 NaN、Infinity');
+  assert.deepEqual(data.advice, { completed: 3, pass: 2, fail: 1, overrides: 0, passRate: 2 / 3, avgDurationMs: 30_000, maxDurationMs: 30_000 });
+  assert.deepEqual(data.daily, [{ date: '2026-10-30', pass: 2, fail: 1, running: 0 }]);
+  assert.deepEqual(data.topRules, [{ ruleId: 'C05-2.3', count: 1 }], 'finishedAt 读不出的那轮不进来');
+  assert.deepEqual(data.pendingReview, { count: 4, failCount: 2 }, '待复核看状态，不看时间');
+  const only = await harness({ documents: ['e1'], rounds, reviews: [] });
+  t.after(only.done);
+  assert.deepEqual((await only.read('today')).advice, { completed: 1, pass: 1, fail: 0, overrides: 0, passRate: 1, avgDurationMs: null, maxDurationMs: null });
 });
 
 test('pendingReview：不按窗口，按单据现在的状态（reviews.mjs 的 stateOf）——pending 和 outdated 的单数，failCount 是其中当前一轮 fail 的', async t => {
@@ -251,6 +277,13 @@ test('reviewers：每个人每张单每一轮只算自己的最后一次；行 =
   assert.deepEqual(policy.reviewers, []);
   assert.deepEqual(policy.myRules, { files: 0, usedChars: 0, limitChars: 5000 }, '规则发布复核人没有「我的规则」');
   assert.deepEqual(policy.pendingReview, { count: 3, failCount: 2 });
+  // 设置里停用的账号（enabled: false）：窗口里没有复核就不给行；有复核的照样给，名字取设置里的
+  const disabled = await harness({ accounts: [...ACCOUNTS, { id: 'poc-old', name: '停用的人（虚构）', role: 'analyst', enabled: false },
+    { id: 'poc-gone', name: '已离开的人（虚构）', role: 'admin', enabled: false }] });
+  t.after(disabled.done);
+  assert.deepEqual((await disabled.read('today')).reviewers.map(row => row.account), ['poc-checker', 'poc-reviewer']);
+  assert.deepEqual((await disabled.read('month')).reviewers.map(row => [row.account, row.name, row.reviews]),
+    [['poc-reviewer', '审核员（虚构）', 3], ['poc-checker', '复核人（虚构）', 2], ['poc-gone', '已离开的人（虚构）', 1]]);
   // 复核人的编号存不了「我的规则」（不合格的账号）：份数记 0，不报错
   const odd = await harness({ reviews: [review('d9', 1, 'adopt', 'Odd Actor', '2026-10-30T03:30:00.000Z')] });
   t.after(odd.done);
@@ -271,6 +304,21 @@ test('topBasis：不通过的那几轮的依据，按规则编号 / 我的规则
   ]);
 });
 
+test('长的依据：按完整的 ref / 标题归并，只截显示的标签（60 字）；截完一样的两组各算各的，顺序固定', async t => {
+  const rounds = {
+    f1: { current: done(1, 'fail', '2026-10-30T01:00:00.000Z', '2026-10-30T01:00:10.000Z', [rule(`${LONG}甲`), rule(`${LONG}乙`), rule(`自定义：${LONG_TITLE}一`)]) },
+    f2: { current: done(1, 'fail', '2026-10-30T02:00:00.000Z', '2026-10-30T02:00:10.000Z', [rule(`${LONG}乙`), rule(`自定义：${LONG_TITLE}二`)]) },
+  };
+  const h = await harness({ documents: ['f1', 'f2'], rounds, reviews: [] });
+  t.after(h.done);
+  assert.deepEqual((await h.read('today')).topBasis, [
+    { kind: 'rule', label: cap(LONG), count: 2 },
+    { kind: 'custom', label: cap(LONG_TITLE), count: 1 }, { kind: 'custom', label: cap(LONG_TITLE), count: 1 },
+    { kind: 'rule', label: cap(LONG), count: 1 },
+  ]);
+  assert.equal([...cap(LONG_TITLE)].length, 60);
+});
+
 test('topRules：窗口里完成的全部轮次引用的规则编号（不含我的规则、认不出编号的），一轮里同一编号只算一次，前 5；同数按编号', async t => {
   const h = await harness();
   t.after(h.done);
@@ -287,38 +335,39 @@ test('basisGroup：规则编号是 ref 开头的知识库编号（C<章号>-<序
   for (const [ref, id] of [['C05-2.3 费控报销 · 九安 · 2 万以下', 'C05-2.3'], ['C05-2.3', 'C05-2.3'], ['  C05-2.3  ', 'C05-2.3'], ['C07-7.11 虚构', 'C07-7.11'],
     ['C05-2.3：费控报销', 'C05-2.3'], ['C05-2.3（升级）', 'C05-2.3'], ['C05-2.3. 句末有点', 'C05-2.3'], ['C05-NOTE 付款审批形式', 'C05-NOTE'], ['G-02 适用范围', 'G-02'],
     ['C01-1', 'C01-1'], ['C12-10.2.1 三级序号', 'C12-10.2.1']]) {
-    assert.deepEqual(ruleOf(ref), { kind: 'rule', label: id, ruleId: id }, ref);
+    assert.deepEqual(ruleOf(ref), { kind: 'rule', key: id, label: id, ruleId: id }, ref);
   }
   for (const ref of ['C05-2.3a 粘着字母', 'C5-2.3 章号一位', 'c05-2.3 小写', 'R-01 虚构规则', 'C05-2.3-1', 'KA-C01', '费控报销 C05-2.3', 'C05-', 'G-2']) {
-    assert.deepEqual(ruleOf(ref), { kind: 'rule', label: ref.trim() }, ref);
+    assert.deepEqual(ruleOf(ref), { kind: 'rule', key: ref.trim(), label: ref.trim() }, ref);
   }
-  assert.deepEqual(ruleOf(`  ${LONG}  `), { kind: 'rule', label: [...LONG].slice(0, 60).join('') });
+  assert.deepEqual(ruleOf(`  ${LONG}  `), { kind: 'rule', key: LONG, label: cap(LONG) }, '按完整的 ref 归并，只截显示的标签');
   assert.equal([...ruleOf(LONG).label].length, 60);
-  assert.deepEqual(ruleOf('自定义：九安房租补充要求.md'), { kind: 'custom', label: '九安房租补充要求.md' });
-  assert.deepEqual(ruleOf(' 自定义：  标题 '), { kind: 'custom', label: '标题' });
+  assert.deepEqual(ruleOf('自定义：九安房租补充要求.md'), { kind: 'custom', key: '九安房租补充要求.md', label: '九安房租补充要求.md' });
+  assert.deepEqual(ruleOf(' 自定义：  标题 '), { kind: 'custom', key: '标题', label: '标题' });
+  assert.deepEqual(ruleOf(`自定义：${LONG_TITLE}`), { kind: 'custom', key: LONG_TITLE, label: cap(LONG_TITLE) }, '我的规则的标题也最多 60 字');
   assert.equal(ruleOf('自定义：  '), null, '没有标题');
   assert.equal(ruleOf(''), null);
-  assert.deepEqual(basisGroup({ kind: 'field', ref: ' 收款方 ' }), { kind: 'field', label: '收款方' });
-  assert.deepEqual(basisGroup({ kind: 'evidence', ref: 'file-001', page: 2 }), { kind: 'evidence', label: 'file-001' });
-  assert.deepEqual(basisGroup({ kind: 'field', ref: '自定义：不是规则' }), { kind: 'field', label: '自定义：不是规则' }, '只有 rule 才看「自定义：」');
+  assert.deepEqual(basisGroup({ kind: 'field', ref: ' 收款方 ' }), { kind: 'field', key: '收款方', label: '收款方' });
+  assert.deepEqual(basisGroup({ kind: 'evidence', ref: 'file-001', page: 2 }), { kind: 'evidence', key: 'file-001', label: 'file-001' });
+  assert.deepEqual(basisGroup({ kind: 'field', ref: '自定义：不是规则' }), { kind: 'field', key: '自定义：不是规则', label: '自定义：不是规则' }, '只有 rule 才看「自定义：」');
   for (const item of [{ kind: 'field', ref: '' }, { kind: null, ref: 'x' }, { kind: 'other', ref: 'x' }]) assert.equal(basisGroup(item), null, JSON.stringify(item));
 });
 
-test('knowledge：方式、配置、就绪来自 kb.status()（不调 Agent）；每个制度标识看最近一次上传：ingested / skipped 且没删的算一份，规则条数取它的 rulesTotal', async t => {
+test('knowledge：方式、配置、就绪来自 kb.status()（不调 Agent）；每个制度标识取最近一次成功（ingested / skipped）的入库，没删的算一份，规则条数取它的 rulesTotal', async t => {
   const h = await harness();
   t.after(h.done);
-  // sample-matrix 最近一次 20 条；fin-rules 7 条；old-policy 删了；broken 最近一次失败了
-  assert.deepEqual((await h.read('today')).knowledge, { mode: 's3vectors', configured: true, ready: true, sources: 2, rules: 27, lastIngestAt: '2026-10-23T01:00:00.000Z' });
+  // sample-matrix 最近一次成功的是 20 条（之后那条还在入库）；fin-rules 7 条；broken 最近一次失败了，库里还是之前那份 3 条；old-policy 删了
+  assert.deepEqual((await h.read('today')).knowledge, { mode: 's3vectors', configured: true, ready: true, sources: 3, rules: 30, lastIngestAt: '2026-10-23T01:00:00.000Z' });
   assert.deepEqual(h.agentCalls, [], '不调 describe / request');
   assert.ok(h.readyCalls.length >= 1, '就绪只看「Agent 接入」页有没有钥匙');
   // 删掉之后又传了一次：又算上
-  const again = await harness({ history: { nextId: 8, items: [...HISTORY.items, { id: 7, sourceId: 'old-policy', status: 'ingested', rulesTotal: 6, finishedAt: '2026-10-26T01:00:00.000Z' }] }, ready: false });
+  const again = await harness({ history: { nextId: 9, items: [...HISTORY.items, { id: 8, sourceId: 'old-policy', status: 'ingested', rulesTotal: 6, finishedAt: '2026-10-26T01:00:00.000Z' }] }, ready: false });
   t.after(again.done);
-  assert.deepEqual((await again.read('today')).knowledge, { mode: 's3vectors', configured: true, ready: false, sources: 3, rules: 33, lastIngestAt: '2026-10-26T01:00:00.000Z' });
+  assert.deepEqual((await again.read('today')).knowledge, { mode: 's3vectors', configured: true, ready: false, sources: 4, rules: 36, lastIngestAt: '2026-10-26T01:00:00.000Z' });
   assert.deepEqual(again.agentCalls, []);
   // kb.status() / historyList() 本身
   assert.deepEqual(await h.kb.status(), { mode: 's3vectors', configured: true, ready: true });
-  assert.deepEqual((await h.kb.historyList()).map(item => item.id), [6, 5, 4, 3, 2, 1], '新的在前');
+  assert.deepEqual((await h.kb.historyList()).map(item => item.id), [7, 6, 5, 4, 3, 2, 1], '新的在前');
 });
 
 test('角色：管理员、分析员、规则发布复核人能看；别的角色、没登录 403；window 只认 today / 14d / month，别的 400；别的路径和方法交还九安', async t => {
@@ -334,8 +383,8 @@ test('角色：管理员、分析员、规则发布复核人能看；别的角�
   assert.equal(other, false);
 });
 
-test('缓存：按（窗口、角色、账号）缓存 60 秒，时钟可注入；到 60 秒重新算', async t => {
-  const h = await harness();
+test('缓存：按（窗口、角色、账号）缓存 60 秒，时钟可注入；到 60 秒重新算；同一角色的两个账号各算各的', async t => {
+  const h = await harness({ accounts: [...ACCOUNTS, { id: 'poc-admin2', name: '管理员二（虚构）', role: 'admin' }], rules: { ...RULES, 'poc-admin2': { files: 3, usedChars: 900 } } });
   t.after(h.done);
   const first = await h.read('today');
   assert.equal(h.listCalls.length, 1);
@@ -352,6 +401,14 @@ test('缓存：按（窗口、角色、账号）缓存 60 秒，时钟可注入�
   assert.equal(fresh.advice.overrides, 2);
   assert.equal(fresh.to, new Date(NOW + 60_000).toISOString());
   assert.equal(h.listCalls.length, 4);
+  // 另一个管理员：同一窗口、同一角色，也自己算；之后两人各拿各的缓存，不串
+  const admin2 = { id: 'poc-admin2', role: 'admin' };
+  assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: 5000 });
+  assert.equal(h.listCalls.length, 5);
+  h.state.clock += 30_000;
+  assert.deepEqual((await h.read('today')).myRules, { files: 2, usedChars: 1200, limitChars: 5000 });
+  assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: 5000 });
+  assert.equal(h.listCalls.length, 5, '两人都是缓存');
 });
 
 test('读轮次或复核失败：503 DASHBOARD_UNAVAILABLE（中文），日志一行 POC_DASHBOARD_FAILED <错误码或错误名>，不记消息；失败不缓存', async t => {

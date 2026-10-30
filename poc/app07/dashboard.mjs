@@ -12,16 +12,19 @@
  *             avgDurationMs（四舍五入到毫秒）、maxDurationMs 取完成的轮次的 finishedAt − startedAt，没有时 null；
  *             overrides：窗口里建的复核，每张单每一轮只取最后一次（不管是谁），其中改判的数。
  *   overrideRate[] 同一批复核（每张单每一轮的最后一次），按这次复核的 created_at 落在上海哪一天：{ date, reviews, overrides }。
- *   reviewers[]    每个人每张单每一轮只算自己的最后一次；行 = 设置里的管理员、分析员账号 + 窗口里复核过的人，按复核数从多到少、再按账号；
- *                  name 取设置里的名字，没有就用账号；customRules 是这个账号「我的规则」的份数。分析员只有自己一行，规则发布复核人没有行。
+ *   reviewers[]    每个人每张单每一轮只算自己的最后一次；行 = 设置里的管理员、分析员账号（停用的 enabled: false 不算）+ 窗口里复核过的人
+ *                  （停用的账号有复核也给行），按复核数从多到少、再按账号；name 取设置里的名字，没有就用账号；customRules 是这个账号「我的规则」的份数。
+ *                  分析员只有自己一行，规则发布复核人没有行。
  *   topBasis[]     窗口里完成、结论 fail 的轮次的依据，前 6；topRules[]：窗口里完成的全部轮次引用的公司制度规则编号，前 5（不含我的规则、认不出编号的）。
- *                  一轮里同一项只算一次；同数按标签（码位）从小到大。归并（basisGroup）：
- *                  kind rule、ref 以「自定义：」开头 → custom，标签是前缀后面的标题（去首尾空白；写法见 audit-agent/prompt.yaml 的自定义规则一段）；
+ *                  一轮里同一项只算一次；同数按标签（码位）从小到大，标签也一样时按完整的归并文字。归并（basisGroup → { kind, key, label }，
+ *                  按 kind + key 归并，label 是给页面显示的、最多 60 字，截完一样的两组各算各的）：
+ *                  kind rule、ref 以「自定义：」开头 → custom，按前缀后面的标题（去首尾空白；写法见 audit-agent/prompt.yaml 的自定义规则一段）；
  *                  别的 rule 取 ref 开头的规则编号 RULE_ID——知识库生成的编号（kb/lib/parse_rules.py）：C<两位章号>-<序号>（序号是数字和点，例如 C05-2.3、
  *                  C07-7.11）、C<章号>-NOTE（章节说明）、G-<两位序号>（制度说明），编号后面不能紧跟字母、数字、下划线、连字符或「.数字」；
- *                  认不出编号时用整个 ref（去首尾空白，最多 60 字）；field / evidence 取 ref（去首尾空白）。没有 kind、ref 是空的不算。
- *   knowledge      kb.status()（方式、有没有发布编号、「Agent 接入」页有没有钥匙）+ 上传历史：每个制度标识看最近一次上传（编号最大的那条），
- *                  它是 ingested / skipped 且没被删除（removedAt）的算一份，rules 是这些的 rulesTotal 之和；lastIngestAt 是 ingested / skipped 里最晚的 finishedAt。
+ *                  认不出编号时按整个 ref（去首尾空白）；field / evidence 按 ref（去首尾空白，标签不截）。没有 kind、ref 是空的不算。
+ *   knowledge      kb.status()（方式、有没有发布编号、「Agent 接入」页有没有钥匙）+ 上传历史：每个制度标识取最近一次成功（ingested / skipped，编号最大）
+ *                  的入库——之后失败或还在入库的那次不影响，库里还是这一份——没被删除（removedAt）的算一份，rules 是这些的 rulesTotal 之和；
+ *                  lastIngestAt 是 ingested / skipped 里最晚的 finishedAt。
  *   myRules        自己的「我的规则」{ files, usedChars, limitChars }；规则发布复核人没有「我的规则」，给 0 / 0 / 5000。
  * 结果按（窗口、角色、账号）缓存 60 秒（now 可注入）。算不出来（读轮次、复核、上传历史失败）→ 503 DASHBOARD_UNAVAILABLE，
  * 日志一行 POC_DASHBOARD_FAILED <错误码或错误名>，不记消息；失败不缓存。
@@ -66,16 +69,17 @@ export function windowOf(window, nowMs) {
   return { from, to: nowMs, days };
 }
 
-/** 一条依据 → { kind, label }（规则编号另带 ruleId，topRules 只数这种）；没有 kind、ref 是空的回 null。 */
+const capped = text => [...text].slice(0, LABEL_MAX).join('');
+/** 一条依据 → { kind, key（按它归并）, label（显示的）}（规则编号另带 ruleId，topRules 只数这种）；没有 kind、ref 是空的回 null。 */
 export function basisGroup({ kind, ref }) {
   const text = String(ref ?? '').trim();
   if (kind === 'rule') {
-    if (text.startsWith(CUSTOM)) { const title = text.slice(CUSTOM.length).trim(); return title ? { kind: 'custom', label: title } : null; }
+    if (text.startsWith(CUSTOM)) { const title = text.slice(CUSTOM.length).trim(); return title ? { kind: 'custom', key: title, label: capped(title) } : null; }
     const id = RULE_ID.exec(text)?.[0];
-    if (id) return { kind: 'rule', label: id, ruleId: id };
-    return text ? { kind: 'rule', label: [...text].slice(0, LABEL_MAX).join('') } : null;
+    if (id) return { kind: 'rule', key: id, label: id, ruleId: id };
+    return text ? { kind: 'rule', key: text, label: capped(text) } : null;
   }
-  return (kind === 'field' || kind === 'evidence') && text ? { kind, label: text } : null;
+  return (kind === 'field' || kind === 'evidence') && text ? { kind, key: text, label: text } : null;
 }
 
 /** 每一轮的条目 [{ key, label, … }] → 一轮里同一 key 只算一次，按次数从多到少、再按标签，前 limit 项。 */
@@ -115,9 +119,10 @@ export function createDashboard({ tenantId, agentTaskKey, readState, listDocumen
 
   async function knowledgeOf() {
     const [status, items] = await Promise.all([kb.status(), kb.historyList()]);
+    // 每个制度标识最近一次成功的入库（编号越大越新）
     const latest = new Map();
-    for (const item of [...items].sort((a, b) => a.id - b.id)) if (typeof item?.sourceId === 'string') latest.set(item.sourceId, item);
-    const kept = [...latest.values()].filter(item => INGESTED.has(item.status) && !item.removedAt);
+    for (const item of [...items].sort((a, b) => a.id - b.id)) if (typeof item?.sourceId === 'string' && INGESTED.has(item.status)) latest.set(item.sourceId, item);
+    const kept = [...latest.values()].filter(item => !item.removedAt);
     const finished = items.filter(item => INGESTED.has(item?.status)).map(item => timeOf(item.finishedAt)).filter(ms => ms !== null);
     return { mode: status.mode, configured: status.configured, ready: status.ready, sources: kept.length,
       rules: kept.reduce((sum, item) => sum + (Number.isSafeInteger(item.rulesTotal) && item.rulesTotal > 0 ? item.rulesTotal : 0), 0),
@@ -129,8 +134,8 @@ export function createDashboard({ tenantId, agentTaskKey, readState, listDocumen
     if (!REVIEWER_ROLES.has(user.role)) return [];
     const self = String(user.id), known = new Map(accounts().map(account => [String(account.id), account]));
     const own = lastOf(windowed, review => JSON.stringify([review.actor, review.documentId, review.adviceRound]));
-    const ids = user.role === 'analyst' ? [self]
-      : [...new Set([...[...known.values()].filter(account => REVIEWER_ROLES.has(account.role)).map(account => String(account.id)), ...own.map(review => review.actor)])];
+    const listed = [...known.values()].filter(account => REVIEWER_ROLES.has(account.role) && account.enabled !== false).map(account => String(account.id));
+    const ids = user.role === 'analyst' ? [self] : [...new Set([...listed, ...own.map(review => review.actor)])];
     const rows = await Promise.all(ids.map(async account => {
       const mine = own.filter(review => review.actor === account);
       return { account, name: known.get(account)?.name || account, reviews: mine.length, overrides: overridesOf(mine), customRules: (await rulesOf(account)).files };
@@ -177,7 +182,7 @@ export function createDashboard({ tenantId, agentTaskKey, readState, listDocumen
       if (review.decision === 'override') day.overrides += 1;
     }
 
-    const topBasis = top(completed.filter(item => item.result === 'fail').map(item => item.groups.map(group => ({ key: JSON.stringify([group.kind, group.label]), ...group }))), TOP_BASIS)
+    const topBasis = top(completed.filter(item => item.result === 'fail').map(item => item.groups.map(group => ({ ...group, key: JSON.stringify([group.kind, group.key]) }))), TOP_BASIS)
       .map(({ kind, label, count }) => ({ kind, label, count }));
     const topRules = top(completed.map(item => item.groups.filter(group => group.ruleId).map(group => ({ key: group.ruleId, label: group.ruleId }))), TOP_RULES)
       .map(({ label, count }) => ({ ruleId: label, count }));

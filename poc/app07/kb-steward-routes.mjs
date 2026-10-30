@@ -9,8 +9,8 @@
  *   GET  …/uploads、…/uploads/<id>                         上传历史（最近 50 条；<uploadsDir>/history.json，0600），页面轮询到 ingested / skipped / failed
  *   GET  …/sources、…/sources/<id>                         制度清单、一份制度的登记和规则编号
  *   POST …/sources/<id>/(deactivate|restore|delete)       下线、恢复、硬删除；下线、恢复不在 describe 的 ops 里时回 409 KB_OP_UNSUPPORTED，不调 Agent。
- *                                                         删除成功（Agent 回 success:true）后，这个制度标识的每一条上传历史记上 removedAt（工作台不再算它；
- *                                                         之后再传的那条不带）；下线、恢复不记
+ *                                                         删除成功（Agent 回 success:true）后，这个制度标识已入完（有 finishedAt）的每一条上传历史
+ *                                                         记上 removedAt（工作台不再算它；还在入库的那条和之后再传的不带）；下线、恢复不记
  *   GET  …/search?q=&segment=&amount=&k=                  按问题检索（板块、金额可空，空的不传）
  * 同步的操作各一次 A2A 调用（约 10–20 秒），回 { data: 工具的 JSON }：工具自己失败时也是 200，data.success === false，带 error_type / message / suggestion。
  * 给工作台（dashboard.mjs）的两个函数，都不调 Agent：status() → { mode, configured, ready }（同 /mode，不带 ops），historyList() → 全部上传历史，新的在前。
@@ -99,8 +99,9 @@ function createHistory(file, log) {
       return { next: { nextId: current.nextId + 1, items: [...current.items, item].slice(-HISTORY_LIMIT) }, value: item };
     }),
     update: (id, patch) => commit(current => ({ next: { ...current, items: current.items.map(item => (item.id === id ? { ...item, ...patch } : item)) } }), { keep: true }),
-    /** 这个制度标识的每一条记上删除时间（已经记过的不动）。 */
-    removed: (sourceId, at) => commit(current => ({ next: { ...current, items: current.items.map(item => (item.sourceId === sourceId && !item.removedAt ? { ...item, removedAt: at } : item)) } }), { keep: true }),
+    /** 这个制度标识已入完（有 finishedAt）的每一条记上删除时间；还在入库的不记（它入完时库里就有它），已经记过的不动。 */
+    removed: (sourceId, at) => commit(current => ({ next: { ...current, items: current.items.map(item => (item.sourceId === sourceId && item.finishedAt && !item.removedAt
+      ? { ...item, removedAt: at } : item)) } }), { keep: true }),
   };
 }
 

@@ -302,12 +302,38 @@ test('delete_marks_history：经知识库页删除成功（Agent 回 success:tru
   assert.deepEqual(after.map(item => item.removedAt ?? null), [null, null, list[1].removedAt, list[1].removedAt]);
   assert.deepEqual(h.requests.map(([op, input]) => [op, input.source_id]), [['ingest', 'sample-matrix'], ['ingest', 'sample-matrix'], ['ingest', 'other-rules'],
     ['delete', 'sample-matrix'], ['delete', 'sample-matrix'], ['ingest', 'sample-matrix']]);
-  // 历史写不进去（目录只读）：删除照样回 200，内存里记上，日志一行
+  // 历史写不进去（目录只读）：删除照样回 200，内存里记上，日志一行。root 不受目录权限限制，写得进去，这一段跳过
+  if (process.getuid?.() === 0) return;
   await chmod(h.dir, 0o500);
   const unwritable = await h.ask('POST', '/sources/other-rules/delete');
   assert.equal(unwritable.status, 200);
   assert.match((await h.routes.historyList())[1].removedAt, ISO);
   assert.ok(h.logs.includes('POC_KB_HISTORY_WRITE_FAILED delete'), h.logs.join('\n'));
+});
+
+test('delete_during_ingest：同一个制度还在入库时删除——已入完的那几条记 removedAt，正在入库的那条不记（没有 finishedAt）；它入完之后不带 removedAt', async t => {
+  let release, ingests = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const h = await harness({ answer: async args => {
+    const { op, source_id } = args.data[0];
+    if (op === 'delete') return reply({ success: true, source_id, affected: 18 });
+    ingests += 1;
+    if (ingests === 2) await gate;
+    return reply({ ...INGESTED, source_id });
+  } });
+  t.after(async () => { release(); await h.settled(2).catch(() => {}); await h.done(); });
+  await h.upload();
+  await h.settled(1);
+  await h.upload();
+  assert.equal((await h.item(2)).status, 'ingesting');
+  assert.equal((await h.ask('POST', '/sources/sample-matrix/delete')).status, 200);
+  assert.deepEqual((await h.routes.historyList()).map(item => [item.id, item.status, typeof item.removedAt]), [[2, 'ingesting', 'undefined'], [1, 'ingested', 'string']]);
+  release();
+  const finished = await h.settled(2);
+  assert.deepEqual([finished.status, finished.removedAt], ['ingested', undefined]);
+  const saved = JSON.parse(await readFile(path.join(h.dir, 'history.json'), 'utf8'));
+  assert.deepEqual(saved.items.map(item => [item.id, item.status, item.removedAt ?? null]), [[1, 'ingested', saved.items[0].removedAt], [2, 'ingested', null]]);
+  assert.ok(saved.items[0].removedAt);
 });
 
 test('status / historyList：给工作台用——方式、有没有发布编号、「Agent 接入」页有没有钥匙；不调 Agent（describe、request 都不发）', async t => {
