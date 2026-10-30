@@ -1,5 +1,5 @@
---- a/public/analysis.js	2026-10-30 06:54:21
-+++ b/public/analysis.js	2026-10-30 07:06:38
+--- a/public/analysis.js	2026-10-30 09:43:42
++++ b/public/analysis.js	2026-10-30 09:54:04
 @@ -998,9 +998,10 @@
      content);
  }
@@ -19,60 +19,73 @@
    if (state.route === 'rules') {
 -    // Bench patch 0004: admins get a second tab, 制度知识库 (public/kb-page.js): upload the policy, ingest, search, the search log.
 -    const kbView = state.routeParams.view === 'kb' && state.session.capabilities?.platformAdmin === true;
-+    // Bench patches 0004–0005: admins and analysts get a second tab, 制度知识库 (public/kb-page.js): 公司制度 (admins only, drawn by
-+    // the knowledge-base mode) and 我的规则 (each reviewer's own rules).
++    // Bench patches 0004–0005: admins and analysts get a second tab, 制度知识库 (public/kb-page.js): 公司制度 (admins only; the policy
++    // goes through the knowledge-base agent over A2A in either KB mode) and 我的规则 (each reviewer's own rules).
 +    const kbView = state.routeParams.view === 'kb' && (state.session.capabilities?.platformAdmin === true || state.session.user?.role === 'analyst');
      const tabs = rulesTabs(kbView);
      if (tabs) main.append(tabs);
      if (kbView) {
---- a/public/kb-page.js	2026-10-30 06:54:21
-+++ b/public/kb-page.js	2026-10-30 07:09:45
-@@ -1,12 +1,27 @@
+--- a/public/kb-page.js	2026-10-30 09:43:42
++++ b/public/kb-page.js	2026-10-30 09:53:41
+@@ -1,12 +1,36 @@
 -// 规则库 · 制度知识库（测试台补丁 0004）。管理员上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库
 -// （向量在知识库的 PostgreSQL 里由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的
 -// 是同一个）；检索日志（审核 Agent、页面、部署核对都查了什么）。接口在测试台外壳 /api/analysis/v1/poc/kb/*。
 -// analysis.js 在 #rules?view=kb 上发 kb-page:mount（只给管理员）；样式沿用平台页的卡片、表格、标签和按钮。
 +// 规则库 · 制度知识库（测试台补丁 0004、0005）。页内两块：
-+//   「公司制度」只给管理员，先 GET /poc/kb/mode，按知识库方式画：
-+//     pg（补丁 0004 的样子）：上传审批矩阵格式的制度 .docx → 平台解析、给出入库预览 → 核对后确认入库（向量在知识库的 PostgreSQL 里
-+//       由 kb_embed 生成）；上传历史；按问题检索（kb_search，和审核 Agent 经 Nexus 数据连接器用的是同一个）；检索日志。
-+//     s3vectors：规则库由「知识库文档管家（S3 Vectors 版）」经 A2A 读写——上传（制度标识、版本说明、文档名）→ 后台入库、轮询上传记录；
-+//       制度清单（下线 / 恢复 / 删除）；按问题检索（rules_search，板块、金额可空）。同步的操作各是一次 A2A 调用（约 10–20 秒），
-+//       工具自己失败时接口也回 200、data.success === false，按失败显示。文档管家还没在「Agent 接入」页启用时整块只有一句提示。
-+//   「我的规则」给能进这一页的人（管理员、分析员）：上传 .md / .docx（显示转出来的文字）、列表、查看全文、删除；只在本人从单据页
-+//     手动发起 AI 独立建议时随请求带上。
-+// 接口在测试台外壳 /api/analysis/v1/poc/kb/*、/poc/custom-rules。analysis.js 在 #rules?view=kb 上发 kb-page:mount（管理员和分析员）；
-+// 样式沿用平台页的卡片、表格、标签和按钮。
++//   「公司制度」只给管理员。两种知识库方式（pg、s3vectors）共用这一块：规则库由 Nexus 上的知识库 Agent 经 A2A 读写——pg 方式是
++//     PG 知识库 Agent（「知识库 Agent」），s3vectors 方式是「知识库文档管家」；页面只经测试台外壳的接口，不连 PG、不解析文档。
++//     先 GET /poc/kb/mode → { mode, configured, ready, ops }（外壳要等 Agent 回 describe，冷启动约 10–20 秒；失败时显示外壳的中文
++//     提示和「重试」）。没配发布编号（configured=false）整块只说「<Agent> 还没配置」，没在「Agent 接入」页启用（ready=false）只说先去
++//     启用；就绪时：上传（制度标识、版本说明、文档名）→ 后台入库、轮询上传记录；制度清单（「下线」「恢复」只在 ops 里有时显示，删除先
++//     确认）；上传记录；按问题检索（板块、金额可空）。同步的操作各是一次 A2A 调用（约 10–20 秒），工具自己失败时接口也回 200、
++//     data.success === false，按失败显示。
++//   「我的规则」给能进这一页的人（管理员、分析员）：上传 .md / .docx（显示转出来的文字）、列表、查看全文、删除，一次一个请求；
++//     只在本人从单据页手动发起 AI 独立建议时随请求带上。
++// 接口在测试台外壳 /api/analysis/v1/poc/kb/*（poc/app07/kb-steward-routes.mjs）、/poc/custom-rules。analysis.js 在 #rules?view=kb 上发
++// kb-page:mount（管理员和分析员）；样式沿用平台页的卡片、表格、标签和按钮。外壳和 Agent 回的文字一律当纯文本放进页面。
  const API = '/api/analysis/v1';
  const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
  const MAX_BYTES = 20 * 1024 * 1024;
- const STATUS = Object.freeze({ parsed: ['已解析，待入库', 'blue'], ingesting: ['入库中', 'amber'], ingested: ['已入库', 'green'], failed: ['失败', 'red'], superseded: ['已被新版本取代', ''] });
- const CALLER = Object.freeze({ agent: '审核 Agent', page: '页面检索', verify: '部署核对', ingest: '入库冒烟' });
+-const STATUS = Object.freeze({ parsed: ['已解析，待入库', 'blue'], ingesting: ['入库中', 'amber'], ingested: ['已入库', 'green'], failed: ['失败', 'red'], superseded: ['已被新版本取代', ''] });
+-const CALLER = Object.freeze({ agent: '审核 Agent', page: '页面检索', verify: '部署核对', ingest: '入库冒烟' });
 +const OWN_MAX_BYTES = 2 * 1024 * 1024;
 +const UPLOAD = Object.freeze({ ingesting: ['入库中', 'amber'], ingested: ['已入库', 'green'], skipped: ['没有变化', 'blue'], failed: ['失败', 'red'] });
 +const SOURCE = Object.freeze({ active: ['有效', 'green'], inactive: ['已下线', 'amber'] });
-+// 新上传的制度标识（同外壳 kb-s3v-routes.mjs 的 TAG）；金额以元为单位
++// 新上传的制度标识（同外壳 kb-steward-routes.mjs 的 TAG）；金额以元为单位
 +const SOURCE_ID = /^[a-z0-9][a-z0-9-]{1,62}$/u;
 +const AMOUNT = /^\d{1,13}(?:\.\d{1,2})?$/u;
 +const WORKING = '正在处理（约 10–20 秒）';
-+const NOT_READY = '先在『Agent 接入』页启用知识库文档管家';
++/** 两种方式各自的 Agent 叫法和说明；lead 是放在句首、后面直接接汉字时的写法（「知识库 Agent」后空一格），同外壳的错误文案。 */
++const AGENTS = Object.freeze({
++  pg: Object.freeze({ name: '知识库 Agent', lead: '知识库 Agent ',
++    lede: '规则库在知识库的 PostgreSQL 里，由 Nexus 上的「知识库 Agent」经 A2A 读写：上传审批矩阵格式的制度，一行一条审批路径，规则编号和原文序号对应。审核 Agent 经 Nexus 数据连接器检索这里的规则（kb_search），审单时引用规则编号。',
++    search: '和审核 Agent 审单时用的是同一个检索（知识库里的 kb_search）。关键词用空格隔开更准，例如「房租 年度框架合同 九安」：含这些词越多的规则越靠前，同样多的再按语义相似度排。板块、金额可空。距离越小越相近。' }),
++  s3vectors: Object.freeze({ name: '知识库文档管家', lead: '知识库文档管家',
++    lede: '规则库在 Amazon S3 Vectors 里，由「知识库文档管家」经 A2A 读写：上传审批矩阵格式的制度，一行一条审批路径，规则编号和原文序号对应。审核 Agent 用 rules_search 检索有效的规则，审单时引用规则编号。',
++    search: '和审核 Agent 审单时用的是同一个检索（文档管家的 rules_search）：只查有效的规则；填了板块只留这个板块和适用全部板块的规则，填了金额只留金额落在档位里的规则（不是金额条件的规则照样保留）。距离越小越相近。' }),
++});
++// 这一页上次从 /mode 读到的方式：再进来时「正在连接…」就叫对名字（还没读到过就叫「知识库 Agent」；换方式要重新部署，页面会重新加载）
++let lastMode = null;
  const PROPS = new Set(['type', 'name', 'value', 'placeholder', 'accept', 'hidden', 'disabled', 'href', 'tabIndex']);
  
  function append(node, ...children) {
-@@ -41,8 +56,20 @@
+@@ -39,10 +63,20 @@
+ function sayer(node) { return (text, kind = '') => { node.textContent = text; node.className = `platform-ops-dialog-result ${kind}`.trim(); }; }
+ function field(label, input) { return h('label', { class: 'kb-field' }, h('span', {}, label), input); }
  const textInput = (name, value = '', placeholder = '') => h('input', { type: 'text', name, value, placeholder, autocomplete: 'off', spellcheck: 'false' });
- const resultText = result => (result ? `新增 ${result.inserted ?? 0} · 重算向量 ${result.updated ?? 0} · 只更新说明 ${result.retagged ?? 0} · 不变 ${result.unchanged ?? 0} · 删除 ${result.pruned ?? 0}` : '—');
- const seconds = (from, to) => { const ms = Date.parse(to) - Date.parse(from); return Number.isFinite(ms) && ms >= 0 ? `${Math.round(ms / 1000)} 秒` : '—'; };
+-const resultText = result => (result ? `新增 ${result.inserted ?? 0} · 重算向量 ${result.updated ?? 0} · 只更新说明 ${result.retagged ?? 0} · 不变 ${result.unchanged ?? 0} · 删除 ${result.pruned ?? 0}` : '—');
+-const seconds = (from, to) => { const ms = Date.parse(to) - Date.parse(from); return Number.isFinite(ms) && ms >= 0 ? `${Math.round(ms / 1000)} 秒` : '—'; };
 +const thousands = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('en-US'));
 +const clip = (text, max) => { const chars = [...String(text ?? '')]; return chars.length > max ? `${chars.slice(0, max).join('')}…` : chars.join(''); };
 +const sizeText = bytes => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
-+/** 拖放区：拖进来或点「选择文件」都交给 pick。 */
-+function dropZone(lead, hint, fileInput, pick) {
++/** 拖放区：拖进来或点「选择文件」（choose，调用方要禁用它时自己传进来）都交给 pick。 */
++function dropZone(lead, hint, fileInput, pick, choose = button('选择文件', () => fileInput.click?.(), true)) {
 +  const zone = h('div', { class: 'kb-drop', on: {
 +    dragover: event => { event.preventDefault?.(); zone.classList?.add('dragging'); },
 +    dragleave: () => zone.classList?.remove?.('dragging'),
 +    drop: event => { event.preventDefault?.(); zone.classList?.remove?.('dragging'); void pick(event.dataTransfer?.files?.[0]); },
-+  } }, h('strong', {}, lead), button('选择文件', () => fileInput.click?.(), true), h('span', { class: 'kb-muted' }, hint), fileInput);
++  } }, h('strong', {}, lead), choose, h('span', { class: 'kb-muted' }, hint), fileInput);
 +  return zone;
 +}
  
@@ -81,27 +94,41 @@
    let disposed = false;
    async function api(path, { method = 'GET', body, headers = {} } = {}) {
      const response = await fetcher(`${API}${path}`, { method, credentials: 'same-origin', cache: 'no-store',
-@@ -52,6 +79,34 @@
+@@ -52,150 +86,334 @@
      if (!response.ok) throw Object.assign(new Error(payload?.error?.message || `没有成功（${response.status}）`), { code: payload?.error?.code, status: response.status });
      return payload?.data;
    }
+-  const json = value => ({ body: JSON.stringify(value), headers: { 'Content-Type': 'application/json' } });
 +  const ctx = { api, pollMs, alive: () => !disposed };
-+
+ 
 +  // 「公司制度」只给管理员（分析员不请求 /poc/kb/*，连方式都不问）
 +  const company = user?.role === 'admin' ? h('section', { class: 'kb-area', 'data-kb-block': 'company' }) : null;
 +  const title = () => h('h3', { class: 'kb-area-title' }, '公司制度');
-+  const notReady = () => company.replaceChildren(title(), h('p', { class: 'kb-warn' }, NOT_READY));
++  const only = (...nodes) => company.replaceChildren(title(), ...nodes);
++  /** 整块只剩一句话的两种情况（读 /mode 时，或接口中途回了这两个错误码）。 */
++  const notices = agent => Object.freeze({
++    notConfigured: () => only(h('p', { class: 'kb-warn' }, `${agent.lead}还没配置`)),
++    notReady: () => only(h('p', { class: 'kb-warn' }, `先在『Agent 接入』页启用${agent.name}`)),
++  });
 +  async function loadCompany() {
-+    company.replaceChildren(title(), h('p', { class: 'kb-muted' }, '正在读取知识库方式…'));
++    only(h('p', { class: 'kb-muted' }, `正在连接${(AGENTS[lastMode] ?? AGENTS.pg).name}（约 10–20 秒）…`));
 +    let mode;
 +    try { mode = await api('/poc/kb/mode'); }
-+    catch (error) { company.replaceChildren(title(), h('p', { class: 'platform-ops-dialog-result error', role: 'status' }, error.message)); return; }
-+    if (mode?.mode === 'pg' || (mode?.mode === 's3vectors' && mode.ready === true)) {
-+      const block = mode.mode === 'pg' ? pgCompany(ctx) : s3vCompany(ctx, notReady);
-+      company.replaceChildren(title(), ...block.nodes);
++    catch (error) {
++      if (!disposed) only(h('div', { class: 'kb-retry' }, h('p', { class: 'platform-ops-dialog-result error', role: 'status' }, error.message), button('重试', () => loadCompany())));
++      return;
++    }
++    if (disposed) return;
++    if (!Object.hasOwn(AGENTS, mode?.mode)) { only(h('p', { class: 'kb-warn' }, `不认识的知识库方式：${dash(mode?.mode)}`)); return; }
++    lastMode = mode.mode;
++    const agent = AGENTS[mode.mode], notice = notices(agent);
++    if (mode.configured === false) notice.notConfigured();
++    else if (mode.ready !== true) notice.notReady();
++    else {
++      const block = agentCompany(ctx, agent, Array.isArray(mode.ops) ? mode.ops : [], notice);
++      only(...block.nodes);
 +      block.start();
-+    } else if (mode?.mode === 's3vectors') notReady();
-+    else company.replaceChildren(title(), h('p', { class: 'kb-warn' }, `不认识的知识库方式：${dash(mode?.mode)}`));
++    }
 +  }
 +
 +  const own = ownRules(ctx);
@@ -111,59 +138,43 @@
 +  return { dispose() { disposed = true; } };
 +}
 +
-+/** PG 方式的「公司制度」：补丁 0004 的样子，行为不变。 */
-+function pgCompany({ api, pollMs, alive }) {
-   const json = value => ({ body: JSON.stringify(value), headers: { 'Content-Type': 'application/json' } });
- 
-   // ---- 上传与入库 ----
-@@ -108,7 +163,7 @@
-       try {
-         await api(`/poc/kb/documents/${data.id}/ingest`, { method: 'POST', ...json({ sourceTag: tag.value.trim(), docTitle: title.value.trim(), sourceVersion: version.value.trim() }) });
-         let item = null;
--        for (let round = 0; round < 400 && !disposed; round += 1) {
-+        for (let round = 0; round < 400 && alive(); round += 1) {
-           await sleep(pollMs);
-           item = await api(`/poc/kb/documents/${data.id}`);
-           if (item?.status !== 'ingesting') break;
-@@ -189,13 +244,267 @@
-   const log = h('section', { class: 'platform-ops-card' }, h('div', { class: 'kb-section-head' }, h('h2', {}, '检索日志'), button('刷新', () => loadLog())),
-     h('p', { class: 'kb-muted' }, '最近 50 次检索：审核 Agent 审单时查了什么、命中了哪些规则；页面检索和部署核对也在这里。'), logRows, logMessage);
- 
--  root.replaceChildren(h('div', { class: 'platform-ops-page kb-page' },
--    h('h2', { class: 'platform-ops-title' }, '制度知识库'),
--    h('p', { class: 'kb-lede' }, '把审批矩阵格式的制度上传进知识库：一行一条审批路径，规则编号和原文序号对应。审核 Agent 经 Nexus 数据连接器检索这里的规则，审单时引用规则编号。'),
--    upload, history, search, log));
--  void loadHistory();
--  void loadLog();
--  return { dispose() { disposed = true; } };
-+  const lede = h('p', { class: 'kb-lede' }, '把审批矩阵格式的制度上传进知识库：一行一条审批路径，规则编号和原文序号对应。审核 Agent 经 Nexus 数据连接器检索这里的规则，审单时引用规则编号。');
-+  return { nodes: [lede, upload, history, search, log], start() { void loadHistory(); void loadLog(); } };
-+}
-+
 +/**
-+ * S3 Vectors 方式的「公司制度」：规则库由文档管家经 A2A 读写。上传先回 202，页面轮询上传记录；清单、下线 / 恢复 / 删除、检索都是同步的
-+ * A2A 调用（约 10–20 秒）：进行中显示「正在处理」、按钮不可用。接口回 KB_AGENT_NOT_READY（钥匙中途没了）时整块换成那句提示。
++ * 「公司制度」（两种方式同一块）：规则库由知识库 Agent 经 A2A 读写。上传先回 202，页面轮询上传记录；清单、下线 / 恢复 / 删除、检索都是
++ * 同步的 A2A 调用（约 10–20 秒）：进行中显示「正在处理」、按钮不可用。「下线」「恢复」只在 ops（Agent 的 describe）里有时显示。
++ * 接口中途回 KB_AGENT_NOT_READY（钥匙没了）或 KB_AGENT_NOT_CONFIGURED 时整块换成那句提示。
 + */
-+function s3vCompany({ api, pollMs, alive }, notReady) {
++function agentCompany({ api, pollMs, alive }, agent, ops, notice) {
++  const can = op => ops.includes(op);
 +  // 同步的接口在工具自己失败时也回 200：data.success === false，带 message / suggestion
 +  async function tool(path, options) {
 +    const data = await api(path, options);
 +    if (data?.success === false) {
-+      throw Object.assign(new Error(`${data.message || '文档管家没有完成这次操作'}${data.suggestion ? `（${data.suggestion}）` : ''}`), { code: data.error_type });
++      throw Object.assign(new Error(`${data.message || `${agent.lead}没有完成这次操作`}${data.suggestion ? `（${data.suggestion}）` : ''}`), { code: data.error_type });
 +    }
 +    return data;
 +  }
-+  const failed = (say, error) => { if (error?.code === 'KB_AGENT_NOT_READY') notReady(); else say(error.message, 'error'); };
++  const failed = (say, error) => {
++    if (error?.code === 'KB_AGENT_NOT_READY') notice.notReady();
++    else if (error?.code === 'KB_AGENT_NOT_CONFIGURED') notice.notConfigured();
++    else say(error.message, 'error');
++  };
 +  const nameOf = source => source.title || source.source_id;
 +  let sources = [];
 +
-+  // ---- 上传与入库 ----
-+  const message = statusLine(), say = sayer(message), work = h('div', { class: 'kb-work' });
-+  const fileInput = h('input', { type: 'file', name: 'file', accept: `.docx,${DOCX}`, hidden: true });
-+  fileInput.addEventListener('change', () => pick(fileInput.files?.[0]));
+   // ---- 上传与入库 ----
+   const message = statusLine(), say = sayer(message), work = h('div', { class: 'kb-work' });
+   const fileInput = h('input', { type: 'file', name: 'file', accept: `.docx,${DOCX}`, hidden: true });
+   fileInput.addEventListener('change', () => pick(fileInput.files?.[0]));
+-  const drop = h('div', { class: 'kb-drop', on: {
+-    dragover: event => { event.preventDefault?.(); drop.classList?.add('dragging'); },
+-    dragleave: () => drop.classList?.remove?.('dragging'),
+-    drop: event => { event.preventDefault?.(); drop.classList?.remove?.('dragging'); void pick(event.dataTransfer?.files?.[0]); },
+-  } }, h('strong', {}, '把制度 .docx 拖到这里，或'), button('选择文件', () => fileInput.click?.(), true),
+-  h('span', { class: 'kb-muted' }, '审批矩阵格式：每章一张表，表头第一列是「序号」；20 MB 以内'), fileInput);
 +  const drop = dropZone('把制度 .docx 拖到这里，或', '审批矩阵格式：每章一张表，表头第一列是「序号」；20 MB 以内', fileInput, pick);
 +  let ingesting = false;
-+
+ 
+-  async function pick(file) {
 +  // 按文件名预填：清单里有同名文件的制度就用它的标识和标题（再上传是它的新版本）；否则英文文件名转成标识，中文的留空让人填
 +  function prefill(file) {
 +    const stem = String(file.name || '').replace(/\.docx$/iu, '');
@@ -173,10 +184,18 @@
 +  }
 +
 +  function pick(file) {
-+    if (!file) return;
+     if (!file) return;
 +    fileInput.value = '';
-+    if (!/\.docx$/iu.test(file.name || '')) { say('只收 .docx 文件（审批矩阵格式的 Word 文档）', 'error'); return; }
-+    if (file.size > MAX_BYTES) { say('文件超过 20 MB', 'error'); return; }
+     if (!/\.docx$/iu.test(file.name || '')) { say('只收 .docx 文件（审批矩阵格式的 Word 文档）', 'error'); return; }
+     if (file.size > MAX_BYTES) { say('文件超过 20 MB', 'error'); return; }
+-    work.replaceChildren();
+-    say(`正在上传并解析「${file.name}」…`);
+-    try {
+-      const data = await api('/poc/kb/documents', { method: 'POST', body: file, headers: { 'Content-Type': DOCX, 'X-File-Name': encodeURIComponent(file.name) } });
+-      say('');
+-      showParsed(data);
+-    } catch (error) { say(error.message, 'error'); }
+-    finally { fileInput.value = ''; void loadHistory(); }
 +    if (ingesting) { say('上一份还在入库，等它完成再上传下一份。', 'error'); return; }
 +    say('');
 +    const initial = prefill(file);
@@ -190,31 +209,81 @@
 +    };
 +    sourceId.addEventListener('input', check);
 +    check();
-+    const go = button('上传并入库', () => submit(file, { sourceId, title, version, go }), true);
++    const go = button('上传并入库', () => submit(file, { sourceId, title, version, go, cancel }), true);
++    const cancel = button('取消', () => { work.replaceChildren(); say(''); });
 +    work.replaceChildren(h('div', { class: 'kb-report' },
 +      h('strong', {}, `「${file.name}」（${sizeText(file.size)}）`),
 +      h('div', { class: 'kb-fields' }, field('制度标识（小写字母、数字和连字符；同一份制度用同一个标识，再上传就是新版本）', sourceId), field('文档名', title), field('版本说明', version)),
 +      existing,
-+      h('div', { class: 'kb-actions' }, go, button('取消', () => { work.replaceChildren(); say(''); }))));
-+  }
-+
++      h('div', { class: 'kb-actions' }, go, cancel)));
+   }
+ 
+-  function previewView(preview) {
+-    const p = preview || {};
+-    return [h('p', { class: 'kb-preview' }, `入库预览：${resultText(p)}`),
+-      p.conflicts ? h('p', { class: 'kb-warn kb-block' }, `${p.conflicts} 条规则编号已属于库里另一份文档：${(p.conflict_ids || []).slice(0, 12).join('、')}${(p.conflict_ids || []).length > 12 ? '…' : ''}。入库会覆盖那份文档的规则，所以不能入库。若这是同一份制度的新版本，把标签改成它原来的标签再预览。`) : null,
+-      p.pruned ? h('p', { class: 'kb-warn' }, `将删除 ${p.pruned} 条：${(p.pruned_ids || []).slice(0, 12).join('、')}${(p.pruned_ids || []).length > 12 ? '…' : ''}（同一标签下、新版本里已经没有的规则）。确认这是同一份制度的新版本再入库。`) : null,
+-      p.inserted && !p.unchanged && !p.retagged && !p.updated ? h('p', { class: 'kb-muted' }, '这个标签下还没有规则：会新增一套。若这是库里已有制度的新版本，请把标签改成它原来的标签。') : null];
 +  function uploadFailure(item) {
 +    const error = item?.error || {}, conflicts = Array.isArray(item?.conflicts) ? item.conflicts : [];
-+    return [`没有入库：${error.message || '文档管家没有完成这次入库'}`,
++    return [`没有入库：${error.message || `${agent.lead}没有完成这次入库`}`,
 +      conflicts.length ? `冲突的规则编号 ${conflicts.length} 条：${conflicts.slice(0, 12).join('、')}${conflicts.length > 12 ? '…' : ''}。若这是库里那份制度的新版本，用它原来的制度标识再上传。` : '',
 +      error.suggestion ? `建议：${error.suggestion}` : ''].filter(Boolean).join(' ');
-+  }
-+
-+  async function submit(file, { sourceId, title, version, go }) {
+   }
+ 
+-  function showParsed(data) {
+-    const report = data.report || {};
+-    const tag = textInput('sourceTag', data.suggestedTag), title = textInput('docTitle', data.docTitle), version = textInput('sourceVersion', data.sourceVersion, '例如 V4.0 正式签批版');
+-    const previewBox = h('div', { class: 'kb-report' });
+-    const stale = h('p', { class: 'kb-warn', hidden: true }, '改了标签或版本说明：先点「重新预览」，看过预览再入库。');
+-    // 规则编号和库里另一份文档冲突时不让入库（入库会覆盖那份文档的规则）；改了标签或版本也要先重新预览（接口只认看过预览的）
+-    let blocked = false;
+-    const showPreview = preview => { previewBox.replaceChildren(...previewView(preview).filter(Boolean)); stale.hidden = true; blocked = Boolean(preview?.conflicts); confirm.disabled = blocked; };
+-    const edited = () => { stale.hidden = false; blocked = true; confirm.disabled = true; };
+-    tag.addEventListener('input', edited);
+-    version.addEventListener('input', edited);
+-    const repreview = button('重新预览', async () => {
+-      try { const answer = await api(`/poc/kb/documents/${data.id}/preview`, { method: 'POST', ...json({ sourceTag: tag.value.trim(), sourceVersion: version.value.trim() }) }); showPreview(answer.preview); say(''); }
+-      catch (error) { say(error.message, 'error'); }
+-    });
+-    const confirm = button('确认入库', async () => {
+-      confirm.disabled = true;
+-      say('正在入库：向量在知识库里逐条生成（约 100 条规则一分钟左右），可以离开这个页面，结果会记在上传历史里。');
+-      try {
+-        await api(`/poc/kb/documents/${data.id}/ingest`, { method: 'POST', ...json({ sourceTag: tag.value.trim(), docTitle: title.value.trim(), sourceVersion: version.value.trim() }) });
+-        let item = null;
+-        for (let round = 0; round < 400 && !disposed; round += 1) {
+-          await sleep(pollMs);
+-          item = await api(`/poc/kb/documents/${data.id}`);
+-          if (item?.status !== 'ingesting') break;
+-        }
+-        if (item?.status === 'ingested') say(`入库完成：${resultText(item.result)}。审核 Agent 下一次检索就用上新规则。`, 'success');
+-        else say(`入库没有完成：${item?.error || '还在进行，稍后在上传历史里看结果'}`, 'error');
+-      } catch (error) { say(error.message, 'error'); }
+-      finally { confirm.disabled = blocked; void loadHistory(); }
+-    }, true);
+-    showPreview(data.preview);
+-    const chapters = table(['章', '章名', '规则数'], (report.chapters || []).map(chapter => [String(chapter.no), dash(chapter.title), String(chapter.rows)]), '没有章节');
+-    work.replaceChildren(
+-      h('div', { class: 'kb-report' },
+-        h('strong', {}, `「${data.fileName}」：规则 ${report.matrix ?? 0} 条（制度说明 ${report.general ?? 0} 条、章节说明 ${report.chapter_notes ?? 0} 条）`),
+-        chapters,
+-        (report.without_path || []).length ? h('p', { class: 'kb-warn' }, `没有审批路径的行：${report.without_path.join('、')}`) : null),
+-      h('div', { class: 'kb-fields' }, field('标签（同一份制度用同一个标签；重新入库时替换这个标签下的旧版本）', tag), field('文档名', title), field('版本说明', version)),
+-      previewBox, stale,
+-      h('div', { class: 'kb-actions' }, confirm, repreview));
++  // 入库进行中「上传并入库」「取消」都不可用（取消只收起表单，入库照样在跑）
++  async function submit(file, { sourceId, title, version, go, cancel }) {
 +    const input = { sourceId: String(sourceId.value || '').trim(), sourceVersion: String(version.value || '').trim(), title: String(title.value || '').trim() };
 +    if (!SOURCE_ID.test(input.sourceId)) { say('制度标识只能用小写字母、数字和连字符（2–63 位，字母或数字开头），例如 fin-approval。', 'error'); return; }
 +    if (ingesting) return;
 +    ingesting = true;
 +    go.disabled = true;
++    cancel.disabled = true;
 +    say(`正在上传「${file.name}」…`);
 +    try {
 +      const started = await api(`/poc/kb/sources?${new URLSearchParams(input)}`, { method: 'POST', body: file, headers: { 'Content-Type': DOCX, 'X-File-Name': encodeURIComponent(file.name) } });
-+      say('正在入库：文档管家解析、生成向量并写入规则库（规则多时要几分钟）。可以离开这个页面，结果会记在上传记录里。');
++      say(`正在入库：${agent.lead}解析、生成向量并写入规则库（规则多时要几分钟）。可以离开这个页面，结果会记在上传记录里。`);
 +      void loadUploads();
 +      let item = null;
 +      for (let round = 0; round < 400 && alive(); round += 1) {
@@ -233,12 +302,26 @@
 +      } else if (item?.status === 'failed') say(uploadFailure(item), 'error');
 +      else say('还在入库：稍后在上传记录里看结果。');
 +    } catch (error) { failed(say, error); }
-+    finally { ingesting = false; go.disabled = false; void loadUploads(); }
-+  }
-+  const upload = h('section', { class: 'platform-ops-card' }, h('h2', {}, '上传制度文档'),
-+    h('p', { class: 'kb-muted' }, '填好制度标识、文档名和版本说明后上传：文档管家解析、给每条规则生成向量并写入规则库，写完在上传记录里看结果。同一个标识再上传就是新版本。'),
++    finally { ingesting = false; go.disabled = false; cancel.disabled = false; void loadUploads(); }
+   }
+   const upload = h('section', { class: 'platform-ops-card' }, h('h2', {}, '上传制度文档'),
+-    h('p', { class: 'kb-muted' }, '平台先解析、给出入库预览（会新增、更新、删除多少条），核对无误再确认入库。'), drop, message, work);
++    h('p', { class: 'kb-muted' }, `填好制度标识、文档名和版本说明后上传：${agent.lead}解析、给每条规则生成向量并写入规则库，写完在上传记录里看结果。同一个标识再上传就是新版本。`),
 +    drop, message, work);
-+
+ 
+-  // ---- 上传历史 ----
+-  const historyRows = h('div'), detail = h('div'), historyMessage = statusLine(), sayHistory = sayer(historyMessage);
+-  async function showDetail(id) {
+-    try {
+-      const item = await api(`/poc/kb/documents/${id}`);
+-      detail.replaceChildren(h('div', { class: 'kb-detail' },
+-        h('strong', {}, `${dash(item.file_name)} · ${(STATUS[item.status] || [item.status])[0]}`),
+-        h('p', { class: 'kb-muted' }, `标签 ${dash(item.source_tag)} · 文档名 ${dash(item.doc_title)} · 版本 ${dash(item.source_version)} · sha256 ${String(item.sha256 || '').slice(0, 12)}…`),
+-        item.result ? h('p', { class: 'kb-preview' }, `入库结果：${resultText(item.result)}`) : null,
+-        item.error ? h('p', { class: 'kb-warn' }, `原因：${item.error}`) : null,
+-        table(['规则编号', '业务事项', '板块', '金额档 / 触发情形'], (item.rules || []).slice(0, 300).map(rule => [rule.rule_id, dash(rule.business_item), dash(rule.segment), dash(rule.amount_tier)]), '这一版没有解析出规则')));
+-      detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+-    } catch (error) { sayHistory(error.message, 'error'); }
 +  // ---- 制度清单（同步的 A2A 调用，一次一个；进行中清单的按钮都不可用）----
 +  const sourceRows = h('div'), confirmBox = h('div'), sourcesMessage = statusLine(), saySources = sayer(sourcesMessage);
 +  const refresh = button('刷新', () => loadSources());
@@ -254,7 +337,8 @@
 +      .finally(() => { pending -= 1; if (!pending) setBusy(false); });
 +    chain = run;
 +    return run;
-+  }
+   }
+-  async function loadHistory() {
 +  function renderSources() {
 +    const make = (label, onClick, primary = false) => { const node = button(label, onClick, primary); node.disabled = pending > 0; rowButtons.push(node); return node; };
 +    rowButtons = [];
@@ -262,7 +346,7 @@
 +      dash(source.title), dash(source.source_id), dash(source.source_version), dash(source.rules_total), pill(SOURCE[source.status] || [dash(source.status), '']),
 +      time(source.updated_at || source.ingested_at),
 +      h('div', { class: 'kb-row-actions' },
-+        source.status === 'inactive' ? make('恢复', () => act('restore', source)) : make('下线', () => act('deactivate', source)),
++        source.status === 'inactive' ? (can('restore') ? make('恢复', () => act('restore', source)) : null) : (can('deactivate') ? make('下线', () => act('deactivate', source)) : null),
 +        make('删除', () => askDelete(source)))]), '规则库里还没有制度'));
 +  }
 +  async function fetchSources() {
@@ -272,7 +356,7 @@
 +  }
 +  const loadSources = () => working(async () => { await fetchSources(); saySources(''); });
 +  const DONE = Object.freeze({
-+    deactivate: (source, count) => `已下线「${nameOf(source)}」（${count} 条规则）：审核 Agent 检索不到了，可以恢复。`,
++    deactivate: (source, count) => `已下线「${nameOf(source)}」（${count} 条规则）：审核 Agent 检索不到了${can('restore') ? '，可以恢复' : ''}。`,
 +    restore: (source, count) => `已恢复「${nameOf(source)}」（${count} 条规则）：又能检索到了。`,
 +    delete: (source, count) => `已删除「${nameOf(source)}」：${count} 条规则和登记都删掉了。`,
 +  });
@@ -281,7 +365,7 @@
 +      const data = await tool(`/poc/kb/sources/${encodeURIComponent(source.source_id)}/${op}`, { method: 'POST' });
 +      const done = DONE[op](source, data?.affected ?? 0);
 +      try { await fetchSources(); saySources(done, 'success'); }
-+      catch (error) { if (error?.code === 'KB_AGENT_NOT_READY') throw error; saySources(`${done} 清单没有刷新：${error.message}`, 'error'); }
++      catch (error) { if (['KB_AGENT_NOT_READY', 'KB_AGENT_NOT_CONFIGURED'].includes(error?.code)) throw error; saySources(`${done} 清单没有刷新：${error.message}`, 'error'); }
 +    });
 +  }
 +  function askDelete(source) {
@@ -289,11 +373,11 @@
 +    const no = button('取消', () => { confirmBox.replaceChildren(); confirmButtons = []; });
 +    confirmButtons = [yes, no];
 +    confirmBox.replaceChildren(h('div', { class: 'kb-confirm' },
-+      h('p', { class: 'kb-warn kb-block' }, `删除「${nameOf(source)}」（${source.source_id}）的全部 ${source.rules_total ?? 0} 条规则和登记，删了不能恢复。只是暂时不用的话，点「下线」。`),
++      h('p', { class: 'kb-warn kb-block' }, `删除「${nameOf(source)}」（${source.source_id}）的全部 ${source.rules_total ?? 0} 条规则和登记，删了不能恢复。${can('deactivate') ? '只是暂时不用的话，点「下线」。' : ''}`),
 +      h('div', { class: 'kb-actions' }, yes, no)));
 +  }
 +  const list = h('section', { class: 'platform-ops-card', 'data-kb-block': 'sources' }, h('div', { class: 'kb-section-head' }, h('h2', {}, '制度清单'), refresh),
-+    h('p', { class: 'kb-muted' }, '以文档管家返回的为准。「下线」后审核 Agent 检索不到这份制度的规则，可以恢复；「删除」连规则带登记一起删掉，不能恢复。'),
++    h('p', { class: 'kb-muted' }, `以${agent.lead}返回的为准。${can('deactivate') ? `「下线」后审核 Agent 检索不到这份制度的规则${can('restore') ? '，可以恢复' : ''}；` : ''}「删除」连规则带登记一起删掉，不能恢复。`),
 +    sourceRows, confirmBox, sourcesMessage);
 +
 +  // ---- 上传记录（外壳自己记的，最近 50 条）----
@@ -301,21 +385,31 @@
 +  const outcome = item => (item.status === 'ingested' ? `写入 ${item.written ?? 0} / 删除 ${item.removed ?? 0} / 不变 ${item.unchanged ?? 0}`
 +    : item.status === 'skipped' ? '和库里的一样，没有重写' : item.status === 'failed' ? clip(item.error?.message || '失败', 80) : '—');
 +  async function loadUploads() {
-+    try {
+     try {
+-      const data = await api('/poc/kb/documents');
+-      sayHistory('');
+-      historyRows.replaceChildren(table(['时间', '文件', '上传人', '状态', '规则数', '入库结果', '用时', ''], (data?.items || []).map(item => [
+-        time(item.uploaded_at), dash(item.file_name), dash(item.uploaded_by), pill(STATUS[item.status] || [dash(item.status), '']), dash(item.report?.matrix),
+-        item.result ? `新增 ${item.result.inserted ?? 0} / 更新 ${(item.result.updated ?? 0) + (item.result.retagged ?? 0)} / 删除 ${item.result.pruned ?? 0}` : '—',
+-        seconds(item.started_at, item.finished_at), button('查看', () => showDetail(item.id))]), '还没有上传过文档'));
+-    } catch (error) { sayHistory(error.message, 'error'); }
 +      const data = await api('/poc/kb/uploads');
 +      sayUploads('');
 +      uploadRows.replaceChildren(table(['时间', '文件', '上传人', '制度标识', '版本', '状态', '条数', '用时', '结果'], (data?.items || []).map(item => [
 +        time(item.at), dash(item.fileName), dash(item.by), dash(item.sourceId), dash(item.sourceVersion), pill(UPLOAD[item.status] || [dash(item.status), '']),
 +        dash(item.rulesTotal), Number.isFinite(item.elapsedMs) ? `${Math.round(item.elapsedMs / 1000)} 秒` : '—', outcome(item)]), '还没有上传过制度'));
 +    } catch (error) { failed(sayUploads, error); }
-+  }
+   }
+-  const history = h('section', { class: 'platform-ops-card' }, h('div', { class: 'kb-section-head' }, h('h2', {}, '上传历史'), button('刷新', () => loadHistory())), historyRows, detail, historyMessage);
 +  const uploads = h('section', { class: 'platform-ops-card', 'data-kb-block': 'uploads' },
 +    h('div', { class: 'kb-section-head' }, h('h2', {}, '上传记录'), button('刷新', () => loadUploads())), uploadRows, uploadsMessage);
-+
-+  // ---- 按问题检索（rules_search：板块、金额可空，空的不传）----
+ 
+-  // ---- 按问题检索 ----
+-  const question = textInput('question', '', '例如：九安的一份采购合同，总金额 30 万，用印需要谁审批？');
++  // ---- 按问题检索（板块、金额可空，空的不传）----
 +  const question = textInput('question', '', '例如：九安的房租年度框架合同，谁最终审批？');
 +  const segment = textInput('segment', '', '板块，例如 九安（可空）'), amount = textInput('amount', '', '金额，元（可空）');
-+  const results = h('div'), searchMessage = statusLine(), saySearch = sayer(searchMessage);
+   const results = h('div'), searchMessage = statusLine(), saySearch = sayer(searchMessage);
 +  const segments = list => (Array.isArray(list) && list.length ? list.map(item => (item === '*' ? '全部板块' : item)).join('、') : '—');
 +  const go = button('检索', async () => {
 +    const text = String(question.value || '').trim(), where = String(segment.value || '').trim(), money = String(amount.value || '').trim().replace(/[,，\s]/gu, '');
@@ -332,82 +426,144 @@
 +    } catch (error) { failed(saySearch, error); }
 +    finally { go.disabled = false; }
 +  }, true);
-+  const search = h('section', { class: 'platform-ops-card' }, h('h2', {}, '按问题检索'),
-+    h('p', { class: 'kb-muted' }, '和审核 Agent 审单时用的是同一个检索（文档管家的 rules_search）：只查有效的规则；填了板块只留这个板块和适用全部板块的规则，填了金额只留金额落在档位里的规则（不是金额条件的规则照样保留）。距离越小越相近。'),
+   const search = h('section', { class: 'platform-ops-card' }, h('h2', {}, '按问题检索'),
+-    h('p', { class: 'kb-muted' }, '和审核 Agent 经 Nexus 数据连接器用的是同一个检索（kb_search）。关键词用空格隔开更准，例如「房租 年度框架合同 九安」：含这些词越多的规则越靠前，同样多的再按语义相似度排。'),
+-    h('div', { class: 'kb-search' }, question, button('检索', async () => {
+-      const text = String(question.value || '').trim();
+-      if (!text) { saySearch('请写一个问题', 'error'); return; }
+-      saySearch('正在检索…');
+-      try {
+-        const data = await api(`/poc/kb/search?q=${encodeURIComponent(text)}&k=8`);
+-        saySearch('');
+-        results.replaceChildren(table(['排名', '规则编号', '业务事项', '板块', '金额档 / 触发情形', '最终审批', '命中词数', '相似度'], (data?.items || []).map((rule, index) => [
+-          String(index + 1), rule.rule_id, dash(rule.business_item), dash(rule.segment), dash(rule.amount_tier), dash(rule.final_approver), dash(rule.keyword_hits), Number(rule.score).toFixed(2)]), '没有找到规则'));
+-      } catch (error) { saySearch(error.message, 'error'); }
+-    }, true)), results, searchMessage);
++    h('p', { class: 'kb-muted' }, agent.search),
 +    h('div', { class: 'kb-search' }, question, segment, amount, go), results, searchMessage);
-+
-+  const lede = h('p', { class: 'kb-lede' }, '规则库在 Amazon S3 Vectors 里，由「知识库文档管家」经 A2A 读写：上传审批矩阵格式的制度，一行一条审批路径，规则编号和原文序号对应。审核 Agent 用 rules_search 检索有效的规则，审单时引用规则编号。');
+ 
+-  // ---- 检索日志 ----
+-  const logRows = h('div'), logMessage = statusLine(), sayLog = sayer(logMessage);
+-  async function loadLog() {
+-    try {
+-      const data = await api('/poc/kb/search-log');
+-      sayLog('');
+-      logRows.replaceChildren(table(['时间', '来自', '问题', '命中（前 3 条）', '用时'], (data?.items || []).map(entry => [
+-        time(entry.at), CALLER[entry.caller] || dash(entry.caller), dash(entry.question),
+-        (entry.hits || []).slice(0, 3).map(hit => `${hit.rule_id}（${Number(hit.score).toFixed(2)}）`).join('、') || '—', Number.isFinite(entry.took_ms) ? `${entry.took_ms} ms` : '—']), '还没有检索记录'));
+-    } catch (error) { sayLog(error.message, 'error'); }
++  const lede = h('p', { class: 'kb-lede' }, agent.lede);
 +  return { nodes: [lede, upload, list, uploads, search], start() { void loadSources(); void loadUploads(); } };
 +}
 +
-+/** 「我的规则」：只操作当前登录账号自己的；限额（10 份、2 MB、合计 20,000 字）由外壳核对，超了照它的中文提示显示。 */
++/**
++ * 「我的规则」：只操作当前登录账号自己的；限额（10 份、2 MB、合计 20,000 字）由外壳核对，超了照它的中文提示显示。
++ * 一次一个请求（读列表、上传、查看全文、删除）：进行中「选择文件」和每行的按钮都不可用，再选文件也不发。
++ */
 +function ownRules({ api }) {
 +  const usage = h('span', { class: 'kb-usage' }, '已用 — / 20,000 字');
 +  const message = statusLine(), say = sayer(message), listMessage = statusLine(), sayList = sayer(listMessage);
 +  const uploaded = h('div'), listRows = h('div'), detail = h('div');
-+  let shown = null;
++  let shown = null, fresh = null, busy = false, rowButtons = [];   // shown：「查看全文」打开的那份；fresh：刚上传、全文框还开着的那份
 +  const fileInput = h('input', { type: 'file', name: 'ownFile', accept: `.md,.docx,text/markdown,${DOCX}`, hidden: true });
 +  fileInput.addEventListener('change', () => pick(fileInput.files?.[0]));
-+  const drop = dropZone('把规则文件拖到这里，或', 'Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份、合计 20,000 字', fileInput, pick);
++  const choose = button('选择文件', () => fileInput.click?.(), true);
++  const drop = dropZone('把规则文件拖到这里，或', 'Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份、合计 20,000 字', fileInput, pick, choose);
 +  const textBox = (head, rule, onClose) => h('div', { class: 'kb-detail' },
 +    h('div', { class: 'kb-section-head' }, h('strong', {}, head), button('收起', onClose)), h('pre', { class: 'kb-own-text' }, rule?.text || ''));
-+
-+  async function pick(file) {
-+    if (!file) return;
++  const setBusy = on => { busy = on; for (const node of [choose, fileInput, ...rowButtons]) node.disabled = on; };
++  async function exclusive(task) {
++    if (busy) return;
++    setBusy(true);
++    try { await task(); } finally { setBusy(false); }
+   }
+-  const log = h('section', { class: 'platform-ops-card' }, h('div', { class: 'kb-section-head' }, h('h2', {}, '检索日志'), button('刷新', () => loadLog())),
+-    h('p', { class: 'kb-muted' }, '最近 50 次检索：审核 Agent 审单时查了什么、命中了哪些规则；页面检索和部署核对也在这里。'), logRows, logMessage);
+ 
+-  root.replaceChildren(h('div', { class: 'platform-ops-page kb-page' },
+-    h('h2', { class: 'platform-ops-title' }, '制度知识库'),
+-    h('p', { class: 'kb-lede' }, '把审批矩阵格式的制度上传进知识库：一行一条审批路径，规则编号和原文序号对应。审核 Agent 经 Nexus 数据连接器检索这里的规则，审单时引用规则编号。'),
+-    upload, history, search, log));
+-  void loadHistory();
+-  void loadLog();
+-  return { dispose() { disposed = true; } };
++  function pick(file) {
++    if (!file) return undefined;
 +    fileInput.value = '';
-+    if (!/\.(md|docx)$/iu.test(file.name || '')) { say('只收 Markdown（.md）或 Word（.docx）文件。', 'error'); return; }
-+    if (file.size > OWN_MAX_BYTES) { say('文件超过 2 MB。', 'error'); return; }
-+    uploaded.replaceChildren();
-+    say(`正在上传「${file.name}」并转成文字…`);
-+    try {
-+      const rule = await api('/poc/custom-rules', { method: 'POST', body: file,
-+        headers: { 'Content-Type': /\.docx$/iu.test(file.name) ? DOCX : 'text/markdown; charset=utf-8', 'X-File-Name': encodeURIComponent(file.name) } });
-+      say('');
-+      uploaded.replaceChildren(textBox(`已上传「${dash(rule?.title)}」：${thousands(rule?.chars)} 字。下面是转出来的文字，请核对（不对就删掉，改好原文件再上传）：`, rule, () => uploaded.replaceChildren()));
-+    } catch (error) { say(error.message, 'error'); }
-+    await load();
++    if (!/\.(md|docx)$/iu.test(file.name || '')) { say('只收 Markdown（.md）或 Word（.docx）文件。', 'error'); return undefined; }
++    if (file.size > OWN_MAX_BYTES) { say('文件超过 2 MB。', 'error'); return undefined; }
++    if (busy) { say('上一个请求还没完成，稍等再试。', 'error'); return undefined; }
++    return exclusive(async () => {
++      uploaded.replaceChildren();
++      fresh = null;
++      say(`正在上传「${file.name}」并转成文字…`);
++      try {
++        const rule = await api('/poc/custom-rules', { method: 'POST', body: file,
++          headers: { 'Content-Type': /\.docx$/iu.test(file.name) ? DOCX : 'text/markdown; charset=utf-8', 'X-File-Name': encodeURIComponent(file.name) } });
++        say('');
++        fresh = rule?.id ?? null;
++        uploaded.replaceChildren(textBox(`已上传「${dash(rule?.title)}」：${thousands(rule?.chars)} 字。下面是转出来的文字，请核对（不对就删掉，改好原文件再上传）：`, rule,
++          () => { uploaded.replaceChildren(); fresh = null; }));
++      } catch (error) { say(error.message, 'error'); }
++      await refresh();
++    });
 +  }
-+  async function load() {
++  async function refresh() {
 +    try {
 +      const data = await api('/poc/custom-rules');
 +      sayList('');
 +      usage.textContent = `已用 ${thousands(data?.usedChars ?? 0)} / ${thousands(data?.limitChars ?? 20000)} 字`;
 +      const items = Array.isArray(data?.items) ? data.items : [];
 +      if (shown && !items.some(item => item.id === shown)) { detail.replaceChildren(); shown = null; }
++      if (fresh && !items.some(item => item.id === fresh)) { uploaded.replaceChildren(); fresh = null; }
++      const make = (label, onClick) => { const node = button(label, onClick); node.disabled = busy; rowButtons.push(node); return node; };
++      rowButtons = [];
 +      listRows.replaceChildren(table(['标题', '字数', '上传时间', ''], items.map(item => [dash(item.title), thousands(item.chars), time(item.uploadedAt),
-+        h('div', { class: 'kb-row-actions' }, button('查看全文', () => view(item.id)), button('删除', () => remove(item)))]), '还没有上传规则'));
++        h('div', { class: 'kb-row-actions' }, make('查看全文', () => view(item.id)), make('删除', () => remove(item)))]), '还没有上传规则'));
 +    } catch (error) { sayList(error.message, 'error'); }
 +  }
-+  async function view(id) {
-+    try {
-+      const rule = await api(`/poc/custom-rules/${encodeURIComponent(id)}`);
-+      shown = id;
-+      detail.replaceChildren(textBox(`${dash(rule?.title)} · ${thousands(rule?.chars)} 字 · ${time(rule?.uploadedAt)}`, rule, () => { detail.replaceChildren(); shown = null; }));
-+      detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
-+    } catch (error) { say(error.message, 'error'); }
++  function view(id) {
++    return exclusive(async () => {
++      try {
++        const rule = await api(`/poc/custom-rules/${encodeURIComponent(id)}`);
++        shown = id;
++        detail.replaceChildren(textBox(`${dash(rule?.title)} · ${thousands(rule?.chars)} 字 · ${time(rule?.uploadedAt)}`, rule, () => { detail.replaceChildren(); shown = null; }));
++        detail.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
++      } catch (error) { say(error.message, 'error'); }
++    });
 +  }
-+  async function remove(item) {
-+    say(`正在删除「${dash(item.title)}」…`);
-+    try { await api(`/poc/custom-rules/${encodeURIComponent(item.id)}/delete`, { method: 'POST' }); say(`已删除「${dash(item.title)}」。`, 'success'); }
-+    catch (error) { say(error.message, 'error'); }
-+    await load();
++  function remove(item) {
++    return exclusive(async () => {
++      say(`正在删除「${dash(item.title)}」…`);
++      try { await api(`/poc/custom-rules/${encodeURIComponent(item.id)}/delete`, { method: 'POST' }); say(`已删除「${dash(item.title)}」。`, 'success'); }
++      catch (error) { say(error.message, 'error'); }
++      await refresh();
++    });
 +  }
 +  const node = h('section', { class: 'kb-area', 'data-kb-block': 'own' },
 +    h('div', { class: 'kb-area-head' }, h('h3', { class: 'kb-area-title' }, '我的规则'), usage),
 +    h('p', { class: 'kb-lede' }, '你自己的附加审核要求：只在你从单据页手动发起 AI 独立建议时随请求带上，审核 Agent 把它和公司制度一起核对，只会让结论更严、不会放宽；自动初审不带。只有你自己看得到。'),
 +    h('section', { class: 'platform-ops-card' }, drop, message, uploaded, listRows, listMessage, detail));
-+  return { node, load };
++  return { node, load: () => exclusive(refresh) };
  }
  
  let current = null;
---- a/public/platform-center.css	2026-10-30 06:54:21
-+++ b/public/platform-center.css	2026-10-30 07:06:38
-@@ -247,3 +247,15 @@
+--- a/public/platform-center.css	2026-10-30 09:43:42
++++ b/public/platform-center.css	2026-10-30 09:54:04
+@@ -237,7 +237,6 @@
+ .kb-field{display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1 1 220px;color:#4b5563;font-size:12px}
+ .kb-page input[type="text"]{box-sizing:border-box;min-height:36px;padding:7px 10px;border:1px solid var(--ui-line);border-radius:8px;background:#fff;color:#374151;font:inherit;font-size:13px}
+ .kb-page input[type="text"]:focus{border-color:var(--ui-accent);outline:none;box-shadow:0 0 0 3px var(--ui-soft-line)}
+-.kb-preview{margin:0;padding:8px 12px;border-radius:8px;background:var(--ui-bg);color:#374151;font-size:13px}
+ .kb-warn{margin:0;padding:8px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;color:#92400e;font-size:13px;line-height:1.6}
+ .kb-warn.kb-block{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
+ .kb-actions{display:flex;flex-wrap:wrap;gap:8px}
+@@ -247,3 +246,17 @@
  .kb-section-head h2{margin:0}
  .kb-detail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--ui-line);border-left:3px solid var(--ui-accent);border-radius:10px;background:#fff}
  @media(prefers-reduced-motion:reduce){.kb-drop{transition:none}}
 +
-+/* Bench patch 0005: the page's two blocks (公司制度 by the KB mode, 我的规则); the same cards, tables and buttons. */
++/* Bench patch 0005: the page's two blocks (公司制度 through the KB agent in either mode, 我的规则); the same cards, tables and buttons. */
 +.kb-area{display:flex;flex-direction:column;gap:12px}
 +.kb-area+.kb-area{margin-top:6px;padding-top:14px;border-top:1px solid var(--ui-line)}
 +.kb-area-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px}
@@ -415,6 +571,8 @@
 +.kb-usage{color:var(--ui-muted);font-size:13px;font-variant-numeric:tabular-nums}
 +.kb-row-actions{display:flex;flex-wrap:wrap;gap:6px}
 +.kb-confirm{display:flex;flex-direction:column;gap:8px}
++.kb-retry{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
++.kb-retry .platform-ops-dialog-result{flex:1 1 320px}
 +.kb-search input[name="segment"],.kb-search input[name="amount"]{flex:0 1 160px}
 +.kb-rule-text{display:block;max-width:56ch;white-space:normal;line-height:1.6;color:#374151}
 +.kb-own-text{margin:0;max-height:360px;overflow:auto;padding:10px 12px;border-radius:8px;background:var(--ui-bg);color:#374151;font:inherit;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}

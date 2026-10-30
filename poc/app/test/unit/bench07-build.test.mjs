@@ -311,7 +311,7 @@ test('补丁 0002：测试分三种——文本（原样发一段话看回复）
 
 const KB_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
-test('补丁 0004：「规则库」顶上分「审核要点」「制度知识库」两个页签（制度知识库只给管理员）；kb-page.js 登记进静态文件白名单和页面', async t => {
+test('补丁 0004：「规则库」顶上分「审核要点」「制度知识库」两个页签（管理员有；补丁 0005 起分析员也有）；kb-page.js 登记进静态文件白名单和页面', async t => {
   const out = await builtPage(t);
   const analysis = await readFile(path.join(out, 'public/analysis.js'), 'utf8');
   const tabs = analysis.slice(analysis.indexOf('function rulesTabs('), analysis.indexOf('function rulesTabs(') + 900);
@@ -326,101 +326,14 @@ test('补丁 0004：「规则库」顶上分「审核要点」「制度知识库
   for (const file of ['public/kb-page.js', 'public/analysis.js', 'public/route-model.js', 'analysis-server.mjs']) await run('node', ['--check', path.join(out, file)]);
 });
 
-test('补丁 0004：制度知识库页——上传后显示解析报告和入库预览，标签可改并重新预览（要删除的用琥珀色提醒），确认入库后轮询到结果并刷新历史；检索、检索日志', async t => {
-  const out = await builtPage(t);
-  globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
-  t.after(() => { delete globalThis.document; });
-  const { mountKbPage } = await import(pathToFileURL(path.join(out, 'public/kb-page.js')).href);
-  const calls = [];
-  let status = 'ingesting';
-  const reply = (data, code = 200) => ({ ok: code < 400, status: code, json: async () => (code < 400 ? { data } : { error: data }) });
-  const fetcher = async (url, init = {}) => {
-    const method = init.method || 'GET';
-    calls.push([method, url, init.headers || {}, init.body]);
-    if (method === 'POST' && url.endsWith('/poc/kb/documents')) return reply({ id: 1, fileName: '仿真办法.docx', suggestedTag: 'sample-matrix', docTitle: '仿真办法', sourceVersion: '',
-      report: { general: 3, chapter_notes: 3, matrix: 12, total: 18, chapters: [{ no: 1, title: '一、立项审批', rows: 4 }], duplicates: [], without_path: [] },
-      preview: { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0, pruned_ids: [] } }, 201);
-    if (url.endsWith('/documents/1/preview') && JSON.parse(init.body).sourceTag === 'other-doc') return reply({ preview: { inserted: 2, updated: 0, retagged: 0, unchanged: 0, pruned: 0, pruned_ids: [], conflicts: 10, conflict_ids: ['C01-1.1', 'C01-1.2'] } });
-    if (url.endsWith('/documents/1/preview')) return reply({ preview: { inserted: 12, updated: 0, retagged: 0, unchanged: 0, pruned: 2, pruned_ids: ['C01-1.1', 'C01-1.2'], conflicts: 0, conflict_ids: [] } });
-    if (url.endsWith('/documents/1/ingest')) return reply({ id: 1, status: 'ingesting' }, 202);
-    if (url.endsWith('/documents/1')) { const now = status; status = 'ingested'; return reply({ id: 1, status: now, result: now === 'ingested' ? { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } : null, rules: [] }); }
-    if (url.endsWith('/poc/kb/documents')) return reply({ items: [{ id: 1, file_name: '仿真办法.docx', status: 'ingested', uploaded_by: 'poc-reviewer', uploaded_at: '2026-10-26T08:00:00Z',
-      report: { matrix: 12 }, result: { inserted: 0, updated: 0, retagged: 0, unchanged: 12, pruned: 0 } }] });
-    if (url.includes('/poc/kb/search?')) return reply({ items: [{ rule_id: 'C05-5.2', business_item: '供应商货款', segment: '甲板块', amount_tier: '单笔 ＞1 万', final_approver: '财务经理', score: 0.81, keyword_hits: 2 }] });
-    if (url.endsWith('/poc/kb/search-log')) return reply({ items: [{ at: '2026-10-26T08:01:00Z', caller: 'agent', question: '房租 九安', hits: [{ rule_id: 'C05-3.4', score: 0.7 }], took_ms: 300 },
-      { at: '2026-10-26T08:02:00Z', caller: 'page', question: '税款', hits: [], took_ms: 200 }, { at: '2026-10-26T08:03:00Z', caller: 'verify', question: 'ping', hits: [], took_ms: 100 }] });
-    // 补丁 0005：管理员的页面先问知识库方式（PG 方式就是 0004 的样子），「我的规则」块也会读一次列表
-    if (url.endsWith('/poc/kb/mode')) return reply({ mode: 'pg', ready: true });
-    if (url.endsWith('/poc/custom-rules')) return reply({ items: [], usedChars: 0, limitChars: 20000, limitFiles: 10 });
-    return reply({ message: '没有这个接口' }, 404);
-  };
-  const root = new FakeNode('div');
-  mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-admin', role: 'admin' }, fetcher, pollMs: 0 });
-  const until = async check => { for (let index = 0; index < 50 && !check(); index += 1) await settle(); assert.ok(check(), root.textContent.slice(0, 400)); };
-  const press = async label => root.all(node => node.tagName === 'BUTTON' && node.textContent === label)[0].click();
-  // 等数据（日志里的问题、历史里的文件名）出来再看，不能只看卡片上固定的说明文字
-  await until(() => root.textContent.includes('房租 九安') && root.textContent.includes('仿真办法.docx'));
-  assert.match(root.textContent, /上传历史[\s\S]*仿真办法\.docx[\s\S]*已入库/);
-  assert.match(root.textContent, /房租 九安[\s\S]*C05-3\.4（0\.70）/);
-  const log = root.textContent.slice(root.textContent.indexOf('房租 九安') - 40);
-  assert.match(log, /审核 Agent[\s\S]*页面检索[\s\S]*部署核对/, '检索日志把 caller 显示成中文');
-
-  const input = root.all(node => node.tagName === 'INPUT' && node.type === 'file')[0];
-  input.files = [new File([new Uint8Array([0x50, 0x4b, 3, 4])], '仿真办法.docx', { type: KB_DOCX })];
-  await input.listeners.change[0]();
-  await until(() => /不变 12/.test(root.textContent));
-  const upload = calls.find(call => call[0] === 'POST' && call[1].endsWith('/poc/kb/documents'));
-  assert.deepEqual([upload[2]['X-File-Name'], upload[2]['X-CSRF-Token'], upload[2]['Content-Type']], [encodeURIComponent('仿真办法.docx'), 'tok', KB_DOCX]);
-  assert.match(root.textContent, /规则 12 条[\s\S]*一、立项审批/);
-  assert.match(root.textContent, /新增 0[\s\S]*重算向量 0[\s\S]*只更新说明 0[\s\S]*不变 12[\s\S]*删除 0/);
-  const tag = root.all(node => node.tagName === 'INPUT' && node.name === 'sourceTag')[0];
-  assert.equal(tag.value, 'sample-matrix');
-  // 规则编号已属于库里另一份文档：入库会覆盖它的规则——红字说明，确认入库按钮不可用
-  const confirmButton = () => root.all(node => node.tagName === 'BUTTON' && node.textContent === '确认入库')[0];
-  // 改了标签或版本还没重新预览：不能入库（入库只认看过预览的标签和版本）
-  tag.value = 'other-doc';
-  for (const listener of tag.listeners.input ?? []) listener();
-  assert.equal(confirmButton().disabled, true, '改了标签就要先重新预览');
-  const staleNote = () => root.all(node => node.tagName === 'P' && /先点「重新预览」/.test(node.textContent))[0];
-  assert.equal(staleNote().hidden, false);
-  await press('重新预览');
-  await until(() => /10 条规则编号已属于库里另一份文档/.test(root.textContent));
-  assert.equal(confirmButton().disabled, true);
-  tag.value = 'other-tag';
-  await press('重新预览');
-  await until(() => /将删除 2 条/.test(root.textContent));
-  assert.equal(confirmButton().disabled, false);
-  assert.doesNotMatch(root.textContent, /已属于库里另一份文档/);
-  assert.equal(staleNote().hidden, true, '重新预览后提示收起');
-  const lastPreview = calls.filter(call => call[1].endsWith('/documents/1/preview')).at(-1);
-  assert.deepEqual(JSON.parse(lastPreview[3]), { sourceTag: 'other-tag', sourceVersion: '' }, '预览带上页面上填的版本说明');
-  assert.ok(root.all(node => /kb-warn/.test(node.className)).length > 0, '要删除的规则用琥珀色提醒');
-  await press('确认入库');
-  await until(() => /入库完成/.test(root.textContent));
-  const ingest = calls.find(call => call[1].endsWith('/documents/1/ingest'));
-  assert.deepEqual(JSON.parse(ingest[3]), { sourceTag: 'other-tag', docTitle: '仿真办法', sourceVersion: '' });
-  assert.equal(ingest[2]['X-CSRF-Token'], 'tok');
-  assert.ok(calls.filter(call => call[0] === 'GET' && call[1].endsWith('/poc/kb/documents')).length >= 2, '入库完成后刷新历史');
-
-  const before = calls.length;
-  await press('检索');
-  assert.equal(calls.length, before, '问题是空的不发请求');
-  root.all(node => node.tagName === 'INPUT' && node.name === 'question')[0].value = '供应商 货款 单笔 2 万';
-  await press('检索');
-  await until(() => /C05-5\.2[\s\S]*供应商货款[\s\S]*0\.81/.test(root.textContent));
-  assert.ok(calls.at(-1)[1].includes(`/poc/kb/search?q=${encodeURIComponent('供应商 货款 单笔 2 万')}`));
-  // 含问题里关键词的规则排在前面：说明里讲清楚，结果里显示命中了几个词
-  assert.match(root.textContent, /用空格隔开/);
-  const cells = root.all(node => node.tagName === 'TD').map(node => node.textContent);
-  const at = cells.indexOf('C05-5.2');
-  assert.deepEqual(cells.slice(at, at + 7), ['C05-5.2', '供应商货款', '甲板块', '单笔 ＞1 万', '财务经理', '2', '0.81']);
-  assert.ok(root.all(node => node.tagName === 'TH').some(node => node.textContent === '命中词数'));
-});
-
-// ---- 补丁 0005：「制度知识库」页按知识库方式画「公司制度」块（只给管理员），能进这一页的人都有「我的规则」块 ----
+// ---- 补丁 0005：「制度知识库」页的「公司制度」块（只给管理员）两种知识库方式共用：都经知识库 Agent（pg 是 PG 知识库 Agent，
+// s3vectors 是知识库文档管家），按 /mode 的 ops 显示按钮；能进这一页的人都有「我的规则」块 ----
 const kbReply = (data, code = 200) => ({ ok: code < 400, status: code, json: async () => (code < 400 ? { data } : { error: data }) });
-async function kbPageModule(t) {
-  const out = await builtPage(t);
+// describe 的 ops：PG 知识库 Agent 约定里必须有的（没有下线 / 恢复）、文档管家的全部
+const KB_PG_OPS = ['describe', 'ingest', 'list', 'detail', 'delete', 'check', 'search'];
+const KB_ALL_OPS = ['describe', 'ingest', 'list', 'detail', 'deactivate', 'restore', 'delete', 'check', 'search'];
+async function kbPageModule(t, built = null) {
+  const out = built ?? await builtPage(t);
   globalThis.document = { createElement: tag => new FakeNode(tag), body: null };
   t.after(() => { delete globalThis.document; });
   return import(pathToFileURL(path.join(out, 'public/kb-page.js')).href);
@@ -530,7 +443,7 @@ test('补丁 0005：S3 Vectors 方式、文档管家还没在「Agent 接入」�
   const fetcher = async (url, init = {}) => {
     const method = init.method || 'GET';
     calls.push(`${method} ${url}`);
-    if (url.endsWith('/poc/kb/mode')) return kbReply({ mode: 's3vectors', ready: false });
+    if (url.endsWith('/poc/kb/mode')) return kbReply({ mode: 's3vectors', configured: true, ready: false, ops: [] });
     return own(method, url, init) ?? kbReply({ message: '没有这个接口' }, 404);
   };
   const root = new FakeNode('div');
@@ -561,7 +474,7 @@ test('补丁 0005：S3 Vectors 方式（ready=true）：上传带制度标识（
     calls.push([method, url, init.headers || {}, init.body]);
     const where = new URL(url, 'http://bench.test');
     const route = where.pathname.replace('/api/analysis/v1/poc/kb', '');
-    if (route === '/mode') return kbReply({ mode: 's3vectors', ready: true });
+    if (route === '/mode') return kbReply({ mode: 's3vectors', configured: true, ready: true, ops: KB_ALL_OPS });
     if (route === '/sources' && method === 'GET') return kbReply({ success: true, sources });
     if (route === '/uploads') return kbReply({ items: [...uploads].reverse() });
     if (route === '/sources' && method === 'POST') {
@@ -677,4 +590,289 @@ test('补丁 0005：S3 Vectors 方式（ready=true）：上传带制度标识（
   input('question').value = '不在线';
   await press('检索');
   await until(() => block('company').textContent.replace('公司制度', '') === '先在『Agent 接入』页启用知识库文档管家');
+});
+
+/**
+ * 「公司制度」接口的假实现（两种方式同一套）：/mode 回 fake.mode（是函数就调它）；清单、上传（POST 回 202，轮询 /uploads/<id> 时
+ * 等测试调 release() 才算入库完成）、下线 / 恢复 / 删除、检索。
+ */
+function companyFake({ mode = { mode: 'pg', configured: true, ready: true, ops: KB_PG_OPS }, sources = [] } = {}) {
+  const fake = { mode, sources: sources.map(source => ({ ...source })), uploads: [], polls: 0, release: null };
+  const gate = new Promise(resolve => { fake.release = resolve; });
+  fake.handle = async (method, url, init) => {
+    const where = new URL(url, 'http://bench.test');
+    if (!where.pathname.startsWith('/api/analysis/v1/poc/kb/')) return null;
+    const route = where.pathname.slice('/api/analysis/v1/poc/kb'.length);
+    if (route === '/mode') return typeof fake.mode === 'function' ? fake.mode() : kbReply(fake.mode);
+    if (route === '/sources' && method === 'GET') return kbReply({ success: true, sources: fake.sources });
+    if (route === '/uploads') return kbReply({ items: [...fake.uploads].reverse() });
+    if (route === '/sources' && method === 'POST') {
+      const p = where.searchParams;
+      fake.uploads.push({ id: fake.uploads.length + 1, at: '2026-10-30T08:00:00Z', fileName: decodeURIComponent(init.headers['X-File-Name']), by: 'poc-admin',
+        sourceId: p.get('sourceId'), sourceVersion: p.get('sourceVersion'), title: p.get('title'), status: 'ingesting', rulesTotal: null, written: null, removed: null,
+        unchanged: null, conflicts: [], elapsedMs: null, error: null });
+      return kbReply({ id: fake.uploads.length, status: 'ingesting' }, 202);
+    }
+    const entry = /^\/uploads\/(\d+)$/.exec(route);
+    if (entry) {
+      fake.polls += 1;
+      await gate;
+      const item = fake.uploads[Number(entry[1]) - 1];
+      if (item.status === 'ingesting') {
+        Object.assign(item, { status: 'ingested', rulesTotal: 121, written: 3, removed: 2, unchanged: 118, elapsedMs: 75000 });
+        fake.sources = fake.sources.map(source => (source.source_id === item.sourceId ? { ...source, source_version: item.sourceVersion, rules_total: 121 } : source));
+      }
+      return kbReply(item);
+    }
+    const one = /^\/sources\/([^/]+)\/(deactivate|restore|delete)$/.exec(route);
+    if (one && method === 'POST') {
+      const id = decodeURIComponent(one[1]), affected = fake.sources.find(source => source.source_id === id)?.rules_total ?? 0;
+      fake.sources = one[2] === 'delete' ? fake.sources.filter(source => source.source_id !== id)
+        : fake.sources.map(source => (source.source_id === id ? { ...source, status: one[2] === 'deactivate' ? 'inactive' : 'active' } : source));
+      return kbReply({ success: true, source_id: id, affected });
+    }
+    if (route === '/search') {
+      return kbReply({ success: true, filter: { note: 'kb_search' }, results: [{ rule_id: 'C05-3.4', rule_type: 'matrix', chapter_no: 5, segments: ['九安'], amt_kind: 'range',
+        source_id: 'fin-approval', text: '房租（年度框架合同）由财务经理审批', distance: 0.18 }] });
+    }
+    return kbReply({ code: 'NOT_FOUND', message: '没有这个接口' }, 404);
+  };
+  return fake;
+}
+/** 依次问各个假实现，都不认就回 404；每次请求记进 calls：[method, url, headers, body]。 */
+function kbFetcher(calls, ...handlers) {
+  return async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push([method, url, init.headers || {}, init.body]);
+    for (const handle of handlers) {
+      const answer = await handle(method, url, init);
+      if (answer) return answer;
+    }
+    return kbReply({ message: '没有这个接口' }, 404);
+  };
+}
+const KB_SOURCES = [
+  { source_id: 'fin-approval', title: '财务审批制度', source_version: 'V4.0', file_name: '财务审批制度.docx', doc_hash: 'ab', rules_total: 118, status: 'active', ingested_at: '2026-10-20T08:00:00Z', updated_at: '2026-10-20T08:00:00Z' },
+  { source_id: 'old-policy', title: '旧制度', source_version: 'V1', file_name: 'old.docx', doc_hash: 'cd', rules_total: 5, status: 'inactive', ingested_at: '2026-10-01T08:00:00Z', updated_at: '2026-10-02T08:00:00Z' },
+];
+const ADMIN = { id: 'poc-admin', role: 'admin' };
+
+test('补丁 0005：PG 方式的「公司制度」也经知识库 Agent，和 S3 Vectors 方式同一块（0004 的入库预览、上传历史、检索日志都去掉）：上传带制度标识、版本、文档名，入库进行中「上传并入库」「取消」都不可用，轮询上传记录到入库完成后刷新清单；按问题检索', async t => {
+  const out = await builtPage(t);
+  const page = await readFile(path.join(out, 'public/kb-page.js'), 'utf8');
+  for (const gone of ['/poc/kb/documents', '/poc/kb/search-log', '检索日志', '入库预览', '重新预览', 'pgCompany']) assert.ok(!page.includes(gone), `kb-page.js 里不该再有 ${gone}`);
+  await run('node', ['--check', path.join(out, 'public/kb-page.js')]);
+  const { mountKbPage } = await kbPageModule(t, out);
+  const calls = [];
+  const company = companyFake({ sources: KB_SOURCES.slice(0, 1) });
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher(calls, company.handle, ownRulesFake()), pollMs: 0 });
+  const { until, buttons, press, row: anyRow, block, input } = kbHelpers(root);
+  const row = text => (block('sources') ? anyRow(text, block('sources')) : undefined);
+  await until(() => Boolean(row('fin-approval')) && root.textContent.includes('已用 0 / 20,000 字'));
+  assert.deepEqual(row('fin-approval').all(node => node.tagName === 'TD').slice(0, 5).map(node => node.textContent), ['财务审批制度', 'fin-approval', 'V4.0', '118', '有效']);
+  const area = block('company');
+  assert.match(area.textContent, /PostgreSQL[\s\S]*「知识库 Agent」经 A2A 读写/);
+  assert.doesNotMatch(area.textContent, /文档管家|S3 Vectors|rules_search/, 'PG 方式不提文档管家');
+  assert.ok(block('uploads'), '上传记录是外壳自己记的，两种方式都有');
+
+  // 上传：清单里有同名文件的制度就用它的标识和标题（再上传是它的新版本）
+  const file = input('file');
+  file.files = [new File([new Uint8Array([0x50, 0x4b, 3, 4])], '财务审批制度.docx', { type: KB_DOCX })];
+  await file.listeners.change[0]();
+  await until(() => Boolean(input('sourceId')));
+  assert.deepEqual([input('sourceId').value, input('docTitle').value], ['fin-approval', '财务审批制度']);
+  input('sourceVersion').value = 'V4.1 修订';
+  const lists = () => calls.filter(call => call[0] === 'GET' && call[1].endsWith('/poc/kb/sources')).length;
+  const listsBefore = lists();
+  const submitting = press('上传并入库');
+  await until(() => company.polls > 0);
+  assert.equal(buttons(area, '上传并入库')[0].disabled, true);
+  assert.equal(buttons(area, '取消')[0].disabled, true, '入库进行中「取消」也不可用');
+  assert.match(area.textContent, /正在入库：知识库 Agent 解析/);
+  company.release();
+  await submitting;
+  await until(() => /入库完成/.test(root.textContent) && /V4\.1 修订/.test(row('fin-approval')?.textContent ?? ''));
+  assert.match(root.textContent, /入库完成：「财务审批制度」共 121 条规则（写入 3、删除 2、不变 118）/);
+  const upload = calls.find(call => call[0] === 'POST' && call[1].includes('/poc/kb/sources?'));
+  const params = new URL(upload[1], 'http://bench.test').searchParams;
+  assert.deepEqual([params.get('sourceId'), params.get('sourceVersion'), params.get('title')], ['fin-approval', 'V4.1 修订', '财务审批制度']);
+  assert.deepEqual([upload[2]['X-File-Name'], upload[2]['X-CSRF-Token'], upload[2]['Content-Type']], [encodeURIComponent('财务审批制度.docx'), 'tok', KB_DOCX]);
+  assert.equal(upload[3], file.files[0]);
+  assert.equal(buttons(area, '取消').length, 0, '入库完成后表单收起');
+  assert.ok(lists() > listsBefore, '入库完成后刷新清单');
+  assert.match(anyRow('V4.1 修订', block('uploads'))?.textContent ?? '', /财务审批制度\.docx[\s\S]*poc-admin[\s\S]*fin-approval[\s\S]*已入库/, '上传记录刷新');
+
+  // 按问题检索：板块、金额空着就不传
+  input('question').value = '房租 年度框架合同 九安';
+  await press('检索');
+  await until(() => root.textContent.includes('房租（年度框架合同）由财务经理审批'));
+  assert.deepEqual(anyRow('C05-3.4').all(node => node.tagName === 'TD').slice(0, 5).map(node => node.textContent), ['1', 'C05-3.4', '九安', 'fin-approval', '0.180']);
+  const search = new URL(calls.findLast(call => call[1].includes('/poc/kb/search?'))[1], 'http://bench.test').searchParams;
+  assert.deepEqual([...search.keys()].sort(), ['k', 'q']);
+  assert.equal(search.get('q'), '房租 年度框架合同 九安');
+  assert.ok(calls.every(call => !/\/poc\/kb\/(documents|search-log)/.test(call[1])), '不再请求 0004 的接口');
+});
+
+test('补丁 0005（ops_gate_buttons）：「下线」「恢复」只在 /mode 的 ops 里有时显示——PG 知识库 Agent 不支持时清单只有「删除」，说明和删除确认里也不提下线；Agent 支持时（哪种方式都一样）照样显示', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  async function mount(mode) {
+    const calls = [];
+    const root = new FakeNode('div');
+    mountKbPage({ root, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher(calls, companyFake({ mode, sources: KB_SOURCES }).handle, ownRulesFake()), pollMs: 0 });
+    const helpers = kbHelpers(root);
+    const row = text => (helpers.block('sources') ? helpers.row(text, helpers.block('sources')) : undefined);
+    await helpers.until(() => Boolean(row('old-policy')));
+    const actions = text => row(text).all(node => node.tagName === 'BUTTON').map(node => node.textContent);
+    return { ...helpers, root, calls, row, actions };
+  }
+  const pg = await mount({ mode: 'pg', configured: true, ready: true, ops: KB_PG_OPS });
+  assert.deepEqual([pg.actions('fin-approval'), pg.actions('old-policy')], [['删除'], ['删除']], 'Agent 不支持下线 / 恢复：只有「删除」');
+  assert.doesNotMatch(pg.block('sources').textContent, /「下线」/);
+  await pg.press('删除', pg.row('fin-approval'));
+  assert.match(pg.block('sources').textContent, /删除「财务审批制度」（fin-approval）的全部 118 条规则和登记，删了不能恢复。/);
+  assert.doesNotMatch(pg.block('sources').textContent, /「下线」/, '确认里不叫人去点没有的「下线」');
+
+  const toggles = await mount({ mode: 'pg', configured: true, ready: true, ops: KB_ALL_OPS });
+  assert.deepEqual([toggles.actions('fin-approval'), toggles.actions('old-policy')], [['下线', '删除'], ['恢复', '删除']], 'Agent 支持时照样显示');
+  assert.match(toggles.block('sources').textContent, /「下线」后审核 Agent 检索不到/);
+  await toggles.press('下线', toggles.row('fin-approval'));
+  await toggles.until(() => /已下线「财务审批制度」（118 条规则）/.test(toggles.root.textContent));
+  assert.ok(toggles.calls.some(call => call[0] === 'POST' && call[1].endsWith('/poc/kb/sources/fin-approval/deactivate')));
+
+  const s3v = await mount({ mode: 's3vectors', configured: true, ready: true, ops: ['describe', 'ingest', 'list', 'detail', 'delete', 'search'] });
+  assert.deepEqual([s3v.actions('fin-approval'), s3v.actions('old-policy')], [['删除'], ['删除']], '看的是 ops，不是方式');
+  const noOps = await mount({ mode: 'pg', configured: true, ready: true });
+  assert.deepEqual([noOps.actions('fin-approval'), noOps.actions('old-policy')], [['删除'], ['删除']], '没有 ops 就当都不支持');
+  for (const page of [pg, s3v, noOps]) assert.ok(page.calls.every(call => !/\/(deactivate|restore)$/.test(call[1])));
+});
+
+test('补丁 0005（not_configured_message）：没配知识库 Agent 的发布编号（configured=false）时「公司制度」块只说「知识库 Agent 还没配置」（S3 Vectors 方式说「知识库文档管家」）；PG 方式没在「Agent 接入」页启用（ready=false）只说「先在『Agent 接入』页启用知识库 Agent」；都不发别的请求', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  for (const [mode, expected] of [
+    [{ mode: 'pg', configured: false, ready: false, ops: [] }, '知识库 Agent 还没配置'],
+    [{ mode: 's3vectors', configured: false, ready: false, ops: [] }, '知识库文档管家还没配置'],
+    [{ mode: 'pg', configured: true, ready: false, ops: [] }, '先在『Agent 接入』页启用知识库 Agent'],
+  ]) {
+    const calls = [];
+    const root = new FakeNode('div');
+    mountKbPage({ root, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher(calls, companyFake({ mode }).handle, ownRulesFake()), pollMs: 0 });
+    const { until, block } = kbHelpers(root);
+    const said = () => block('company').textContent.replace('公司制度', '');
+    await until(() => said() === expected && root.textContent.includes('已用 0 / 20,000 字'));
+    for (let index = 0; index < 10; index += 1) await settle();
+    assert.deepEqual(calls.map(call => `${call[0]} ${call[1]}`).sort(), ['GET /api/analysis/v1/poc/custom-rules', 'GET /api/analysis/v1/poc/kb/mode'], JSON.stringify(mode));
+    assert.equal(block('company').all(node => ['BUTTON', 'INPUT', 'TABLE'].includes(node.tagName)).length, 0, '整块只有那句提示');
+    assert.equal(said(), expected);
+    assert.ok(block('own'));
+  }
+});
+
+test('补丁 0005：/mode 要等知识库 Agent 回 describe——等的时候说「正在连接知识库 Agent（约 10–20 秒）…」（这一页上次读到 S3 Vectors 方式就说「知识库文档管家」）；/mode 失败显示服务端的中文提示和「重试」，重试成功就画出整块', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  const UNAVAILABLE = '知识库 Agent 暂时连不上，或没在限定时间内答完：稍后再试（入库的话先看一下制度清单，可能已经写完）。';
+  let release = null;
+  const answers = [
+    async () => { await new Promise(resolve => { release = resolve; }); return kbReply({ code: 'KB_UNAVAILABLE', message: UNAVAILABLE }, 503); },
+    async () => kbReply({ mode: 'pg', configured: true, ready: true, ops: KB_PG_OPS }),
+  ];
+  const company = companyFake({ sources: KB_SOURCES.slice(0, 1) });
+  company.mode = () => answers.shift()();
+  const calls = [];
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher(calls, company.handle, ownRulesFake()), pollMs: 0 });
+  const { until, buttons, press, row, block } = kbHelpers(root);
+  await until(() => block('company').textContent.includes('正在连接知识库 Agent（约 10–20 秒）…') && release !== null);
+  assert.equal(buttons(block('company'), '重试').length, 0);
+  release();
+  await until(() => block('company').textContent.includes(UNAVAILABLE));
+  assert.equal(buttons(block('company'), '重试').length, 1, '失败时给「重试」');
+  assert.deepEqual(calls.filter(call => call[1].includes('/poc/kb/')).map(call => call[1]), ['/api/analysis/v1/poc/kb/mode'], '/mode 失败不发别的请求');
+  await press('重试', block('company'));
+  await until(() => Boolean(row('fin-approval', block('company'))));
+  assert.equal(calls.filter(call => call[1].endsWith('/poc/kb/mode')).length, 2);
+  assert.doesNotMatch(block('company').textContent, /暂时连不上/);
+
+  // 这一页读到过 S3 Vectors 方式：下一次进来，等的时候说文档管家
+  const s3v = companyFake({ mode: { mode: 's3vectors', configured: true, ready: true, ops: KB_ALL_OPS } });
+  const firstRoot = new FakeNode('div');
+  mountKbPage({ root: firstRoot, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher([], s3v.handle, ownRulesFake()), pollMs: 0 });
+  const first = kbHelpers(firstRoot);
+  await first.until(() => Boolean(first.block('sources')));
+  let answer = null;
+  s3v.mode = () => new Promise(resolve => { answer = () => resolve(kbReply({ mode: 's3vectors', configured: true, ready: true, ops: KB_ALL_OPS })); });
+  const againRoot = new FakeNode('div');
+  mountKbPage({ root: againRoot, csrfToken: () => 'tok', user: ADMIN, fetcher: kbFetcher([], s3v.handle, ownRulesFake()), pollMs: 0 });
+  const again = kbHelpers(againRoot);
+  await again.until(() => again.block('company').textContent.includes('正在连接知识库文档管家（约 10–20 秒）…') && answer !== null);
+  answer();
+  await again.until(() => Boolean(again.block('sources')));
+});
+
+test('补丁 0005：「我的规则」请求进行中（读列表、上传、查看全文、删除）按钮都不可用，再选文件不发请求；删掉刚上传的那份后它的全文框也收起（删别的不动它）', async t => {
+  const { mountKbPage } = await kbPageModule(t);
+  const own = ownRulesFake([{ id: 'r-1', title: '房租补充要求.md', format: 'md', chars: 1200, uploadedAt: '2026-10-28T08:00:00Z', text: '九安板块的房租对公付款须附出租方的房产证明。' }]);
+  const calls = [];
+  let hold = true, release = null;
+  const fetcher = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push([method, url]);
+    if (hold) { hold = false; await new Promise(resolve => { release = resolve; }); }
+    return own(method, url, init) ?? kbReply({ message: '没有这个接口' }, 404);
+  };
+  const root = new FakeNode('div');
+  mountKbPage({ root, csrfToken: () => 'tok', user: { id: 'poc-reviewer', role: 'analyst' }, fetcher, pollMs: 0 });
+  const { until, press, row, block, input } = kbHelpers(root);
+  const requestButtons = () => block('own').all(node => node.tagName === 'BUTTON' && ['选择文件', '查看全文', '删除'].includes(node.textContent));
+  const allDisabled = () => requestButtons().every(node => node.disabled === true);
+  const noneDisabled = () => requestButtons().every(node => !node.disabled);
+  const held = async () => { await until(() => release !== null); };
+  const letGo = () => { const go = release; release = null; go(); };
+
+  // 读列表
+  await held();
+  assert.ok(requestButtons().length === 1 && allDisabled(), '读列表时「选择文件」不可用');
+  letGo();
+  await until(() => Boolean(row('房租补充要求.md')) && noneDisabled());
+
+  // 上传：进行中按钮都不可用，再选一个文件不发请求
+  hold = true;
+  const file = input('ownFile');
+  file.files = [new File(['对公付款单金额超过 10 万元须附合同。'], '合同要求.md', { type: 'text/markdown' })];
+  const uploading = file.listeners.change[0]();
+  await held();
+  assert.ok(requestButtons().length === 3 && allDisabled(), '上传时「选择文件」「查看全文」「删除」都不可用');
+  const before = calls.length;
+  file.files = [new File(['x'], '另一份.md', { type: 'text/markdown' })];
+  await file.listeners.change[0]();
+  assert.equal(calls.length, before, '上一个请求没完成时再选文件不发请求');
+  assert.match(block('own').textContent, /上一个请求还没完成/);
+  letGo();
+  await uploading;
+  await until(() => /已上传「合同要求\.md」/.test(root.textContent) && Boolean(row('合同要求.md')) && noneDisabled());
+
+  // 查看全文
+  hold = true;
+  const viewing = press('查看全文', row('房租补充要求.md'));
+  await held();
+  assert.ok(allDisabled(), '查看全文时按钮都不可用');
+  letGo();
+  await viewing;
+  await until(() => root.textContent.includes('须附出租方的房产证明') && noneDisabled());
+
+  // 删别的那份：进行中按钮都不可用；它的全文收起，刚上传的那份的全文框不动
+  hold = true;
+  const deleting = press('删除', row('房租补充要求.md'));
+  await held();
+  assert.ok(allDisabled(), '删除时按钮都不可用');
+  letGo();
+  await deleting;
+  await until(() => !row('房租补充要求.md') && noneDisabled());
+  assert.doesNotMatch(root.textContent, /须附出租方的房产证明/);
+  assert.match(root.textContent, /已上传「合同要求\.md」：300 字/, '删别的规则不动刚上传的那份的全文框');
+
+  // 删刚上传的那份：它的全文框也收起
+  await press('删除', row('合同要求.md'));
+  await until(() => !row('合同要求.md'));
+  assert.doesNotMatch(root.textContent, /已上传「合同要求\.md」|对公付款单金额超过 10 万元须附合同。/, '删掉刚上传的那份后它的全文框收起');
 });
