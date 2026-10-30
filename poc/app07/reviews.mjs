@@ -6,8 +6,10 @@
  *   GET  …/reviews/latest?ids=a,b,…             单据池一页（1–50 张）的复核状态 → { items: { [documentId]: { state, current, review } } }
  * 两个 GET 给管理员、分析员和规则发布复核人（policy_reviewer 的单据池只读，也要看复核状态）；别的角色一律 403。
  * 会话、来源和 CSRF 由九安校验；这些路径不在 /platform 下，九安不替它们读请求体，这里自己读。
- * 只能复核「当前那一轮已完成、审的是单据现在的版本、结论是 pass / fail」的建议：提交的轮次或版本不是当前的 → 409 REVIEW_STALE（先查这个），
- * 同一轮但还没完成（在跑、失败、declined…）→ 409 REVIEW_ADVICE_NOT_READY；单据不在测试台的公司里或不存在 → 404。两人同时复核同一轮都成功，后一次为准。
+ * 只能复核「当前那一轮已完成、审的是单据现在的版本、结论是 pass / fail」的建议。单据不在测试台的公司里或不存在 → 404；然后按顺序查：
+ *   ① 提交的版本不是单据现在的版本 → 409 REVIEW_STALE；② 有当前一轮、提交的轮次不是它 → 409 REVIEW_STALE；
+ *   ③ 没有轮次，或当前一轮不能复核（在跑、失败、declined、给旧版本做的…）→ 409 REVIEW_ADVICE_NOT_READY。
+ *   只有真有更新的东西（单据新版本、新一轮）时才说「刚更新」。两人同时复核同一轮都成功，后一次为准。
  * 查当前一轮和写入之间不加锁：这中间刚好又跑完一轮的话，记下的仍是提交时那一轮，latest 里这张单显示 outdated，回到待复核。
  * 改判原因按方向（Spec 第 9 节）：AI 不建议通过 → 改判为通过、AI 建议通过 → 改判为不通过各一组；other 必须写备注；备注去掉首尾空白，最多 200 字。
  * 表 poc_review_decisions 在九安的 jiuan07 库里（端到端测试的重置删库重建，随之清空），start() 时建；created_at 存 UTC 的 DATETIME(3)。
@@ -29,26 +31,27 @@ export const OVERRIDE_REASONS = Object.freeze({
 });
 const ALL_REASONS = new Set([...OVERRIDE_REASONS.fail, ...OVERRIDE_REASONS.pass]);
 export const REVIEW_MESSAGES = Object.freeze({
-  REVIEW_FORBIDDEN: '只有管理员和分析员能复核 AI 建议；规则发布复核人只能查看复核记录。',
-  REVIEW_INVALID: '复核内容不对：要有单据、版本、轮次和结论（采纳或改判），不带别的字段。',
+  REVIEW_FORBIDDEN: '只有管理员和分析员能复核 AI 建议（规则发布复核人只能查看）：要复核请换管理员或分析员账号登录。',
+  REVIEW_INVALID: '复核内容不对（要有单据、版本、轮次和结论，不带别的字段）：请刷新页面后重新提交。',
   REVIEW_NOT_FOUND: '找不到这张单据：刷新单据池后再试。',
   REVIEW_ADVICE_NOT_READY: '这张单还没有完成的 AI 建议，等建议出来再复核。',
   REVIEW_STALE: '这张单的 AI 建议刚更新，请先看新的建议。',
   REVIEW_UNAVAILABLE: '复核记录暂时读写不了，稍后再试。',
-  INVALID_CONTENT_TYPE: '复核请求要用 JSON 发送。',
-  INVALID_JSON: '复核请求不是有效的 JSON。',
-  BODY_LIMIT: '复核请求太大：备注最多 200 字。',
+  INVALID_CONTENT_TYPE: '复核请求不是 JSON：请刷新页面后重新提交。',
+  INVALID_JSON: '复核请求不是有效的 JSON：请刷新页面后重新提交。',
+  BODY_LIMIT: `复核请求太大：请把备注缩短到 ${NOTE_MAX} 字以内再提交。`,
 });
 const INVALID = Object.freeze({
-  adoptReason: '采纳 AI 建议时不用选改判原因。',
-  reason: '改判要选一个改判原因。',
-  fail: '改判为通过要从这些原因里选一个：合同或补充协议已涵盖、原件齐全 AI 没识别、金额核对无误、适用规则不对、其他。',
-  pass: '改判为不通过要从这些原因里选一个：原件缺失或不符、金额不符、收款方不符、适用规则不对、其他。',
-  otherNote: '改判原因选「其他」时要写备注。',
-  note: `备注最多 ${NOTE_MAX} 字。`,
-  documentId: '要给出单据编号（documentId）。',
-  ids: `复核状态一次查 1 到 ${LATEST_MAX} 张单据（ids 用逗号分开）。`,
-  query: '请求里有不认识的参数。',
+  adoptReason: '采纳 AI 建议不用选改判原因：请去掉改判原因再提交。',
+  reason: '改判还没选原因：请选一个改判原因再提交。',
+  fail: '这个原因不能用来改判为通过：请从合同或补充协议已涵盖、原件齐全 AI 没识别、金额核对无误、适用规则不对、其他里选一个。',
+  pass: '这个原因不能用来改判为不通过：请从原件缺失或不符、金额不符、收款方不符、适用规则不对、其他里选一个。',
+  otherNote: '改判原因选了「其他」：请写上备注再提交。',
+  note: `备注超过 ${NOTE_MAX} 字：请缩短后再提交。`,
+  documentId: '缺少单据编号（documentId）：请从单据池重新打开这张单。',
+  ids: `复核状态一次查 1 到 ${LATEST_MAX} 张单据（ids 用逗号分开）：请减少单据数后重试。`,
+  query: '请求里有不认识的参数：请刷新页面后重试。',
+  since: '统计起点不是有效的时间：请刷新页面后重试。',
 });
 const STATUS = Object.freeze({ REVIEW_FORBIDDEN: 403, REVIEW_INVALID: 400, REVIEW_NOT_FOUND: 404, REVIEW_ADVICE_NOT_READY: 409, REVIEW_STALE: 409,
   REVIEW_UNAVAILABLE: 503, INVALID_CONTENT_TYPE: 415, INVALID_JSON: 400, BODY_LIMIT: 413 });
@@ -57,6 +60,8 @@ const send = (res, status, payload) => { res.writeHead(status, { 'Content-Type':
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = value => typeof value === 'string' && TEXT.test(value) && value.trim() === value;
 const absent = value => value === undefined || value === null;
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/u;
+const CODE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
 const COLUMNS = 'id, document_id, document_version, advice_round, ai_result, decision, final_result, reason, note, actor, created_at';
 const SCHEMA = `CREATE TABLE IF NOT EXISTS poc_review_decisions (
@@ -77,6 +82,14 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS poc_review_decisions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`;
 /** ISO 时间 ↔ UTC 的 DATETIME(3) 文字（'2026-10-30 08:00:01.000'），不经 pool 的时区换算。 */
 const sqlTime = at => new Date(at).toISOString().slice(0, 23).replace('T', ' ');
+/** 统计起点：Date，或带时差（Z / ±hh:mm）的 ISO 时间；DATETIME 只到 1000–9999 年。别的一律 REVIEW_INVALID。 */
+function sinceOf(since) {
+  if (absent(since)) return new Date(0);
+  const at = since instanceof Date ? since : typeof since === 'string' && ISO_TIME.test(since) ? new Date(since) : null;
+  const year = at ? at.getUTCFullYear() : NaN;
+  if (!(year >= 1000 && year <= 9999)) fail('REVIEW_INVALID', INVALID.since);
+  return at;
+}
 const isoOf = value => (value instanceof Date ? value : new Date(`${String(value).replace(' ', 'T')}Z`)).toISOString();
 const reviewOf = row => ({ id: Number(row.id), documentId: row.document_id, documentVersion: row.document_version, adviceRound: Number(row.advice_round),
   aiResult: row.ai_result, decision: row.decision, finalResult: row.final_result, reason: row.reason ?? null, note: row.note ?? null, actor: row.actor,
@@ -126,8 +139,9 @@ export function createReviews({ pool, readCurrentAdvice, now = Date.now }) {
     async add(actor, input) {
       const review = parse(input);
       const advice = await adviceOf(review.documentId);
-      if (review.round !== advice.round || review.sourceVersion !== advice.documentVersion || review.sourceVersion !== advice.adviceVersion) fail('REVIEW_STALE');
-      if (!reviewable(advice)) fail('REVIEW_ADVICE_NOT_READY');
+      if (review.sourceVersion !== advice.documentVersion) fail('REVIEW_STALE');
+      if (advice.round != null && review.round !== advice.round) fail('REVIEW_STALE');
+      if (advice.round == null || !reviewable(advice)) fail('REVIEW_ADVICE_NOT_READY');
       const aiResult = advice.result;
       if (review.decision === 'override' && !OVERRIDE_REASONS[aiResult].includes(review.reason)) fail('REVIEW_INVALID', INVALID[aiResult]);
       const finalResult = review.decision === 'adopt' ? aiResult : aiResult === 'pass' ? 'fail' : 'pass';
@@ -158,9 +172,9 @@ export function createReviews({ pool, readCurrentAdvice, now = Date.now }) {
       }));
     },
 
-    /** since（ISO 时间、Date 或毫秒）以来的全部复核，按时间先后；不给就是全部。 */
+    /** since（Date 或带时差的 ISO 时间）以来的全部复核，按时间先后；不给就是全部。 */
     async all({ since = null } = {}) {
-      return select('created_at >= ?', [sqlTime(since ?? 0)]);
+      return select('created_at >= ?', [sqlTime(sinceOf(since))]);
     },
   };
 }
@@ -193,7 +207,8 @@ export function reviewsRoutes({ reviews, log = () => {} }) {
         }
       } catch (error) {
         const known = Object.hasOwn(STATUS, error?.code);
-        if (!known) log(`POC_REVIEWS_FAILED ${String(error?.code ?? '')}`.trim().slice(0, 120));
+        // 只记错误码（程序错误没有 code 时记错误名），不记消息
+        if (!known) log(`POC_REVIEWS_FAILED ${[error?.code, error?.name].find(value => typeof value === 'string' && CODE.test(value)) ?? 'UNKNOWN'}`);
         const code = known ? error.code : 'REVIEW_UNAVAILABLE';
         send(res, STATUS[code], { error: { code, message: (known && error.shown) || REVIEW_MESSAGES[code] } });
       }

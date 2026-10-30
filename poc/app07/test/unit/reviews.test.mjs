@@ -215,27 +215,47 @@ test('请求体不合格 400：缺字段、多字段、结论不认识、轮次�
   assert.equal(h.pool.table().length, 0);
 });
 
-test('只能复核当前那一轮：轮次或版本不是当前的 409 REVIEW_STALE（先查这个）；当前一轮没完成 409 REVIEW_ADVICE_NOT_READY', async () => {
+// 检查顺序（T3h）：① 版本不是单据现在的 → STALE；② 有当前一轮、轮次不是它 → STALE；③ 没有轮次或这一轮不能复核 → NOT_READY。
+// 只有真有更新的东西（单据新版本、新一轮）时才说「刚更新」。
+test('T3h ①：提交的版本不是单据现在的版本 → 409 REVIEW_STALE（不看轮次；没有轮次时也一样）', async () => {
   const h = await harness();
-  h.setRounds('d1', round(2, { status: 'running' }), [done(1, 'pass')]);
-  const stale = await h.post(adopt({ round: 1 }));
+  h.setRounds('d1', done(1, 'pass'));
+  h.docs.get('d1').version = 'v2';
+  const stale = await h.post(adopt({ sourceVersion: 'v1' }));
   refusedWith(stale, 409, 'REVIEW_STALE');
   assert.equal(stale.payload.error.message, '这张单的 AI 建议刚更新，请先看新的建议。');
-  const running = await h.post(adopt({ round: 2 }));
-  refusedWith(running, 409, 'REVIEW_ADVICE_NOT_READY');
-  assert.equal(running.payload.error.message, '这张单还没有完成的 AI 建议，等建议出来再复核。');
-  for (const current of [round(2, { status: 'failed', errorCode: 'AI_UNAVAILABLE' }), round(2, { status: 'declined', declined: { reason: 'out_of_scope' } }),
-    round(2, { status: 'superseded' }), done(2, null), done(2, 'unsure')]) {
+  refusedWith(await h.post(adopt({ sourceVersion: 'v1', round: 9 })), 409, 'REVIEW_STALE');
+  refusedWith(await h.post(adopt({ documentId: 'd2', sourceVersion: 'v0' })), 409, 'REVIEW_STALE');
+  assert.equal(h.pool.table().length, 0);
+});
+
+test('T3h ②：有当前一轮、提交的轮次不是它 → 409 REVIEW_STALE（当前一轮在跑、或是给旧版本做的也一样）', async () => {
+  const h = await harness();
+  h.setRounds('d1', round(2, { status: 'running' }), [done(1, 'pass')]);
+  refusedWith(await h.post(adopt({ round: 1 })), 409, 'REVIEW_STALE');
+  h.setRounds('d1', done(2, 'pass'), [done(1, 'pass')]);
+  refusedWith(await h.post(adopt({ round: 1 })), 409, 'REVIEW_STALE');
+  refusedWith(await h.post(adopt({ round: 3 })), 409, 'REVIEW_STALE');
+  h.docs.get('d1').version = 'v2';
+  refusedWith(await h.post(adopt({ round: 1, sourceVersion: 'v2' })), 409, 'REVIEW_STALE');
+  assert.equal(h.pool.table().length, 0);
+});
+
+test('T3h ③：没有轮次、或当前一轮不能复核（在跑、失败、declined、superseded、没有 pass / fail、给旧版本做的）→ 409 REVIEW_ADVICE_NOT_READY', async () => {
+  const h = await harness();
+  // 从没跑过 AI 建议：没有更新的东西，不说「刚更新」
+  const never = await h.post(adopt({ documentId: 'd2', round: 1 }));
+  refusedWith(never, 409, 'REVIEW_ADVICE_NOT_READY');
+  assert.equal(never.payload.error.message, '这张单还没有完成的 AI 建议，等建议出来再复核。');
+  for (const current of [round(2, { status: 'running' }), round(2, { status: 'failed', errorCode: 'AI_UNAVAILABLE' }),
+    round(2, { status: 'declined', declined: { reason: 'out_of_scope' } }), round(2, { status: 'superseded' }), done(2, null), done(2, 'unsure')]) {
     h.setRounds('d1', current, [done(1, 'pass')]);
     refusedWith(await h.post(adopt({ round: 2 })), 409, 'REVIEW_ADVICE_NOT_READY');
   }
-  // 单据有了新版本：那一轮审的是旧版本
+  // 单据现在是 v2，当前一轮是给 v1 做的：按 v2 提交这一轮
   h.setRounds('d1', done(2, 'pass'));
   h.docs.get('d1').version = 'v2';
-  refusedWith(await h.post(adopt({ round: 2, sourceVersion: 'v1' })), 409, 'REVIEW_STALE');
-  refusedWith(await h.post(adopt({ round: 2, sourceVersion: 'v2' })), 409, 'REVIEW_STALE');
-  // 从没跑过 AI 建议：没有当前一轮可对上
-  refusedWith(await h.post(adopt({ documentId: 'd2', round: 1 })), 409, 'REVIEW_STALE');
+  refusedWith(await h.post(adopt({ round: 2, sourceVersion: 'v2' })), 409, 'REVIEW_ADVICE_NOT_READY');
   assert.equal(h.pool.table().length, 0);
 });
 
@@ -362,6 +382,10 @@ test('all({ since })：给工作台用，按时间先后；建表可以重复跑
   assert.deepEqual((await h.reviews.all()).map(item => item.id), [1, 2, 3]);
   assert.deepEqual((await h.reviews.all({ since: '2026-10-30T08:00:02.000Z' })).map(item => [item.id, item.documentId, item.finalResult]), [[2, 'd2', 'fail'], [3, 'd1', 'pass']]);
   assert.deepEqual((await h.reviews.all({ since: new Date('2026-10-30T09:00:00Z') })), []);
+  assert.deepEqual((await h.reviews.all({ since: '2026-10-30T16:00:02+08:00' })).map(item => item.id), [2, 3], '带时差的 ISO 时间按 UTC 比');
+  for (const since of ['yesterday', '2026-10-30', '2026-10-30T08:00:00', '2026-13-01T00:00:00Z', 1_730_000_000_000, new Date('x'), new Date('0999-12-31T00:00:00Z'), {}]) {
+    await assert.rejects(h.reviews.all({ since }), error => error.code === 'REVIEW_INVALID', String(since));
+  }
   await h.reviews.start();
   assert.equal(h.pool.table().length, 3, '再建一次表不清数据');
 
@@ -372,6 +396,11 @@ test('all({ since })：给工作台用，按时间先后；建表可以重复跑
   assert.equal(answer.status, 503);
   assert.equal(answer.payload.error.code, 'REVIEW_UNAVAILABLE');
   assert.deepEqual(b.logs, ['POC_REVIEWS_FAILED ECONNREFUSED']);
+  // 程序错误没有 code：记错误名，不记消息
+  const t = await harness({ pool: { ...fakePool(), query: async sql => { if (sql.trim().startsWith('CREATE')) return [{}]; throw new TypeError('rows is not iterable: 虚构的内容'); } } });
+  t.setRounds('d1', done(1, 'pass'));
+  assert.equal((await t.post(adopt())).status, 503);
+  assert.deepEqual(t.logs, ['POC_REVIEWS_FAILED TypeError']);
 });
 
 // ---- 真 MySQL 8（要 MYSQL_TEST_URL，库名以 _test 结尾；mysql2 取九安 v0.7.10 副本里的）----
