@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { startApp } from './startApp';
 import { defaultStates, deferred, fakeBench, version } from './documentsFake';
+import { queryClient } from '../api/queryClient';
 
 // 复核（Spec 第 9 节；Ruling T5f；Review Focus 3）：按单据、绑定当前那一轮；采纳或改判（原因按方向，「其他」必须写备注，备注 ≤ 200 字）；
 // 提交成功后开「待复核」里的下一张，没有了就关掉抽屉说一声。
@@ -31,6 +32,25 @@ describe('review: adopt', () => {
     // 单据池跟着刷新：doc-1 离开了「待复核」
     expect(await screen.findByRole('radio', { name: '待复核 1' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '已复核 2' })).toBeInTheDocument();
+  });
+
+  it('F3: a review marks the 工作台 numbers stale (every window), so the dashboard reads them again instead of showing the old ones', async () => {
+    const { drawer, user } = await openDrawer('doc-1');
+    for (const window of ['today', '14d', 'month']) queryClient.setQueryData(['dashboard', window], { window });
+    expect(queryClient.getQueryState(['dashboard', '14d'])!.isInvalidated).toBe(false);
+    await user.click(within(drawer).getByRole('button', { name: '提交复核' }));
+    await screen.findByRole('dialog', { name: 'DGZF-F07-002' });
+    for (const window of ['today', '14d', 'month']) expect(queryClient.getQueryState(['dashboard', window])!.isInvalidated).toBe(true);
+  });
+
+  it('a refused review leaves the 工作台 numbers alone', async () => {
+    const { drawer, user } = await openDrawer('doc-1', { overrides: {
+      'POST /api/analysis/v1/poc/reviews': { status: 409, body: { error: { code: 'REVIEW_STALE', message: '这张单的 AI 建议刚更新，请先看新的建议。' } } },
+    } });
+    queryClient.setQueryData(['dashboard', '14d'], { window: '14d' });
+    await user.click(within(drawer).getByRole('button', { name: '提交复核' }));
+    expect(await within(drawer).findByRole('alert')).toHaveTextContent('这张单的 AI 建议刚更新，请先看新的建议。');
+    expect(queryClient.getQueryState(['dashboard', '14d'])!.isInvalidated).toBe(false);
   });
 
   it('when it was the last one to review, closes the drawer and says 「待复核的单据都处理完了」', async () => {

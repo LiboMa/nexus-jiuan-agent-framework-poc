@@ -13,6 +13,8 @@ export interface SessionUser {
   name: string;
   role: Role;
   companyIds?: string[];
+  /** 九安按来源分的授权范围：汇联易的公司在 huilianyi.companyIds（有它就按它，没有按 companyIds）。 */
+  providerScopes?: { huilianyi?: { companyIds?: string[] } };
   mode?: string;
   principalId?: string;
 }
@@ -27,6 +29,15 @@ export interface Session {
 }
 
 export const SESSION_KEY = ['session'] as const;
+
+/**
+ * 这个账号在九安里一家公司也没有（照九安的 analysisHuilianyiCompanyIds：有 providerScopes.huilianyi 按它，没有按 companyIds）：
+ * 单据池、工作台都是空的。九安不许规则发布复核人有公司（Ruling FR1）。会话里没写范围时不下结论（回 false）。
+ */
+export function hasNoCompanies(user: SessionUser | null | undefined): boolean {
+  const ids = user?.providerScopes?.huilianyi ? user.providerScopes.huilianyi.companyIds : user?.companyIds;
+  return Array.isArray(ids) && ids.length === 0;
+}
 export const ROLE_LABELS: Record<Role, string> = { admin: '管理员', analyst: '分析员', policy_reviewer: '规则发布复核人' };
 
 // 本标签页里登录过的标记（不是凭据）：刷新页面后再遇到 401，也能说「登录已过期」而不是当成第一次来。

@@ -111,9 +111,12 @@ export function empty(window: Window = '14d'): FakeDashboard {
 export function asAnalyst(data: FakeDashboard): FakeDashboard {
   return { ...data, reviewers: [{ account: 'u-analyst', name: '复核人', reviews: 12, overrides: 1, customRules: 1 }], myRules: { files: 1, usedChars: 300, limitChars: 5000 } };
 }
-/** 规则发布复核人：没有按审核员的行，没有「我的规则」。 */
+/**
+ * 规则发布复核人：九安里没有公司（Ruling FR1），外壳一张单也数不到——单据上来的数全是 0、没有按审核员的行、没有「我的规则」；
+ * 知识库不分公司，照常给。
+ */
 export function asPolicyReviewer(data: FakeDashboard): FakeDashboard {
-  return { ...data, reviewers: [], myRules: { files: 0, usedChars: 0, limitChars: 5000 } };
+  return { ...empty(data.window), from: data.from, to: data.to, knowledge: data.knowledge, reviewers: [], myRules: { files: 0, usedChars: 0, limitChars: 5000 } };
 }
 
 export interface DashboardOptions extends KbOptions {

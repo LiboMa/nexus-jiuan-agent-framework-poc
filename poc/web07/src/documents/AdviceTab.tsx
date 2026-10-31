@@ -5,6 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { dashboardKeys } from '../api/dashboard';
 import type { Role } from '../api/session';
 import { basisTag, customRulesOwner, keys, secondsBetween, startAdvice, stripCustomRulesNote, timeText, type Advice, type BasisItem } from '../api/documents';
 import { Button } from '../ui/Button';
@@ -35,6 +36,8 @@ export function AdviceTab({ id, version, role, advice, onOpenPage }: {
       queryClient.setQueryData(keys.advice(vars.id), data);
       void queryClient.invalidateQueries({ queryKey: ['reviews'] });
       void queryClient.invalidateQueries({ queryKey: keys.rounds(vars.id) });
+      // 工作台的「审核中」、待复核跟着变（外壳的缓存也清了，F3）
+      void queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
     },
   });
   const value = advice.data;

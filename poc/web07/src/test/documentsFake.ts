@@ -1,4 +1,6 @@
 // 单据池和单据抽屉测试用的假后端：九安的 /documents…、外壳的 /poc/reviews…、/poc/advice-rounds。有状态：提交复核后 latest 跟着变。
+// 照真的按登录的人的公司给（九安的单据接口、外壳的新接口都按它，Ruling FR1）：规则发布复核人在九安里没有公司，列表是空的，每张单 404，
+// latest 里是 no_advice；latest 对不认识的单据也给 no_advice（外壳 reviews.mjs 就这样）。
 // 单据、公司、规则全部虚构（规则编号 R-xx、名字带「虚构」），没有真实制度原文。
 import type { Role } from '../api/session';
 import { fakeApi, sessionBody, type FakeCall, type FakeReply, type FakeRoute } from './fakeApi';
@@ -134,14 +136,23 @@ export function defaultStates(docs = DOCS): Map<string, FakeDocState> {
 const ok = (data: unknown, status = 200): FakeReply => ({ status, body: { data } });
 const refuse = (status: number, code: string, message: string): FakeReply => ({ status, body: { error: { code, message } } });
 
+const NO_ADVICE: FakeLatest = { state: 'no_advice', current: null, review: null };
+const NOT_FOUND: FakeReply = { status: 404, body: { error: { code: 'NOT_FOUND', message: '未找到可访问的记录。' } } };
+
 /**
  * 假测试台。overrides 里的路由（「方法 路径」）优先；docs 给单据列表（默认 DOCS）；states 给每张单的状态（默认 defaultStates）。
+ * companyIds：这个人能看的公司（不给：规则发布复核人 [] 什么都看不到，别的角色看得到全部虚构公司）；给了也写进会话。
  */
-export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaultStates(docs), overrides = {} as Record<string, FakeRoute> } = {}) {
+export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaultStates(docs), overrides = {} as Record<string, FakeRoute>, companyIds }: {
+  role?: Role; docs?: FakeDoc[]; states?: Map<string, FakeDocState>; overrides?: Record<string, FakeRoute>; companyIds?: string[];
+} = {}) {
+  const scope = companyIds ?? (role === 'policy_reviewer' ? [] : null);
+  const mine = (d: FakeDoc) => scope === null || scope.includes(d.companyId);
+  const inScope = (id: string | null) => { const s = states.get(id ?? ''); return s && mine(s.doc) ? s : undefined; };
   const list = (call: FakeCall): FakeReply => {
     const params = new URLSearchParams(call.search);
     const q = params.get('q') ?? '', limit = Number(params.get('limit') ?? 25), offset = Number(params.get('offset') ?? 0);
-    const hit = docs.filter(d => !q || d.number.includes(q) || d.companyName.includes(q) || (d.supplier ?? '').includes(q));
+    const hit = docs.filter(d => mine(d) && (!q || d.number.includes(q) || d.companyName.includes(q) || (d.supplier ?? '').includes(q)));
     const items = hit.slice(offset, offset + limit).map(d => ({
       id: d.id, environment: 'prod', tenantId: 'fake-tenant', companyId: d.companyId, companyName: d.companyName, number: d.number, formName: d.formName, type: d.type,
       status: '1003', amount: d.amount, currency: d.currency, version: d.version, submittedAt: d.submittedAt, title: d.title, applicantName: '周宁（虚构）',
@@ -152,12 +163,12 @@ export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaul
   const latest = (call: FakeCall): FakeReply => {
     const ids = (new URLSearchParams(call.search).get('ids') ?? '').split(',').filter(Boolean);
     if (!ids.length || ids.length > 50) return refuse(400, 'REVIEW_INVALID', '复核状态一次查 1 到 50 张单据（ids 用逗号分开）：请减少单据数后重试。');
-    return ok({ items: Object.fromEntries(ids.filter(id => states.has(id)).map(id => [id, states.get(id)!.latest])) });
+    return ok({ items: Object.fromEntries(ids.map(id => [id, inScope(id)?.latest ?? NO_ADVICE])) });
   };
   const addReview = (call: FakeCall): FakeReply => {
     if (role === 'policy_reviewer') return refuse(403, 'REVIEW_FORBIDDEN', '只有管理员和分析员能复核 AI 建议（规则发布复核人只能查看）：要复核请换管理员或分析员账号登录。');
     const body = call.body as { documentId: string; sourceVersion: string; round: number; decision: string; reason?: string; note?: string };
-    const s = states.get(body.documentId);
+    const s = inScope(body.documentId);
     if (!s) return refuse(404, 'REVIEW_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
     if (body.sourceVersion !== s.doc.version || body.round !== s.latest.current?.round) return refuse(409, 'REVIEW_STALE', '这张单的 AI 建议刚更新，请先看新的建议。');
     const aiResult = s.latest.current!.result!;
@@ -169,25 +180,30 @@ export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaul
     return ok({ review }, 201);
   };
   const routes: Record<string, FakeRoute> = {
-    'GET /api/analysis/v1/session': { body: sessionBody(role) },
+    'GET /api/analysis/v1/session': { body: sessionBody(role, 'csrf-1', companyIds) },
     [`GET ${API}/documents`]: list,
     [`GET ${API}/poc/reviews/latest`]: latest,
     [`POST ${API}/poc/reviews`]: addReview,
     [`GET ${API}/poc/reviews`]: call => {
-      const s = states.get(new URLSearchParams(call.search).get('documentId') ?? '');
+      const s = inScope(new URLSearchParams(call.search).get('documentId'));
       return s ? ok({ items: s.reviews }) : refuse(404, 'REVIEW_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
     },
     [`GET ${API}/poc/evidence-pages`]: call => {
-      const s = states.get(new URLSearchParams(call.search).get('documentId') ?? '');
+      const s = inScope(new URLSearchParams(call.search).get('documentId'));
       return s ? ok({ documentId: s.doc.id, documentVersion: s.doc.version, files: s.pages }) : refuse(404, 'EVIDENCE_PAGES_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
     },
     [`GET ${API}/poc/advice-rounds`]: call => {
-      const s = states.get(new URLSearchParams(call.search).get('documentId') ?? '');
+      const s = inScope(new URLSearchParams(call.search).get('documentId'));
       return s ? ok({ documentId: s.doc.id, documentVersion: s.doc.version, items: s.rounds }) : refuse(404, 'ADVICE_ROUNDS_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
     },
   };
   for (const [id, s] of states) {
     const base = `${API}/documents/${id}`;
+    // 九安：不在这个人公司里的单据，每个接口都是 404
+    if (!mine(s.doc)) {
+      for (const route of [`GET ${base}`, `GET ${base}/page`, `GET ${base}/advice`, `POST ${base}/advice`, `GET ${base}/evidence`, `POST ${base}/evidence/read`]) routes[route] = NOT_FOUND;
+      continue;
+    }
     routes[`GET ${base}`] = () => ok({ ...s.doc, sourceForm: { header: { title: s.doc.title } }, reviewFields: {} });
     routes[`GET ${base}/page`] = () => ok(s.page);
     routes[`GET ${base}/advice`] = () => ok(s.advice);

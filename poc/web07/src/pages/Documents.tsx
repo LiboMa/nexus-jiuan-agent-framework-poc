@@ -2,13 +2,18 @@
  * 单据池（Spec 第 6 节；样稿 drafts-v2.html 的 A 版表格 + drawer-a.html）：九安的对公付款单，按外壳的复核状态分
  * 「待复核（pending + outdated）/ 已复核（reviewed）/ 全部」。最多读 500 张（每页 50 张），状态 50 张一批问；页签、翻页都在页面里做（Ruling T5d）。
  * 点一行开右侧抽屉（地址 ?doc=<id>）；抽屉开着时表格照样能点，点另一行就换单。提交复核后开「待复核」里的下一张（Ruling T5f）。
+ * 开着时自己刷新（F2）：表格这一页有审核中的行、或「待复核」是空的，每 12 秒问一次复核状态；单据池是空的，每 12 秒读一次列表；
+ * 页面藏起来（切到别的标签页）或离开单据池就停。「刷新」、再搜一次同样的字都重新读列表和状态。
+ * 账号在九安里没有公司（规则发布复核人，Ruling FR1）：单据池是空的，照直说，不轮询。
  */
 import { useMemo, useRef, useState, type FormEvent, type Ref } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { ApiError } from '../api/client';
-import { useSession } from '../api/session';
-import { POOL_MAX, SCAN_MAX, amountText, itemText, keys, loadPool, loadStates, type DocumentItem, type LatestState } from '../api/documents';
+import { hasNoCompanies, useSession } from '../api/session';
+import {
+  POOL_MAX, POOL_POLL_MS, SCAN_MAX, amountText, isDocumentId, itemText, keys, loadPool, loadStates, type DocumentItem, type LatestState,
+} from '../api/documents';
 import { PageHeader } from '../shell/PageHeader';
 import { DocumentDrawer } from '../documents/DocumentDrawer';
 import { adviceLabel, reviewLabel } from '../documents/labels';
@@ -19,10 +24,12 @@ import { Panel } from '../ui/Panel';
 import { Pill } from '../ui/Pill';
 import { Segmented } from '../ui/Segmented';
 import { cx } from '../ui/cx';
+import { usePageVisible } from '../ui/usePageVisible';
 
 type PoolTab = 'pending' | 'reviewed' | 'all';
 const PAGE_ROWS = 20;
 const IN_TAB: Record<Exclude<PoolTab, 'all'>, ReadonlySet<string>> = { pending: new Set(['pending', 'outdated']), reviewed: new Set(['reviewed']) };
+const POOL_STATES = ['reviews', 'latest', 'pool'] as const;
 const messageOf = (error: unknown) => (error instanceof ApiError ? error.message : '读取没有成功，请刷新页面重试。');
 
 export function Documents() {
@@ -36,11 +43,19 @@ export function Documents() {
   const [notice, setNotice] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
+  const queryClient = useQueryClient();
+  const visible = usePageVisible();
+  const noCompanies = hasNoCompanies(session?.user);
+  const polling = visible && !noCompanies;
+  // 复核状态要不要轮询，由这一次渲染算出的表格决定（见下面 rows）；查询在渲染之后才读它
+  const pollStates = useRef(false);
 
-  const pool = useQuery({ queryKey: keys.pool(q), queryFn: () => loadPool(q) });
+  const pool = useQuery({ queryKey: keys.pool(q), queryFn: () => loadPool(q),
+    refetchInterval: query => (polling && query.state.status === 'success' && !query.state.data?.items.length ? POOL_POLL_MS : false) });
   const items = useMemo(() => pool.data?.items ?? [], [pool.data]);
   const ids = useMemo(() => items.map(item => item.id), [items]);
-  const states = useQuery({ queryKey: keys.poolStates(ids), queryFn: () => loadStates(ids), enabled: pool.isSuccess && ids.length > 0 });
+  const states = useQuery({ queryKey: keys.poolStates(ids), queryFn: () => loadStates(ids), enabled: pool.isSuccess && ids.length > 0,
+    refetchInterval: () => (pollStates.current ? POOL_POLL_MS : false) });
   const stateOf = (id: string): LatestState | undefined => states.data?.[id];
 
   const lists = useMemo(() => {
@@ -56,6 +71,8 @@ export function Documents() {
   const current = Math.min(page, pages);
   const rows = shown.slice((current - 1) * PAGE_ROWS, current * PAGE_ROWS);
   const counted = states.isSuccess || ids.length === 0;
+  // 这一页有审核中的行（等它出结果），或「待复核」是空的（等新的单）：每 12 秒问一次
+  pollStates.current = polling && states.isSuccess && (rows.some(item => states.data?.[item.id]?.state === 'running') || lists.pending.length === 0);
   // 复核的回调可能来自更早的一次渲染（提交还在路上时人换了单）：现在开着哪张、待复核的顺序都从这两个 ref 读
   const currentDoc = useRef(docParam);
   currentDoc.current = docParam;
@@ -87,9 +104,26 @@ export function Documents() {
     setDoc(null);
     setNotice('待复核的单据都处理完了');
   }
+  // 「刷新」：重新读列表，再重新问复核状态（单据没变时还是同一个查询）；连点只算一次
+  const refreshing = useRef(false);
+  const [refreshBusy, setRefreshBusy] = useState(false);
+  async function refresh() {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    setRefreshBusy(true);
+    try {
+      await pool.refetch();
+      await queryClient.refetchQueries({ queryKey: POOL_STATES, type: 'active' });
+    } finally {
+      refreshing.current = false;
+      setRefreshBusy(false);
+    }
+  }
   function search(event: FormEvent) {
     event.preventDefault();
-    setQ(draft.trim());
+    const next = draft.trim();
+    // 同样的字再搜一次：照样重新读
+    if (next === q) void refresh(); else setQ(next);
     setPage(1);
   }
   function clearSearch() { setDraft(''); setQ(''); setPage(1); }
@@ -102,7 +136,7 @@ export function Documents() {
 
   /** 关抽屉后焦点回到那一行；那一行不在这一页（或已离开这个页签）就落到表格上，表格也没有就落到搜索框。 */
   function focusAfterClose(closedId: string) {
-    const row = closedId && isRowId(closedId) ? document.querySelector<HTMLButtonElement>(`[data-open-doc="${closedId}"]`) : null;
+    const row = isDocumentId(closedId) ? document.querySelector<HTMLButtonElement>(`[data-open-doc="${closedId}"]`) : null;
     (row ?? tableRef.current ?? searchRef.current)?.focus();
   }
 
@@ -123,6 +157,7 @@ export function Documents() {
               />
             </label>
             <Button type="submit">搜索</Button>
+            <Button icon="refresh" busy={refreshBusy} onClick={() => void refresh()}>刷新</Button>
           </form>
         )}
       />
@@ -151,7 +186,9 @@ export function Documents() {
           )
             : !items.length ? (
               q ? <Empty icon="search" title="没有找到单据" description="换个单号或收款方再搜一次，或清空搜索看全部单据。" action={<Button onClick={clearSearch}>清空搜索</Button>} />
-                : <Empty title="单据池里还没有对公付款单" description="汇联易的新单同步过来、读完详情后会出现在这里；要造一张测试单，打开测试台的「模拟来单」。" />
+                : noCompanies
+                  ? <Empty title="这个账号没有可看的单据" description="这个账号没有分到任何公司，所以单据池是空的。要看单据，请换管理员或分析员账号登录。" />
+                  : <Empty title="单据池里还没有对公付款单" description="汇联易的新单同步过来、读完详情后会出现在这里；要造一张测试单，打开测试台的「模拟来单」。" />
             )
               : tab !== 'all' && !states.isSuccess ? (
                 states.isError ? null : <p role="status" className="m-0 px-4 py-10 text-center text-13 text-steel">正在读取复核状态…</p>
@@ -193,9 +230,6 @@ export function Documents() {
     </div>
   );
 }
-
-// 放进选择器之前再认一次编号（和 loadPool 的校验一样）
-const isRowId = (id: string) => /^[a-zA-Z0-9_-]{1,160}$/.test(id);
 
 function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen }: {
   tableRef: Ref<HTMLTableElement>; rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined; statesReady: boolean; onOpen: (id: string) => void;

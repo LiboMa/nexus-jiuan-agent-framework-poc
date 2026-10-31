@@ -355,6 +355,21 @@ describe('按审核员', () => {
     expect(bench.calls.filter(call => call.path.startsWith('/api/analysis/v1/poc/kb/'))).toEqual([]);
   });
 
+  it('policy_reviewer has no companies in Jiuan (Ruling FR1): every number is 0 or 「—」 and the charts show their usual empty states', async () => {
+    await openDashboard({ role: 'policy_reviewer' });
+    await waitFor(() => expect(screen.getByRole('link', { name: /^待复核/ }).querySelector('[data-value]')?.textContent).toBe('0张'));
+    expect(valueOf('AI 已出建议')).toBe('0张');
+    expect(valueOf('建议通过')).toBe('—');
+    expect(valueOf('出建议用时')).toBe('—');
+    expect(within(region('每天的 AI 建议')).getByText(/这段时间还没有 AI 建议/)).toBeInTheDocument();
+    expect(within(region('人工改判率')).getByText(/这段时间还没有人复核/)).toBeInTheDocument();
+    expect(within(region('不通过最常见的依据')).getByText(/这段时间 AI 没有不建议通过的单据/)).toBeInTheDocument();
+    expect(within(region('最常引用的规则')).getByText(/还没有引用公司制度/)).toBeInTheDocument();
+    // 知识库不分公司，照常
+    expect(within(region('知识库')).getByText('3 份')).toBeInTheDocument();
+    expectNoBadNumbers();
+  });
+
   it('policy_reviewer: says there is nothing to count for this account, and no 上传制度', async () => {
     await openDashboard({ role: 'policy_reviewer' });
     // 这个角色不复核：上排第一个数叫「待复核」，不说「待我复核」

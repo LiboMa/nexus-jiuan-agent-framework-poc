@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { startApp } from './startApp';
 import { DOCS, adviceOf, defaultStates, fakeBench, type FakeDoc } from './documentsFake';
 
@@ -207,5 +208,147 @@ describe('单据池: the drawer', () => {
     screen.getByRole('button', { name: 'DGZF-F07-002' }).focus();
     await user.keyboard('{Enter}');
     expect(await screen.findByRole('dialog', { name: 'DGZF-F07-002' })).toBeInTheDocument();
+  });
+});
+
+describe('单据池: an account with no companies (Ruling FR1)', () => {
+  it('policy_reviewer has no companies in Jiuan: the pool says plainly that this account has nothing to see, and keeps its tabs', async () => {
+    const { bench } = await openPool({ role: 'policy_reviewer' });
+    expect(await screen.findByText('这个账号没有可看的单据')).toBeInTheDocument();
+    expect(screen.getByText(/换管理员或分析员账号/)).toBeInTheDocument();
+    expect(screen.queryByText('单据池里还没有对公付款单')).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: '单据' })).not.toBeInTheDocument();
+    expect(within(tabs()).getAllByRole('radio').map(radio => radio.textContent)).toEqual(['待复核 0', '已复核 0', '全部 0']);
+    // 照真的九安：列表是空的
+    expect(bench.find('GET', '/api/analysis/v1/documents')).toHaveLength(1);
+  });
+
+  it('an admin whose pool is simply empty still hears that no corporate payment has come in yet', async () => {
+    await openPool({ docs: [], states: defaultStates(DOCS) });
+    expect(await screen.findByText('单据池里还没有对公付款单')).toBeInTheDocument();
+    expect(screen.queryByText('这个账号没有可看的单据')).not.toBeInTheDocument();
+  });
+});
+
+// F2：单据池开着时自己刷新——表格里有「审核中」的行、或「待复核」是空的，每 12 秒问一次复核状态；单据池是空的，每 12 秒读一次列表。
+// 页面藏起来（切到别的标签页）或离开单据池就停。「刷新」和再搜一次同样的字都重新读列表和状态。
+describe('单据池: refreshes while it is open (F2)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+  });
+  const latestCalls = (bench: ReturnType<typeof fakeBench>) => bench.find('GET', '/api/analysis/v1/poc/reviews/latest').length;
+  const listCalls = (bench: ReturnType<typeof fakeBench>) => bench.find('GET', '/api/analysis/v1/documents').length;
+  const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  const hide = (hidden: boolean) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+  };
+
+  it('a 审核中 row turns into 待复核 without the user doing anything, then the polling stops', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench } = await openPool();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
+    expect(within(rowOf('DGZF-F07-004')).getByText('审核中')).toBeInTheDocument();
+    const before = latestCalls(bench);
+    // 那一轮跑完了：外壳现在说 doc-4 待复核
+    const s4 = bench.states.get('doc-4')!;
+    s4.latest = { state: 'pending', current: { round: 1, result: 'pass', status: 'completed' }, review: null };
+    await advance(9_000);
+    expect(latestCalls(bench)).toBe(before);
+    await advance(3_500);
+    expect(latestCalls(bench)).toBe(before + 1);
+    expect(await within(rowOf('DGZF-F07-004')).findByText('建议通过')).toBeInTheDocument();
+    expect(within(rowOf('DGZF-F07-004')).getByText('待复核')).toBeInTheDocument();
+    expect(within(tabs()).getByRole('radio', { name: '待复核 3' })).toBeInTheDocument();
+    // 没有在跑的了、「待复核」也不空：不再问
+    await advance(40_000);
+    expect(latestCalls(bench)).toBe(before + 1);
+    expect(listCalls(bench)).toBe(1);
+  });
+
+  it('while 待复核 is empty it keeps asking, so new work shows up by itself', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const states = defaultStates();
+    for (const id of ['doc-1', 'doc-2']) states.get(id)!.latest = { state: 'reviewed', current: { round: 1, result: 'fail', status: 'completed' }, review: { decision: 'adopt', adviceRound: 1 } };
+    states.get('doc-4')!.latest = { state: 'no_advice', current: null, review: null };
+    const { bench } = await openPool({ states });
+    expect(await screen.findByText('没有待复核的单据')).toBeInTheDocument();
+    const before = latestCalls(bench);
+    states.get('doc-4')!.latest = { state: 'pending', current: { round: 1, result: 'fail', status: 'completed' }, review: null };
+    await advance(12_500);
+    expect(latestCalls(bench)).toBe(before + 1);
+    expect(await screen.findByRole('button', { name: 'DGZF-F07-004' })).toBeInTheDocument();
+    await advance(30_000);
+    expect(latestCalls(bench)).toBe(before + 1);
+  });
+
+  it('an empty pool reads the list again every 12 s until documents arrive', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const docs: FakeDoc[] = [];
+    const { bench } = await openPool({ docs, states: defaultStates(DOCS) });
+    expect(await screen.findByText('单据池里还没有对公付款单')).toBeInTheDocument();
+    expect(listCalls(bench)).toBe(1);
+    await advance(12_500);
+    expect(listCalls(bench)).toBe(2);
+    docs.push(DOCS[0]);
+    await advance(12_500);
+    expect(await screen.findByRole('button', { name: 'DGZF-F07-001' })).toBeInTheDocument();
+    const lists = listCalls(bench);
+    await advance(40_000);
+    expect(listCalls(bench)).toBe(lists);
+  });
+
+  it('stops while the page is hidden and starts again when it is shown; stops when the user leaves the pool', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench } = await openPool();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
+    const before = latestCalls(bench);
+    hide(true);
+    await advance(40_000);
+    expect(latestCalls(bench)).toBe(before);
+    hide(false);
+    await advance(12_500);
+    expect(latestCalls(bench)).toBeGreaterThan(before);
+    const shown = latestCalls(bench);
+    await user.click(screen.getByRole('link', { name: '工作台' }));
+    await screen.findByRole('heading', { level: 1, name: '工作台' });
+    await advance(40_000);
+    expect(latestCalls(bench)).toBe(shown);
+  });
+
+  it('「刷新」 next to 搜索 reads the list and the review states again', async () => {
+    const { user, bench } = await openPool();
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    const refresh = screen.getByRole('button', { name: '刷新' });
+    expect(screen.getByRole('button', { name: '搜索' }).nextElementSibling).toBe(refresh);
+    const [lists, latest] = [listCalls(bench), latestCalls(bench)];
+    bench.states.get('doc-3')!.latest = { state: 'outdated', current: { round: 2, result: 'pass', status: 'completed' }, review: { decision: 'adopt', adviceRound: 1 } };
+    await user.click(refresh);
+    expect(await within(tabs()).findByRole('radio', { name: '待复核 3' })).toBeInTheDocument();
+    expect(listCalls(bench)).toBe(lists + 1);
+    expect(latestCalls(bench)).toBe(latest + 1);
+    // 连点两下：一次
+    fireEvent.click(refresh);
+    fireEvent.click(refresh);
+    await waitFor(() => expect(latestCalls(bench)).toBe(latest + 2));
+    expect(listCalls(bench)).toBe(lists + 2);
+  });
+
+  it('searching the same words again reads again', async () => {
+    const { user, bench } = await openPool();
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    const search = screen.getByRole('searchbox', { name: '搜索单号、收款方' });
+    await user.type(search, '柯顿{Enter}');
+    await waitFor(() => expect(new URLSearchParams(bench.find('GET', '/api/analysis/v1/documents').at(-1)!.search).get('q')).toBe('柯顿'));
+    const [lists, latest] = [listCalls(bench), latestCalls(bench)];
+    await user.click(screen.getByRole('button', { name: '搜索' }));
+    await waitFor(() => expect(listCalls(bench)).toBe(lists + 1));
+    await waitFor(() => expect(latestCalls(bench)).toBe(latest + 1));
+    expect(new URLSearchParams(bench.find('GET', '/api/analysis/v1/documents').at(-1)!.search).get('q')).toBe('柯顿');
   });
 });

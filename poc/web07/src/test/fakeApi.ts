@@ -40,11 +40,12 @@ function reply({ status = 200, body, text }: FakeReply): Response {
 
 export const NAMES: Record<Role, string> = { admin: '审核员', analyst: '复核人', policy_reviewer: '规则复核' };
 
-export function sessionBody(role: Role = 'admin', csrfToken = 'csrf-1') {
+/** 会话：九安不许规则发布复核人有公司（analysis-auth.mjs），所以他的 companyIds 是 []；companyIds 可以另给（测试假设的账号）。 */
+export function sessionBody(role: Role = 'admin', csrfToken = 'csrf-1', companyIds: string[] = role === 'policy_reviewer' ? [] : ['c-1']) {
   return {
     data: {
       tenantId: 'jiuan07', version: '0.7.10', instance: 'test',
-      user: { id: `u-${role}`, name: NAMES[role], role, companyIds: role === 'policy_reviewer' ? [] : ['c-1'], mode: 'local' },
+      user: { id: `u-${role}`, name: NAMES[role], role, companyIds, mode: 'local' },
       csrfToken,
       companies: [{ id: 'c-1', name: '九安' }],
       capabilities: { platformView: true, platformAdmin: role === 'admin', agentAccess: role === 'admin' },

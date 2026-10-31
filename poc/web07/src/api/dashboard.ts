@@ -74,4 +74,5 @@ export function readDashboard(raw: unknown): Dashboard {
 }
 
 export const fetchDashboard = async (window: DashboardWindow) => readDashboard(await api<unknown>(`/poc/dashboard?window=${window}`));
-export const dashboardKeys = { window: (window: DashboardWindow) => ['dashboard', window] as const };
+/** all：每个窗口的数（复核成功、发起一轮后整体作废，F3）。 */
+export const dashboardKeys = { all: ['dashboard'] as const, window: (window: DashboardWindow) => ['dashboard', window] as const };

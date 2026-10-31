@@ -1,11 +1,12 @@
 /**
  * 抽屉底部的复核区（样稿 drawer-a.html；Spec 第 9 节）：按单据、绑定当前那一轮（外壳 /poc/reviews/latest 的 current.round）。
  * 采纳 AI 建议，或改判（原因按方向：AI 不建议通过 → 改判为通过的五个，AI 建议通过 → 改判为不通过的五个；「其他」必须写备注；备注 ≤ 200 字）。
- * 「提交复核」成功后由单据池开下一张待复核（Ruling T5f）。409（REVIEW_STALE / REVIEW_ADVICE_NOT_READY）照服务端的话提示，并刷新这张单（Review Focus 3）。
+ * 「提交复核」成功后由单据池开下一张待复核（Ruling T5f），工作台的数作废重读（F3）。409（REVIEW_STALE / REVIEW_ADVICE_NOT_READY）照服务端的话提示，并刷新这张单（Review Focus 3）。
  */
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
+import { dashboardKeys } from '../api/dashboard';
 import {
   NOTE_MAX, OVERRIDE_REASONS, REASON_LABELS, keys, limitNote, noteLength, submitReview, timeText, type AiResult, type LatestState, type OverrideReason, type ReviewInput,
 } from '../api/documents';
@@ -44,6 +45,8 @@ export function ReviewForm({ id, version, latest, onReviewed, onNext, hasNext }:
       queryClient.setQueryData<LatestState | null>(keys.latest(doc), old => (old ? { ...old, state: 'reviewed', review } : old));
       void queryClient.invalidateQueries({ queryKey: ['reviews'] });
       void queryClient.invalidateQueries({ queryKey: keys.rounds(doc) });
+      // 工作台的待复核、改判数跟着变：每个窗口的那份都作废（外壳的缓存也清了，F3）
+      void queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
       onReviewed(doc);
     },
     onError: (error, input) => {

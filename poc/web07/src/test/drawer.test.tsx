@@ -15,6 +15,9 @@ async function openDrawer(id = 'doc-1', options: Parameters<typeof fakeBench>[0]
   return { ...app, bench, drawer };
 }
 const as = (role: Role) => ({ role });
+// 规则发布复核人在九安里没有公司（Ruling FR1），真的账号什么单据都看不到（单据池的测试有这一条）；
+// 假如他有公司（九安现在不许）：抽屉照样只读——这里证明只读的这一层
+const readOnlyReviewer = { role: 'policy_reviewer' as Role, companyIds: DOCS.map(d => d.companyId) };
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -226,9 +229,25 @@ describe('drawer: AI 建议', () => {
   });
 });
 
+describe('drawer: 重新审核 and the 工作台 (F3)', () => {
+  it('starting a round marks the 工作台 numbers stale; a refused start does not', async () => {
+    const { bench, drawer, user } = await openDrawer('doc-1');
+    await within(drawer).findByRole('region', { name: 'AI 结论' });
+    queryClient.setQueryData(['dashboard', '14d'], { window: '14d' });
+    bench.routes['POST /api/analysis/v1/documents/doc-1/advice'] = { status: 429, body: { error: { code: 'RATE_LIMIT', message: '操作太频繁，请一分钟后再试。' } } };
+    await user.click(within(drawer).getByRole('button', { name: '重新审核' }));
+    expect(await within(drawer).findByRole('alert')).toHaveTextContent('操作太频繁，请一分钟后再试。');
+    expect(queryClient.getQueryState(['dashboard', '14d'])!.isInvalidated).toBe(false);
+    bench.routes['POST /api/analysis/v1/documents/doc-1/advice'] = { status: 202, body: { data: adviceOf(DOCS[0], { status: 'running', result: null, finishedAt: null, canRun: false }) } };
+    await user.click(within(drawer).getByRole('button', { name: '重新审核' }));
+    expect(await within(drawer).findByText('AI 正在审核')).toBeInTheDocument();
+    expect(queryClient.getQueryState(['dashboard', '14d'])!.isInvalidated).toBe(true);
+  });
+});
+
 describe('drawer: roles', () => {
   it('policy_reviewer reads everything but has no 重新审核, no 读取原件 and no review form — a read-only note instead', async () => {
-    const { drawer, user } = await openDrawer('doc-1', as('policy_reviewer'));
+    const { drawer, user } = await openDrawer('doc-1', readOnlyReviewer);
     await within(drawer).findByRole('region', { name: 'AI 结论' });
     expect(within(drawer).queryByRole('button', { name: '重新审核' })).not.toBeInTheDocument();
     expect(within(drawer).queryByRole('button', { name: '提交复核' })).not.toBeInTheDocument();
@@ -265,7 +284,7 @@ describe('drawer: 原件, 单据信息, 历史', () => {
   });
 
   it('原件 shows each file\'s pages, page numbers labelled, text as plain text in a scrollable block', async () => {
-    const { drawer, user, bench } = await openDrawer('doc-1', as('policy_reviewer'));
+    const { drawer, user, bench } = await openDrawer('doc-1', readOnlyReviewer);
     await user.click(await within(drawer).findByRole('tab', { name: '原件 3' }));
     const contract = await within(drawer).findByRole('region', { name: '虚构合同.pdf 的文字' });
     const pages = within(contract).getAllByRole('article');

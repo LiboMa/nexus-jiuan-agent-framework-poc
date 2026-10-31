@@ -107,6 +107,8 @@ export interface Advice {
   result: AiResult | null; note?: string; basis?: BasisItem[]; basisChanged?: boolean; errorCode?: string | null; declinedReason?: string;
   startedAt?: string | null; finishedAt?: string | null; canRun?: boolean;
 }
+/** 单据池开着时自己刷新的间隔（F2）：表格里有审核中的行、「待复核」是空的时问复核状态；单据池是空的时读列表。 */
+export const POOL_POLL_MS = 12_000;
 /** 进行中时每 3 秒看一次（Ruling：轮询 3 s，停在结果上）。 */
 export const ADVICE_POLL_MS = 3000;
 export const fetchAdvice = (id: string) => api<Advice>(`/documents/${enc(id)}/advice`);
