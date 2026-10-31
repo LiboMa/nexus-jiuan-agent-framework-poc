@@ -92,7 +92,7 @@
 
 | 工具 | 用途 | 检查 |
 |---|---|---|
-| bash（3.2 及以上即可） | 运行 `deploy.sh` | `bash --version` |
+| bash 4 及以上（macOS 自带的 3.2 会把紧跟中文的变量名读错：`brew install bash`，让它排在 PATH 前面） | 运行 `deploy.sh` | `bash --version` |
 | AWS CLI v2 | EC2 / SSM / CloudFormation / Bedrock | `aws --version` |
 | session-manager-plugin | `ingest` 阶段经 SSM 端口转发连数据库 | `session-manager-plugin --version` |
 | uv | 临时 Python 环境（boto3、psycopg、pyyaml），不污染系统 | `uv --version` |

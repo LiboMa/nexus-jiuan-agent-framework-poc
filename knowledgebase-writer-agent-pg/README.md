@@ -65,7 +65,7 @@ PostgreSQL + pgvector（kb/ 部署的那一套）
 |---|---|
 | Nexus v0.3.28 管理员账号 | 导入工具、发布工具新版本在本版本只对管理员开放 |
 | Nexus Operator | 本仓库的 `skills/nexus-ai-operator`：`python3 -I skills/nexus-ai-operator/scripts/nexus.py --profile <名字> whoami` 能看到你的平台和用户 |
-| 本机工具 | `python3`（`build_tools.py`、`render.py` 只用标准库）、`git`（打包时记提交号）、[uv](https://docs.astral.sh/uv/)（管理员脚本用它临时装 boto3；本机测试装 psycopg 等）、Node 18+（A2A 自测与契约测试） |
+| 本机工具 | `python3`（`build_tools.py`、`render.py` 只用标准库）、`git`（打包时记提交号）、[uv](https://docs.astral.sh/uv/)（管理员脚本用它临时装 boto3；本机测试装 psycopg 等）、Node 18.17+（A2A 自测与契约测试；客户端用到 `AbortSignal.any`） |
 | 同仓库的 `kb/` | 核心模块的源码（`kb/lib`）、提示词共用片段（`kb/prompt/kb_rules_v1.zh.md`）、本机测试的 PGlite 底座（`kb/tests`）。管理员密码走 SSM 时，借它的密封读取（`kb/lib/common.sh`、`kb/host/read-admin-password.sh`），SSM 命令历史里只有密文 |
 | 同仓库的 `knowbase-s3vectors-agent/` | 两个文档管家共用的管理员脚本（`scripts/admin_run.sh`、`nexus_admin.py`、`render.py`、`nexus_package.py`），本机测试的替身（`tests/stubs`） |
 | 同仓库的 `poc/` | `a2a_rules.mjs` 用测试台的 A2A 客户端：`poc/app/nexus/a2a-client.mjs`、`poc/app07/kb-steward-client.mjs` |
