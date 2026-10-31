@@ -5,21 +5,24 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { basisGroup, createDashboard, dashboardRoutes, windowOf } from '../../dashboard.mjs';
+import { basisGroup, createDashboard, dashboardRoutes, refreshOnRounds, windowOf } from '../../dashboard.mjs';
 import { createKbStewardRoutes } from '../../kb-steward-routes.mjs';
+import { benchScope } from './scope-fixture.mjs';
 
 // 工作台统计：轮次照九安 agent-task-service.mjs 存的样子造（假的状态表），复核、「我的规则」是假的；知识库用真的 kb-steward-routes（上传历史写在临时目录），
 // 它的 client 是假的：describe / request 一被调到就失败（不为看板调 Agent）。时钟是假的：现在 = 2026-10-30 12:00（上海）。
 const PATH = '/api/analysis/v1/poc/dashboard';
 const NOW = Date.parse('2026-10-30T04:00:00.000Z');
-const ADMIN = { id: 'poc-reviewer', role: 'admin' };
-const ANALYST = { id: 'poc-checker', role: 'analyst' };
-const POLICY = { id: 'poc-policy', role: 'policy_reviewer' };
+// 登录的人（会话里的 companyIds）；工作台只数这个人范围里（∩ 测试台的公司 co-a、co-b）的单据（Ruling FR1）
+const BENCH = ['co-a', 'co-b'];
+const ADMIN = { id: 'poc-reviewer', role: 'admin', companyIds: ['co-a', 'co-b'] };
+const ANALYST = { id: 'poc-checker', role: 'analyst', companyIds: ['co-a', 'co-b'] };
+const POLICY = { id: 'poc-policy', role: 'policy_reviewer', companyIds: [] };   // 九安不许规则发布复核人有公司
 const ACCOUNTS = [{ id: 'poc-reviewer', name: '审核员（虚构）', role: 'admin' }, { id: 'poc-checker', name: '复核人（虚构）', role: 'analyst' },
   { id: 'poc-policy', name: '规则复核（虚构）', role: 'policy_reviewer' }];
 const agentTaskKey = ({ tenantId, companyId, task, subject }) => 'agent-task:v1:' + createHash('sha256').update([tenantId, companyId, task, subject.kind, subject.id].join('|')).digest('hex');
 const keyOf = (document, task = 'review_advice') => agentTaskKey({ tenantId: 't1', companyId: document.companyId, task, subject: { kind: 'document', id: document.id } });
-const doc = (id, version = 'v1') => ({ id, companyId: 'co-a', version, type: 'corporate_payment' });
+const doc = (id, version = 'v1', companyId = 'co-a') => ({ id, companyId, version, type: 'corporate_payment' });
 /** 一轮：startedAt / finishedAt 是 UTC；done 是完成了的一轮（Agent 的结论和依据在 output 里）。 */
 const round = (n, extra = {}) => ({ round: n, task: 'review_advice', subjectVersion: 'v1', trigger: 'upstream', requestedBy: 'system:pipeline', basis: { assembled: true }, ...extra });
 const done = (n, result, startedAt, finishedAt, basis = [], extra = {}) => round(n, { status: 'completed', startedAt, finishedAt, output: { result, note: '虚构', basis }, ...extra });
@@ -83,10 +86,11 @@ const RULES = { 'poc-reviewer': { files: 2, usedChars: 1200 }, 'poc-checker': { 
 const LONG_TITLE = `九安房租补充要求${'很长的标题'.repeat(15)}`;
 const cap = text => [...text].slice(0, 60).join('');
 
+/** companies：单据 → 公司（不写就是 co-a）。 */
 async function harness({ documents = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'], rounds = roundsOf(), reviews = reviewsOf(), history = HISTORY,
-  configured = true, ready = true, rules = RULES, accounts = ACCOUNTS } = {}) {
-  const docs = documents.map(id => doc(id, id === 'd7' ? 'v2' : 'v1'));
-  const states = new Map(Object.entries(rounds).filter(([id]) => documents.includes(id)).map(([id, state]) => [keyOf(doc(id)), { revision: 1, version: 1, history: [], ...state }]));
+  configured = true, ready = true, rules = RULES, accounts = ACCOUNTS, companies = {} } = {}) {
+  const docs = documents.map(id => doc(id, id === 'd7' ? 'v2' : 'v1', companies[id]));
+  const states = new Map(Object.entries(rounds).filter(([id]) => documents.includes(id)).map(([id, state]) => [keyOf(doc(id, 'v1', companies[id])), { revision: 1, version: 1, history: [], ...state }]));
   const dir = await mkdtemp(path.join(tmpdir(), 'dashboard-'));
   if (history) { await mkdir(dir, { recursive: true }); await writeFile(path.join(dir, 'history.json'), JSON.stringify(history)); }
   const agentCalls = [], readyCalls = [], listCalls = [], ruleCalls = [], logs = [];
@@ -107,7 +111,8 @@ async function harness({ documents = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 
   const fakeReviews = { async all(options = {}) { if (state.broken) throw state.broken; assert.deepEqual(options, {}, '待复核要全部复核：不带 since'); return [...state.reviews]; } };
   const dashboard = createDashboard({ tenantId: 't1', agentTaskKey, reviews: fakeReviews, customRules, kb, accounts: () => accounts, now: () => state.clock,
     readState: async key => { if (state.brokenRounds) throw state.brokenRounds; return states.get(key) ?? null; },
-    listDocuments: async () => { listCalls.push(1); return docs.map(item => ({ ...item })); } });
+    scopeOf: benchScope(BENCH),
+    listDocuments: async companyIds => { listCalls.push(companyIds); return docs.filter(item => companyIds.includes(item.companyId)).map(item => ({ ...item })); } });
   const routes = dashboardRoutes({ dashboard, log: line => logs.push(line) });
   const ask = async (query, user = ADMIN, method = 'GET') => {
     let status = null, payload = null;
@@ -276,7 +281,7 @@ test('reviewers：每个人每张单每一轮只算自己的最后一次；行 =
   const policy = await h.read('month', POLICY);
   assert.deepEqual(policy.reviewers, []);
   assert.deepEqual(policy.myRules, { files: 0, usedChars: 0, limitChars: 5000 }, '规则发布复核人没有「我的规则」');
-  assert.deepEqual(policy.pendingReview, { count: 3, failCount: 2 });
+  assert.deepEqual(policy.pendingReview, { count: 0, failCount: 0 }, '规则发布复核人没有公司（Ruling FR1）：一张单也数不到');
   // 设置里停用的账号（enabled: false）：窗口里没有复核就不给行；有复核的照样给，名字取设置里的
   const disabled = await harness({ accounts: [...ACCOUNTS, { id: 'poc-old', name: '停用的人（虚构）', role: 'analyst', enabled: false },
     { id: 'poc-gone', name: '已离开的人（虚构）', role: 'admin', enabled: false }] });
@@ -402,13 +407,104 @@ test('缓存：按（窗口、角色、账号）缓存 60 秒，时钟可注入�
   assert.equal(fresh.to, new Date(NOW + 60_000).toISOString());
   assert.equal(h.listCalls.length, 4);
   // 另一个管理员：同一窗口、同一角色，也自己算；之后两人各拿各的缓存，不串
-  const admin2 = { id: 'poc-admin2', role: 'admin' };
+  const admin2 = { id: 'poc-admin2', role: 'admin', companyIds: ['co-a'] };
   assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: 5000 });
   assert.equal(h.listCalls.length, 5);
   h.state.clock += 30_000;
   assert.deepEqual((await h.read('today')).myRules, { files: 2, usedChars: 1200, limitChars: 5000 });
   assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: 5000 });
   assert.equal(h.listCalls.length, 5, '两人都是缓存');
+});
+
+test('Ruling FR1：只数登录的人范围里的单据（九安里能看的公司 ∩ 测试台的公司）——轮次、待复核、复核都一样；规则发布复核人没有公司，全是 0', async t => {
+  // d2、d9 在 co-b，别的在 co-a
+  const h = await harness({ companies: { d2: 'co-b', d9: 'co-b' } });
+  t.after(h.done);
+  const everyone = await h.read('today');
+  assert.equal(everyone.advice.completed, 4);
+  const narrow = { id: 'poc-checker', role: 'analyst', companyIds: ['co-b', 'co-z'] };
+  const mine = await h.read('today', narrow);
+  assert.deepEqual(h.listCalls.at(-1), ['co-b'], '只按这个人在测试台里的公司列单据');
+  assert.deepEqual(mine.advice, { completed: 2, pass: 2, fail: 0, overrides: 0, passRate: 1, avgDurationMs: 35_000, maxDurationMs: 60_000 },
+    'd2（10 s）、d9（60 s）；d1 的改判在 co-a，不算');
+  assert.deepEqual(mine.pendingReview, { count: 1, failCount: 0 }, 'd9 待复核；co-a 的 d1、d4、d8 不算');
+  assert.deepEqual(mine.daily, [{ date: '2026-10-30', pass: 2, fail: 0, running: 0 }], 'd3 在跑的那一轮在 co-a');
+  assert.deepEqual(mine.overrideRate, [{ date: '2026-10-30', reviews: 1, overrides: 0 }], '只有 d2 的复核');
+  assert.deepEqual(mine.reviewers, [{ account: 'poc-checker', name: '复核人（虚构）', reviews: 1, overrides: 0, customRules: 1 }]);
+  assert.deepEqual(mine.topBasis, []);
+  const coA = await h.read('today', { ...ADMIN, companyIds: ['co-a'] });
+  assert.equal(coA.advice.completed, 2, 'd1、d7');
+  assert.deepEqual(coA.reviewers.map(row => [row.account, row.reviews]), [['poc-checker', 1], ['poc-reviewer', 1]], 'd2 的复核在 co-b，不算');
+
+  const policy = await h.read('14d', POLICY);
+  const calls = h.listCalls.length;
+  assert.deepEqual(policy.pendingReview, { count: 0, failCount: 0 });
+  assert.deepEqual(policy.advice, { completed: 0, pass: 0, fail: 0, overrides: 0, passRate: null, avgDurationMs: null, maxDurationMs: null });
+  assert.ok(policy.daily.every(day => day.pass === 0 && day.fail === 0 && day.running === 0));
+  assert.ok(policy.overrideRate.every(day => day.reviews === 0 && day.overrides === 0));
+  assert.deepEqual([policy.topBasis, policy.topRules, policy.reviewers], [[], [], []]);
+  assert.equal(policy.knowledge.sources, 3, '知识库不分公司，照常给');
+  await h.read('today', POLICY);
+  assert.equal(h.listCalls.length, calls, '范围是空的：不去列单据');
+});
+
+test('缓存的键里有范围：同一个账号换了公司（设置改过）不拿旧的那份', async t => {
+  const h = await harness({ companies: { d2: 'co-b', d9: 'co-b' } });
+  t.after(h.done);
+  assert.equal((await h.read('today', { ...ADMIN, companyIds: ['co-a'] })).advice.completed, 2);
+  assert.equal((await h.read('today', { ...ADMIN, companyIds: ['co-b'] })).advice.completed, 2);
+  assert.deepEqual(h.listCalls, [['co-a'], ['co-b']]);
+  assert.equal((await h.read('today', { ...ADMIN, companyIds: ['co-b', 'co-a'] })).advice.completed, 4);
+  await h.read('today', { ...ADMIN, companyIds: ['co-a', 'co-b'] });
+  assert.equal(h.listCalls.length, 3, '同一范围（顺序不同）还是同一份');
+});
+
+test('F3：invalidate() 之后下一次读重新算（60 秒内也是）；只清缓存，正在算的那一份照样回给等它的人', async t => {
+  const h = await harness();
+  t.after(h.done);
+  assert.equal((await h.read('today')).advice.overrides, 1);
+  h.state.reviews = [...reviewsOf(), review('d9', 1, 'override', 'poc-reviewer', '2026-10-30T03:59:00.000Z')];
+  h.state.clock += 1_000;
+  assert.equal((await h.read('today')).advice.overrides, 1, '没清：60 秒内是缓存');
+  h.dashboard.invalidate();
+  assert.equal((await h.read('today')).advice.overrides, 2, '清了：马上是新的');
+  assert.equal((await h.read('today', ANALYST)).advice.overrides, 2);
+  assert.equal(h.listCalls.length, 3);
+  const pending = h.dashboard.read({ window: '14d', user: ADMIN });
+  h.dashboard.invalidate();
+  assert.equal((await pending).advice.overrides, 3);
+  assert.equal(h.listCalls.length, 4);
+});
+
+test('refreshOnRounds：人从单据页发起一轮（start 成功）就清工作台的缓存，这一轮结束（done 不管成败）再清一次；start 失败不清；list、view 原样', async () => {
+  let calls = 0, finish, abort;
+  const rounds = [];
+  const inner = {
+    list: async () => 'list', view: async () => 'view',
+    async start(args) {
+      rounds.push(args);
+      if (args.fail) throw Object.assign(new Error('x'), { code: 'RATE_LIMIT' });
+      return { round: rounds.length, done: new Promise((resolve, reject) => { finish = resolve; abort = reject; }) };
+    },
+  };
+  const wrapped = refreshOnRounds(inner, { invalidate: () => { calls += 1; } });
+  assert.equal(await wrapped.list(), 'list');
+  assert.equal(await wrapped.view(), 'view');
+  const started = await wrapped.start({ actor: { id: 'u1' }, document: { id: 'd1' } });
+  assert.equal(started.round, 1);
+  assert.equal(calls, 1, '发起成功：清一次');
+  finish({ status: 'completed' });
+  await started.done;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2, '这一轮结束：再清一次');
+  const second = await wrapped.start({ document: { id: 'd2' } });
+  abort(new Error('round failed'));
+  await assert.rejects(second.done);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 4, '这一轮失败也算结束');
+  await assert.rejects(wrapped.start({ fail: true }), error => error.code === 'RATE_LIMIT');
+  assert.equal(calls, 4, '没发起成功：不清');
+  assert.equal(refreshOnRounds(null, { invalidate() {} }), null, '没开 AI 独立建议：原样是 null');
 });
 
 test('读轮次或复核失败：503 DASHBOARD_UNAVAILABLE（中文），日志一行 POC_DASHBOARD_FAILED <错误码或错误名>，不记消息；失败不缓存', async t => {
@@ -429,9 +525,11 @@ test('读轮次或复核失败：503 DASHBOARD_UNAVAILABLE（中文），日志�
   assert.equal((await h.read('today')).advice.completed, 4, '恢复后照常（失败没进缓存）');
 });
 
-test('server_wiring：外壳把工作台挂在 platformRoutes 上，只读对公付款单，用同一个复核、「我的规则」和知识库', async () => {
+test('server_wiring：外壳把工作台挂在 platformRoutes 上，按登录的人的范围只读对公付款单，用同一个复核、「我的规则」和知识库；复核、发起一轮后清它的缓存', async () => {
   const server = await readFile(fileURLToPath(new URL('../../server.mjs', import.meta.url)), 'utf8');
   assert.match(server, /\|\| \(await dashboard\.handle\(args\)\) \|\|/);
-  assert.match(server, /createDashboard\(\{[\s\S]*?listDocuments: \(\) => everyDocument\(page => store\.listDocuments\(\{ companyIds, type: 'corporate_payment', \.\.\.page \}\)\)/s);
+  assert.match(server, /createDashboard\(\{[\s\S]*?scopeOf: userScope, listDocuments: scope => everyDocument\(page => store\.listDocuments\(\{ companyIds: scope, type: 'corporate_payment', \.\.\.page \}\)\)/s);
   assert.match(server, /createDashboard\(\{[\s\S]*?reviews, customRules, kb, accounts: \(\) => config\.accounts/);
+  assert.match(server, /reviewsRoutes\(\{ reviews, log, onReviewed: \(\) => dashboardStats\.invalidate\(\) \}\)/);
+  assert.match(server, /reviewAdvice: nexusAdvice \? refreshOnRounds\(withAdviceActor\(J\.reviewAdviceState\.createReviewAdviceState\(\{ tasks: agentTasks \}\)\), dashboardStats\) : null/);
 });

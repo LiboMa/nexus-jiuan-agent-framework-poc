@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evidencePagesReader, evidencePagesRoutes } from '../../evidence-pages.mjs';
+import { scopedDocument } from '../../user-scope.mjs';
+import { benchScope } from './scope-fixture.mjs';
 
 // 单据抽屉「原件」页签按页看抽取的文字（Ruling T5g）：读单据（store.getDocument），再用它的公司和现在的版本调九安只读的
 // evidenceService.context（server.mjs 的 readEvidence）；只回 { id, name, status, totalPages, pages: [{ page, text }] }。全部虚构。
@@ -8,7 +10,14 @@ const PATH = '/api/analysis/v1/poc/evidence-pages';
 const DOCS = new Map([
   ['d1', { id: 'd1', companyId: 'co-a', version: 'v2', number: 'DGZF-X-001' }],
   ['d2', { id: 'd2', companyId: 'co-a', version: 'v1' }],
+  ['d3', { id: 'd3', companyId: 'co-b', version: 'v1' }],
+  ['dx', { id: 'dx', companyId: 'co-z', version: 'v1' }], // 不在测试台的公司里
 ]);
+const BENCH = ['co-a', 'co-b'];
+// 登录的人（会话里的 companyIds）；外壳按它 ∩ 测试台的公司读单据（Ruling FR1）
+const ADMIN = { id: 'poc-reviewer', role: 'admin', companyIds: ['co-a', 'co-b', 'co-z'] };
+const NARROW = { id: 'poc-narrow', role: 'analyst', companyIds: ['co-b'] };
+const POLICY = { id: 'poc-policy', role: 'policy_reviewer', companyIds: [] };
 const CONTEXT = {
   environment: 'prod', tenantId: 't1', companyId: 'co-a', documentId: 'd1', sourceVersion: 'v2', detailVersion: 'dv1', status: 'pending_read', completeness: 'partial',
   observedScopeComplete: false, observedFileCount: 3, omittedCount: 0, returnedCount: 2, truncated: false, fingerprint: 'fp',
@@ -21,11 +30,15 @@ const CONTEXT = {
 function harness({ readEvidence } = {}) {
   const reads = [], calls = [], logs = [];
   const readPages = evidencePagesReader({
-    readDocument: async id => { reads.push(id); return DOCS.get(id) ?? null; },
+    readDocument: scopedDocument(benchScope(BENCH), async ({ id, companyIds }) => {
+      reads.push(id);
+      const document = DOCS.get(id);
+      return document && companyIds.includes(document.companyId) ? document : null;
+    }),
     readEvidence: readEvidence ?? (async input => { calls.push(input); return input.documentId === 'd1' ? CONTEXT : { ...CONTEXT, documentId: input.documentId, status: 'not_run', files: [] }; }),
   });
   const routes = evidencePagesRoutes({ readPages, log: line => logs.push(line) });
-  const ask = async (search = '', { user = { id: 'poc-reviewer', role: 'admin' }, method = 'GET', path = PATH } = {}) => {
+  const ask = async (search = '', { user = ADMIN, method = 'GET', path = PATH } = {}) => {
     let status = null, payload = null;
     const res = { writeHead(code) { status = code; return this; }, setHeader() {}, end(text) { payload = text ? JSON.parse(text) : null; } };
     const url = new URL(`${path}${search}`, 'http://localhost');
@@ -43,7 +56,7 @@ const refusedWith = (answer, status, code) => {
 
 test('reads the document, then the evidence context with its company and current version; returns only id, name, status, totalPages and pages', async () => {
   const h = harness();
-  const answer = await h.readPages('d1');
+  const answer = await h.readPages('d1', ADMIN);
   assert.deepEqual(h.reads, ['d1']);
   assert.deepEqual(h.calls, [{ companyId: 'co-a', documentId: 'd1', version: 'v2' }]);
   assert.deepEqual(answer, { documentId: 'd1', documentVersion: 'v2', files: [
@@ -54,14 +67,16 @@ test('reads the document, then the evidence context with its company and current
 
 test('originals not read yet (status not_run) → files: []; a document outside the bench → null', async () => {
   const h = harness();
-  assert.deepEqual(await h.readPages('d2'), { documentId: 'd2', documentVersion: 'v1', files: [] });
-  assert.equal(await h.readPages('nope'), null);
+  assert.deepEqual(await h.readPages('d2', ADMIN), { documentId: 'd2', documentVersion: 'v1', files: [] });
+  assert.equal(await h.readPages('nope', ADMIN), null);
+  assert.equal(await h.readPages('dx', ADMIN), null, '这个人有 co-z，可 co-z 不是测试台的公司');
   assert.deepEqual(h.calls.map(call => call.documentId), ['d2'], '范围外的单据不去读原件');
 });
 
-test('GET evidence-pages?documentId=: admin, analyst and policy_reviewer may read it', async () => {
+test('GET evidence-pages?documentId=: admin, analyst and (given companies) policy_reviewer may read it', async () => {
   for (const role of ['admin', 'analyst', 'policy_reviewer']) {
-    const answer = await harness().ask('?documentId=d1', { user: { id: `u-${role}`, role } });
+    // 规则发布复核人：九安现在不许他有公司（见 Ruling FR1 那一条），这里只证明角色这一关放他过去
+    const answer = await harness().ask('?documentId=d1', { user: { id: `u-${role}`, role, companyIds: ['co-a'] } });
     assert.equal(answer.status, 200, JSON.stringify(answer.payload));
     assert.deepEqual(answer.payload.data.files.map(file => [file.name, file.pages.length]), [['虚构合同.pdf', 2], ['虚构发票.pdf', 2]]);
     assert.equal(Object.hasOwn(answer.payload.data.files[0], 'sha256'), false);
@@ -77,6 +92,17 @@ test('other roles and no session → 403; unknown document → 404; bad query �
     refusedWith(await h.ask(search), 400, 'EVIDENCE_PAGES_INVALID');
   }
   assert.deepEqual(h.calls, []);
+});
+
+test('Ruling FR1: read by the signed-in user\'s companies — a document outside them is 404 like a missing one, and its originals are never read; policy_reviewer has no companies and sees none', async () => {
+  const h = harness();
+  assert.equal((await h.ask('?documentId=d3', { user: NARROW })).status, 200, '他自己公司（co-b）的单');
+  refusedWith(await h.ask('?documentId=d1', { user: NARROW }), 404, 'EVIDENCE_PAGES_NOT_FOUND');
+  refusedWith(await h.ask('?documentId=d1', { user: POLICY }), 404, 'EVIDENCE_PAGES_NOT_FOUND');
+  refusedWith(await h.ask('?documentId=d3', { user: POLICY }), 404, 'EVIDENCE_PAGES_NOT_FOUND');
+  refusedWith(await h.ask('?documentId=d1', { user: { id: 'poc-odd', role: 'admin' } }), 404, 'EVIDENCE_PAGES_NOT_FOUND');
+  assert.deepEqual(h.calls.map(call => call.documentId), ['d3'], '范围外的单据不去读原件');
+  assert.deepEqual(h.reads, ['d3', 'd1'], '范围是空的（规则发布复核人）连单据都不去读');
 });
 
 test('Jiuan\'s codes map to the shell\'s own, with Chinese messages; unknown errors are 503 and only the code is logged', async () => {
@@ -107,5 +133,5 @@ test('drops malformed pages and files instead of passing them through', async ()
     { id: 'a-1', name: '虚构合同.pdf', status: 'ready', totalPages: 2, pages: [{ page: 1, text: '好的' }, { page: 'x', text: 1 }, null] },
     null, { name: '没有编号' },
   ] }) });
-  assert.deepEqual((await h.readPages('d1')).files, [{ id: 'a-1', name: '虚构合同.pdf', status: 'ready', totalPages: 2, pages: [{ page: 1, text: '好的' }] }]);
+  assert.deepEqual((await h.readPages('d1', ADMIN)).files, [{ id: 'a-1', name: '虚构合同.pdf', status: 'ready', totalPages: 2, pages: [{ page: 1, text: '好的' }] }]);
 });

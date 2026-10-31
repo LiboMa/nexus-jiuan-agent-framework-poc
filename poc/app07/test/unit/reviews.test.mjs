@@ -7,17 +7,21 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { currentAdviceReader, readAdviceRounds } from '../../advice-rounds.mjs';
 import { OVERRIDE_REASONS, createReviews, reviewsRoutes } from '../../reviews.mjs';
+import { scopedDocument } from '../../user-scope.mjs';
+import { benchScope } from './scope-fixture.mjs';
 
 // 复核记录：审核员对一张单当前那一轮 AI 独立建议「采纳」或「改判」，绑定这一轮。轮次照九安 agent-task-service.mjs 存的样子造（假的状态表），
 // 复核表用内存里的假 pool：只认 reviews.mjs 写的那几条 SQL，别的 SQL 直接报错。真 MySQL 的那一条测试要 MYSQL_TEST_URL，没有就跳过。
 const BASE = '/api/analysis/v1/poc/reviews';
-const ADMIN = { id: 'poc-reviewer', role: 'admin' };
-const ANALYST = { id: 'poc-checker', role: 'analyst' };
-const POLICY = { id: 'poc-policy', role: 'policy_reviewer' };
+// 登录的人（会话里的 companyIds）；外壳按它 ∩ 测试台的公司读单据（Ruling FR1）
+const ADMIN = { id: 'poc-reviewer', role: 'admin', companyIds: ['co-a', 'co-b', 'co-z'] };
+const ANALYST = { id: 'poc-checker', role: 'analyst', companyIds: ['co-a', 'co-b'] };
+const NARROW = { id: 'poc-narrow', role: 'analyst', companyIds: ['co-b'] };
+const POLICY = { id: 'poc-policy', role: 'policy_reviewer', companyIds: [] };   // 九安不许规则发布复核人有公司
 // 和九安 agent-task-service.mjs 的 agentTaskKey 同一个算法（组合根注入九安自己的那个）
 const agentTaskKey = ({ tenantId, companyId, task, subject }) => 'agent-task:v1:' + createHash('sha256').update([tenantId, companyId, task, subject.kind, subject.id].join('|')).digest('hex');
 const keyOf = (document, task = 'review_advice') => agentTaskKey({ tenantId: 't1', companyId: document.companyId, task, subject: { kind: 'document', id: document.id } });
-const SCOPE = ['co-a', 'co-b'];
+const SCOPE = ['co-a', 'co-b'];   // 测试台的公司
 const docsOf = () => new Map([
   ['d1', { id: 'd1', companyId: 'co-a', version: 'v1' }], ['d2', { id: 'd2', companyId: 'co-a', version: 'v1' }],
   ['d3', { id: 'd3', companyId: 'co-b', version: 'v1' }], ['d4', { id: 'd4', companyId: 'co-b', version: 'v1' }],
@@ -77,11 +81,11 @@ async function harness({ clock = Date.parse('2026-10-30T08:00:00.000Z'), step = 
   const docs = docsOf(), states = new Map(), reads = [];
   let at = clock;
   const readCurrentAdvice = currentAdviceReader({ tenantId: 't1', agentTaskKey, readState: async key => { reads.push(key); return states.get(key) ?? null; },
-    readDocument: async id => { const document = docs.get(id); return document && SCOPE.includes(document.companyId) ? { ...document } : null; } });
+    readDocument: scopedDocument(benchScope(SCOPE), async ({ id, companyIds }) => { const document = docs.get(id); return document && companyIds.includes(document.companyId) ? { ...document } : null; }) });
   const reviews = createReviews({ pool, readCurrentAdvice, now: () => (at += step) });
   await reviews.start();
-  const logs = [];
-  const routes = reviewsRoutes({ reviews, log: line => logs.push(line) });
+  const logs = [], reviewed = [];
+  const routes = reviewsRoutes({ reviews, log: line => logs.push(line), onReviewed: review => reviewed.push(review.id) });
   const setRounds = (id, current, history = []) => states.set(keyOf(docs.get(id)), { revision: 1, version: 1, current, history });
   const ask = async (method, route = '', { user = ADMIN, body, raw, headers = { 'content-type': 'application/json' } } = {}) => {
     const bytes = raw ?? (body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body)));
@@ -94,7 +98,7 @@ async function harness({ clock = Date.parse('2026-10-30T08:00:00.000Z'), step = 
   };
   const post = (body, user = ADMIN) => ask('POST', '', { user, body });
   const latest = async (ids, user = ADMIN) => ask('GET', `/latest?ids=${ids.map(encodeURIComponent).join(',')}`, { user });
-  return { docs, states, reads, reviews, routes, logs, pool, ask, post, latest, setRounds, readCurrentAdvice };
+  return { docs, states, reads, reviews, routes, logs, reviewed, pool, ask, post, latest, setRounds, readCurrentAdvice };
 }
 const adopt = (extra = {}) => ({ documentId: 'd1', sourceVersion: 'v1', round: 1, decision: 'adopt', ...extra });
 const override = (reason, extra = {}) => ({ documentId: 'd1', sourceVersion: 'v1', round: 1, decision: 'override', reason, ...extra });
@@ -129,11 +133,13 @@ test('readAdviceRounds：每张单的当前一轮和历史；documentVersion 取
 test('readCurrentAdvice：只读这一张单的状态（不扫单据池）；单据不在范围里是 null，没跑过 AI 建议时轮次各项为 null', async () => {
   const h = await harness();
   h.setRounds('d1', done(3, 'pass'), [done(2, 'fail'), done(1, 'fail')]);
-  assert.deepEqual(await h.readCurrentAdvice('d1'), { documentVersion: 'v1', round: 3, status: 'completed', result: 'pass', adviceVersion: 'v1' });
+  assert.deepEqual(await h.readCurrentAdvice('d1', ADMIN), { documentVersion: 'v1', round: 3, status: 'completed', result: 'pass', adviceVersion: 'v1' });
   assert.deepEqual(h.reads, [keyOf(h.docs.get('d1'))]);
-  assert.deepEqual(await h.readCurrentAdvice('d2'), { documentVersion: 'v1', round: null, status: null, result: null, adviceVersion: null });
-  assert.equal(await h.readCurrentAdvice('dx'), null);
-  assert.equal(await h.readCurrentAdvice('nope'), null);
+  assert.deepEqual(await h.readCurrentAdvice('d2', ADMIN), { documentVersion: 'v1', round: null, status: null, result: null, adviceVersion: null });
+  assert.equal(await h.readCurrentAdvice('dx', ADMIN), null, '这个人有 co-z，可 co-z 不是测试台的公司');
+  assert.equal(await h.readCurrentAdvice('nope', ADMIN), null);
+  assert.equal(await h.readCurrentAdvice('d1', NARROW), null, '这个人只有 co-b');
+  assert.equal(await h.readCurrentAdvice('d1', POLICY), null);
 });
 
 // ---- 复核（reviews.mjs）----
@@ -337,6 +343,47 @@ test('latest 一次 1 到 50 张：没有 ids、空的、超过 50 张 400', asy
   refusedWith(await h.ask('GET', '/latest?ids=d1&x=1'), 400, 'REVIEW_INVALID');
 });
 
+test('Ruling FR1：按登录的人的公司读写——范围外的单据 latest 里是 no_advice（别人的复核也不给），历史和复核 404，一条也不写', async () => {
+  const h = await harness();
+  h.setRounds('d1', done(1, 'fail'));   // co-a
+  h.setRounds('d3', done(1, 'pass'));   // co-b
+  assert.equal((await h.post(adopt(), ADMIN)).status, 201);
+  const narrow = (await h.latest(['d1', 'd3'], NARROW)).payload.data.items;
+  assert.deepEqual(narrow.d1, { state: 'no_advice', current: null, review: null }, 'co-a 的单：在他范围外');
+  assert.equal(narrow.d3.state, 'pending');
+  assert.equal((await h.latest(['d1'], ADMIN)).payload.data.items.d1.state, 'reviewed', '范围里有 co-a 的人照常看到');
+  refusedWith(await h.ask('GET', '?documentId=d1', { user: NARROW }), 404, 'REVIEW_NOT_FOUND');
+  refusedWith(await h.post(adopt(), NARROW), 404, 'REVIEW_NOT_FOUND');
+  assert.equal((await h.post(adopt({ documentId: 'd3', round: 1 }), NARROW)).status, 201, '他自己公司的单照样能复核');
+  for (const id of ['d1', 'd3']) {
+    assert.deepEqual((await h.latest([id], POLICY)).payload.data.items[id], { state: 'no_advice', current: null, review: null });
+    refusedWith(await h.ask('GET', `?documentId=${id}`, { user: POLICY }), 404, 'REVIEW_NOT_FOUND');
+  }
+  assert.deepEqual(h.pool.table().map(row => [row.document_id, row.actor]), [['d1', 'poc-reviewer'], ['d3', 'poc-narrow']]);
+});
+
+test('F3：每次复核成功（201）后调 onReviewed（外壳用它清工作台的缓存）；被拒的、读的都不调；它出错不影响这次复核', async () => {
+  const h = await harness();
+  h.setRounds('d1', done(1, 'fail'));
+  refusedWith(await h.post(adopt({ round: 2 })), 409, 'REVIEW_STALE');
+  refusedWith(await h.post(adopt(), POLICY), 403, 'REVIEW_FORBIDDEN');
+  await h.ask('GET', '?documentId=d1');
+  await h.latest(['d1']);
+  assert.deepEqual(h.reviewed, []);
+  const first = await h.post(adopt());
+  assert.equal(first.status, 201);
+  assert.deepEqual(h.reviewed, [first.payload.data.review.id]);
+  const logs = [];
+  const routes = reviewsRoutes({ reviews: h.reviews, log: line => logs.push(line), onReviewed: () => { throw new TypeError('boom'); } });
+  let status = null;
+  const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(adopt()))]), { method: 'POST', headers: { 'content-type': 'application/json' } });
+  await routes.handle({ req, url: new URL(BASE, 'http://localhost'), path: BASE, session: { user: ADMIN }, body: undefined,
+    res: { writeHead(code) { status = code; return this; }, setHeader() {}, end() {} } });
+  assert.equal(status, 201);
+  assert.deepEqual(logs, ['POC_REVIEWS_ON_REVIEWED_FAILED TypeError']);
+  assert.equal(h.pool.table().length, 2);
+});
+
 test('复核历史：要 documentId；单据不在范围里或不存在 404，复核也一样', async () => {
   const h = await harness();
   refusedWith(await h.ask('GET', ''), 400, 'REVIEW_INVALID');
@@ -353,8 +400,14 @@ test('角色：管理员、分析员能复核；policy_reviewer 只能看（复�
   refusedWith(denied, 403, 'REVIEW_FORBIDDEN');
   assert.match(denied.payload.error.message, /管理员和分析员/);
   assert.equal((await h.post(adopt(), ANALYST)).status, 201);
-  assert.equal((await h.ask('GET', '?documentId=d1', { user: POLICY })).status, 200);
-  assert.equal((await h.latest(['d1'], POLICY)).payload.data.items.d1.state, 'reviewed');
+  // 角色这一关放规则发布复核人看（不是 403）；可九安不许他有公司，所以哪张单都在范围外：404、no_advice（Ruling FR1）
+  refusedWith(await h.ask('GET', '?documentId=d1', { user: POLICY }), 404, 'REVIEW_NOT_FOUND');
+  assert.deepEqual((await h.latest(['d1'], POLICY)).payload.data.items.d1, { state: 'no_advice', current: null, review: null });
+  // 假如他有公司（九安现在不许）：照样只能看
+  const reader = { ...POLICY, companyIds: ['co-a'] };
+  assert.equal((await h.ask('GET', '?documentId=d1', { user: reader })).status, 200);
+  assert.equal((await h.latest(['d1'], reader)).payload.data.items.d1.state, 'reviewed');
+  refusedWith(await h.post(adopt(), reader), 403, 'REVIEW_FORBIDDEN');
   for (const user of [{ id: 'someone', role: 'viewer' }, { id: 'someone' }, null]) {
     refusedWith(await h.post(adopt(), user), 403, 'REVIEW_FORBIDDEN');
     refusedWith(await h.ask('GET', '?documentId=d1', { user }), 403, 'REVIEW_FORBIDDEN');

@@ -22,7 +22,8 @@ import { agentCallRoutes } from './agent-calls.mjs';
 import { adviceRoundsRoutes, currentAdviceReader, documentRoundsReader, everyDocument } from './advice-rounds.mjs';
 import { createReviews, reviewsRoutes } from './reviews.mjs';
 import { evidencePagesReader, evidencePagesRoutes } from './evidence-pages.mjs';
-import { createDashboard, dashboardRoutes } from './dashboard.mjs';
+import { createDashboard, dashboardRoutes, refreshOnRounds } from './dashboard.mjs';
+import { createUserScope, scopedDocument } from './user-scope.mjs';
 import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
 import { createKbStewardClient } from './kb-steward-client.mjs';
@@ -197,21 +198,28 @@ const agentTests = createAgentTests({ ...envelopeChecks, callRaw,
 // 「Agent 接入」页的调用记录：从单据池的单据反查九安存的每一轮，加上手动测试
 const agentCalls = agentCallRoutes({ log, extraRows: () => agentTests.rows(), tenantId: config.scope.tenantId, tasks: Object.keys(ROUTED_TASKS), agentTaskKey: J.taskService.agentTaskKey,
   listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, ...page })), readState: key => store.readState(key) });
+// 复核、各轮、原件的文字、工作台都按登录的人的范围读单据（Ruling FR1）：他在九安里能看的汇联易公司（九安自己的 analysisHuilianyiCompanyIds，
+// 九安的单据接口也按它）∩ 测试台的公司；规则发布复核人在九安里没有公司，什么都读不到。范围外的单据和不存在的一样（404）
+const userScope = createUserScope({ benchCompanyIds: companyIds, sourceCompanyIds: J.auth.analysisHuilianyiCompanyIds });
+const headInScope = scopedDocument(userScope, ({ id, companyIds: scope }) => store.getDocumentHead({ id, companyIds: scope }));
+const documentInScope = scopedDocument(userScope, ({ id, companyIds: scope }) => store.getDocument({ id, companyIds: scope }));
 // 复核记录（采纳 / 改判 AI 独立建议，绑定那一轮）：表 poc_review_decisions 在 jiuan07 库里，端到端测试的重置删库时随之清空；
 // 复核时只读这一张单的单据头和当前一轮
 const reviews = createReviews({ pool, readCurrentAdvice: currentAdviceReader({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
-  readState: key => store.readState(key), readDocument: id => store.getDocumentHead({ id, companyIds }) }) });
+  readState: key => store.readState(key), readDocument: headInScope }) });
 await reviews.start();
-const reviewRoutes = reviewsRoutes({ reviews, log });
+// 工作台统计：对公付款单的 AI 建议轮次、复核记录、知识库的上传历史和「我的规则」；不为看板调 Agent，结果按（窗口、角色、账号、范围）缓存 60 秒，
+// 复核成功、人从单据页发起一轮和这一轮结束时清掉（F3）
+const dashboardStats = createDashboard({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey, readState: key => store.readState(key),
+  scopeOf: userScope, listDocuments: scope => everyDocument(page => store.listDocuments({ companyIds: scope, type: 'corporate_payment', ...page })),
+  reviews, customRules, kb, accounts: () => config.accounts });
+const dashboard = dashboardRoutes({ log, dashboard: dashboardStats });
+const reviewRoutes = reviewsRoutes({ reviews, log, onReviewed: () => dashboardStats.invalidate() });
 // 单据抽屉的「历史」页签：一张单的 AI 独立建议各轮（九安的 advice 接口只给当前一轮）；同样只读这一张单的单据头和状态
 const adviceRounds = adviceRoundsRoutes({ log, readRounds: documentRoundsReader({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
-  readState: key => store.readState(key), readDocument: id => store.getDocumentHead({ id, companyIds }) }) });
-// 单据抽屉「原件」页签按页看文字：九安只读的 evidenceService.context（readEvidence），先按测试台的公司范围读单据
-const evidencePages = evidencePagesRoutes({ log, readPages: evidencePagesReader({ readDocument: id => store.getDocument({ id, companyIds }), readEvidence }) });
-// 工作台统计：对公付款单的 AI 建议轮次、复核记录、知识库的上传历史和「我的规则」；不为看板调 Agent，结果按（窗口、角色、账号）缓存 60 秒
-const dashboard = dashboardRoutes({ log, dashboard: createDashboard({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
-  readState: key => store.readState(key), listDocuments: () => everyDocument(page => store.listDocuments({ companyIds, type: 'corporate_payment', ...page })),
-  reviews, customRules, kb, accounts: () => config.accounts }) });
+  readState: key => store.readState(key), readDocument: headInScope }) });
+// 单据抽屉「原件」页签按页看文字：先按登录的人的范围读单据，读到了才调九安只读的 evidenceService.context（readEvidence）
+const evidencePages = evidencePagesRoutes({ log, readPages: evidencePagesReader({ readDocument: documentInScope, readEvidence }) });
 const platformRoutes = { ...jiuanRoutes, async handle(args) {
   return (await nexusAccess.handle(args)) || (await agentTests.handle(args)) || (await agentCalls.handle(args)) || (await intake.handle(args))
     || (await myRules.handle(args)) || (await reviewRoutes.handle(args)) || (await adviceRounds.handle(args)) || (await evidencePages.handle(args)) || (await dashboard.handle(args)) || (await kb.handle(args)) || jiuanRoutes.handle(args);
@@ -222,7 +230,7 @@ const app = J.server.createAnalysisApp({ store, companyDirectory, localAccess: n
   approvalWritebackService: null, approvalSourceKind: config.source.kind, ...runtime, dingtalk: null, healthCheck: database.health, loginAttemptLimit: 600,
   adviceSummaryProvider: { list: runtime.listAdviceSummaries }, sync: syncLoop, syncRange, syncScope: config.scope, origin: config.origin,
   instance: config.instance, source: 'huilianyi-stage', milestone, elementCheck: J.elementCheckState.createElementCheckState({ tasks: agentTasks }),
-  reviewAdvice: nexusAdvice ? withAdviceActor(J.reviewAdviceState.createReviewAdviceState({ tasks: agentTasks })) : null, onError: ({ code }) => log(code) });
+  reviewAdvice: nexusAdvice ? refreshOnRounds(withAdviceActor(J.reviewAdviceState.createReviewAdviceState({ tasks: agentTasks })), dashboardStats) : null, onError: ({ code }) => log(code) });
 
 const login = createPasswordLogin({ passwords: new Map([['poc-reviewer', secretText('reviewer_password')], ['poc-checker', secretText('checker_password')]]),
   issueTicket: accountId => auth.issueLocalTicket(accountId) });

@@ -59,24 +59,24 @@ export const adviceOf = (document, record) => ({ documentVersion: document.versi
   result: outputOf(record).result ?? null, adviceVersion: record?.subjectVersion ?? null });
 
 /**
- * readDocument(id) → 范围内的单据（要 id、companyId、version），不在范围里或不存在时 null。
- * 返回的函数：documentId → null（单据不在范围里）或 adviceOf 的样子；没跑过 AI 建议时 round、status、result、adviceVersion 都是 null。
+ * readDocument(id, user) → 登录的人范围里的单据（要 id、companyId、version；user-scope.mjs 的 scopedDocument），不在范围里或不存在时 null。
+ * 返回的函数：(documentId, user) → null（单据不在这个人的范围里）或 adviceOf 的样子；没跑过 AI 建议时 round、status、result、adviceVersion 都是 null。
  */
 export function currentAdviceReader({ tenantId, agentTaskKey, readState, readDocument, task = ADVICE_TASK }) {
-  return async documentId => {
-    const document = await readDocument(documentId);
+  return async (documentId, user) => {
+    const document = await readDocument(documentId, user);
     if (!document || document.id !== documentId) return null;
     return adviceOf(document, (await readState(stateKey({ tenantId, agentTaskKey, document, task })))?.current ?? null);
   };
 }
 
 /**
- * readDocument 同 currentAdviceReader。返回的函数：documentId → null（单据不在范围里）或
+ * readDocument 同 currentAdviceReader。返回的函数：(documentId, user) → null（单据不在这个人的范围里）或
  * { documentId, documentVersion（单据现在的版本）, items }：items 是 readAdviceRounds 的样子，按轮次新的在前（九安的 history 是旧的在前）。
  */
 export function documentRoundsReader({ tenantId, agentTaskKey, readState, readDocument, task = ADVICE_TASK }) {
-  return async documentId => {
-    const document = await readDocument(documentId);
+  return async (documentId, user) => {
+    const document = await readDocument(documentId, user);
     if (!document || document.id !== documentId) return null;
     const rounds = await readAdviceRounds({ tenantId, agentTaskKey, readState, task, listDocuments: async () => [document] });
     const order = item => (Number.isSafeInteger(item.round) ? item.round : -1);
@@ -98,7 +98,9 @@ const ROUNDS_STATUS = Object.freeze({ ADVICE_ROUNDS_FORBIDDEN: 403, ADVICE_ROUND
 const refuse = code => { throw Object.assign(new Error(code), { code }); };
 const sendJson = (res, status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); };
 
-/** 抽屉「历史」页签的接口：只读，给管理员、分析员、规则发布复核人；别的角色 403；单据不在范围里或不存在 404（同 reviews.mjs）。 */
+/**
+ * 抽屉「历史」页签的接口：只读，给管理员、分析员、规则发布复核人；别的角色 403；单据不在登录的人的范围里（Ruling FR1）或不存在 404（同 reviews.mjs）。
+ */
 export function adviceRoundsRoutes({ readRounds, log = () => {} }) {
   return {
     async handle({ req, url, path: pathname, session, res }) {
@@ -108,7 +110,7 @@ export function adviceRoundsRoutes({ readRounds, log = () => {} }) {
         if (!ROUNDS_ROLES.has(session?.user?.role)) refuse('ADVICE_ROUNDS_FORBIDDEN');
         const names = [...where.searchParams.keys()], documentId = where.searchParams.get('documentId');
         if (names.length !== 1 || names[0] !== 'documentId' || !DOCUMENT_ID.test(documentId ?? '') || documentId.trim() !== documentId) refuse('ADVICE_ROUNDS_INVALID');
-        const rounds = await readRounds(documentId);
+        const rounds = await readRounds(documentId, session.user);
         if (!rounds) refuse('ADVICE_ROUNDS_NOT_FOUND');
         sendJson(res, 200, { data: rounds });
       } catch (error) {

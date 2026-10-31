@@ -6,13 +6,15 @@
  *   GET  …/reviews/latest?ids=a,b,…             单据池一页（1–50 张）的复核状态 → { items: { [documentId]: { state, current, review } } }
  * 两个 GET 给管理员、分析员和规则发布复核人（policy_reviewer 的单据池只读，也要看复核状态）；别的角色一律 403。
  * 会话、来源和 CSRF 由九安校验；这些路径不在 /platform 下，九安不替它们读请求体，这里自己读。
- * 只能复核「当前那一轮已完成、审的是单据现在的版本、结论是 pass / fail」的建议。单据不在测试台的公司里或不存在 → 404；然后按顺序查：
+ * 单据按登录的人的范围读（他在九安里的公司 ∩ 测试台的公司，Ruling FR1）：范围外的单据和不存在的一样——复核、历史 404，latest 里是 no_advice（别人的复核也不给）。
+ * 只能复核「当前那一轮已完成、审的是单据现在的版本、结论是 pass / fail」的建议。单据不在这个人的范围里或不存在 → 404；然后按顺序查：
  *   ① 提交的版本不是单据现在的版本 → 409 REVIEW_STALE；② 有当前一轮、提交的轮次不是它 → 409 REVIEW_STALE；
  *   ③ 没有轮次，或当前一轮不能复核（在跑、失败、declined、给旧版本做的…）→ 409 REVIEW_ADVICE_NOT_READY。
  *   只有真有更新的东西（单据新版本、新一轮）时才说「刚更新」。两人同时复核同一轮都成功，后一次为准。
  * 查当前一轮和写入之间不加锁：这中间刚好又跑完一轮的话，记下的仍是提交时那一轮，latest 里这张单显示 outdated，回到待复核。
  * 改判原因按方向（Spec 第 9 节）：AI 不建议通过 → 改判为通过、AI 建议通过 → 改判为不通过各一组；other 必须写备注；备注去掉首尾空白，最多 200 字。
  * 表 poc_review_decisions 在九安的 jiuan07 库里（端到端测试的重置删库重建，随之清空），start() 时建；created_at 存 UTC 的 DATETIME(3)。
+ * 每次复核成功后调 onReviewed(review)（外壳用它清工作台的缓存，F3）；它出错只记日志，不影响这次复核。
  */
 import { readJson } from '../app/http.mjs';
 
@@ -121,25 +123,27 @@ export function stateOf(advice, review) {
 }
 
 /**
- * readCurrentAdvice(documentId) → null（单据不在范围里）或 { documentVersion（单据现在的版本）, round, status, result, adviceVersion（这一轮审的版本） }
- * （advice-rounds.mjs 的 currentAdviceReader）。now() 给毫秒。
+ * readCurrentAdvice(documentId, user) → null（单据不在这个人的范围里）或 { documentVersion（单据现在的版本）, round, status, result, adviceVersion（这一轮审的版本） }
+ * （advice-rounds.mjs 的 currentAdviceReader）。user 是登录的人（会话里的 user）。now() 给毫秒。
  */
 export function createReviews({ pool, readCurrentAdvice, now = Date.now }) {
   async function select(where, params, order = 'created_at, id') {
     const [rows] = await pool.query(`SELECT ${COLUMNS} FROM poc_review_decisions WHERE ${where} ORDER BY ${order}`, params);
     return rows.map(reviewOf);
   }
-  async function adviceOf(documentId) {
-    const advice = await readCurrentAdvice(documentId);
+  async function adviceOf(documentId, user) {
+    const advice = await readCurrentAdvice(documentId, user);
     if (!advice) fail('REVIEW_NOT_FOUND');
     return advice;
   }
   return {
     async start() { await pool.query(SCHEMA); },
 
-    async add(actor, input) {
+    /** user 是登录的人：actor 记他的账号，单据按他的范围读。 */
+    async add(user, input) {
       const review = parse(input);
-      const advice = await adviceOf(review.documentId);
+      const advice = await adviceOf(review.documentId, user);
+      const actor = user?.id;
       if (review.sourceVersion !== advice.documentVersion) fail('REVIEW_STALE');
       if (advice.round != null && review.round !== advice.round) fail('REVIEW_STALE');
       if (advice.round == null || !reviewable(advice)) fail('REVIEW_ADVICE_NOT_READY');
@@ -154,17 +158,17 @@ export function createReviews({ pool, readCurrentAdvice, now = Date.now }) {
     },
 
     /** 这张单的全部复核，新的在前。 */
-    async history(documentId) {
+    async history(documentId, user) {
       if (!isText(documentId)) fail('REVIEW_INVALID', INVALID.documentId);
-      await adviceOf(documentId);
+      await adviceOf(documentId, user);
       return select('document_id = ?', [documentId], 'created_at DESC, id DESC');
     },
 
-    /** 每张单：state、当前一轮 { round, result, status }（没有轮次时 null）、最后一次复核（不在范围里的单据什么都不给）。 */
-    async latest(documentIds) {
+    /** 每张单：state、当前一轮 { round, result, status }（没有轮次时 null）、最后一次复核（不在这个人范围里的单据什么都不给）。 */
+    async latest(documentIds, user) {
       if (!Array.isArray(documentIds) || !documentIds.length || documentIds.length > LATEST_MAX || !documentIds.every(isText)) fail('REVIEW_INVALID', INVALID.ids);
       const ids = [...new Set(documentIds)];
-      const advice = await Promise.all(ids.map(id => readCurrentAdvice(id)));
+      const advice = await Promise.all(ids.map(id => readCurrentAdvice(id, user)));
       const last = new Map();
       for (const review of await select(`document_id IN (${ids.map(() => '?').join(', ')})`, ids)) last.set(review.documentId, review);
       return Object.fromEntries(ids.map((id, index) => {
@@ -185,7 +189,7 @@ function onlyQuery(url, names) {
   for (const key of url.searchParams.keys()) if (!names.includes(key) || url.searchParams.getAll(key).length !== 1) fail('REVIEW_INVALID', INVALID.query);
 }
 
-export function reviewsRoutes({ reviews, log = () => {} }) {
+export function reviewsRoutes({ reviews, log = () => {}, onReviewed = () => {} }) {
   return {
     async handle({ req, url, path: pathname, session, res, body }) {
       const where = url ?? new URL(pathname, 'http://localhost');
@@ -197,14 +201,16 @@ export function reviewsRoutes({ reviews, log = () => {} }) {
         if (route === 'add') {
           onlyQuery(where, []);
           const input = body === undefined ? await readJson(req, { maximum: 4_000 }) : body;
-          send(res, 201, { data: { review: await reviews.add(session.user.id, input) } });
+          const review = await reviews.add(session.user, input);
+          try { onReviewed(review); } catch (error) { log(`POC_REVIEWS_ON_REVIEWED_FAILED ${[error?.code, error?.name].find(value => typeof value === 'string' && CODE.test(value)) ?? 'UNKNOWN'}`); }
+          send(res, 201, { data: { review } });
         } else if (route === 'history') {
           onlyQuery(where, ['documentId']);
-          send(res, 200, { data: { items: await reviews.history(where.searchParams.get('documentId')) } });
+          send(res, 200, { data: { items: await reviews.history(where.searchParams.get('documentId'), session.user) } });
         } else {
           onlyQuery(where, ['ids']);
           const ids = where.searchParams.get('ids');
-          send(res, 200, { data: { items: await reviews.latest(ids === null ? [] : ids.split(',')) } });
+          send(res, 200, { data: { items: await reviews.latest(ids === null ? [] : ids.split(','), session.user) } });
         }
       } catch (error) {
         const known = Object.hasOwn(STATUS, error?.code);

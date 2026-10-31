@@ -4,6 +4,8 @@
  * window 只认这三个、别的参数不收（400 DASHBOARD_INVALID）。会话和来源由九安校验。只读；不为看板调 Agent（知识库只看配置、钥匙和上传历史）。
  * 窗口按上海时间（上海没有夏令时，按固定 +08:00 算）：today = 今天 0 点到现在，14d = 今天和前 13 天，month = 本月 1 日 0 点到现在；
  * from / to 是 UTC 的 ISO 时间。daily[]、overrideRate[] 窗口里每个上海日期一项（没有数的日子也给，全 0），从早到晚。
+ * 范围（Ruling FR1）：只数登录的人范围里的单据——他在九安里的公司 ∩ 测试台的公司（scopeOf，user-scope.mjs）；轮次、待复核、复核（只算这些单据的）都一样。
+ *   规则发布复核人在九安里没有公司：全是 0（知识库不分公司，照常给）。范围是空的就不去列单据。
  * 口径（Spec 5.2、第 9 节）：
  *   轮次      照 advice-rounds.mjs 的 walkRounds 从对公付款单反查 review_advice 的轮次（每张单当前一轮 + 5 轮历史，更早的数不到）。
  *             完成 = status completed 且结论是 pass / fail，按 finishedAt 落在窗口里；daily 的 running 是状态为 running 的轮次，按 startedAt。
@@ -26,8 +28,9 @@
  *                  的入库——之后失败或还在入库的那次不影响，库里还是这一份——没被删除（removedAt）的算一份，rules 是这些的 rulesTotal 之和；
  *                  lastIngestAt 是 ingested / skipped 里最晚的 finishedAt。
  *   myRules        自己的「我的规则」{ files, usedChars, limitChars }；规则发布复核人没有「我的规则」，给 0 / 0 / 5000。
- * 结果按（窗口、角色、账号）缓存 60 秒（now 可注入）。算不出来（读轮次、复核、上传历史失败）→ 503 DASHBOARD_UNAVAILABLE，
- * 日志一行 POC_DASHBOARD_FAILED <错误码或错误名>，不记消息；失败不缓存。
+ * 结果按（窗口、角色、账号、范围）缓存 60 秒（now 可注入）；invalidate() 清掉全部缓存（复核成功、人发起一轮和它结束时，外壳调它，F3）。
+ * 算不出来（读轮次、复核、上传历史失败）→ 503 DASHBOARD_UNAVAILABLE，日志一行 POC_DASHBOARD_FAILED <错误码或错误名>，不记消息；失败不缓存。
+ *   refreshOnRounds  包一层九安的 reviewAdviceState：单据页发起一轮成功、这一轮结束（不管成败）时清工作台的缓存。
  */
 import { ADVICE_TASK, adviceOf, basisOf, walkRounds } from './advice-rounds.mjs';
 import { CUSTOM_RULES_LIMITS } from './custom-rules.mjs';
@@ -99,11 +102,13 @@ const lastOf = (reviews, keyOf) => [...new Map(reviews.map(review => [keyOf(revi
 const overridesOf = reviews => reviews.filter(review => review.decision === 'override').length;
 
 /**
- * 轮次照 walkRounds 读（tenantId、agentTaskKey、readState、listDocuments 原样传过去；listDocuments 只给对公付款单）；
+ * scopeOf(user) → 这个人的范围（公司编号，user-scope.mjs 的 createUserScope）；listDocuments(companyIds) → 这些公司的对公付款单。
+ * 轮次照 walkRounds 读（tenantId、agentTaskKey、readState 原样传过去）；
  * reviews 是 createReviews 的（用 all()），customRules 是 createCustomRules 的（用 list），kb 是 createKbStewardRoutes 的（用 status、historyList）；
  * accounts() → 设置里的账号 [{ id, name, role }]。now() 给毫秒。
  */
-export function createDashboard({ tenantId, agentTaskKey, readState, listDocuments, reviews, customRules, kb, accounts = () => [], now = Date.now }) {
+export function createDashboard({ tenantId, agentTaskKey, readState, scopeOf, listDocuments, reviews, customRules, kb, accounts = () => [], now = Date.now }) {
+  if (typeof scopeOf !== 'function' || typeof listDocuments !== 'function') throw new TypeError('createDashboard 要 scopeOf 和 listDocuments');
   const cache = new Map();
 
   /** 这个账号「我的规则」的 { files, usedChars, limitChars }；账号编号存不了规则（CUSTOM_RULES_ACCOUNT_INVALID）时算没有。 */
@@ -143,11 +148,15 @@ export function createDashboard({ tenantId, agentTaskKey, readState, listDocumen
     return rows.sort((a, b) => b.reviews - a.reviews || compare(a.account, b.account));
   }
 
-  async function compute(window, user, nowMs) {
+  async function compute(window, user, scope, nowMs) {
     const { from, to, days } = windowOf(window, nowMs);
     const inWindow = ms => ms !== null && ms >= from && ms <= to;
-    const [rounds, allReviews, knowledge] = await Promise.all([
-      walkRounds({ tenantId, tasks: [ADVICE_TASK], agentTaskKey, listDocuments, readState }), reviews.all(), knowledgeOf()]);
+    const documents = scope.length ? await listDocuments(scope) : [];
+    const mine = new Set(documents.map(document => document.id));
+    const [rounds, every, knowledge] = await Promise.all([
+      walkRounds({ tenantId, tasks: [ADVICE_TASK], agentTaskKey, listDocuments: async () => documents, readState }), reviews.all(), knowledgeOf()]);
+    // 复核只算这个人范围里的单据的
+    const allReviews = every.filter(review => mine.has(review.documentId));
 
     // 待复核：每张单最后一次复核（不按窗口）对它的当前一轮
     const lastReview = new Map(allReviews.map(review => [review.documentId, review]));
@@ -199,18 +208,37 @@ export function createDashboard({ tenantId, agentTaskKey, readState, listDocumen
   }
 
   return {
-    /** 这个人这个窗口的统计；60 秒内同一（窗口、角色、账号）给同一份（同时来的几次共用一轮），失败的不留。 */
+    /** 这个人这个窗口的统计；60 秒内同一（窗口、角色、账号、范围）给同一份（同时来的几次共用一轮），失败的不留。 */
     read({ window, user }) {
-      const at = now(), key = JSON.stringify([window, user.role, String(user.id)]);
+      const scope = scopeOf(user);
+      const at = now(), key = JSON.stringify([window, user.role, String(user.id), [...scope].sort()]);
       const hit = cache.get(key);
       if (hit && at - hit.at < TTL_MS) return hit.value;
       for (const [name, entry] of cache) if (at - entry.at >= TTL_MS) cache.delete(name);
-      const entry = { at, value: compute(window, user, at) };
+      const entry = { at, value: compute(window, user, scope, at) };
       cache.set(key, entry);
       entry.value.catch(() => { if (cache.get(key) === entry) cache.delete(key); });
       return entry.value;
     },
+    /** 清掉全部缓存：下一次读重新算；正在算的那一份照样回给等它的人。 */
+    invalidate() { cache.clear(); },
   };
+}
+
+/**
+ * 九安的 reviewAdviceState（单据页的发起入口）包一层：start 成功就 dashboard.invalidate()，这一轮结束（started.done 不管成败）再清一次；
+ * start 失败不清。list、view 原样。没开 AI 独立建议（null）原样回 null。
+ */
+export function refreshOnRounds(reviewAdviceState, dashboard) {
+  if (!reviewAdviceState) return reviewAdviceState;
+  const clear = () => { try { dashboard.invalidate(); } catch { /* 清不了缓存不影响发起 */ } };
+  return Object.freeze({ ...reviewAdviceState,
+    async start(args) {
+      const started = await reviewAdviceState.start(args);
+      clear();
+      if (started?.done && typeof started.done.then === 'function') started.done.then(clear, clear);
+      return started;
+    } });
 }
 
 export function dashboardRoutes({ dashboard, log = () => {} }) {

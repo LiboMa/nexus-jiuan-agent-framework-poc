@@ -2,8 +2,10 @@
  * 一张单原件的按页文字（单据抽屉的「原件」页签，Ruling T5g）：九安的 GET /documents/:id/evidence 只给读取状态和页数，不给文字；
  * 文字在九安加密的文字缓存里，只读的 evidenceService.context 会读它（每张单最多 10 个已读出文字的原件，analysis-evidence-service.mjs）。
  *   GET /api/analysis/v1/poc/evidence-pages?documentId= → { documentId, documentVersion, files: [{ id, name, status, totalPages, pages: [{ page, text }] }] }
- * 先读单据（store.getDocument，测试台的公司范围），再用它的公司和现在的版本调 readEvidence（server.mjs 包好的 context）。
- * 原件还没读过（status not_run）回 files: []。给管理员、分析员、规则发布复核人；别的角色 403；单据不在范围里或不存在 404（同 advice-rounds）。
+ * 先按登录的人的范围读单据（store.getDocument，他在九安里的公司 ∩ 测试台的公司，Ruling FR1），读到了才用它的公司和现在的版本调
+ * readEvidence（server.mjs 包好的 context）。context 照旧用流水线身份读：九安按人读要求是管理员或分析员（规则发布复核人会被当成登录失效），
+ * 所以这一道门是外壳自己的角色检查和这次按人读单据。
+ * 原件还没读过（status not_run）回 files: []。给管理员、分析员、规则发布复核人；别的角色 403；单据不在这个人的范围里或不存在 404（同 advice-rounds）。
  * 九安的错误码换成外壳自己的（同 reviews.mjs），日志只记错误码，不记消息和文字。
  */
 const PATH = '/api/analysis/v1/poc/evidence-pages';
@@ -38,12 +40,13 @@ function fileOf(file) {
 }
 
 /**
- * readDocument(id) → 范围内的单据（要 id、companyId、version）或 null；readEvidence({ companyId, documentId, version }) → 九安的 context。
- * 返回的函数：documentId → null（单据不在范围里）或 { documentId, documentVersion, files }。
+ * readDocument(id, user) → 登录的人范围里的单据（要 id、companyId、version；user-scope.mjs 的 scopedDocument）或 null；
+ * readEvidence({ companyId, documentId, version }) → 九安的 context。
+ * 返回的函数：(documentId, user) → null（单据不在这个人的范围里，不去读原件）或 { documentId, documentVersion, files }。
  */
 export function evidencePagesReader({ readDocument, readEvidence }) {
-  return async documentId => {
-    const document = await readDocument(documentId);
+  return async (documentId, user) => {
+    const document = await readDocument(documentId, user);
     if (!document || document.id !== documentId) return null;
     const context = await readEvidence({ companyId: document.companyId, documentId, version: document.version });
     const files = context?.status === 'not_run' || !Array.isArray(context?.files) ? [] : context.files.map(fileOf).filter(Boolean);
@@ -60,7 +63,7 @@ export function evidencePagesRoutes({ readPages, log = () => {} }) {
         if (!ROLES.has(session?.user?.role)) refuse('EVIDENCE_PAGES_FORBIDDEN');
         const names = [...where.searchParams.keys()], documentId = where.searchParams.get('documentId');
         if (names.length !== 1 || names[0] !== 'documentId' || !DOCUMENT_ID.test(documentId ?? '') || documentId.trim() !== documentId) refuse('EVIDENCE_PAGES_INVALID');
-        const pages = await readPages(documentId);
+        const pages = await readPages(documentId, session.user);
         if (!pages) refuse('EVIDENCE_PAGES_NOT_FOUND');
         send(res, 200, { data: pages });
       } catch (error) {

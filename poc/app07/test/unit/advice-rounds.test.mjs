@@ -2,16 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { adviceRoundsRoutes, documentRoundsReader, readAdviceRounds } from '../../advice-rounds.mjs';
+import { scopedDocument } from '../../user-scope.mjs';
+import { benchScope } from './scope-fixture.mjs';
 
 // 单据抽屉的「历史」页签：一张单的 AI 独立建议各轮（当前一轮 + 九安存的最近几轮历史），新的在前。
 // 轮次照九安 agent-task-service.mjs 存的样子造：history 按先后追加（旧的在前），current 是最新的一轮。
 const PATH = '/api/analysis/v1/poc/advice-rounds';
 const agentTaskKey = ({ tenantId, companyId, task, subject }) => 'agent-task:v1:' + createHash('sha256').update([tenantId, companyId, task, subject.kind, subject.id].join('|')).digest('hex');
 const keyOf = (document, task = 'review_advice') => agentTaskKey({ tenantId: 't1', companyId: document.companyId, task, subject: { kind: 'document', id: document.id } });
-const SCOPE = ['co-a'];
+const SCOPE = ['co-a', 'co-b'];   // 测试台的公司
+// 登录的人：九安里能看的汇联易公司（会话里的 companyIds）；外壳按它 ∩ 测试台的公司读单据（Ruling FR1）
+const ADMIN = { id: 'poc-reviewer', role: 'admin', companyIds: ['co-a', 'co-z'] };
+const NARROW = { id: 'poc-narrow', role: 'analyst', companyIds: ['co-b', 'co-z'] };   // 测试台里只有 co-b
+const POLICY = { id: 'poc-policy', role: 'policy_reviewer', companyIds: [] }; // 九安不许规则发布复核人有公司
 const DOCS = new Map([
   ['d1', { id: 'd1', companyId: 'co-a', version: 'v2' }],
   ['d2', { id: 'd2', companyId: 'co-a', version: 'v1' }],
+  ['d3', { id: 'd3', companyId: 'co-b', version: 'v1' }],
   ['dx', { id: 'dx', companyId: 'co-z', version: 'v1' }], // 不在测试台的公司里：当它不存在
 ]);
 const round = (n, extra = {}) => ({ round: n, task: 'review_advice', contractTask: 'review_advice@1', subjectVersion: 'v1', trigger: 'upstream', requestedBy: 'system:pipeline',
@@ -23,9 +30,9 @@ function harness({ states = new Map(), readState } = {}) {
   const reads = [], logs = [];
   const readRounds = documentRoundsReader({ tenantId: 't1', agentTaskKey,
     readState: readState ?? (async key => { reads.push(key); return states.get(key) ?? null; }),
-    readDocument: async id => { const document = DOCS.get(id); return document && SCOPE.includes(document.companyId) ? { ...document } : null; } });
+    readDocument: scopedDocument(benchScope(SCOPE), async ({ id, companyIds }) => { const document = DOCS.get(id); return document && companyIds.includes(document.companyId) ? { ...document } : null; }) });
   const routes = adviceRoundsRoutes({ readRounds, log: line => logs.push(line) });
-  const ask = async (search = '', { user = { id: 'poc-reviewer', role: 'admin' }, method = 'GET', path = PATH } = {}) => {
+  const ask = async (search = '', { user = ADMIN, method = 'GET', path = PATH } = {}) => {
     let status = null, payload = null;
     const res = { writeHead(code) { status = code; return this; }, setHeader() {}, end(text) { payload = text ? JSON.parse(text) : null; } };
     const url = new URL(`${path}${search}`, 'http://localhost');
@@ -49,7 +56,7 @@ test('documentRoundsReader：只读这一张单的状态（不扫单据池），
     history: [round(1, { status: 'failed', errorCode: 'AGENT_TASK_UNROUTED', finishedAt: '2026-10-30T01:00:00.500Z' }), done(2, 'pass')],
   }], [keyOf(d1, 'first_review'), { current: done(9, 'pass'), history: [] }]]);
   const h = harness({ states });
-  const answer = await h.readRounds('d1');
+  const answer = await h.readRounds('d1', ADMIN);
   assert.deepEqual(h.reads, [keyOf(d1)], '只读 review_advice 这一个任务、这一张单');
   assert.equal(answer.documentId, 'd1');
   assert.equal(answer.documentVersion, 'v2');
@@ -65,16 +72,17 @@ test('documentRoundsReader：只读这一张单的状态（不扫单据池），
 
 test('documentRoundsReader：没跑过 AI 建议 → 空列表；单据不在范围里或不存在 → null', async () => {
   const h = harness();
-  assert.deepEqual(await h.readRounds('d2'), { documentId: 'd2', documentVersion: 'v1', items: [] });
-  assert.equal(await h.readRounds('dx'), null);
-  assert.equal(await h.readRounds('nope'), null);
+  assert.deepEqual(await h.readRounds('d2', ADMIN), { documentId: 'd2', documentVersion: 'v1', items: [] });
+  assert.equal(await h.readRounds('dx', ADMIN), null, '这个人有 co-z，可 co-z 不是测试台的公司');
+  assert.equal(await h.readRounds('nope', ADMIN), null);
 });
 
-test('GET advice-rounds?documentId=：管理员、分析员、规则发布复核人都能看，新的在前', async () => {
+test('GET advice-rounds?documentId=：管理员、分析员、（有公司的话）规则发布复核人都能看，新的在前', async () => {
   const states = new Map([[keyOf(DOCS.get('d2')), { current: round(2, { status: 'running' }), history: [done(1, 'pass')] }]]);
   for (const role of ['admin', 'analyst', 'policy_reviewer']) {
     const h = harness({ states });
-    const answer = await h.ask('?documentId=d2', { user: { id: `u-${role}`, role } });
+    // 规则发布复核人：九安现在不许他有公司（见下一条），这里只证明角色这一关放他过去
+    const answer = await h.ask('?documentId=d2', { user: { id: `u-${role}`, role, companyIds: ['co-a'] } });
     assert.equal(answer.handled, true);
     assert.equal(answer.status, 200, JSON.stringify(answer.payload));
     assert.equal(answer.payload.data.documentVersion, 'v1');
@@ -89,6 +97,18 @@ test('别的角色、没登录 → 403；不在范围里或不存在的单据 �
   refusedWith(await h.ask('?documentId=dx'), 404, 'ADVICE_ROUNDS_NOT_FOUND');
   refusedWith(await h.ask('?documentId=nope'), 404, 'ADVICE_ROUNDS_NOT_FOUND');
   assert.deepEqual(h.reads, [], '范围外的单据不去读它的轮次');
+});
+
+test('Ruling FR1：按登录的人的公司读——公司不在这个人范围里的单据 404，和不存在一样；规则发布复核人没有公司，一张也看不到', async () => {
+  const states = new Map([[keyOf(DOCS.get('d1')), { current: done(1, 'pass'), history: [] }]]);
+  const h = harness({ states });
+  assert.equal((await h.ask('?documentId=d1')).status, 200, '同一张单，范围里有 co-a 的人看得到');
+  refusedWith(await h.ask('?documentId=d1', { user: NARROW }), 404, 'ADVICE_ROUNDS_NOT_FOUND');
+  assert.equal((await h.ask('?documentId=d3', { user: NARROW })).status, 200, '他自己公司（co-b）的单照样看得到');
+  refusedWith(await h.ask('?documentId=d1', { user: POLICY }), 404, 'ADVICE_ROUNDS_NOT_FOUND');
+  refusedWith(await h.ask('?documentId=d3', { user: POLICY }), 404, 'ADVICE_ROUNDS_NOT_FOUND');
+  refusedWith(await h.ask('?documentId=d1', { user: { id: 'poc-odd', role: 'analyst' } }), 404, 'ADVICE_ROUNDS_NOT_FOUND');
+  assert.deepEqual(h.reads, [keyOf(DOCS.get('d1')), keyOf(DOCS.get('d3'))], '范围外的单据不去读它的轮次');
 });
 
 test('参数不对 → 400：缺 documentId、空的、重复的、带别的参数、控制字符、太长', async () => {
