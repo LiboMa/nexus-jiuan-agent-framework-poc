@@ -122,6 +122,19 @@ test('Jiuan\'s codes map to the shell\'s own, with Chinese messages; unknown err
   assert.deepEqual(h.logs, ['POC_EVIDENCE_PAGES_FAILED TypeError']);
 });
 
+test('EVIDENCE_PAGES_REREAD: admin and analyst are told to click 读取原件; policy_reviewer, who has no such button, is told to ask them', async () => {
+  const stale = async () => { throw Object.assign(new Error('x'), { code: 'ANALYSIS_EVIDENCE_CACHE_INVALID' }); };
+  for (const role of ['admin', 'analyst']) {
+    const answer = await harness({ readEvidence: stale }).ask('?documentId=d1', { user: { id: `u-${role}`, role, companyIds: ['co-a'] } });
+    refusedWith(answer, 409, 'EVIDENCE_PAGES_REREAD');
+    assert.equal(answer.payload.error.message, '原件的文字和现在的单据对不上了：点「读取原件」重新读取后再看。');
+  }
+  const reader = await harness({ readEvidence: stale }).ask('?documentId=d1', { user: { id: 'u-policy', role: 'policy_reviewer', companyIds: ['co-a'] } });
+  refusedWith(reader, 409, 'EVIDENCE_PAGES_REREAD');
+  assert.equal(reader.payload.error.message, '原件的文字和现在的单据对不上了：要重新读取原件，请找管理员或分析员。');
+  assert.doesNotMatch(reader.payload.error.message, /点「读取原件」/);
+});
+
 test('only GET on this path; anything else goes to the next route', async () => {
   const h = harness();
   assert.equal((await h.ask('?documentId=d1', { method: 'POST' })).handled, false);

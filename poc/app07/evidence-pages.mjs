@@ -20,6 +20,8 @@ export const EVIDENCE_PAGES_MESSAGES = Object.freeze({
   EVIDENCE_PAGES_REREAD: '原件的文字和现在的单据对不上了：点「读取原件」重新读取后再看。',
   EVIDENCE_PAGES_UNAVAILABLE: '原件的文字暂时读不到，稍后再试。',
 });
+// 规则发布复核人没有「读取原件」按钮：换一句叫他找能读的人
+const READER_MESSAGES = Object.freeze({ EVIDENCE_PAGES_REREAD: '原件的文字和现在的单据对不上了：要重新读取原件，请找管理员或分析员。' });
 const STATUS = Object.freeze({ EVIDENCE_PAGES_FORBIDDEN: 403, EVIDENCE_PAGES_INVALID: 400, EVIDENCE_PAGES_NOT_FOUND: 404, EVIDENCE_PAGES_STALE: 409,
   EVIDENCE_PAGES_REREAD: 409, EVIDENCE_PAGES_UNAVAILABLE: 503 });
 // 九安 evidenceService.context 会抛的码 → 外壳的码；别的（含程序错误）都是 UNAVAILABLE
@@ -71,7 +73,8 @@ export function evidencePagesRoutes({ readPages, log = () => {} }) {
         // 只记错误码（程序错误没有合格的码时记错误名），不记消息
         if (!own) log(`POC_EVIDENCE_PAGES_FAILED ${[error?.code, error?.name].find(value => typeof value === 'string' && CODE.test(value)) ?? 'UNKNOWN'}`);
         const code = own ? error.code : FROM_JIUAN[error?.code] ?? 'EVIDENCE_PAGES_UNAVAILABLE';
-        send(res, STATUS[code], { error: { code, message: EVIDENCE_PAGES_MESSAGES[code] } });
+        const message = (session?.user?.role === 'policy_reviewer' && READER_MESSAGES[code]) || EVIDENCE_PAGES_MESSAGES[code];
+        send(res, STATUS[code], { error: { code, message } });
       }
       return true;
     },
