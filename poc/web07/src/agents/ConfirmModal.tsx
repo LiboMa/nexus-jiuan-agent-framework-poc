@@ -4,12 +4,18 @@
  */
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { REASON_MAX } from '../api/agents';
-import { clipChars } from '../api/knowledge';
 import { messageOf } from '../knowledge/AgentNotice';
 import { Button } from '../ui/Button';
 import { Icon, type IconName } from '../ui/icons';
 import { Modal } from '../ui/Modal';
 import type { OneAtATime } from './useOneAtATime';
+
+/** 最多 max 个 UTF-16 单元（九安按 reason.trim().length 量）；不把一个四字节字符切成两半。 */
+export function clipUnits(text: string, max: number): string {
+  let out = '';
+  for (const char of text) { if (out.length + char.length > max) break; out += char; }
+  return out;
+}
 
 export interface ConfirmAsk {
   title: string; icon?: IconName; text: string; warning?: string | null; confirmLabel: string; cancelLabel?: string; danger?: boolean; working: string;
@@ -70,7 +76,7 @@ function ConfirmForm({ ask, one, onCancel, onDone, onLate }: {
             <span className="text-12 font-medium text-steel"><label htmlFor={id}>原因</label><span className="ml-2 font-normal text-faint">必填，会记进操作记录；{REASON_MAX} 字以内</span></span>
             <textarea id={id} rows={2} value={reason} disabled={sending} placeholder="例如：换成新版的审单 Agent"
               className="w-full resize-y rounded-ctl border border-line bg-surface px-[10px] py-[6px] text-13 text-ink hover:border-faint focus:border-blue disabled:opacity-55"
-              onChange={event => setReason(clipChars(event.target.value, REASON_MAX))} />
+              onChange={event => setReason(clipUnits(event.target.value, REASON_MAX))} />
           </div>
         )}
         {sending && <p role="status" className="m-0 text-13 text-wait-ink">{ask.working}</p>}

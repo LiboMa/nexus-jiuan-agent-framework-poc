@@ -1,8 +1,9 @@
 /**
  * Agent 列表（Rulings T8a / T8b）：Nexus 上的发布和这里启用过的合成一张表，一个发布一行。状态以启用记录为准，没有记录的看 Nexus 清单能不能启用；
  * 只有一行标「审批 Agent」（审批流只调它），别的就绪的标「供前端工作流调用（不进审批流）」。每行只给合它状态的操作（补丁 0002 的 agentCard）：
- *   就绪：测试 · 设为 / 取消审批 Agent · 复核 · 停用    密钥失效：换钥匙 ·（取消审批 Agent）· 停用
+ *   就绪：测试 · 设为 / 取消审批 Agent · 重新验证 · 停用    密钥失效：换钥匙 ·（取消审批 Agent）· 停用
  *   已停用：重新启用 ·（取消审批 Agent）               没启用：能启用的给「启用」，不能的写明原因
+ * 「重新验证」是用存着的密钥再向 Nexus 验一次名片和密钥（补丁里叫 refresh）；不叫「复核」，那是全站审核员复核 AI 建议的意思。
  * 一次一个操作：进行中所有按钮不可用。
  */
 import { timeText } from '../api/documents';
@@ -46,11 +47,12 @@ function Row({ agent, approval, listed, busy, on }: { agent: AgentRow; approval:
     <Button key={label} size="sm" variant={primary ? 'primary' : 'default'} disabled={busy} onClick={() => run(agent)}>{label}</Button>
   );
   const approvalAct = approval ? act('取消审批 Agent', on.unapprove) : active ? act('设为审批 Agent', on.approve) : null;
-  const actions = active ? [act('测试', on.test), approvalAct, act('复核', on.refresh), act('停用', on.disable)]
+  const actions = active ? [act('测试', on.test), approvalAct, act('重新验证', on.refresh), act('停用', on.disable)]
     : record?.status === 'invalid' ? [act('换钥匙', on.rotate, true), approvalAct, act('停用', on.disable)]
       : record?.status === 'disabled' ? [act('重新启用', on.enable, true), approvalAct]
         : !record && item?.enableable ? [act('启用', on.enable, true)] : [];
-  const problems = !record && item && !item.enableable ? (item.problems?.length ? item.problems : [item.a2aReady ? '名片不合契约' : 'A2A 还没就绪']) : [];
+  // Nexus 清单说它现在不能启用的原因：没启用的写在状态下；已启用的照记录的状态，原因作为提示（名片可能改坏了，下次重新验证会失败）
+  const problems = item && !item.enableable ? (item.problems?.length ? item.problems : [item.a2aReady ? '名片不合契约' : 'A2A 还没就绪']) : [];
   return (
     <tr data-publish={agent.publishId} className="hover:bg-canvas">
       <td className={cx(cell, 'min-w-[200px] max-w-[300px]')}>
@@ -60,7 +62,7 @@ function Row({ agent, approval, listed, busy, on }: { agent: AgentRow; approval:
       </td>
       <td className={cx(cell, 'min-w-[150px] max-w-[220px]')}>
         <Pill tone={status.tone} icon={status.tone === 'wait' ? 'warning' : undefined}>{status.text}</Pill>
-        {problems.map(problem => <span key={problem} className="mt-1 block text-12 text-wait-ink">{problem}</span>)}
+        {problems.map(problem => <span key={problem} className="mt-1 block text-12 text-wait-ink">{record ? `Nexus 上现在：${problem}` : problem}</span>)}
         {record?.status === 'invalid' && record.invalidReason && <span className="mt-1 block text-12 text-fail-ink">失效原因：{resultText(record.invalidReason)}</span>}
       </td>
       <td className={cx(cell, 'whitespace-nowrap')}>

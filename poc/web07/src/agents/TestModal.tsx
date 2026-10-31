@@ -38,6 +38,9 @@ export function TestModal({ agent, open, isApproval, onClose }: { agent: AgentRo
   const [envelope, setEnvelope] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [testId, setTestId] = useState<string | null>(null);
+  // 等够 5 分钟的那次测试（计时器到点时记下）。不能在渲染时拿 Date.now() 算：一直「进行中」时每次问到的结果都一样，
+  // 结构共享让 data 不变，最后一次问完也不会重新渲染，页面就一直说「一般几秒到两分钟」
+  const [expired, setExpired] = useState<string | null>(null);
   const since = useRef(0);
   const inFlight = useRef(false);
 
@@ -55,16 +58,22 @@ export function TestModal({ agent, open, isApproval, onClose }: { agent: AgentRo
   });
   const run = useQuery({
     queryKey: agentKeys.test(testId ?? ''), queryFn: () => fetchTest(testId!), enabled: Boolean(testId),
-    refetchInterval: query => (query.state.data?.status === 'running' && !final(query.state.error) && Date.now() - since.current < TEST_WAIT_MS ? TEST_POLL_MS : false),
+    refetchInterval: query => (query.state.data?.status === 'running' && !final(query.state.error) && expired !== testId ? TEST_POLL_MS : false),
   });
   const current = testId ? run.data ?? null : null;
   const settled = current && current.status !== 'running' ? current : null;
   const gone = Boolean(testId) && !settled && final(run.error);
-  const timedOut = Boolean(current) && !settled && !gone && Date.now() - since.current >= TEST_WAIT_MS;
+  const timedOut = Boolean(testId) && expired === testId && !settled && !gone;
   const running = start.isPending || (Boolean(testId) && !settled && !gone && !timedOut);
   // 有了结果，调用记录里就多了这一轮
   const settledKey = settled ? `${settled.testId}:${settled.status}` : null;
   useEffect(() => { if (settledKey) void queryClient.invalidateQueries({ queryKey: agentKeys.calls }); }, [settledKey, queryClient]);
+  // 开始后 5 分钟还没结果：停止轮询，说一声，按钮放开
+  useEffect(() => {
+    if (!testId || settledKey || gone) return;
+    const timer = setTimeout(() => setExpired(testId), Math.max(0, since.current + TEST_WAIT_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [testId, settledKey, gone]);
 
   function refuse(text: string) { setProblem(text); start.reset(); }
   function send(input: TestInput) {

@@ -3,7 +3,7 @@
  * 他们打开 #/agents 只看到「没有权限」，这一页根本不挂上、不发请求；九安和外壳那头也只认管理员。
  *   连接条：连 Nexus（弹框贴 Nexus API 密钥）/ 断开 / 手动添加（A2A 地址 + 调用密钥）
  *   审批流现在调谁（一行）+ Agent 列表：Nexus 上的发布和已启用的按发布编号合成一张表；启用、换钥匙（弹框贴调用密钥）、设为 / 取消审批 Agent（确认 + 原因）、
- *   测试（单据 / 文本 / 请求信封，弹框）、复核、停用
+ *   测试（单据 / 文本 / 请求信封，弹框）、重新验证、停用
  *   调用记录（默认收起，展开看备注和依据）、操作记录（收起）
  * 先读启用记录；部署里配了 Nexus 地址（configured）才问 Nexus 连接，连上了才读发布清单（要几秒）。写操作一次一个（useOneAtATime）。
  */
@@ -101,10 +101,10 @@ export function Agents() {
     refresh: agent => {
       if (one.isBusy()) return;
       setNotice(null);
-      void one.run(`正在用存着的密钥复核「${agent.name}」…`, async () => {
+      void one.run(`正在用存着的密钥重新验证「${agent.name}」…`, async () => {
         try {
           const record = await runAction(agent.publishId, 'refresh', REASONS.refresh);
-          setNotice({ text: `复核完成：「${agent.name}」${STATUS_TEXT[record?.status ?? ''] ?? '状态待核实'}。`, ok: true });
+          setNotice({ text: `重新验证完成：「${agent.name}」${STATUS_TEXT[record?.status ?? ''] ?? '状态待核实'}。`, ok: true });
         } catch (error) {
           setNotice({ text: messageOf(error), ok: false });
         } finally { await reread(); }
@@ -172,7 +172,8 @@ export function Agents() {
           </>
         )}
 
-      <CallsPanel nameOf={nameOf} />
+      {/* 读到启用记录以后才读调用记录：读不到时（多半是没有权限或这一页没开）只留一个出错的面板，也不多发一个注定被拒的请求 */}
+      {access.data && <CallsPanel nameOf={nameOf} />}
       {access.data && <AuditLog audit={access.data.audit} nameOf={nameOf} />}
 
       <KeyModal ask={keyAsk} one={one} onClose={() => setKeyAsk(null)} onDone={done} onLate={late} />

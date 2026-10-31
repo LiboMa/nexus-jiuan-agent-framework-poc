@@ -22,11 +22,11 @@ const RESULTS: Record<string, string> = {
 export const resultText = (code: string | null | undefined) => (code ? RESULTS[code] ?? `未通过（${code}）` : '—');
 
 export const ACTIONS: Record<string, string> = {
-  enable: '启用', rotate: '换钥匙', disable: '停用', refresh: '复核', mark_invalid: '标记失效', approve: '设为审批 Agent', unapprove: '取消审批 Agent',
+  enable: '启用', rotate: '换钥匙', disable: '停用', refresh: '重新验证', mark_invalid: '标记失效', approve: '设为审批 Agent', unapprove: '取消审批 Agent',
 };
 /** 不用人写原因的操作，原因照补丁 0002 自动填（留痕）；设为 / 取消审批 Agent 要人写（Ruling T8b）。 */
 export const REASONS = {
-  enable: '在「Agent 接入」页启用', rotate: '在「Agent 接入」页换钥匙', disable: '在「Agent 接入」页停用', refresh: '在「Agent 接入」页复核',
+  enable: '在「Agent 接入」页启用', rotate: '在「Agent 接入」页换钥匙', disable: '在「Agent 接入」页停用', refresh: '在「Agent 接入」页重新验证',
   manual: '在「Agent 接入」页手动添加（A2A 地址 + 调用密钥）',
 } as const;
 

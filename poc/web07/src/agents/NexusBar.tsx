@@ -3,7 +3,6 @@
  * 两种情况都能「手动添加 Agent」（A2A 地址 + 调用密钥）。读不到连接、读不到发布清单时原话说明，已启用的 Agent 照样列在下面；
  * 外壳说连接失效了（AGENT_NEXUS_RECONNECT / NOT_CONNECTED）就给「重新连接」。
  */
-const RECONNECT: ReadonlySet<string> = new Set(['AGENT_NEXUS_RECONNECT', 'AGENT_NEXUS_NOT_CONNECTED']);
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { NexusState, Publication } from '../api/agents';
 import { ApiError } from '../api/client';
@@ -11,6 +10,8 @@ import { messageOf } from '../knowledge/AgentNotice';
 import { Button } from '../ui/Button';
 import { Panel } from '../ui/Panel';
 import { Pill } from '../ui/Pill';
+
+const RECONNECT: ReadonlySet<string> = new Set(['AGENT_NEXUS_RECONNECT', 'AGENT_NEXUS_NOT_CONNECTED']);
 
 export function NexusBar({ nexus, published, busy, onConnect, onDisconnect, onManual }: {
   nexus: UseQueryResult<NexusState, Error>; published: UseQueryResult<Publication[], Error>; busy: boolean;

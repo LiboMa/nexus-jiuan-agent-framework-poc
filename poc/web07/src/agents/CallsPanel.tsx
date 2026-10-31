@@ -17,13 +17,19 @@ import { callStatus, conclusionOf, resultText, seconds, taskOf, triggerOf } from
 
 const head = 'whitespace-nowrap border-b border-line px-3 py-[9px] text-left text-12 font-medium text-steel';
 const cell = 'whitespace-nowrap border-b border-line px-3 py-[10px] text-13';
-const keyOf = (call: CallRow, index: number) => [call.testId, call.documentId, call.task, call.round, call.at, index].join('|');
+// 展开状态跟着这一轮走，不跟位置走（刷新进来更新的一轮，展开的那行还开着）：测试按 testId，九安的轮次按单据 + 任务 + 第几轮
+const idOf = (call: CallRow) => (call.testId ? `test:${call.testId}` : `round:${call.documentId ?? ''}|${call.task ?? ''}|${call.round ?? ''}|${call.round == null ? call.startedAt ?? call.at ?? '' : ''}`);
+function keysOf(items: CallRow[]) {
+  const seen = new Map<string, number>();
+  return items.map(call => { const id = idOf(call); const n = seen.get(id) ?? 0; seen.set(id, n + 1); return n ? `${id}#${n}` : id; });
+}
 
 export function CallsPanel({ nameOf }: { nameOf: (publishId: string) => string | null }) {
   const calls = useQuery({ queryKey: agentKeys.calls, queryFn: fetchCalls });
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const toggle = (key: string) => setOpened(now => { const next = new Set(now); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const items = calls.data ?? [];
+  const keys = keysOf(items);
   return (
     <Panel title="调用记录" className="mt-[14px]"
       extra={<>{calls.isSuccess && <span>{items.length} 轮</span>}<Button size="sm" icon="refresh" disabled={calls.isFetching} onClick={() => void calls.refetch()}>刷新</Button></>}>
@@ -41,7 +47,7 @@ export function CallsPanel({ nameOf }: { nameOf: (publishId: string) => string |
               </thead>
               <tbody>
                 {items.map((call, index) => {
-                  const key = keyOf(call, index);
+                  const key = keys[index];
                   const open = opened.has(key);
                   const status = callStatus(call);
                   const verdict = conclusionOf(call);

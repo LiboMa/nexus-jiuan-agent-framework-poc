@@ -4,11 +4,11 @@ import { queryClient } from '../api/queryClient';
 import type { Role } from '../api/session';
 import { startApp } from './startApp';
 import {
-  AUDIT_PUB, BROKEN_PUB, DRAFT_PUB, FAKE_KEY, FAKE_NEXUS_KEY, KB_PUB, MANUAL_PUB, RECORDS, deferred, fakeAgents, type AgentsOptions,
+  AUDIT_PUB, BROKEN_PUB, DRAFT_PUB, FAKE_KEY, FAKE_NEXUS_KEY, KB_PUB, MANUAL_PUB, PUBLICATIONS, RECORDS, deferred, fakeAgents, type AgentsOptions,
 } from './agentsFake';
 
 // 「Agent 接入」（Spec 第 6 节；补丁 0001–0003；Rulings T8a–T8e）：只给管理员；连接 / 断开 Nexus；发布清单和已启用的合成一张表；
-// 粘贴密钥在弹框里（type=password，提交、关闭、出错都清空，哪儿都不显示）；审批 Agent 只有一个；停用、复核、换钥匙。
+// 粘贴密钥在弹框里（type=password，提交、关闭、出错都清空，哪儿都不显示，不让浏览器当成网站密码存）；审批 Agent 只有一个；停用、重新验证、换钥匙。
 const BASE = '/api/analysis/v1/platform/agent-access';
 
 async function openAgents(options: AgentsOptions = {}) {
@@ -57,6 +57,9 @@ describe('Agent 接入: admin only (Review Focus 5, T8e)', () => {
     const { bench, user } = await openAgents({ overrides: { [`GET ${BASE}`]: { status: 403, body: { error: { code: 'FORBIDDEN', message: '只有管理员可以管理 Agent 接入。' } } } } });
     expect(await screen.findByText('只有管理员可以管理 Agent 接入。')).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Agent 列表' })).not.toBeInTheDocument();
+    // 只有一个出错的面板：读不到启用记录时调用记录也不挂上
+    expect(screen.queryByRole('region', { name: '调用记录' })).not.toBeInTheDocument();
+    expect(bench.find('GET', `${BASE}/calls`)).toEqual([]);
     const reads = bench.find('GET', BASE).length;
     await user.click(screen.getByRole('button', { name: '重新读取' }));
     await waitFor(() => expect(bench.find('GET', BASE).length).toBe(reads + 1));
@@ -87,7 +90,7 @@ describe('Agent 接入: Nexus', () => {
     const dialog = await screen.findByRole('dialog', { name: '连接 Nexus' });
     const input = within(dialog).getByLabelText('Nexus API 密钥') as HTMLInputElement;
     expect(input).toHaveAttribute('type', 'password');
-    expect(input).toHaveAttribute('autocomplete', 'off');
+    expect(input).toHaveAttribute('autocomplete', 'new-password');
     await user.type(input, FAKE_NEXUS_KEY);
     await user.click(within(dialog).getByRole('button', { name: '连接' }));
     const [post] = bench.find('POST', `${BASE}/nexus`);
@@ -169,12 +172,21 @@ describe('Agent 接入: one table (T8a)', () => {
     expect(await rowOf(AUDIT_PUB)).toContainElement(tags()[0] as HTMLElement);
     expect(within(await rowOf(KB_PUB)).getByText('供前端工作流调用（不进审批流）')).toBeInTheDocument();
     for (const id of [AUDIT_PUB, DRAFT_PUB, BROKEN_PUB, MANUAL_PUB]) expect(within(await rowOf(id)).queryByText('供前端工作流调用（不进审批流）')).not.toBeInTheDocument();
-    expect(buttonsOf(await rowOf(AUDIT_PUB))).toEqual(['测试', '取消审批 Agent', '复核', '停用']);
-    expect(buttonsOf(await rowOf(KB_PUB))).toEqual(['测试', '设为审批 Agent', '复核', '停用']);
+    expect(buttonsOf(await rowOf(AUDIT_PUB))).toEqual(['测试', '取消审批 Agent', '重新验证', '停用']);
+    expect(buttonsOf(await rowOf(KB_PUB))).toEqual(['测试', '设为审批 Agent', '重新验证', '停用']);
     expect(buttonsOf(await rowOf(DRAFT_PUB))).toEqual(['启用']);
     expect(buttonsOf(await rowOf(BROKEN_PUB))).toEqual([]);
     expect(buttonsOf(await rowOf(MANUAL_PUB))).toEqual(['换钥匙', '停用']);
     expect(screen.getByText('审批流调用「审单 Agent（虚构）」：单据池里对公付款单的 AI 独立建议都发给它；其他就绪的 Agent 只供前端工作流调用。')).toBeInTheDocument();
+  });
+
+  it('a ready Agent whose card Nexus now finds wrong keeps its status and shows Nexus\'s problems as a hint', async () => {
+    const publications = PUBLICATIONS().map(item => (item.publishId === AUDIT_PUB ? { ...item, enableable: false, problems: ['名片不合契约（虚构）'] } : item));
+    await openAgents({ publications });
+    const row = await rowOf(AUDIT_PUB);
+    await waitFor(() => expect(within(row).getByText('Nexus 上现在：名片不合契约（虚构）')).toBeInTheDocument());
+    expect(within(row).getByText('就绪')).toBeInTheDocument();
+    expect(buttonsOf(row)).toEqual(['测试', '取消审批 Agent', '重新验证', '停用']);
   });
 
   it('with no approval Agent the line says the approval flow is waiting, and no row is tagged', async () => {
@@ -202,7 +214,7 @@ describe('Agent 接入: paste a call key (T8c)', () => {
     const dialog = await screen.findByRole('dialog', { name: '启用「报销问答助手（虚构）」' });
     const input = within(dialog).getByLabelText('调用密钥') as HTMLInputElement;
     expect(input).toHaveAttribute('type', 'password');
-    expect(input).toHaveAttribute('autocomplete', 'off');
+    expect(input).toHaveAttribute('autocomplete', 'new-password');
     await user.type(input, FAKE_KEY);
     expect(document.body.innerHTML).not.toContain(FAKE_KEY);
     await user.click(within(dialog).getByRole('button', { name: '验证并启用' }));
@@ -217,6 +229,37 @@ describe('Agent 接入: paste a call key (T8c)', () => {
     expect(await screen.findByText('已启用「报销问答助手（虚构）」，密钥指纹 c0ffee42。')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     nowhere(FAKE_KEY);
+  });
+
+  it('the key box does not look like a site password (T8f): no <form>, autocomplete=new-password, a non-credential name, ignore hints; Enter sends', async () => {
+    const { bench, user } = await openAgents();
+    await user.click(within(await rowOf(DRAFT_PUB)).getByRole('button', { name: '启用' }));
+    const dialog = await screen.findByRole('dialog', { name: '启用「报销问答助手（虚构）」' });
+    expect(dialog.querySelector('form')).toBeNull();
+    const input = within(dialog).getByLabelText('调用密钥') as HTMLInputElement;
+    expect(input).toHaveAttribute('type', 'password');
+    expect(input).toHaveAttribute('autocomplete', 'new-password');
+    expect(input).toHaveAttribute('name', 'agentCallKey');
+    expect(input.id).toBe('agentCallKey');
+    expect(input).toHaveAttribute('data-1p-ignore');
+    expect(input).toHaveAttribute('data-lpignore', 'true');
+    expect(input).toHaveAttribute('data-form-type', 'other');
+    for (const name of [input.name, input.id]) expect(name).not.toMatch(/pass|pwd/i);
+    await user.type(input, `${FAKE_KEY}{Enter}`);
+    expect(input.value).toBe('');
+    expect(bench.find('POST', BASE)[0].body).toEqual({ publishId: DRAFT_PUB, key: FAKE_KEY, reason: '在「Agent 接入」页启用' });
+    nowhere(FAKE_KEY);
+  });
+
+  it('the Nexus API key box is the same kind of box, with its own non-credential name', async () => {
+    const { user } = await openAgents({ connected: false });
+    await user.click(await screen.findByRole('button', { name: '连接 Nexus' }));
+    const dialog = await screen.findByRole('dialog', { name: '连接 Nexus' });
+    expect(dialog.querySelector('form')).toBeNull();
+    const input = within(dialog).getByLabelText('Nexus API 密钥');
+    expect(input).toHaveAttribute('autocomplete', 'new-password');
+    expect(input).toHaveAttribute('name', 'nexusApiKey');
+    expect(input).toHaveAttribute('data-form-type', 'other');
   });
 
   it('a refused key: the message as it came, the box emptied, the key nowhere, and 验证并启用 works again', async () => {
@@ -271,6 +314,9 @@ describe('Agent 接入: paste a call key (T8c)', () => {
     const go = within(dialog).getByRole('button', { name: '验证并启用' });
     act(() => { fireEvent.click(go); fireEvent.click(go); });
     expect(bench.find('POST', BASE)).toHaveLength(1);
+    // 没有在途标记时，第二下读到的是已经清空的框，会说「请贴上调用密钥」：这里一句也不该有
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('正在向 Nexus 当场验证名片与密钥，最长约三分钟…')).toBeInTheDocument();
     slow.resolve({ status: 422, body: { error: { code: 'AGENT_KEY_REJECTED', message: 'Nexus 不认这把调用密钥。' } } });
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('Nexus 不认这把调用密钥。');
   });
@@ -302,7 +348,7 @@ describe('Agent 接入: paste a call key (T8c)', () => {
     expect(input.value).toBe('');
     expect(bench.find('POST', `${BASE}/${MANUAL_PUB}/rotate`)[0].body).toEqual({ key: FAKE_KEY, reason: '在「Agent 接入」页换钥匙' });
     expect(await screen.findByText('已给「手动添加的初审 Agent（虚构）」换好调用密钥，新密钥指纹 beadfeed。')).toBeInTheDocument();
-    await waitFor(async () => expect(buttonsOf(await rowOf(MANUAL_PUB))).toEqual(['测试', '设为审批 Agent', '复核', '停用']));
+    await waitFor(async () => expect(buttonsOf(await rowOf(MANUAL_PUB))).toEqual(['测试', '设为审批 Agent', '重新验证', '停用']));
     nowhere(FAKE_KEY);
   });
 
@@ -346,7 +392,7 @@ describe('Agent 接入: the approval Agent (T8b)', () => {
     await waitFor(async () => expect(await rowOf(KB_PUB)).toContainElement(tags()[0] as HTMLElement));
     expect(tags()).toHaveLength(1);
     expect(within(await rowOf(AUDIT_PUB)).getByText('供前端工作流调用（不进审批流）')).toBeInTheDocument();
-    expect(buttonsOf(await rowOf(AUDIT_PUB))).toEqual(['测试', '设为审批 Agent', '复核', '停用']);
+    expect(buttonsOf(await rowOf(AUDIT_PUB))).toEqual(['测试', '设为审批 Agent', '重新验证', '停用']);
   });
 
   it('an Agent whose card declares review_advice@1 gets no warning; with no approval Agent yet, the text says so', async () => {
@@ -378,6 +424,37 @@ describe('Agent 接入: the approval Agent (T8b)', () => {
     expect(tags()).toHaveLength(0);
   });
 
+  it('two clicks on 确认设为审批 Agent in the same tick send one approve (the reason stays filled in, so only the guard stops the second)', async () => {
+    const slow = deferred();
+    const { bench, user } = await openAgents({ overrides: { [`POST ${BASE}/${KB_PUB}/approve`]: slow.route } });
+    await user.click(within(await rowOf(KB_PUB)).getByRole('button', { name: '设为审批 Agent' }));
+    const dialog = await screen.findByRole('dialog', { name: '设为审批 Agent' });
+    await user.type(within(dialog).getByLabelText('原因'), '虚构：试一下');
+    const go = within(dialog).getByRole('button', { name: '确认设为审批 Agent' });
+    act(() => { fireEvent.click(go); fireEvent.click(go); });
+    expect(await within(dialog).findByText('正在把「知识库文档管家（PG 版）」设为审批 Agent…')).toBeInTheDocument();
+    expect(bench.find('POST', `${BASE}/${KB_PUB}/approve`)).toHaveLength(1);
+    slow.resolve({ body: { data: { publishId: KB_PUB, status: 'active', approval: true } } });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(bench.find('POST', `${BASE}/${KB_PUB}/approve`)).toHaveLength(1);
+  });
+
+  it('the reason is cut at 200 UTF-16 units, as Jiuan counts it — an astral character counts two and is not split', async () => {
+    const { bench, user } = await openAgents();
+    await user.click(within(await rowOf(KB_PUB)).getByRole('button', { name: '设为审批 Agent' }));
+    const dialog = await screen.findByRole('dialog', { name: '设为审批 Agent' });
+    const reason = within(dialog).getByLabelText('原因') as HTMLTextAreaElement;
+    fireEvent.change(reason, { target: { value: `${'甲'.repeat(199)}𠀀乙` } });
+    expect(reason.value).toBe('甲'.repeat(199));
+    fireEvent.change(reason, { target: { value: `${'甲'.repeat(198)}𠀀乙` } });
+    expect(reason.value).toBe(`${'甲'.repeat(198)}𠀀`);
+    expect(reason.value.length).toBe(200);
+    await user.click(within(dialog).getByRole('button', { name: '确认设为审批 Agent' }));
+    const sent = (bench.find('POST', `${BASE}/${KB_PUB}/approve`)[0].body as { reason: string }).reason;
+    expect(sent.length).toBeLessThanOrEqual(200);
+    expect(sent).toBe(`${'甲'.repeat(198)}𠀀`);
+  });
+
   it('a refusal from Jiuan stays in the modal as it came', async () => {
     const { user } = await openAgents({ overrides: { [`POST ${BASE}/${KB_PUB}/approve`]: { status: 409, body: { error: { code: 'AGENT_ACCESS_CONFLICT', message: '记录刚被别人改过，请刷新后重试。' } } } } });
     await user.click(within(await rowOf(KB_PUB)).getByRole('button', { name: '设为审批 Agent' }));
@@ -402,17 +479,28 @@ describe('Agent 接入: disable and re-check', () => {
     expect(within(await rowOf(AUDIT_PUB)).getByText('已停用')).toBeInTheDocument();
   });
 
-  it('复核 checks again with the stored key; two clicks in the same tick send one request and every row button waits', async () => {
+  it('重新验证 checks again with the stored key; two clicks in the same tick send one request and every row button waits', async () => {
     const slow = deferred();
     const { bench } = await openAgents({ overrides: { [`POST ${BASE}/${KB_PUB}/refresh`]: slow.route } });
-    const button = within(await rowOf(KB_PUB)).getByRole('button', { name: '复核' });
+    const button = within(await rowOf(KB_PUB)).getByRole('button', { name: '重新验证' });
     act(() => { fireEvent.click(button); fireEvent.click(button); });
-    expect(await screen.findByText('正在用存着的密钥复核「知识库文档管家（PG 版）」…')).toBeInTheDocument();
+    expect(await screen.findByText('正在用存着的密钥重新验证「知识库文档管家（PG 版）」…')).toBeInTheDocument();
     expect(bench.find('POST', `${BASE}/${KB_PUB}/refresh`)).toHaveLength(1);
-    expect(bench.find('POST', `${BASE}/${KB_PUB}/refresh`)[0].body).toEqual({ reason: '在「Agent 接入」页复核' });
+    expect(bench.find('POST', `${BASE}/${KB_PUB}/refresh`)[0].body).toEqual({ reason: '在「Agent 接入」页重新验证' });
     for (const each of within(await agentTable()).getAllByRole('button')) expect(each).toBeDisabled();
     slow.resolve({ body: { data: { publishId: KB_PUB, status: 'active', fingerprint: '6ea5f00d', approval: false } } });
-    expect(await screen.findByText('复核完成：「知识库文档管家（PG 版）」就绪。')).toBeInTheDocument();
+    expect(await screen.findByText('重新验证完成：「知识库文档管家（PG 版）」就绪。')).toBeInTheDocument();
+  });
+
+  it('重新验证 is what the trail calls it too', async () => {
+    const { user } = await openAgents();
+    await user.click(within(await rowOf(KB_PUB)).getByRole('button', { name: '重新验证' }));
+    expect(await screen.findByText('重新验证完成：「知识库文档管家（PG 版）」就绪。')).toBeInTheDocument();
+    await user.click(await screen.findByText('操作记录（3 条）'));
+    const first = within(screen.getByRole('table', { name: '操作记录' })).getAllByRole('row')[1];
+    expect(within(first).getByText('重新验证')).toBeInTheDocument();
+    expect(within(first).getByText('在「Agent 接入」页重新验证')).toBeInTheDocument();
+    expect(screen.queryByText('复核')).not.toBeInTheDocument();
   });
 
   it('操作记录 is folded and lists the trail, newest first', async () => {

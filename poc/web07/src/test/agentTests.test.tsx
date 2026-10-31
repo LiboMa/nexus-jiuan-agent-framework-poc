@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TEST_POLL_MS } from '../api/agents';
+import { TEST_POLL_MS, TEST_WAIT_MS } from '../api/agents';
 import { startApp } from './startApp';
 import { AUDIT_PUB, BASIS, CALLS, DESCRIBE_REQUEST, KB_PUB, REVIEW_REQUEST, deferred, fakeAgents, type AgentsOptions } from './agentsFake';
 
@@ -90,6 +90,65 @@ describe('Agent 测试: 单据', () => {
     expect(within(result).getByText('没有完成：Nexus 暂时答不了（或超时）')).toBeInTheDocument();
     expect(within(result).getByText('错误码 AI_UNAVAILABLE')).toBeInTheDocument();
     expect(within(dialog).getByText('这次没有完成，原因见下。')).toBeInTheDocument();
+  });
+
+  it('after 5 minutes without a result the modal says so, stops polling and 开始测试 works again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench } = await openAgents();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const dialog = await openTest(user, AUDIT_PUB, '审单 Agent（虚构）');
+    await waitFor(() => expect(within(dialog).getAllByRole('option')).toHaveLength(2));
+    await user.click(within(dialog).getByRole('button', { name: '开始测试' }));
+    await within(dialog).findByText('已发给「审单 Agent（虚构）」，一般几秒到两分钟…');
+    // 一直「进行中」：每次问到的都一样（结构共享，data 不变），只有计时器能让页面知道等够了
+    await act(async () => { await vi.advanceTimersByTimeAsync(TEST_WAIT_MS); });
+    expect(await within(dialog).findByText('等了五分钟还没有结果：测试还在 Agent 那边跑，结果出来后会记进下面的调用记录。')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/一般几秒到两分钟/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '开始测试' })).toBeEnabled();
+    const stopped = polls(bench, 'test_000000000001');
+    await act(async () => { await vi.advanceTimersByTimeAsync(TEST_POLL_MS * 4); });
+    expect(polls(bench, 'test_000000000001')).toBe(stopped);
+  });
+
+  it('switching to another Agent\'s test starts clean: no result, status or polling carries over, either way', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench } = await openAgents();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let dialog = await openTest(user, AUDIT_PUB, '审单 Agent（虚构）');
+    await waitFor(() => expect(within(dialog).getAllByRole('option')).toHaveLength(2));
+    await user.click(within(dialog).getByRole('button', { name: '开始测试' }));
+    await within(dialog).findByText(/已发给「审单 Agent（虚构）」/);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    dialog = await openTest(user, KB_PUB, '知识库文档管家（PG 版）');
+    expect(within(dialog).queryByRole('status')).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('region', { name: '测试结果' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '发送' })).toBeEnabled();
+    // 审单 Agent 那次测试不再问（它的面板已经换掉了），也不会显示在这里
+    const first = polls(bench, 'test_000000000001');
+    bench.finish('test_000000000001', { result: 'fail', note: '审单 Agent 的结论（虚构）', basis: [] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(TEST_POLL_MS * 3); });
+    expect(polls(bench, 'test_000000000001')).toBe(first);
+    expect(within(dialog).queryByText('审单 Agent 的结论（虚构）')).not.toBeInTheDocument();
+
+    await user.type(within(dialog).getByLabelText('发给 Agent 的文字'), '你好（虚构）');
+    await user.click(within(dialog).getByRole('button', { name: '发送' }));
+    expect(bench.find('POST', `${BASE}/${KB_PUB}/test`)).toHaveLength(1);
+    bench.finish('test_000000000002', { reply: '知识库 Agent 的回复（虚构）' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(TEST_POLL_MS); });
+    const result = await within(dialog).findByRole('region', { name: '测试结果' });
+    expect(within(result).getByText('知识库 Agent 的回复（虚构）')).toBeInTheDocument();
+    expect(within(result).queryByText('审单 Agent 的结论（虚构）')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    dialog = await openTest(user, AUDIT_PUB, '审单 Agent（虚构）');
+    expect(within(dialog).queryByRole('region', { name: '测试结果' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('知识库 Agent 的回复（虚构）')).not.toBeInTheDocument();
+    const second = polls(bench, 'test_000000000002');
+    await act(async () => { await vi.advanceTimersByTimeAsync(TEST_POLL_MS * 3); });
+    expect(polls(bench, 'test_000000000002')).toBe(second);
   });
 
   it('the knowledge-base Agent opens on 文本 (it does not review documents)', async () => {
@@ -245,6 +304,22 @@ describe('调用记录', () => {
     expect(within(screen.getByRole('list', { name: '依据' })).getByText('C05-2.3')).toBeInTheDocument();
     await user.click(within(rows[1]).getByRole('button', { name: '展开' }));
     expect(screen.getByText('没有完成：Nexus 暂时答不了（或超时）')).toBeInTheDocument();
+  });
+
+  it('an opened row stays open after 刷新 brings in a newer call (rows are keyed by the call, not by position)', async () => {
+    const { bench, user } = await openAgents();
+    const calls = await table();
+    await waitFor(() => expect(within(calls).getAllByRole('row').filter(row => row.hasAttribute('data-call'))).toHaveLength(3));
+    await user.click(within(calls).getAllByRole('row').filter(row => row.hasAttribute('data-call'))[0].querySelector('button')!);
+    expect(screen.getByText('原件齐全，金额一致（虚构）')).toBeInTheDocument();
+    bench.state.calls.unshift({ ...CALLS()[0], at: '2026-10-31T03:30:00.000Z', documentId: 'doc-9', number: 'DGZF-F07-009', round: 1, note: '新的一轮（虚构）' });
+    await user.click(within(screen.getByRole('region', { name: '调用记录' })).getByRole('button', { name: '刷新' }));
+    await waitFor(() => expect(within(calls).getAllByRole('row').filter(row => row.hasAttribute('data-call'))).toHaveLength(4));
+    const rows = within(calls).getAllByRole('row').filter(row => row.hasAttribute('data-call'));
+    expect(within(rows[0]).getByRole('button', { name: '展开' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(rows[1]).getByRole('button', { name: '收起' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('原件齐全，金额一致（虚构）')).toBeInTheDocument();
+    expect(screen.queryByText('新的一轮（虚构）')).not.toBeInTheDocument();
   });
 
   it('says so when there are no calls yet', async () => {

@@ -27,7 +27,8 @@ export const RECORDS = (): FakeRecord[] => [
   record(KB_PUB, '知识库文档管家（PG 版）', []),
   record(MANUAL_PUB, '手动添加的初审 Agent（虚构）', ['first_review@1'], { status: 'invalid', invalidReason: 'AGENT_KEY_REJECTED' }),
 ];
-export const PUBLICATIONS = () => [
+export interface FakePublication { publishId: string; name: string; description: string; status: string; a2aReady: boolean; tasks: string[]; enableable: boolean; problems: string[] }
+export const PUBLICATIONS = (): FakePublication[] => [
   { publishId: AUDIT_PUB, name: '审单 Agent（虚构）', description: '', status: 'active', a2aReady: true, tasks: ['review_advice@1'], enableable: true, problems: [] },
   { publishId: KB_PUB, name: '知识库文档管家（PG 版）', description: '', status: 'active', a2aReady: true, tasks: [], enableable: true, problems: [] },
   { publishId: DRAFT_PUB, name: '报销问答助手（虚构）', description: '', status: 'active', a2aReady: true, tasks: [], enableable: true, problems: [] },
@@ -55,7 +56,9 @@ export const BASIS = [
   { kind: 'field', ref: '金额', page: null, note: '付款 12,000 元（虚构）' },
   { kind: 'evidence', ref: EVIDENCE_REF, page: 2, note: '合同第 2 页（虚构）' },
 ];
-export const CALLS = () => [
+/** 调用记录的行（字段照 agent-calls.mjs 的 rowOf 和 agent-tests.mjs 的 view）。 */
+export type FakeCallRow = Record<string, unknown>;
+export const CALLS = (): FakeCallRow[] => [
   { at: '2026-10-31T02:10:00.000Z', documentId: 'doc-1', number: 'DGZF-F07-001', task: 'review_advice@1', round: 2, trigger: 'upstream', publishId: AUDIT_PUB,
     status: 'completed', result: 'pass', errorCode: null, declinedReason: null, startedAt: '2026-10-31T02:09:08.000Z', finishedAt: '2026-10-31T02:10:00.000Z', latencyMs: 52_000,
     attempts: 1, agentVersion: '1.2.0', repaired: false, note: '原件齐全，金额一致（虚构）', basis: BASIS.slice(0, 2) },

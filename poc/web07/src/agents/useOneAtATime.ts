@@ -8,7 +8,7 @@ export interface OneAtATime {
 }
 
 /**
- * 这一页一次只做一件写操作（连接、启用、换钥匙、停用、复核、设为 / 取消审批 Agent）：每次都是真实调用 Nexus，九安还按人限每分钟 5 次。
+ * 这一页一次只做一件写操作（连接、启用、换钥匙、停用、重新验证、设为 / 取消审批 Agent）：每次都是真实调用 Nexus，九安还按人限每分钟 5 次。
  * 按钮要等下一次渲染才变灰，同一拍里的第二下由在途标记挡住：调用方先问 isBusy()，再 run()（run 同步地立起标记）。
  */
 export function useOneAtATime(): OneAtATime {
