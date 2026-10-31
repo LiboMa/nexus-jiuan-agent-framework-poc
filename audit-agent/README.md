@@ -4,12 +4,12 @@
 
 | 文件 | 内容 |
 |---|---|
-| `prompt.yaml` | 当前版本 v3（2026-10-25，2026-10-26 改查询方式，2026-10-28 加自定义规则、分两种知识库方式，2026-10-31 认审批风险判断卡，`agentVersion` 为 `jiuan-audit-ai-kb-2026-10-31.1`）：三段式请求照旧；第 4 条加知识库只读查询的例外；第 8 条规则问答、第 9 条信封模式（九安 v0.7.10 的 `review_advice@1`）查规则，`pg` 方式第 1 次用库内语义检索 `kb_search`、没对口的再按关键词 `ILIKE`，`s3vectors` 方式用 `rules_search`；第 9 条 c 的 ③ 之后是审批风险判断卡的判断和审核员自定义规则（`input.customRules`）的处理，⑤ 里矩阵行、卡片行各有依据写法，两种方式一样 |
+| `prompt.yaml` | 当前版本 v3（2026-10-25，2026-10-26 改查询方式，2026-10-28 加自定义规则、分两种知识库方式，2026-10-31 认审批风险判断卡，同日改成少想一档（`effort: high`）、少查（`kb_search` 取 5 行，关键词用拆开的费用 / 付款类型名称，对得上的卡一到就停），`agentVersion` 为 `jiuan-audit-ai-kb-2026-10-31.2`）：三段式请求照旧；第 4 条加知识库只读查询的例外；第 8 条规则问答、第 9 条信封模式（九安 v0.7.10 的 `review_advice@1`）查规则，`pg` 方式第 1 次用库内语义检索 `kb_search`、没对口的再按关键词 `ILIKE`，`s3vectors` 方式用 `rules_search`；第 9 条 c 的 ③ 之后是审批风险判断卡的判断和审核员自定义规则（`input.customRules`）的处理，⑤ 里矩阵行、卡片行各有依据写法，两种方式一样 |
 | `prompt-owner-2026-10-25.yaml` | 项目负责人在网页上改过的上一版（加了第 7、8 条和连接器），回退用 |
 | `apply.py` | 下发：打印线上提示词到渲染结果的 diff → 写提示词 → 原样重存发布的动态配置 → 发布描述写上契约和任务两行 → 只读核对 |
 | `setup.py` | 新环境第一次用、或换知识库方式时：按 `AGENT_NAME` 找或建 Agent（克隆通用助手、写入提示词）、找或建 A2A 发布；`pg` 方式把知识库连接器绑进动态配置，`s3vectors` 方式先核对规则工具 `rules_search` 已绑密钥、再从动态配置里去掉 `CONNECTOR_ID`（其余字段原样）；幂等，编号写回环境配置。`--delete` 只删演练用的（名字以 `_rehearsal` 结尾） |
 | `nexus_common.py`、`deploy_env.py` | 两个脚本共用：目标环境、提示词渲染（方式块、占位符）、经 operator 调 Nexus；读环境配置（规则和 `poc/infra/lib/deploy-env.sh` 一样） |
-| `tests/` | 单元测试（`python3 -B -m unittest discover -s audit-agent/tests`，假的 Nexus，不联网）；`tests/fixtures/` 里是现有环境两种方式各自期望的渲染结果，和改动前（`2026-10-28.1`，线上现在的）那一份 |
+| `tests/` | 单元测试（`python3 -B -m unittest discover -s audit-agent/tests`，假的 Nexus，不联网）；`tests/fixtures/` 里是现有环境两种方式各自期望的渲染结果，和改动前（`2026-10-31.1`，线上现在的）那一份 |
 
 ## 两种知识库方式
 
@@ -35,7 +35,7 @@
   - rule_type=matrix 是审批矩阵的一行（审批路径），general 是制度说明与图例，chapter_note 是章节说明，clause 是正文条款和非矩阵表格的行；
   - 2026-10-31 起有效的只有审批风险判断卡（`risk-cards`，449 行，全是 clause）：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 每行一张卡，卡片全文在 `scope_controls`（约 210–280 字，「卡片编号：…；费用类型：…；…；一期可行性：…」），segment、amount_tier、final_approver、approval_path_text 是空的。原来的 V4.0 审批矩阵（`finance-approval-v4`）已下线。
 - 库内语义检索：`SELECT … FROM kb_search('<板块> <业务事项关键词> <金额>', 8)`，PG 里用实例角色调 Bedrock 把问题向量化，先按关键词命中数、再按语义排序；每次记进检索日志（九安「规则库 › 制度知识库」页能看）。说明见 [`../kb/GUIDE.md`](../kb/GUIDE.md) 6.3。第 8 条由知识库工具管（`kb/agent/prompt-rules.txt` + `poc/infra/kb.sh agent`），本目录 `prompt.yaml` 的 `pg` 块里第 7、8 条要和它逐字一致（`tests/test_apply.py` 钉住；改完 `kb.sh agent --dry-run` 应全是 `=`）。`s3vectors` 方式不要跑 `kb.sh agent`，它会把 PG 的第 7、8 条写回去。
-- 连接器交给模型的结果每格截到 80 字、最多 30 行，超过 4000 字就只留前 10 行，所以提示词让 Agent 用 `substr` 分列取长文：卡片在第 1 次查询里取 c1–c4（320 字）就是整张，按关键词补查至多 10 行。
+- 连接器交给模型的结果每格截到 80 字、最多 30 行，超过 4000 字就只留前 10 行，所以提示词让 Agent 用 `substr` 分列取长文：卡片在第 1 次查询里取 c1–c4（320 字）就是整张，按关键词补查至多 6 行。
 - 连接器的库账号有读写权限。提示词只让初审做 SELECT，但更稳妥的是给它换一个只读账号。
 
 ## 怎么改
@@ -52,6 +52,6 @@
    - 调用密钥由管理员在九安「后台配置 › Agent 接入」页上粘贴一次（https://jiuan-v0710.tinyboat.blog/#adminConfig?tab=agentAccess），之后的调用都用这条启用记录。
    - 端到端测试不读、不粘贴密钥；它会核对 Agent 引用的规则编号在库里都存在。
 
-只改提示词不重存动态配置，A2A 调用用的还是旧快照（Nexus `publication_gateway/executor.py:554-578`）。`apply.py` 每次都会重存。
+只改提示词不重存动态配置，A2A 调用用的还是旧快照（Nexus `publication_gateway/executor.py:554-578`）。`apply.py` 每次都会重存。快照是按整份提示词 YAML 重算的（`dynamic_config_service.build_resolved_definition`），所以 `metadata` 里的 `additional_request_fields.output_config.effort` 也跟着下发。
 
 回退：`prompt-owner-2026-10-25.yaml` 复制成 `prompt.yaml`，再运行 `apply.py --base` 加上当前线上版本对应的文件。

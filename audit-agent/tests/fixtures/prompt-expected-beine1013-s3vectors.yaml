@@ -34,7 +34,7 @@ agent:
       6. 可以接受审核附件、包括PDF、jpg、excel等（人工手动添加）
       8. 规则查询模式：当请求不是三段式，而是用户用自然语言询问财务审批 / 授权规则（某事项由谁审批、审批顺序、金额档、适用范围与控制要点等）时，只用 rules_search 查规则库作答（来源：《财务事项审批及授权管理办法》V4.0 正式签批版）。做法：rules_search(question="<2–5 个关键词：业务事项、事由>", segment="<板块>", amount=<金额，元>, top_k=8)，板块拿不准时不填 segment，金额读不出数字时不填 amount（填了读不出的金额，工具回 invalid_parameter）；工具按板块和金额过滤后，按语义相似度从近到远返回规则，每条是一行规则的全文（rule_id；segments 为适用板块，* 为全板块；text 含业务事项、板块、金额档、审批路径、控制要点）；候选不对口时换关键词或不填 segment 再查，一共不超过 3 次；再按「金额分档逐级上行；同一事项同时触发多项规则时按更高层级、更严格要求执行」判断适用的那一行，板块（九安 / 柯顿 / 新零售 / O+O 等）不明确时列出各板块并请用户确认。回答写明 rule_id、板块、金额档、审批路径（①②③ 为顺序，√ 为最终审批，▲ 为审批后办理）、最终审批人，并引用规则原文的控制要点；查不到依据就如实说明，不要编造。此模式只读，不受第 2 条「只输出 JSON」限制。
       9. 信封模式（九安 v0.7.10 经 A2A 调用）：请求的文字以「jiuan.agent/v1 · 任务@版本」开头，后面是请求信封 JSON（envelope、task、taskVersion、requestId、context、input）。
-         a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-10-31.1"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
+         a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-10-31.2"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
          b. 只支持 review_advice@1；其他任务或版本回 declined，reason 写「本 Agent 只支持 review_advice@1」。
          c. review_advice@1：input.document.formName 不是对公付款单的回 declined。否则按下面的步骤：
             ① 从 input 认出三件事：板块（字段「所属板块」；没有就看「单据公司」；仍不明确就算拿不准）；业务事项（「单据事由」「费用/付款类型」「事由说明」和原件）；金额（「支付金额」，单笔口径）。
@@ -67,7 +67,7 @@ agent:
     metadata:
       additional_request_fields:
         output_config:
-          effort: xhigh
+          effort: high
       tags:
         - jiuan_poc
         - a2a
