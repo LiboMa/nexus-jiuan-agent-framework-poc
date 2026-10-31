@@ -1,5 +1,5 @@
 """审核 Agent 的下发：提示词里不写环境值（连接器、规则工具目录、Agent 名、模型按环境配置替换），知识库那几段按 KB_MODE 渲染成
-pg / s3vectors 两种，两种都有自定义规则一段；apply.py 的目标来自环境配置。"""
+pg / s3vectors 两种，两种都有审批风险判断卡、自定义规则两段；apply.py 的目标来自环境配置。"""
 import difflib
 import io
 import re
@@ -18,14 +18,15 @@ import nexus_common  # noqa: E402
 
 PROMPT = (AGENT / "prompt.yaml").read_text(encoding="utf-8")
 EXPECTED = (HERE / "fixtures/prompt-expected-beine1013.yaml").read_text(encoding="utf-8")
-# 改动前（agentVersion jiuan-audit-ai-kb-2026-10-26.1）的 pg 渲染结果，也就是现有环境线上的提示词
-BEFORE = (HERE / "fixtures/prompt-expected-beine1013-2026-10-26.1.yaml").read_text(encoding="utf-8")
+# 改动前（agentVersion jiuan-audit-ai-kb-2026-10-28.1，2026-10-30 下发）的 pg 渲染结果，也就是现有环境线上的提示词
+BEFORE = (HERE / "fixtures/prompt-expected-beine1013-2026-10-28.1.yaml").read_text(encoding="utf-8")
 EXPECTED_S3V = (HERE / "fixtures/prompt-expected-beine1013-s3vectors.yaml").read_text(encoding="utf-8")
 KB_TEMPLATE = (AGENT.parent / "kb/agent/prompt-rules.txt").read_text(encoding="utf-8")
 RULES_TOOL_DIR = "kb_s3v_rules_0a1b2c3d"
 S3V_KEYS = ("KB_MODE=s3vectors\nKB_S3V_BUCKET=knowbase-s3v-example\nKB_S3V_RULES_INDEX=rules\n"
             f"RULES_TOOL_DIR={RULES_TOOL_DIR}\nKB_S3V_KEY_ID=key-0123456789ab\nKB_S3V_PUBLICATION_ID=pub_0123456789abcdef\n")
-OLD_VERSION, NEW_VERSION = "jiuan-audit-ai-kb-2026-10-26.1", "jiuan-audit-ai-kb-2026-10-28.1"
+OLD_VERSION, NEW_VERSION = "jiuan-audit-ai-kb-2026-10-28.1", "jiuan-audit-ai-kb-2026-10-31.1"
+CUSTOM_START = "自定义规则（input.customRules）"
 
 
 def env_file(text):
@@ -47,12 +48,49 @@ def changes(old, new):
             for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if tag != "equal"]
 
 
-def custom_rules_paragraph(rendered):
-    """第 9 条 c 里 ③ 和 ④ 之间的那几行（自定义规则一段）。"""
+def span(rendered, start, end):
+    """(i, j)：第 i 行（去掉行首空白）以 start 开头，j 是它之后第一个以 end 开头的行。"""
     lines = rendered.splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines) if line.lstrip().startswith("③ 判断")) + 1
-    end = next(i for i, line in enumerate(lines) if line.lstrip().startswith("④ 结论"))
-    return "".join(lines[start:end])
+    i = next(k for k, line in enumerate(lines) if line.lstrip().startswith(start))
+    return i, next(k for k in range(i + 1, len(lines)) if lines[k].lstrip().startswith(end))
+
+
+def section(rendered, start, end):
+    i, j = span(rendered, start, end)
+    return rendered.splitlines(keepends=True)[i:j]
+
+
+def step2(rendered):
+    """第 9 条 c 的 ②（查规则）：到 ③ 为止。"""
+    return section(rendered, "② 查规则", "③ 判断")
+
+
+def step5(rendered):
+    """第 9 条 c 的 ⑤（output）：到 ⑥ 为止。"""
+    return section(rendered, "⑤ output", "⑥ ")
+
+
+def card_paragraph(rendered):
+    """③ 那一行之后、自定义规则之前的几行（审批风险判断卡一段）。"""
+    return "".join(section(rendered, "③ 判断", CUSTOM_START)[1:])
+
+
+def custom_rules_paragraph(rendered):
+    """第 9 条 c 里 ③ 之后、④ 之前的自定义规则一段。"""
+    return "".join(section(rendered, CUSTOM_START, "④ 结论"))
+
+
+def unchanged_parts(rendered):
+    """去掉这次改的几处（②、审批风险判断卡一段、⑤）之后的提示词。"""
+    drop = set()
+    for start, end, keep_first in (("② 查规则", "③ 判断", False), ("③ 判断", CUSTOM_START, True), ("⑤ output", "⑥ ", False)):
+        i, j = span(rendered, start, end)
+        drop.update(range(i + keep_first, j))
+    return "".join(line for k, line in enumerate(rendered.splitlines(keepends=True)) if k not in drop)
+
+
+def only_in(lines, other):
+    return [line.rstrip("\n") for line in lines if line not in other]
 
 
 def tools_dependencies(rendered):
@@ -63,16 +101,63 @@ def tools_dependencies(rendered):
 
 class PromptTest(unittest.TestCase):
     def test_render_pg_matches_online(self):
-        """pg 渲染 = 期望文件；期望文件和改动前（线上现在的）只差 agentVersion 和第 9 条 c 里 ③ 之后的自定义规则一段。"""
+        """pg 渲染 = 期望文件；期望文件和改动前（线上现在的）只差 agentVersion、第 9 条 c 的 ②、③ 之后的审批风险判断卡一段和 ⑤。"""
         self.assertEqual(nexus_common.render_prompt(PROMPT, nexus_common.target_from(None)), EXPECTED)
+        self.assertEqual(BEFORE.count(f'"agentVersion":"{OLD_VERSION}"'), 1)
+        self.assertEqual(unchanged_parts(BEFORE).replace(OLD_VERSION, NEW_VERSION), unchanged_parts(EXPECTED))
+        self.assertEqual(card_paragraph(BEFORE), "", "改动前没有审批风险判断卡一段")
+        self.assertNotEqual(step2(BEFORE), step2(EXPECTED))
+        self.assertNotEqual(step5(BEFORE), step5(EXPECTED))
         found = changes(BEFORE, EXPECTED)
-        self.assertEqual([tag for tag, *_ in found], ["replace", "insert"], found)
-        (_, old, new, _), (_, removed, added, before_insert) = found
-        self.assertEqual((len(old), len(new), removed), (1, 1, []))
-        self.assertIn(f'"agentVersion":"{OLD_VERSION}"', old[0])
-        self.assertEqual(old[0].replace(OLD_VERSION, NEW_VERSION), new[0])
-        self.assertTrue(before_insert.lstrip().startswith("③ 判断"), before_insert)
-        self.assertEqual("".join(added), custom_rules_paragraph(EXPECTED))
+        self.assertEqual([tag for tag, *_ in found], ["replace", "replace", "insert", "replace", "replace"], found)
+
+    def test_pg_step2_reads_card_rows_as_well_as_matrix_rows(self):
+        """②：第 1 次 kb_search 带 rule_type 和 scope_controls 的四截（一张卡最长约 280 字，c1–c4 是整张卡）；补查不限 matrix；
+        矩阵的 C05 提示和取全文只在候选里有矩阵行时做；仍一共不超过 3 次。"""
+        lines = [line.strip() for line in step2(EXPECTED)]
+        text = "\n".join(lines)
+        chunks = "substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4"
+        first = next(line for line in lines if line.startswith("第 1 次"))
+        self.assertIn("SELECT rule_id, rule_type, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits, "
+                      f"{chunks} FROM kb_search('<板块> <业务事项或费用类型的 2–4 个关键词> <金额>', 8);", first)
+        kinds = lines[lines.index(first) + 1]
+        for part in ("rule_type 为 matrix 的是审批矩阵的一行，有审批路径", "clause 是制度条款或一张审批风险判断卡", "卡片的 c1–c4 就是整张卡，不用再取全文"):
+            self.assertIn(part, kinds)
+        fallback = next(line for line in lines if line.startswith("候选里没有对口的行时"))
+        self.assertIn("费用类型的名称", fallback)
+        self.assertIn(f"SELECT rule_id, rule_type, {chunks} FROM approval_rules WHERE (coalesce(business_item,'')||' '||coalesce(amount_tier,'')||' '||"
+                      "coalesce(scope_controls,'')) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY rule_type, rule_id LIMIT 10;", fallback)
+        self.assertNotIn("rule_type='matrix'", text)
+        self.assertTrue(next(line for line in lines if "C05-2.x" in line).startswith("候选里有审批矩阵行时："))
+        fetch = next(line for line in lines if "approval_path_text" in line)
+        self.assertTrue(fetch.startswith("选中的矩阵行（1–3 行）再取全文。"), fetch)
+        self.assertIn("一共不超过 3 次", lines[0])
+        self.assertTrue(lines[-1].startswith("次数有余时，可以再查制度说明、图例和章节说明（rule_type 为 general 或 chapter_note"), lines[-1])
+
+    def test_card_paragraph_and_output_are_the_same_in_both_modes(self):
+        """③ 之后的审批风险判断卡一段和 ⑤ 两种方式共用：卡片的判断依据、缺什么对照字段和原件，结论是卡的建议，一期不上线的卡单凭它
+        不判 fail；⑤ 的矩阵行写法不变，卡片行另有写法。"""
+        card = card_paragraph(EXPECTED)
+        self.assertEqual(card_paragraph(EXPECTED_S3V), card)
+        self.assertEqual(len(card.splitlines()), 1)
+        for text in ("审批风险判断卡", "费用类型", "业务线、财务线两张", "「判断依据」「缺什么」对照字段和原件", "{…} 是单据字段的占位",
+                     "「结论」（不过 / 补件后过 / 过·留痕）就是这张卡的建议", "缺了或核验不了给 fail", "都齐了给 pass，别的卡或规则另有要求的除外",
+                     "「一期不上线」", "「现在就能跑」", "单凭它不判 fail，在 note 里说明"):
+            self.assertIn(text, card)
+        for absent in ("c1", "SELECT", "approval_rules", "kb_search", "rules_search"):
+            self.assertNotIn(absent, card, "两种方式共用的一段不提哪一种的查法")
+        step3 = next(line for line in EXPECTED.splitlines() if line.lstrip().startswith("③ 判断"))
+        self.assertIn("同一事项同时触发多项规则时，按更高层级、更严格的要求执行", step3)
+        self.assertEqual(step3, next(line for line in BEFORE.splitlines() if line.lstrip().startswith("③ 判断")))
+        out = "".join(step5(EXPECTED))
+        self.assertEqual("".join(step5(EXPECTED_S3V)), out)
+        for text in ("note 不超过 1000 字：适用哪条规则或哪张卡、适用审批矩阵行时这张单该走的审批路径和最终审批人、核对了什么、不通过的原因。",
+                     "审批矩阵行的 ref 写「规则编号 业务事项 · 板块 · 金额档」，不超过 200 字，规则编号照库里的 rule_id 原样写（例如 C05-2.3）；"
+                     "note 写「适用审批路径：…；最终审批人：…；核对：…」，不超过 500 字。",
+                     "风险判断卡的 ref 写「<rule_id> <卡片编号> <费用类型> · <审核线>」，不超过 200 字；note 写「风险判断卡：<风险等级>，<结论>；缺：…；核对：…」，不超过 500 字。",
+                     "只写真的查到、真的适用的行，不编造编号。"):
+            self.assertIn(text, out)
+        self.assertEqual(only_in(step5(BEFORE), step5(EXPECTED)), [line.rstrip("\n") for line in step5(BEFORE) if "1000 字" in line or '"rule"' in line])
 
     def test_custom_rules_paragraph_is_the_same_in_both_modes_and_keeps_the_output_contract(self):
         pg = custom_rules_paragraph(EXPECTED)
@@ -306,12 +391,15 @@ class ApplyTest(unittest.TestCase):
                 [line[1:] for line in out.splitlines() if line.startswith("+") and not line.startswith("+++")])
 
     def test_dry_run_without_base_prints_the_diff_against_the_live_prompt(self):
-        """现有环境（pg，线上是改动前的版本）：diff 只有 agentVersion 那一行和自定义规则一段。"""
+        """现有环境（pg，线上是改动前的版本）：diff 只有 agentVersion 那一行、② 改的几行、审批风险判断卡一段和 ⑤ 改的两行。"""
         out = self.dry_run("NEXUS_ORIGIN=https://nxs-beine1013.tinyboat.blog\nNEXUS_PROFILE=beine1013\nCONNECTOR_ID=conn-f0c7233959d9\n", BEFORE)
         removed, added = self.diff_lines(out)
         old_line = next(line for line in BEFORE.splitlines() if OLD_VERSION in line)
-        self.assertEqual(removed, [old_line])
-        self.assertEqual(added, [old_line.replace(OLD_VERSION, NEW_VERSION), *custom_rules_paragraph(EXPECTED).splitlines()])
+        self.assertEqual(removed, [old_line, *only_in(step2(BEFORE), step2(EXPECTED)), *only_in(step5(BEFORE), step5(EXPECTED))])
+        self.assertEqual(added, [old_line.replace(OLD_VERSION, NEW_VERSION), *only_in(step2(EXPECTED), step2(BEFORE)),
+                                 *card_paragraph(EXPECTED).splitlines(), *only_in(step5(EXPECTED), step5(BEFORE))])
+        self.assertEqual((len(only_in(step2(BEFORE), step2(EXPECTED))), len(only_in(step2(EXPECTED), step2(BEFORE)))), (4, 5))
+        self.assertFalse([line for line in removed + added if "自定义规则" in line or "8. 规则查询模式" in line or "7. 例外" in line])
         put = next(call for call in self.calls if call[0] == "PUT")
         self.assertEqual(put[6]["content"], EXPECTED)
 
@@ -333,7 +421,9 @@ class ApplyTest(unittest.TestCase):
         removed, added = self.diff_lines(out)
         self.assertIn(f"      - imported_tools/{RULES_TOOL_DIR}/s3vectors_rules_tools/rules_search", added)
         self.assertIn("      - system_tools/data_connector/data_connector_query", removed)
-        self.assertFalse([line for line in removed + added if "自定义规则" in line], "自定义规则一段两种方式一样，不在 diff 里")
+        shared = {line.rstrip("\n") for line in [*card_paragraph(EXPECTED).splitlines(), *step5(EXPECTED)]}
+        self.assertFalse([line for line in removed + added if "自定义规则" in line or line in shared],
+                         "自定义规则、审批风险判断卡两段和 ⑤ 两种方式一样，不在 diff 里")
         put = next(call for call in self.calls if call[0] == "PUT")
         self.assertEqual(put[6]["content"], nexus_common.render_prompt(PROMPT, nexus_common.target_from(
             env_file("NEXUS_ORIGIN=https://nexus.example.com\nNEXUS_PROFILE=p\n" + S3V_KEYS))))
