@@ -597,5 +597,20 @@ describe('switching window while hovering (fix round 1)', () => {
     await settled();
     expect(screen.queryByText('这一页没有打开')).not.toBeInTheDocument();
     expect(within(lineChart()).getAllByRole('img')).toHaveLength(1);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('T7: the chart\'s one Tab stop goes back to the last day when the days change, instead of staying on the old position', async () => {
+    await openDashboard();
+    const days = within(barChart()).getAllByRole('img');
+    act(() => { (days[3] as unknown as HTMLElement).focus(); });
+    expect(days[3]).toHaveAttribute('tabindex', '0');
+    act(() => { (days[3] as unknown as HTMLElement).blur(); });
+    fireEvent.click(screen.getByRole('radio', { name: '本月' }));
+    await settled();
+    const after = within(barChart()).getAllByRole('img');
+    expect(after).toHaveLength(30);
+    expect(after.map(day => day.getAttribute('tabindex')).indexOf('0')).toBe(29);
+    expect(after.filter(day => day.getAttribute('tabindex') === '0')).toHaveLength(1);
   });
 });

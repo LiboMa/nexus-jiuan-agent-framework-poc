@@ -6,6 +6,7 @@ import { useRef, useState, type KeyboardEvent } from 'react';
  * 焦点框只给键盘（:focus-visible，见各图里的 group-focus-visible:），鼠标点一下不画。
  * days 是这批日子的标识（例如日期串）：换了一批（换窗口）就把提示收起——被删掉的 <g> 不会发 pointerleave，
  * 留着的 <g> 现在是另一天；指针再动一下就提示新的那一天。active 也一律限在 count 以内，绝不指到不存在的一天。
+ * Tab 位也回到最后一天（不留在旧窗口的位置上：那个位置现在是另一天）。
  */
 export function useRoving(count: number, days: string) {
   const [hovered, setHovered] = useState<number | null>(null);
@@ -14,6 +15,7 @@ export function useRoving(count: number, days: string) {
   if (seen !== days) {
     setSeen(days);
     setHovered(null);
+    setStop(null);
   }
   const active = hovered !== null && hovered >= 0 && hovered < count ? hovered : null;
   const nodes = useRef<Array<SVGGElement | null>>([]);
