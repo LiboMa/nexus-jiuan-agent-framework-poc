@@ -579,7 +579,7 @@ docker logs --since 15m nexus-pgvector 2>&1 | grep -E "ERROR|STATEMENT"
 | `本机端口 15432 已被占用` | 上次端口转发残留：`lsof -nP -iTCP:15432 -sTCP:LISTEN` 找到 PID 后结束；或换 `INGEST_LOCAL_PORT` |
 | `登录失败` | admin 密码在界面上改过后，`NEXUS_ADMIN_PASSWORD_SSM` 读到的是旧密码 → 改用 `NEXUS_ADMIN_PASSWORD_FILE` 或环境变量 |
 | `HTTP 422 … limit` | Nexus 版本的分页上限不同（例如 `/agents` 的 limit ≤ 100）；按报错调整 `lib/nexus_api.py` 对应调用 |
-| `调用 Bedrock … 失败` | 身份缺 `bedrock:InvokeModel`，或该区域没开通 Titan v2 模型访问 |
+| `调用 Bedrock … 失败` | 身份缺 `bedrock:InvokeModel`，或该区域没开通 `EMBED_MODEL_ID` 的模型访问（缺省 Cohere Embed v4；`us.` 推理配置文件还要它路由到的各区域基础模型） |
 | 解析器退出码 3 | 文档结构不匹配，见 7.4 |
 | `db 阶段 … .env 里的 NEXUS_DB_USER/NEXUS_DB_NAME 与配置不一致` | 改 `deploy.env` 与主机现状对齐（不要删 `.env`：库里已有的用户 / 库名不会跟着变） |
 | `表 … 的 owner 是 …，不是当前用户` | 接管来的规则表 owner 不是应用用户：在主机上 `docker exec nexus-pgvector psql -U postgres -d nexus -c "ALTER TABLE approval_rules OWNER TO nexus"` |

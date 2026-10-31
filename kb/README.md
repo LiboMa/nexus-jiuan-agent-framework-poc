@@ -35,7 +35,7 @@ vi deploy.env                    # NEXUS_URL、管理员密码来源、PG 主机
 | 网络 | 安全组放行 PG 端口 ← 私网段（独立 CloudFormation 栈） |
 | Sandbox 出站 | Nexus `vm_egress.allow_cidrs` 并入 PG 网段（VM 默认丢弃所有私网目标） |
 | Nexus | 数据库凭证密钥 + PostgreSQL 数据连接器 |
-| 规则库 | `approval_rules`：每条审批路径一行，带检索全文与 1024 维向量（Titan v2） |
+| 规则库 | `approval_rules`：每条审批路径一行，带检索全文与 1024 维向量（缺省 Cohere Embed v4，`EMBED_MODEL_ID`；Titan v2 时代建的库换模型见 GUIDE 7.6） |
 | 审核 Agent | 提示词第 7 条（运维 / 测验模式）、第 8 条（规则查询模式：先 `kb_search` 取候选） |
 
 ## 文档
@@ -59,4 +59,4 @@ tests/                  单元测试（只用仿真文档 fixtures/sample-matrix
 
 ## 依赖
 
-本机：bash、AWS CLI v2、session-manager-plugin、uv、python3。AWS：EC2 / SSM / CloudFormation / Bedrock（Titan Embed Text v2）权限。PG 主机：实例角色能调这个嵌入模型、IMDS 跳数 ≥ 2、容器能连 Debian 软件源（GUIDE 2.4）。Nexus：管理员账号（在 v0.3.28 Enterprise 上验证）。
+本机：bash、AWS CLI v2、session-manager-plugin、uv、python3。AWS：EC2 / SSM / CloudFormation / Bedrock（`EMBED_MODEL_ID`，缺省 Cohere Embed v4 `us.cohere.embed-v4:0`）权限。PG 主机：实例角色能调这个嵌入模型、IMDS 跳数 ≥ 2、容器能连 Debian 软件源（GUIDE 2.4）。Nexus：管理员账号（在 v0.3.28 Enterprise 上验证）。
