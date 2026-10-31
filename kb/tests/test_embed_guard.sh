@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # db 阶段的防混用（lib/common.sh 的 embed_guard）：库里登记的向量模型 × 配置的模型 × --migrate-embeddings / --restore-embeddings
-# → apply / migrate / restore / refuse:<原因>。另核对：两个主机脚本里读登记的那段代码相同；deploy.sh 的新选项只配 db / regress。
+# → apply / migrate / restore / refuse:<原因>。另核对：两个主机脚本里读登记的那段代码相同；deploy.sh 的新选项只配 db / regress；
+# load_config 遇到 deploy.env 里没填的 <…> 占位符（带不带引号都算）说出是哪一项。
 #
 #   bash kb/tests/test_embed_guard.sh          # 不连 AWS、不连库；macOS 自带的 /bin/bash（3.2）也要能跑
 #
@@ -114,6 +115,40 @@ for w in --migrate-embeddings --restore-embeddings regress --questions-dir --lab
   n=$((n + 1))
   case "$help" in *"$w"*) ;; *) fail "deploy.sh --help 里没有 $w" ;; esac
 done
+
+# ---- load_config：deploy.env 里还留着 <…> 占位符（样例里带引号；旧样例没带，bash 会当成重定向）就说出是哪一项 ----
+PH="deploy.env 里 NEXUS_URL 还是占位符，先填上"
+# cfg <NEXUS_URL 那一行> [追加的一行]：在样例的基础上改；loaded：读一遍，成功时打印 NEXUS_URL
+cfg() { sed "s|^NEXUS_URL=.*|$1|" "$KB/deploy.env.example" > "$tmp/cfg.env"; [ $# -lt 2 ] || printf '%s\n' "$2" >> "$tmp/cfg.env"; }
+loaded() { ( load_config "$tmp/cfg.env" && printf 'URL=%s\n' "$NEXUS_URL" ) 2>&1; }
+# rejects <期望的报错片段> <说明>
+rejects() {
+  local out rc; n=$((n + 1))
+  out="$(loaded)"; rc=$?
+  [ "$rc" -ne 0 ] || { fail "load_config（$2）应当停下：$out"; return; }
+  case "$out" in *"$1"*) ;; *) fail "load_config（$2）的报错里没有「$1」：$out" ;; esac
+  case "$out" in *"syntax error"*) fail "load_config（$2）报的是 bash 的语法错误：$out" ;; esac
+}
+# accepts <期望的 NEXUS_URL> <说明>
+accepts() {
+  local out; n=$((n + 1))
+  out="$(loaded)" || { fail "load_config（$2）应当读得进来：$out"; return; }
+  [ "$out" = "URL=$1" ] || fail "load_config（$2）：得到「$out」，期望 URL=$1"
+}
+cp "$KB/deploy.env.example" "$tmp/cfg.env"; rejects "$PH" "样例原样（带引号的占位符）"
+cfg 'NEXUS_URL=https://<env>.<your-domain>'; rejects "$PH" "没带引号的占位符"
+cfg 'NEXUS_URL=https://nexus.example' 'export PG_HOST_INSTANCE_ID="<i-xxxxxxxx>"'
+rejects "deploy.env 里 PG_HOST_INSTANCE_ID 还是占位符，先填上" "别的项、带 export 的占位符"
+cfg 'NEXUS_URL=https://nexus.example'; accepts https://nexus.example "填好的、不带引号"
+cfg "NEXUS_URL='https://nexus.example/'"; accepts https://nexus.example "填好的、带引号和结尾的 /"
+cfg 'NEXUS_URL="https://nexus.example"' "CONNECTOR_DESCRIPTION='检索：SELECT * FROM kb_search(<问题>, 8)'"
+accepts https://nexus.example "正文类的项里有 < >，不当占位符"
+# deploy.sh 读到样例原样的配置：停在读配置，说出是哪一项，碰不到 AWS
+cp "$KB/deploy.env.example" "$tmp/cfg.env"; n=$((n + 1))
+out="$(PATH="$tmp/bin:$PATH" bash "$KB/deploy.sh" preflight --config "$tmp/cfg.env" 2>&1)" && fail "样例原样的配置 deploy.sh 也跑过去了：$out"
+case "$out" in *"$PH"*) ;; *) fail "deploy.sh 读样例原样的配置，报错里没有「${PH}」：$out" ;; esac
+n=$((n + 1))
+[ ! -e "$tmp/called" ] || fail "占位符没填时调到了外部命令：$(cat "$tmp/called")"
 
 # ---- 主机脚本（在 PG 主机上由 bash 5 跑）：假的 docker / systemctl / ss，不连库 ----
 #   pgvector-status.sh 的 embed_model；pgvector-up.sh 执行前再读一次登记、migrate 时 SQL 拼接、NOTICE 转成 [host] 行、出错整段停

@@ -7,6 +7,7 @@ nexus-package.json，以及 PG 版的提示词和探针。不连 Nexus、AWS、S
   （Task 7 Step 1 存在仓库外 /tmp/s3v-before/）逐字相同——这里比对当时记下的 sha256。
 - PG 包：3 个工具都要 pg_kb / database_credentials 密钥（5 个字段）；zip 模块的导入、整目录替换（files_body）、逐文件核对、
   按人绑定密钥（bind）的请求都对；提示词能解析、含共用片段的全部文字、操作清单含 describe 和 preview、引用 3 个工具。
+- admin_run.sh：读对包的 deploy.env 和管理员密码来源；deploy.env 里没填的 <…> 占位符（带不带引号）说出是哪一项，不跑 nexus_admin.py。
 - 探针（Task 8 的本地文件）：build_tools.py probe 打出可重复的 .build/kb_probe.zip；照 VM 的装法装成包时相对 import 成立，
   当成顶层模块装时把错误报回来而不是装不上。
 构建都写到临时目录，不碰包里的 .build/ 和 .state/。
@@ -754,6 +755,32 @@ class AdminRun(Tmp):
             (both / library / "lib" / "common.sh").write_text(FAKE_COMMON.replace("fake-admin-password", f"from-{library}"), encoding="utf-8")
         proc = self.run_sh(both / "knowledgebase-writer-agent-pg" / "scripts" / "admin_run.sh", "verify", "--dir", "x")
         self.assertEqual(self.uv_log()["PW"], "from-kb", "先找 kb/，再找 pgvector-rules-kb/")
+
+    def test_placeholders_in_deploy_env(self):
+        """deploy.env 里还留着 <…> 占位符：带引号的（样例的写法）、不带引号的（bash 会当成重定向）都停下并说出是哪一项，不跑 nexus_admin.py；
+        填好的值带不带引号、带不带 export 都照常读。"""
+        pw = self.tmp / "admin-pw"
+        pw.write_text("local-admin-password\n", encoding="utf-8")
+        pw.chmod(0o600)
+        url = "deploy.env 里 NEXUS_URL 还是占位符，先填上"
+        cases = (("PG 版样例原样", PG / "deploy.env.example", url),
+                 ("S3 Vectors 版样例原样", S3V / "deploy.env.example", url),
+                 ("没带引号", f"NEXUS_URL=https://<env>.<domain>\nNEXUS_PASSWORD_FILE={pw}\n", url),
+                 ("别的项", f"NEXUS_URL=https://nexus.example\nNEXUS_PASSWORD_FILE={pw}\n"
+                          "export NEXUS_ADMIN_PASSWORD_SSM='<deployer 实例 ID>:<deploy.yaml 绝对路径>'\n",
+                  "deploy.env 里 NEXUS_ADMIN_PASSWORD_SSM 还是占位符，先填上"))
+        for what, env, message in cases:
+            with self.subTest(what):
+                root = self.tree(env.read_text(encoding="utf-8") if isinstance(env, Path) else env)
+                for pkg in ("knowledgebase-writer-agent-pg", "knowbase-s3vectors-agent"):
+                    proc = self.run_sh(root / pkg / "scripts" / "admin_run.sh", "verify", "--dir", "x")
+                    self.assertEqual((proc.returncode, proc.stderr.strip()), (2, message), pkg)
+                    self.assertFalse((self.tmp / "uv.log").exists(), "没填就不跑 nexus_admin.py")
+        root = self.tree(f"NEXUS_URL='https://nexus.example'\nexport NEXUS_ADMIN_USER=\"ops\"\nNEXUS_PASSWORD_FILE='{pw}'\n")
+        proc = self.run_sh(root / "knowledgebase-writer-agent-pg" / "scripts" / "admin_run.sh", "verify", "--dir", "x")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        log = self.uv_log()
+        self.assertEqual((log["NEXUS_URL"], log["NEXUS_ADMIN_USER"], log["PW_FILE"]), ("https://nexus.example", "ops", str(pw)))
 
     def test_ssm_without_library_or_package(self):
         root = self.tree("NEXUS_URL=https://nexus.example\nNEXUS_ADMIN_PASSWORD_SSM=i-0123456789abcdef0:/opt/x.yaml\n", None)

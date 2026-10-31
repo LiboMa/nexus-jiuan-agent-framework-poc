@@ -10,10 +10,18 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${NEXUS_PKG_ROOT:-$HERE/..}" && pwd)"
 [ -f "$ROOT/nexus-package.json" ] || { echo "$ROOT 里没有 nexus-package.json（NEXUS_PKG_ROOT 要指向一个交付包的目录）" >&2; exit 2; }
+# 样例里的 <…> 是占位符，还留着就停下并说出是哪一项：没加引号的 bash 会当成重定向（source 时只报一句看不懂的语法错误），
+# 所以 source 之前先看原文；加了引号的（样例里的写法）source 之后看值。
+placeholder() { echo "deploy.env 里 $1 还是占位符，先填上" >&2; exit 2; }
+KEY_RE='^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)='
+for k in $(LC_ALL=C sed -n "s/${KEY_RE}[^'\"[:space:]]*<[^[:space:]]*>.*/\\2/p" "$ROOT/deploy.env" 2>/dev/null); do placeholder "$k"; done
 set -a
 # shellcheck disable=SC1091
 . "$ROOT/deploy.env"
 set +a
+for k in $(LC_ALL=C sed -n "s/${KEY_RE}.*/\\2/p" "$ROOT/deploy.env"); do
+  case "${!k-}" in *'<'*'>'*) placeholder "$k" ;; esac
+done
 : "${NEXUS_URL:?}" "${NEXUS_ADMIN_USER:=admin}" "${AWS_REGION:=us-east-1}"
 if [ -n "${NEXUS_PASSWORD_FILE:-}" ]; then
   [ -f "$NEXUS_PASSWORD_FILE" ] || { echo "NEXUS_PASSWORD_FILE 不存在" >&2; exit 2; }

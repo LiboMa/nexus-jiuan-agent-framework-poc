@@ -22,14 +22,29 @@ warn() { printf '\033[0;33m  !\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[0;31m  ✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------- 配置 ----------
+# 样例里的 <…> 是要换成真实值的占位符，还留着就停下并说出是哪一项：
+#   没加引号的（KEY=https://<env>.<domain>）bash 会当成重定向，source 时只报一句看不懂的语法错误，所以 source 之前先看原文；
+#   加了引号的（样例里的写法）source 得过，source 之后再看值。
+# 正文类的项（连接器描述、文档名、版本说明、板块提示、问句）可以合法地含 < 和 >，不当占位符。
+CONFIG_FREE_TEXT=" CONNECTOR_DESCRIPTION RULES_DOC_TITLE RULES_SOURCE_VERSION RULES_SEGMENTS_HINT E2E_QUESTION "
+config_keys() { LC_ALL=C sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)=.*/\2/p' "$1"; }
+unquoted_placeholder_keys() {
+  LC_ALL=C sed -n "s/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)=[^'\"[:space:]]*<[^[:space:]]*>.*/\2/p" "$1"
+}
+
 # load_config <file>：source 配置并补默认值。所有变量导出，供 Python 子进程读取。
 load_config() {
-  local f="$1" pre_profile="${AWS_PROFILE:-}"
+  local f="$1" pre_profile="${AWS_PROFILE:-}" k
   [ -f "$f" ] || die "找不到配置文件 $f（先 cp deploy.env.example deploy.env 再修改）"
+  for k in $(unquoted_placeholder_keys "$f"); do die "deploy.env 里 $k 还是占位符，先填上"; done
   set -a
   # shellcheck disable=SC1090
   . "$f"
   set +a
+  for k in $(config_keys "$f"); do
+    case "$CONFIG_FREE_TEXT" in *" $k "*) continue ;; esac
+    case "${!k-}" in *'<'*'>'*) die "deploy.env 里 $k 还是占位符，先填上" ;; esac
+  done
   : "${DEPLOY_NAME:=pgvector-rules-kb}"
   : "${AWS_REGION:=us-east-1}"
   : "${NEXUS_ADMIN_USER:=admin}"

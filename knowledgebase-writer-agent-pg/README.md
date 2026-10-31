@@ -226,7 +226,13 @@ node knowledgebase-writer-agent-pg/scripts/a2a_rules.mjs search '{"question": "�
 
 ## 10　以后：更新工具代码、重存提示词
 
-**更新工具代码**（改了 `tools/pg_kb_tools.py` 或 `kb/lib` 的核心模块）：
+本节和第 17 节的命令都在本包（`knowledgebase-writer-agent-pg/`）的上一级目录执行：开发仓库的根目录，也就是交付 zip 里的 `repo/`。Operator 写成数组，bash 和 zsh 都能用（第 0 节的 `${=OP}` 只有 zsh 认）：
+
+```bash
+OP=(python3 -I skills/nexus-ai-operator/scripts/nexus.py --profile '<你的 profile>')   # 引号里换成你的 profile 名
+```
+
+**更新工具代码**（改了 `knowledgebase-writer-agent-pg/tools/pg_kb_tools.py` 或 `kb/lib` 的核心模块）：
 
 ```bash
 # 1. 跑第 2 节的本机测试（改了 kb/lib 时连同 kb/tests）
@@ -236,14 +242,19 @@ bash knowledgebase-writer-agent-pg/scripts/admin_run.sh publish --module pg --to
 bash knowledgebase-writer-agent-pg/scripts/admin_run.sh verify  --module pg --dir <DIR_NAME>
 ```
 
-- `<TOOL_ID>` 取 `.state/import.json` 里任一个工具的 `tool_id`（三个工具在同一个工具目录里）；`<N>` 是服务端现在的版本（第一次导入是 1）。版本对不上就停下，不会覆盖别人刚发布的。
+- `<TOOL_ID>` 取 `knowledgebase-writer-agent-pg/.state/import.json` 里任一个工具的 `tool_id`（三个工具在同一个工具目录里）；`<N>` 是服务端现在的版本（第一次导入是 1）。版本对不上就停下，不会覆盖别人刚发布的。
 - `check` 列出每个文件的变化（`(new)` / `(changed)` / `(removed)`）和平台的检查结果；`publish` 把整个目录换成本地构建的文件集合，版本号加 1。
 - 每个文件第 1 行带着提交号：换了提交（哪怕源码没变）重新打包，`verify` 也会报「不一致」，要对齐就照上面发一个新版本。
 
-**重存提示词**（改了模板，或改了共用片段 `kb/prompt/kb_rules_v1.zh.md`）：照第 6 步再 `render.py prompt` 一次、PUT 一次。
+**重存提示词**（改了模板，或改了共用片段 `kb/prompt/kb_rules_v1.zh.md`）：同第 6 步，渲染一次、PUT 一次。
+
+```bash
+python3 -I knowbase-s3vectors-agent/scripts/render.py prompt --package knowledgebase-writer-agent-pg --tool-dir <DIR_NAME>
+"${OP[@]}" call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file knowledgebase-writer-agent-pg/.build/prompt-body.json --yes
+```
 
 - 改共用片段会同时改两个 Agent 的提示词：S3 Vectors 版也要照它的指南重存一次；`admin_test.py` 钉着 S3 Vectors 版的输出，改动是有意的就同步更新那几个哈希。
-- 不确定服务端是不是最新的：`${=OP} call GET "/api/v2/agents/<AGENT_ID>/files/prompt"` 的 `content` 与 `.build/prompt.yaml` 比一下。
+- 不确定服务端是不是最新的：`"${OP[@]}" call GET "/api/v2/agents/<AGENT_ID>/files/prompt"` 的 `content` 与 `knowledgebase-writer-agent-pg/.build/prompt.yaml` 比一下。
 
 ## 11　规则请求（kb.rules/v1）：操作、工具、回复
 
@@ -446,14 +457,17 @@ Agent 只回工具返回的那个 JSON：不加文字、不改字段、不翻译
 
 ## 17　回滚与清理
 
-由轻到重。**删除类操作各自单独确认。**
+由轻到重。**删除类操作各自单独确认。** 命令在本包的上一级目录执行（开发仓库的根目录，即交付 zip 里的 `repo/`），`OP` 照第 10 节定义。
 
-1. **提示词**：把第 6 步存下的那一份 PUT 回 `/api/v2/agents/<AGENT_ID>/files/prompt`（请求体 `{"content": "…", "file_type": "prompt"}`）。
-2. **工具代码**：管理员 `POST /api/v2/tools/registered/<TOOL_ID>/versions/<N>/activate` 回到第 N 版；或从旧的提交重新打包，照第 10 节发布。
+1. **提示词**：把第 6 步存下的那一份 PUT 回去。请求体是 `{"content": "<prompt-before.json 里的 content>", "file_type": "prompt"}`，先存成仓库外的一个文件：
+   ```bash
+   "${OP[@]}" call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file <仓库外的目录>/prompt-rollback.json --yes
+   ```
+2. **工具代码**：回到第 N 版（`--profile` 要是管理员的）：`"${OP[@]}" call POST "/api/v2/tools/registered/<TOOL_ID>/versions/<N>/activate" --yes`；或从旧的提交重新打包，照第 10 节发布。
 3. **一份制度的数据**：`deactivate` 先下线（可恢复）；要回到旧版本，就用同一个制度标识再入库旧版文件。`delete` 不可恢复。
-4. **向量模型**（换模型后对比或端到端不过）：照 `kb/GUIDE.md` 7.6 第 4 步回退到 Titan（`EMBED_MODEL_ID` 改回 Titan，`db --dry-run --restore-embeddings` 看过再 `db --restore-embeddings`）。要用备份表 `approval_rules_titan_backup`。本 Agent 不用改：向量始终由库里登记的模型算。
+4. **向量模型**（换模型后对比或端到端不过）：照 `kb/GUIDE.md` 7.6 第 4 步回退到 Titan：`kb/deploy.env` 里 `EMBED_MODEL_ID` 改回 Titan，`kb/deploy.sh db --dry-run --restore-embeddings` 看过再 `kb/deploy.sh db --restore-embeddings`。要用备份表 `approval_rules_titan_backup`。本 Agent 不用改：向量始终由库里登记的模型算。
 5. **待清理的东西**（参考环境，各自另行确认）：
-   - 测试用的调用密钥：网页上停用，或 `DELETE /api/v2/publications/<PUBLISH_ID>/keys/<CREDENTIAL_ID>`；再删本机的 `.state/a2a-call-key`。
+   - 测试用的调用密钥：网页上停用，或 `DELETE /api/v2/publications/<PUBLISH_ID>/keys/<CREDENTIAL_ID>`；再删本机的 `knowledgebase-writer-agent-pg/.state/a2a-call-key`。
    - 探针工具目录 `kb_pg_probe_<hash>`，调它的测试会话和那份会话级动态配置；对话端到端在本 Agent 上建的测试会话。
    - 复制 Agent 时带来的旧工具目录。
    - 备份表 `approval_rules_titan_backup`：**留到项目负责人决定**。删了就不能回退到 Titan；不删就不能再迁移一次。删时以 postgres 在 PG 主机上 `DROP TABLE approval_rules_titan_backup`。
