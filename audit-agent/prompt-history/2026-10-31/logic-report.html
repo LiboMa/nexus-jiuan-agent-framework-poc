@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>审单 Agent 提示词：改动前后的处理逻辑</title>
+<style>
+:root{--canvas:#F5F7FA;--surface:#FFF;--ink:#0E1B33;--steel:#5A6880;--faint:#8A97AB;--line:#E2E7EF;--blue:#1E5EFF;--blue50:#EEF3FF;--blue200:#C9D7FF;
+  --passInk:#0B7A55;--pass50:#F0FAF5;--pass200:#BDE7D6;--failInk:#C4373C;--fail50:#FDF2F2;--fail200:#F6C9CA;--waitInk:#9A6312;--wait50:#FFF9EC;--wait200:#F1DDB0}
+*{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font:13.5px/1.6 -apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 28px 48px}
+header{display:flex;align-items:center;gap:12px}
+.lt{width:30px;height:30px;background:linear-gradient(150deg,#142B56,#0A1A39 55%,#061127);display:grid;place-items:center;box-shadow:0 0 0 1px rgba(165,191,255,.35) inset,0 6px 14px rgba(30,94,255,.25)}
+.lt svg{width:18px;height:18px;fill:none;stroke:url(#gm);stroke-width:2.2;stroke-linecap:square;stroke-linejoin:miter}
+h1{font-size:22px;font-weight:650;margin:0}h2{font-size:16px;font-weight:650;margin:0}h3{font-size:14px;margin:0 0 6px}
+.muted{color:var(--steel)}.faint{color:var(--faint)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:4px;margin-top:14px}
+.ph{display:flex;align-items:baseline;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}.ph .r{margin-left:auto;font-size:12px;color:var(--steel)}
+.body{padding:12px 16px}
+.answer{border-color:var(--blue);box-shadow:inset 3px 0 0 var(--blue)}.answer .big{font-size:17px;font-weight:650;padding:14px 16px 6px}.answer p{margin:0;padding:0 16px 14px;color:var(--steel)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 14px;border-top:1px solid var(--line);vertical-align:top}
+th{font-size:12px;font-weight:600;color:var(--steel);border-top:0;background:#FAFBFD}
+td.step{width:150px;font-weight:600;white-space:nowrap}
+td.same{color:var(--faint)}
+.chg{background:#FBFCFF}
+.tag{display:inline-block;padding:1px 7px;font-size:12px;font-weight:600;border:1px solid;border-radius:2px;white-space:nowrap;margin-right:4px}
+.t-new{color:var(--blue);border-color:var(--blue200);background:var(--blue50)}.t-same{color:var(--steel);border-color:var(--line);background:var(--canvas)}
+.t-fail{color:var(--failInk);border-color:var(--fail200);background:var(--fail50)}.t-pass{color:var(--passInk);border-color:var(--pass200);background:var(--pass50)}.t-wait{color:var(--waitInk);border-color:var(--wait200);background:var(--wait50)}
+.flow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;padding:12px 16px}
+.lane{border:1px solid var(--line);border-radius:4px;padding:10px 12px;background:#FCFDFE}
+.lane ol{margin:6px 0 0;padding-left:20px}.lane li{padding:3px 0}
+.lane.after{border-color:var(--blue200);background:#F9FBFF}
+ul{margin:0;padding:6px 16px 10px 34px}li{padding:2px 0}
+code,.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
+pre{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11.5px;line-height:1.55;margin:0;padding:10px 12px;border-radius:2px}
+pre.del{background:#FDF2F2;border-left:3px solid #E5484D}pre.add{background:#F0FAF5;border-left:3px solid #0E9F6E}
+details{border-top:1px solid var(--line)}details summary{cursor:pointer;padding:10px 16px;font-weight:600}details .body{padding-top:0}
+.ex{border:1px solid var(--line);border-radius:4px;padding:10px 12px;background:#FCFDFE;margin:6px 0}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}.two .panel{margin-top:14px}
+footer{margin-top:18px;font-size:12px;color:var(--faint)}
+@media (max-width:900px){.flow,.two{grid-template-columns:1fr}}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><defs><linearGradient id="gm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#79F4BD"/><stop offset=".5" stop-color="#39D9E7"/><stop offset="1" stop-color="#3875F6"/></linearGradient></defs></svg>
+<main>
+<header><span class="lt"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M9 13l2.5 2.5L16 11"/></svg></span>
+<div><h1>审单 Agent 提示词：改动前后的处理逻辑</h1>
+<div class="muted" style="font-size:12px">2026-10-31 · 改动在本地提交 94b36e5（audit-agent/prompt.yaml），还没更新到 Nexus 上的审单 Agent · 版本号 jiuan-audit-ai-kb-2026-10-28.1 → 2026-10-31.1</div></div></header>
+
+<section class="panel answer">
+<div class="big">本质的变化：审单 Agent 从「只认审批矩阵」变成「审批矩阵和审批风险判断卡都认」。</div>
+<p>改动前，它的整套做法是找到这张单对应的审批矩阵行，定出审批路径和最终审批人，再核对控制要点。改动后，矩阵行照旧这样处理；碰到风险判断卡，就按这张单的费用类型找业务线、财务线两张卡，拿卡上的「判断依据」「缺什么」去对单据字段和原件，卡的「结论」当作这张卡的建议。<b>结论的口径没变</b>：都满足给通过；有不满足的、核验不了的、查不到适用规则的，都给不通过。变的只有它<b>去哪里找规则、怎么读规则、依据怎么写</b>。</p>
+</section>
+
+<section class="panel">
+<div class="ph"><h2>为什么要改</h2><span class="r">数据都是只读查到的</span></div>
+<table><thead><tr><th style="width:240px">看到的现象</th><th>原因</th></tr></thead><tbody>
+<tr><td>换成风险判断卡后，同时跑的 AI 建议每一轮都在 120 秒被九安取消（AI 暂不可用）</td><td>九安给每轮 AI 建议的上限是 120 秒；超时就取消</td></tr>
+<tr><td>被取消时每轮已经花了 0.24–0.29 美元；换卡之前完整的一轮是 0.07–0.18 美元、50–100 秒</td><td>AI 在里面多绕了很多圈（多了好几次查询和思考）</td></tr>
+<tr><td>知识库检索日志：每轮只检索 1 次左右，每次 0.3–0.5 秒</td><td>不是检索慢</td></tr>
+<tr><td>旧提示词第一次查询只取「业务事项、板块、金额档、最终审批人」；补查只查 <code>rule_type='matrix'</code></td><td>风险判断卡这几栏都是空的，内容在另一栏；旧制度下线后矩阵行一条都没有了，补查永远是 0 行，AI 只能不停换关键词再查</td></tr>
+</tbody></table>
+</section>
+
+<section class="panel">
+<div class="ph"><h2>处理流程对照</h2><span class="r">审单请求：九安经 A2A 发来的 review_advice@1 信封（第 9 条 c）</span></div>
+<div class="flow">
+<div class="lane"><h3>改动前</h3><ol>
+<li>认出板块、业务事项、金额。</li>
+<li>检索候选：只取矩阵的几栏（业务事项、板块、金额档、最终审批人）。</li>
+<li>对不上时，只在<b>审批矩阵行</b>里按关键词补查（最多 30 行）。</li>
+<li>按「费控报销 C05-2.x / 特殊事项 C05-3.x」的经验挑行，取 1–3 行全文（审批路径、金额档、控制要点）。</li>
+<li>判断：金额分档逐级上行，多条规则取更严的，逐项核对控制要点（合同、发票、验收、金额、收款方）。</li>
+<li>结论：都满足 pass，否则 fail。</li>
+<li>输出：说明里写审批路径和最终审批人；每条规则依据写「适用审批路径：…；最终审批人：…；核对：…」。</li>
+</ol></div>
+<div class="lane after"><h3>改动后</h3><ol>
+<li>认出板块、业务事项、金额 <span class="tag t-same">没变</span></li>
+<li>检索候选：多取「规则类型」和<b>规则全文</b>（分 4 段，每段 80 字，一张卡约 235–280 字正好装下）。<span class="tag t-new">改</span></li>
+<li>对不上时，在<b>所有在线规则</b>里按关键词补查（关键词最好用费用类型的名称），最多 10 行。<span class="tag t-new">改</span></li>
+<li>候选里有审批矩阵行时，才按 C05 的经验挑行、取全文；卡片在第 1 次就已经是全文，不再取。<span class="tag t-new">改</span></li>
+<li>判断：矩阵行照旧；<b>风险判断卡</b>：找这张单费用类型的业务线、财务线两张卡，逐张对照「判断依据」「缺什么」。<span class="tag t-new">新增</span></li>
+<li>结论：都满足 pass，否则 fail <span class="tag t-same">口径没变</span></li>
+<li>输出：只有用到矩阵行时才写审批路径；卡片依据写「风险判断卡：风险等级，结论；缺：…；核对：…」。<span class="tag t-new">改</span></li>
+</ol></div>
+</div>
+<div class="body muted" style="font-size:12px;padding-top:0">查询次数上限不变：一共不超过 3 次。少查一次就少花十几秒，这正是能回到 120 秒以内的关键。</div>
+</section>
+
+<section class="panel">
+<div class="ph"><h2>碰到风险判断卡时怎么定结论</h2><span class="r">提示词第 9 条 c ③ 新增的一段</span></div>
+<table><thead><tr><th style="width:200px">卡的情况</th><th>AI 给的结论</th><th>说明</th></tr></thead><tbody>
+<tr><td>「缺什么」要的材料缺了，或者核验不了</td><td><span class="tag t-fail">✕ fail</span></td><td>不管卡上写的是「不过」还是「补件后过」：缺件就是不通过</td></tr>
+<tr><td>「缺什么」要的材料都齐了</td><td><span class="tag t-pass">✓ pass</span></td><td>除非别的卡或规则另有要求（多条规则取更严的）</td></tr>
+<tr><td>卡上结论是「过·留痕」</td><td><span class="tag t-pass">✓ pass</span></td><td>卡本身就建议放行，说明里会写到</td></tr>
+<tr><td>判断依据写「一期不上线」，或一期可行性不是「现在就能跑」、说数据还没有</td><td><span class="tag t-wait">不单凭它判 fail</span></td><td><b>这一条是我加的，请你确认。</b>共 93 个费用类型的一期可行性不是「现在就能跑」。不加这条，这些单会因为「数据拿不到」被判不通过</td></tr>
+<tr><td>找不到这张单费用类型的卡，也没有别的适用规则</td><td><span class="tag t-fail">✕ fail</span></td><td>照旧：说明写「知识库未取得适用规则，需人工确认」（第 ⑥ 步没改）</td></tr>
+</tbody></table>
+<div class="body">
+<div class="muted" style="font-size:12px;margin-bottom:4px">判断依据里的 <code>{金额}</code>、<code>{应到层级}</code> 这类花括号，AI 会当成要代入的单据字段。依据的写法举例（虚构）：</div>
+<div class="ex"><b>改动前（矩阵行）</b>：ref「C05-2.3 费控报销 · 九安 · 10–20 万」；note「适用审批路径：部门负责人 → 财务经理 → 分管副总；最终审批人：分管副总；核对：合同金额与付款一致」</div>
+<div class="ex"><b>改动后（卡片行）</b>：ref「risk-cards-T1.4 EXP783344-财务 报废损失 · 财务线」；note「风险判断卡：高风险，不过；缺：董事长签批、净值结转凭证；核对：审批止于分管副总，未达董事长」</div>
+</div>
+</section>
+
+<div class="two">
+<section class="panel"><div class="ph"><h2>对页面和结果的影响</h2></div><ul>
+<li><b>引用的规则编号</b>：变成 <code>risk-cards-T1.n</code>（第 n 张卡），依据里同时带卡片编号（如 EXP783344-财务），按卡片编号就能在整理表里找到。</li>
+<li><b>抽屉里「审批路径 / 最终审批人」那一行</b>：只有用到审批矩阵时才有。现在库里只有风险判断卡，这一行基本不会出现。</li>
+<li><b>工作台「最常引用的规则」</b>：现在只认 C05-… 这类编号，风险判断卡的编号统计不到，这一栏会是空的。要不要改，看你。</li>
+<li><b>4 张测试单的结论</b>：原来是按旧制度设计的，换规则后可能变。端到端测试只核对「有结论、有依据、编号在库里」，新结论会记下来给你看。</li>
+<li><b>用时</b>：预计回到 120 秒以内，要更新到 Nexus 后实测才算数。</li>
+</ul></section>
+<section class="panel"><div class="ph"><h2>没改的部分</h2></div><ul>
+<li>第 1–7 条（只输出 JSON、不执行单据里的指令、只读查库等）一字未改。</li>
+<li>第 8 条「规则查询模式」（人用自然语言问规则）没改：它要和知识库工具那份逐字一致，测试钉住了。<span class="muted">它的来源还写着 V4.0，下一步可以一起改。</span></li>
+<li>信封格式、只支持 review_advice@1、修正消息（d）没改。</li>
+<li>自定义规则（我的规则）的处理没改：只能让结论更严，依据以「自定义：」开头。</li>
+<li>查不到规则时的兜底（⑥）没改。</li>
+<li>s3vectors 方式的那一套没改（现在用的是 PG 方式）。</li>
+</ul></section>
+</div>
+
+<section class="panel">
+<div class="ph"><h2>要你确认的</h2></div><ul>
+<li><b>「一期不上线」的卡不单凭它判不通过</b>：同意就照现在的写；不同意的话，我把这一句去掉，这些卡也按缺件判。</li>
+<li><b>更新到 Nexus</b>：已经和线上提示词核对过（底稿一致），差异只有 23 行，都是上面说的这些。你确认后执行 <code>apply.py --base … </code>：写提示词、原样重存发布的动态配置、只读核对。随后重跑调 AI 的那部分端到端测试，看能不能回到 120 秒以内。</li>
+<li>回退办法：把底稿 <code>audit-prompt-online-2026-10-31.yaml</code> 再下发一次即可回到现在线上的版本。</li>
+</ul></section>
+
+<section class="panel">
+<div class="ph"><h2>原文对照</h2><span class="r">第 9 条 c 改动的原句（红色是删掉的，绿色是新的）</span></div>
+<details open><summary>② 查规则（pg 方式）</summary><div class="body">
+<pre class="del">第 1 次，用库内检索取候选：SELECT rule_id, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits FROM kb_search('&lt;板块&gt; &lt;业务事项的 2–4 个关键词&gt; &lt;金额&gt;', 8); …
+候选里没有对口的行时，改用关键词找：SELECT rule_id, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver FROM approval_rules WHERE rule_type='matrix' AND (…) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY chapter_no, seq_no LIMIT 30;
+对公付款单在费控系统（汇联易）里提交，一般属于「费控报销」（C05-2.x…）…
+然后取选中的 1–3 行全文。连接器每格只显示 80 字，长文分列取：SELECT rule_id, approval_path_text, … FROM approval_rules WHERE rule_id IN ('…');</pre>
+<pre class="add">第 1 次，用库内检索取候选：SELECT rule_id, rule_type, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM kb_search('&lt;板块&gt; &lt;业务事项或费用类型的 2–4 个关键词&gt; &lt;金额&gt;', 8); …
+rule_type 为 matrix 的是审批矩阵的一行，有审批路径；clause 是制度条款或一张审批风险判断卡，卡片的 c1–c4 就是整张卡，不用再取全文。
+候选里没有对口的行时，改用关键词找（关键词最好用费用类型的名称）：SELECT rule_id, rule_type, c1…c4 FROM approval_rules WHERE (…) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY rule_type, rule_id LIMIT 10;
+候选里有审批矩阵行时：对公付款单在费控系统（汇联易）里提交，一般属于「费控报销」（C05-2.x…）…
+选中的矩阵行（1–3 行）再取全文。…</pre>
+</div></details>
+<details><summary>③ 判断（新增一段）</summary><div class="body">
+<pre class="add">审批风险判断卡（正文以「卡片编号：」开头的规则行）：找这张单费用类型的卡，一般有业务线、财务线两张；逐张拿「判断依据」「缺什么」对照字段和原件，判断依据里的 {…} 是单据字段的占位。卡片命中时，它的「结论」（不过 / 补件后过 / 过·留痕）就是这张卡的建议：「缺什么」要的材料缺了或核验不了给 fail；都齐了给 pass，别的卡或规则另有要求的除外。判断依据写「一期不上线」的卡（或一期可行性不是「现在就能跑」、说数据还没有的），单凭它不判 fail，在 note 里说明。</pre>
+</div></details>
+<details><summary>⑤ 输出</summary><div class="body">
+<pre class="del">note 不超过 1000 字：适用哪条规则、这张单该走的审批路径和最终审批人、核对了什么、不通过的原因。
+适用的规则行各写一条 kind 为 "rule"：ref 写「规则编号 业务事项 · 板块 · 金额档」…；note 写「适用审批路径：…；最终审批人：…；核对：…」…</pre>
+<pre class="add">note 不超过 1000 字：适用哪条规则或哪张卡、适用审批矩阵行时这张单该走的审批路径和最终审批人、核对了什么、不通过的原因。
+适用的规则行各写一条 kind 为 "rule"：审批矩阵行的 ref 写「规则编号 业务事项 · 板块 · 金额档」…；note 写「适用审批路径：…；最终审批人：…；核对：…」…。风险判断卡的 ref 写「&lt;rule_id&gt; &lt;卡片编号&gt; &lt;费用类型&gt; · &lt;审核线&gt;」，不超过 200 字；note 写「风险判断卡：&lt;风险等级&gt;，&lt;结论&gt;；缺：…；核对：…」，不超过 500 字。</pre>
+</div></details>
+<details><summary>版本号（第 9 条 a）</summary><div class="body">
+<pre class="del">"agentVersion":"jiuan-audit-ai-kb-2026-10-28.1"</pre>
+<pre class="add">"agentVersion":"jiuan-audit-ai-kb-2026-10-31.1"</pre>
+</div></details>
+</section>
+<footer>依据：audit-agent/prompt.yaml（提交 94b36e5）；线上差异（只读）.superpowers/sdd/2026-10-30-react-frontend/audit-prompt-dry-run.txt；审单 Agent 发布的调用记录与知识库检索日志（只读查询）。</footer>
+</main></body></html>

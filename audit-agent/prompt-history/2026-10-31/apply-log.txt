@@ -1,0 +1,27 @@
+--- 线上提示词
++++ prompt.yaml（pg 方式渲染）
+@@ -38 +38 @@
+-         a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-10-28.1"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
++         a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-10-31.1"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
+@@ -43,4 +43,5 @@
+-               第 1 次，用库内检索取候选：SELECT rule_id, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits FROM kb_search('<板块> <业务事项的 2–4 个关键词> <金额>', 8); 关键词用空格隔开，例如「九安 房租 对公付款 单笔3万」：含关键词越多的行越靠前，同样多的按语义相似度排。
+-               候选里没有对口的行时，改用关键词找：SELECT rule_id, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver FROM approval_rules WHERE rule_type='matrix' AND (business_item||' '||coalesce(amount_tier,'')||' '||coalesce(scope_controls,'')) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY chapter_no, seq_no LIMIT 30;
+-               对公付款单在费控系统（汇联易）里提交，一般属于「费控报销」（C05-2.x，适用范围包括对公付款），再看「费控报销特殊事项」（C05-3.x，升级 / 降级事项）有没有命中；税款、投融资、预付款回票等看对应的行。
+-               然后取选中的 1–3 行全文。连接器每格只显示 80 字，长文分列取：SELECT rule_id, approval_path_text, substr(amount_tier,1,80) t1, substr(amount_tier,81,80) t2, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4, substr(scope_controls,321,80) c5, substr(scope_controls,401,80) c6 FROM approval_rules WHERE rule_id IN ('…');
++               第 1 次，用库内检索取候选：SELECT rule_id, rule_type, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM kb_search('<板块> <业务事项或费用类型的 2–4 个关键词> <金额>', 8); 关键词用空格隔开，例如「九安 房租 对公付款 单笔3万」：含关键词越多的行越靠前，同样多的按语义相似度排。
++               rule_type 为 matrix 的是审批矩阵的一行，有审批路径；clause 是制度条款或一张审批风险判断卡，卡片的 c1–c4 就是整张卡，不用再取全文。
++               候选里没有对口的行时，改用关键词找（关键词最好用费用类型的名称）：SELECT rule_id, rule_type, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM approval_rules WHERE (coalesce(business_item,'')||' '||coalesce(amount_tier,'')||' '||coalesce(scope_controls,'')) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY rule_type, rule_id LIMIT 10;
++               候选里有审批矩阵行时：对公付款单在费控系统（汇联易）里提交，一般属于「费控报销」（C05-2.x，适用范围包括对公付款），再看「费控报销特殊事项」（C05-3.x，升级 / 降级事项）有没有命中；税款、投融资、预付款回票等看对应的行。
++               选中的矩阵行（1–3 行）再取全文。连接器每格只显示 80 字，长文分列取：SELECT rule_id, approval_path_text, substr(amount_tier,1,80) t1, substr(amount_tier,81,80) t2, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4, substr(scope_controls,321,80) c5, substr(scope_controls,401,80) c6 FROM approval_rules WHERE rule_id IN ('…');
+@@ -48,0 +50 @@
++               审批风险判断卡（正文以「卡片编号：」开头的规则行）：找这张单费用类型的卡，一般有业务线、财务线两张；逐张拿「判断依据」「缺什么」对照字段和原件，判断依据里的 {…} 是单据字段的占位。卡片命中时，它的「结论」（不过 / 补件后过 / 过·留痕）就是这张卡的建议：「缺什么」要的材料缺了或核验不了给 fail；都齐了给 pass，别的卡或规则另有要求的除外。判断依据写「一期不上线」的卡（或一期可行性不是「现在就能跑」、说数据还没有的），单凭它不判 fail，在 note 里说明。
+@@ -57 +59 @@
+-               note 不超过 1000 字：适用哪条规则、这张单该走的审批路径和最终审批人、核对了什么、不通过的原因。
++               note 不超过 1000 字：适用哪条规则或哪张卡、适用审批矩阵行时这张单该走的审批路径和最终审批人、核对了什么、不通过的原因。
+@@ -59 +61 @@
+-               适用的规则行各写一条 kind 为 "rule"：ref 写「规则编号 业务事项 · 板块 · 金额档」，不超过 200 字，规则编号照库里的 rule_id 原样写（例如 C05-2.3）；note 写「适用审批路径：…；最终审批人：…；核对：…」，不超过 500 字。只写真的查到、真的适用的行，不编造编号。
++               适用的规则行各写一条 kind 为 "rule"：审批矩阵行的 ref 写「规则编号 业务事项 · 板块 · 金额档」，不超过 200 字，规则编号照库里的 rule_id 原样写（例如 C05-2.3）；note 写「适用审批路径：…；最终审批人：…；核对：…」，不超过 500 字。风险判断卡的 ref 写「<rule_id> <卡片编号> <费用类型> · <审核线>」，不超过 200 字；note 写「风险判断卡：<风险等级>，<结论>；缺：…；核对：…」，不超过 500 字。只写真的查到、真的适用的行，不编造编号。
+提示词：已写入
+动态配置：已原样重存 2eef3a9b-bf30-4e02-9e26-8e1c2fc0f34f（连接器 ['conn-6c50c2ea84ea', 'conn-f0c7233959d9']，key_match_mode exact）
+发布描述：已是最新，跳过
+核对通过：快照有第 9 条（7745 字），连接器与密钥匹配方式不变，名片有契约和任务两行（发布修订号 15）
