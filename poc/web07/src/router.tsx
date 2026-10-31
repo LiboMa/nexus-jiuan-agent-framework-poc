@@ -15,6 +15,7 @@ import { Login } from './pages/Login';
 import type { PageKey } from './shell/nav';
 
 const Placeholder = lazy(() => import('./pages/Placeholder').then(module => ({ default: module.Placeholder })));
+const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
 const Documents = lazy(() => import('./pages/Documents').then(module => ({ default: module.Documents })));
 const Knowledge = lazy(() => import('./pages/Knowledge').then(module => ({ default: module.Knowledge })));
 const MyRules = lazy(() => import('./pages/MyRules').then(module => ({ default: module.MyRules })));
@@ -29,7 +30,7 @@ export const routes: RouteObject[] = [
     path: '/',
     element: <SessionGate />,
     children: [
-      { index: true, element: page('dashboard', <Placeholder page="dashboard" />) },
+      { index: true, element: page('dashboard', <Dashboard />) },
       { path: 'documents', element: page('documents', <Documents />) },
       { path: 'knowledge', element: page('knowledge', <Knowledge />) },
       { path: 'my-rules', element: page('myRules', <MyRules />) },

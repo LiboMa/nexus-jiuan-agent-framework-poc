@@ -101,7 +101,8 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
 
   let body: ReactNode;
   if (session.isPending) body = <p role="status" className="m-0 text-13 text-steel">正在读取登录状态…</p>;
-  else if (!admin) body = <Notice title="只有管理员能上传制度" text="需要上传制度请找管理员；你可以在知识库页看制度清单、检索。" />;
+  // 知识库页暂时只给管理员：不再让分析员去那一页
+  else if (!admin) body = <Notice title="只有管理员能上传制度" text="上传制度要由管理员来做：请把制度文件交给管理员上传。" />;
   else if (!agent) body = <AgentNotice mode={mode} />;
   else if (phase === 'pick') {
     body = (

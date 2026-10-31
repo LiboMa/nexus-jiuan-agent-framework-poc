@@ -286,9 +286,12 @@ describe('<UploadPolicyModal open onClose /> on another page (for 工作台)', (
     await user.click(within(dialog).getByRole('button', { name: '上传并入库' }));
     await within(dialog).findByText('入库中');
     await user.click(within(dialog).getByRole('button', { name: '稍后再看' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenLastCalledWith({ ingesting: true });
+    // 宿主没关它（open 一直是 true），弹框还在：Esc 必须再调一次 onClose，而且还说在入库
     await user.keyboard('{Escape}');
-    expect(onClose).toHaveBeenLastCalledWith({ ingesting: true });
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenNthCalledWith(2, { ingesting: true });
   });
 
   it('says what to do when the agent is not enabled, with no drop zone', async () => {
@@ -302,6 +305,9 @@ describe('<UploadPolicyModal open onClose /> on another page (for 工作台)', (
     const { bench } = mount({ role: 'analyst' });
     const dialog = await screen.findByRole('dialog', { name: '上传制度' });
     expect(await within(dialog).findByText('只有管理员能上传制度')).toBeInTheDocument();
+    // 知识库页暂时只给管理员：分析员的提示不再让人去知识库页
+    expect(within(dialog).getByText('上传制度要由管理员来做：请把制度文件交给管理员上传。')).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(/知识库页|检索/);
     expect(within(dialog).queryByText('把制度 .docx 拖到这里，或')).not.toBeInTheDocument();
     expect(bench.find('GET', '/api/analysis/v1/poc/kb/mode')).toEqual([]);
   });
