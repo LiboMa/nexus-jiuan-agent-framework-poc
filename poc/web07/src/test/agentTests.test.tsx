@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TEST_POLL_MS, TEST_WAIT_MS } from '../api/agents';
+import { TEST_POLL_MS, TEST_WAIT_MS, type CallRow } from '../api/agents';
+import { callStatus } from '../agents/labels';
 import { startApp } from './startApp';
 import { AUDIT_PUB, BASIS, CALLS, DESCRIBE_REQUEST, KB_PUB, REVIEW_REQUEST, deferred, fakeAgents, type AgentsOptions } from './agentsFake';
 
@@ -282,6 +283,11 @@ describe('Agent 测试: 请求信封', () => {
 });
 
 describe('调用记录', () => {
+  it('a call still running reads 「审核中」, as on every other page', () => {
+    expect(callStatus({ status: 'running' } as CallRow)).toEqual({ text: '审核中', tone: 'wait' });
+    expect(callStatus({ status: 'completed' } as CallRow).text).toBe('已完成');
+  });
+
   const table = () => screen.findByRole('table', { name: '调用记录' });
   it('time, document number, task, publication, trigger, status, conclusion, duration and error code; folded until 展开 shows the note and basis', async () => {
     const { user } = await openAgents();

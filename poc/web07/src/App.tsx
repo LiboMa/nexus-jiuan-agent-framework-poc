@@ -2,9 +2,9 @@ import { StrictMode, useEffect, useLayoutEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router';
-import { ApiError, setUnauthorizedHandler } from './api/client';
+import { ApiError, setCsrfInvalidHandler, setUnauthorizedHandler } from './api/client';
 import { queryClient } from './api/queryClient';
-import { consumeAccessTicket, exchangeTicketOnce, handleUnauthorized, setLoginNotice } from './api/session';
+import { consumeAccessTicket, exchangeTicketOnce, handleCsrfInvalid, handleUnauthorized, setLoginNotice } from './api/session';
 import { createAppRouter } from './router';
 import { Splash } from './shell/Splash';
 import { TooltipProvider } from './ui/Tooltip';
@@ -19,7 +19,8 @@ export function App({ accessTicket = null }: { accessTicket?: string | null }) {
 
   useLayoutEffect(() => {
     setUnauthorizedHandler(handleUnauthorized);
-    return () => setUnauthorizedHandler(null);
+    setCsrfInvalidHandler(handleCsrfInvalid);
+    return () => { setUnauthorizedHandler(null); setCsrfInvalidHandler(null); };
   }, []);
 
   useEffect(() => {

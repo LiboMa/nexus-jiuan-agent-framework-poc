@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, api, setCsrfToken, setUnauthorizedHandler } from '../api/client';
+import { ApiError, api, setCsrfInvalidHandler, setCsrfToken, setUnauthorizedHandler } from '../api/client';
 import { fakeApi, unauthorized } from './fakeApi';
 
 const rejection = (promise: Promise<unknown>) => promise.then(() => { throw new Error('expected the request to fail'); }, (error: ApiError) => error);
@@ -117,5 +117,27 @@ describe('api()', () => {
       await expect(api(path)).rejects.toMatchObject({ code: 'BAD_PATH' });
     }
     expect(server.calls).toHaveLength(2);
+  });
+});
+
+describe('api(): 403 CSRF_INVALID', () => {
+  it('says the sign-in changed and to reload the page (not 「请求未通过校验。」), and tells the app; other 403s are left as they are', async () => {
+    fakeApi({
+      'POST /api/analysis/v1/poc/reviews': { status: 403, body: { error: { code: 'CSRF_INVALID', message: '请求未通过校验。' } } },
+      'POST /api/analysis/v1/poc/other': { status: 403, body: { error: { code: 'REVIEW_FORBIDDEN', message: '只有管理员和分析员能复核 AI 建议。' } } },
+    });
+    const seen: ApiError[] = [];
+    setCsrfInvalidHandler(error => seen.push(error));
+    try {
+      const error = await rejection(api('/poc/reviews', { method: 'POST', body: {} }));
+      expect(error).toBeInstanceOf(ApiError);
+      expect([error.status, error.code, error.message]).toEqual([403, 'CSRF_INVALID', '登录状态已变化，请刷新页面。']);
+      expect(seen).toEqual([error]);
+      const other = await rejection(api('/poc/other', { method: 'POST', body: {} }));
+      expect(other.message).toBe('只有管理员和分析员能复核 AI 建议。');
+      expect(seen).toHaveLength(1);
+    } finally {
+      setCsrfInvalidHandler(null);
+    }
   });
 });

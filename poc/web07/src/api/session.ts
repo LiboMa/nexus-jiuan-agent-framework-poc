@@ -47,13 +47,17 @@ const markSignedIn = (on: boolean) => {
 };
 const wasSignedIn = () => { try { return window.sessionStorage.getItem(SIGNED_IN_FLAG) === '1'; } catch { return false; } };
 
-/** 读当前会话；没登录（401）回 null。其他错误照常抛出（由界面说明并给「重新读取」）。 */
+/**
+ * 读当前会话；没登录（401）回 null。其他错误照常抛出（由界面说明并给「重新读取」）。
+ * 读到了就把登录页的提示清掉（例如旧入口的票据失效了、Cookie 却还有效：人已经在里面了，那句话不该留到下一次登录页，T1 M2）。
+ */
 export async function fetchSession(): Promise<Session | null> {
   try {
     const session = await api<Session>('/session');
     if (!session?.user || typeof session.csrfToken !== 'string') throw new ApiError(200, 'BAD_RESPONSE', '服务器返回的登录信息不完整，请刷新页面重试。');
     setCsrfToken(session.csrfToken);
     markSignedIn(true);
+    setLoginNotice(null);
     return { ...session, capabilities: session.capabilities ?? {} };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return null;
@@ -106,6 +110,11 @@ async function refreshSession(): Promise<Session | null> {
   return queryClient.fetchQuery({ queryKey: SESSION_KEY, queryFn: fetchSession, staleTime: 0 });
 }
 
+/** 任何接口回 403 CSRF_INVALID 时调用（由应用通过 setCsrfInvalidHandler 挂上）：重新读会话，拿新的令牌；会话没了就回登录页。 */
+export function handleCsrfInvalid() {
+  void queryClient.invalidateQueries({ queryKey: SESSION_KEY });
+}
+
 /** 用票据换会话（九安设 HttpOnly 的会话 Cookie），再重新读会话、拿新的 CSRF 令牌。 */
 export async function exchangeTicket(ticket: string): Promise<Session | null> {
   await api('/auth/exchange', { method: 'POST', body: { ticket } });
@@ -123,9 +132,25 @@ export async function login(account: string, password: string): Promise<Session 
   return session;
 }
 
-/** 退出：通知九安注销会话；不管成没成功，本地都忘掉。 */
+export const LOGOUT_OFFLINE_NOTICE = '退出没有完成：网络断了，服务器上的登录可能还在。请联网后刷新页面，再点一次退出。';
+export const LOGOUT_UNCONFIRMED_NOTICE = '退出没有完成：服务器没有确认，服务器上的登录可能还在。请刷新页面后再点一次退出。';
+
+/**
+ * 退出：通知九安注销会话；不管成没成功，本地都忘掉。没成功（网络断了、服务器没确认）时在登录页说清楚：
+ * 服务器上的会话可能还有效（8 小时），联网后刷新页面会回到里面，再点一次退出（T1 M1）。401 说明服务器上已经没有这个会话了，不用说。
+ */
 export async function logout(): Promise<void> {
-  try { await api('/auth/logout', { method: 'POST' }); } finally { forgetSession(); }
+  let notice: string | null = null;
+  try {
+    await api('/auth/logout', { method: 'POST' });
+  } catch (error) {
+    const status = error instanceof ApiError ? error.status : 0;
+    if (status !== 401) notice = status === 0 ? LOGOUT_OFFLINE_NOTICE : LOGOUT_UNCONFIRMED_NOTICE;
+    throw error;
+  } finally {
+    forgetSession();
+    setLoginNotice(notice);
+  }
 }
 
 const ACCESS_PREFIX = '#access=';

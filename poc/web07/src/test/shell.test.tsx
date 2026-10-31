@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -8,6 +8,7 @@ import { Drawer } from '../ui/Drawer';
 import { Tabs } from '../ui/Tabs';
 import { Tooltip, TooltipProvider } from '../ui/Tooltip';
 import { Button } from '../ui/Button';
+import { LazyPage } from '../shell/LazyPage';
 import { fakeApi, sessionBody } from './fakeApi';
 import { startApp, unmountAll } from './startApp';
 
@@ -167,5 +168,31 @@ describe('CSP: style-src \'self\'', () => {
     await screen.findByRole('dialog', { name: '上传制度' });
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('a page that fails to open (LazyPage)', () => {
+  function Throws({ error }: { error: Error }): never { throw error; }
+  const quiet = () => vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('a chunk that cannot be downloaded: maybe a new version was just released — 刷新页面', () => {
+    const spy = quiet();
+    for (const error of [new TypeError('Failed to fetch dynamically imported module: https://x/assets/Documents-1.js'), new TypeError('error loading dynamically imported module'),
+      new TypeError('Importing a module script failed.'), Object.assign(new Error('Loading chunk 3 failed.'), { name: 'ChunkLoadError' })]) {
+      const { unmount } = render(<LazyPage><Throws error={error} /></LazyPage>);
+      expect(screen.getByText('这一页没有打开')).toBeInTheDocument();
+      expect(screen.getByText(/可能刚发布了新版本/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '刷新页面' })).toBeInTheDocument();
+      unmount();
+    }
+    spy.mockRestore();
+  });
+  it('any other error: says the page ran into an error and offers 刷新页面, without blaming a release', () => {
+    const spy = quiet();
+    render(<LazyPage><Throws error={new TypeError("Cannot read properties of undefined (reading 'length')")} /></LazyPage>);
+    expect(screen.getByText('这一页没有打开')).toBeInTheDocument();
+    expect(screen.getByText('页面出了错，没能显示出来：刷新页面后再试；一直这样请联系管理员。')).toBeInTheDocument();
+    expect(screen.queryByText(/新版本/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '刷新页面' })).toBeInTheDocument();
+    spy.mockRestore();
   });
 });

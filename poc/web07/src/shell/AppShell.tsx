@@ -103,7 +103,7 @@ function Account({ session, collapsed }: { session: Session; collapsed: boolean 
   const roleLabel = ROLE_LABELS[role] ?? '已登录';
   async function signOut() {
     setBusy(true);
-    try { await logout(); } catch { /* 本地已经忘掉会话；服务端的会话 8 小时后自己过期 */ }
+    try { await logout(); } catch { /* 本地已经忘掉会话；没退成的话登录页会说（logout 设了提示） */ }
     navigate('/login', { replace: true });
   }
   const logoutButton = (

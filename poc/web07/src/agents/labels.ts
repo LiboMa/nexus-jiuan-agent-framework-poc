@@ -43,7 +43,7 @@ export function statusOf(agent: AgentRow): { text: string; tone: Tone } {
 
 // ---- 调用记录、测试结果 ----
 
-const CALL_STATUS: Record<string, string> = { completed: '已完成', failed: '没有完成', declined: '没有给出建议', running: '进行中', superseded: '被新一轮取代' };
+const CALL_STATUS: Record<string, string> = { completed: '已完成', failed: '没有完成', declined: '没有给出建议', running: '审核中', superseded: '被新一轮取代' };
 const CALL_TRIGGER: Record<string, string> = { upstream: '自动初审', manual: '单据页发起', person: '单据页发起', test: '测试' };
 export const MODE_TEXT: Record<string, string> = { document: '单据', text: '文本', envelope: '请求信封' };
 export const callStatus = (call: CallRow): { text: string; tone: Tone } => ({

@@ -4,6 +4,8 @@
  * - 非 GET 自动带 X-CSRF-Token（取自 GET /session 的 data.csrfToken）和 Content-Type: application/json。
  * - 解 {data} / {error:{code,message}} 信封；错误照服务端的中文 message 原样给出。
  * - 401（登录接口本身除外）时调用 onUnauthorized()：由应用清会话缓存、回登录页。
+ * - 403 CSRF_INVALID（别的标签页重新登录过，令牌换了）：说「登录状态已变化，请刷新页面。」（不用九安笼统的「请求未通过校验。」），
+ *   并调用 onCsrfInvalid()：由应用重新读会话、拿新的令牌（会话没了就回登录页）。
  */
 export const API_BASE = '/api/analysis/v1';
 
@@ -45,15 +47,19 @@ const fallbackMessage = (status: number) =>
   FALLBACK[status] ?? (status >= 500 ? `服务器出错了（HTTP ${status}），请刷新页面重试；一直这样请联系管理员。` : `请求没有成功（HTTP ${status}），请刷新页面重试。`);
 const hasChinese = (text: unknown): text is string => typeof text === 'string' && /[一-龥]/.test(text);
 
+export const CSRF_INVALID_MESSAGE = '登录状态已变化，请刷新页面。';
+
 // 这几个接口回 401 说的是「账号口令不对」「票据失效」，不是会话过期。
 const SIGN_IN_PATHS = new Set([`${API_BASE}/poc/login`, `${API_BASE}/auth/exchange`, `${API_BASE}/auth/logout`]);
 
 let csrfToken: string | null = null;
 let unauthorizedHandler: ((error: ApiError) => void) | null = null;
+let csrfInvalidHandler: ((error: ApiError) => void) | null = null;
 
 export function setCsrfToken(token: string | null) { csrfToken = token || null; }
 export function getCsrfToken() { return csrfToken; }
 export function setUnauthorizedHandler(handler: ((error: ApiError) => void) | null) { unauthorizedHandler = handler; }
+export function setCsrfInvalidHandler(handler: ((error: ApiError) => void) | null) { csrfInvalidHandler = handler; }
 
 // 只查路径部分：查询串里的 ..（例如搜索 1..2）照样发；路径里的 .. 和它的 %2e 写法（URL 会把它当上一级）都不行。
 const DOT_SEGMENT = /(?:\.|%2e){2}/i;
@@ -96,11 +102,15 @@ export async function api<T = unknown>(path: string, init: ApiInit = {}): Promis
   const envelope = (payload && typeof payload === 'object' ? payload : {}) as { data?: unknown; error?: { code?: unknown; message?: unknown; details?: unknown } };
 
   if (!response.ok) {
-    const error = envelope.error && typeof envelope.error === 'object'
-      ? new ApiError(response.status, typeof envelope.error.code === 'string' ? envelope.error.code : `HTTP_${response.status}`,
-        hasChinese(envelope.error.message) ? envelope.error.message : fallbackMessage(response.status), envelope.error.details)
-      : new ApiError(response.status, 'BAD_RESPONSE', `服务器返回了看不懂的内容（HTTP ${response.status}），请刷新页面重试；一直这样请联系管理员。`);
+    const code = envelope.error && typeof envelope.error === 'object' && typeof envelope.error.code === 'string' ? envelope.error.code : null;
+    const error = response.status === 403 && code === 'CSRF_INVALID'
+      ? new ApiError(403, code, CSRF_INVALID_MESSAGE)
+      : envelope.error && typeof envelope.error === 'object'
+        ? new ApiError(response.status, code ?? `HTTP_${response.status}`,
+          hasChinese(envelope.error.message) ? envelope.error.message : fallbackMessage(response.status), envelope.error.details)
+        : new ApiError(response.status, 'BAD_RESPONSE', `服务器返回了看不懂的内容（HTTP ${response.status}），请刷新页面重试；一直这样请联系管理员。`);
     if (response.status === 401 && !SIGN_IN_PATHS.has(url.split('?')[0])) unauthorizedHandler?.(error);
+    if (error.code === 'CSRF_INVALID') csrfInvalidHandler?.(error);
     throw error;
   }
   if (!('data' in envelope)) throw new ApiError(response.status, 'BAD_RESPONSE', '服务器返回了看不懂的内容，请刷新页面重试；一直这样请联系管理员。');

@@ -131,6 +131,68 @@ describe('session and sign-in', () => {
     expect(screen.queryByText('登录已过期，请重新登录')).not.toBeInTheDocument();
   });
 
+  it('T1 M1: a sign-out the network cut off says so on the sign-in page: the server sign-in may still be live, sign out again once back online', async () => {
+    const server = fakeApi({
+      'GET /api/analysis/v1/session': { body: sessionBody('admin') },
+      'POST /api/analysis/v1/auth/logout': () => { throw new TypeError('Failed to fetch'); },
+    });
+    const { user } = await startApp('#/');
+    const sidebar = await screen.findByRole('complementary', { name: '侧栏' });
+    await user.click(within(sidebar).getByRole('button', { name: '退出登录' }));
+    expect(await screen.findByRole('heading', { name: '登录九安审单' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('退出没有完成：网络断了，服务器上的登录可能还在。请联网后刷新页面，再点一次退出。');
+    expect(server.find('POST', '/api/analysis/v1/auth/logout')).toHaveLength(1);
+    expect(screen.queryByText('登录已过期，请重新登录')).not.toBeInTheDocument();
+  });
+
+  it('T1 M1: a sign-out the server did not confirm says so too', async () => {
+    fakeApi({
+      'GET /api/analysis/v1/session': { body: sessionBody('admin') },
+      'POST /api/analysis/v1/auth/logout': { status: 503, body: { error: { code: 'ANALYSIS_RUNTIME_STOPPING', message: '平台正在重启，请稍候刷新。' } } },
+    });
+    const { user } = await startApp('#/');
+    await user.click(within(await screen.findByRole('complementary', { name: '侧栏' })).getByRole('button', { name: '退出登录' }));
+    expect(await screen.findByRole('heading', { name: '登录九安审单' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('退出没有完成：服务器没有确认，服务器上的登录可能还在。请刷新页面后再点一次退出。');
+  });
+
+  it('T1 M2: a dead #access ticket while the cookie is still good opens the shell, and leaves no stale notice for the next sign-in page', async () => {
+    const server = fakeApi({
+      'GET /api/analysis/v1/session': { body: sessionBody('admin') },
+      'POST /api/analysis/v1/auth/exchange': { status: 401, body: { error: { code: 'TICKET_INVALID', message: '入口已失效，请重新生成本机入口。' } } },
+      'POST /api/analysis/v1/auth/logout': () => {
+        server.routes['GET /api/analysis/v1/session'] = unauthorized;
+        return { body: { data: { loggedOut: true } } };
+      },
+    });
+    const { user } = await startApp('#access=used-ticket');
+    expect(await screen.findByRole('heading', { level: 1, name: '工作台' })).toBeInTheDocument();
+    await user.click(within(screen.getByRole('complementary', { name: '侧栏' })).getByRole('button', { name: '退出登录' }));
+    expect(await screen.findByRole('heading', { name: '登录九安审单' })).toBeInTheDocument();
+    expect(screen.queryByText('入口已失效，请重新生成本机入口。')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('a 403 CSRF_INVALID says the sign-in changed and to reload, instead of Jiuan\'s generic words, and reads the session again', async () => {
+    let csrf = 'csrf-old';
+    const server = fakeApi({
+      'GET /api/analysis/v1/session': () => ({ body: sessionBody('admin', csrf) }),
+      'POST /api/analysis/v1/poc/thing': call => (call.headers.get('X-CSRF-Token') === csrf ? { body: { data: { ok: true } } }
+        : { status: 403, body: { error: { code: 'CSRF_INVALID', message: '请求未通过校验。' } } }),
+    });
+    await startApp('#/');
+    await screen.findByRole('heading', { level: 1, name: '工作台' });
+    const sessions = server.find('GET', '/api/analysis/v1/session').length;
+    csrf = 'csrf-new';   // 别的标签页重新登录过：令牌换了
+    let caught: unknown = null;
+    await act(async () => { caught = await api('/poc/thing', { method: 'POST', body: {} }).catch(error => error); });
+    expect(caught).toMatchObject({ status: 403, code: 'CSRF_INVALID', message: '登录状态已变化，请刷新页面。' });
+    await waitFor(() => expect(server.find('GET', '/api/analysis/v1/session').length).toBe(sessions + 1));
+    // 读回来的新令牌：下一次就过了
+    await act(async () => { await expect(api('/poc/thing', { method: 'POST', body: {} })).resolves.toEqual({ ok: true }); });
+    expect(server.find('POST', '/api/analysis/v1/poc/thing').at(-1)!.headers.get('X-CSRF-Token')).toBe('csrf-new');
+  });
+
   it('a session that cannot be read for another reason shows what happened and a way to retry, not a blank page', async () => {
     let up = false;
     fakeApi({
