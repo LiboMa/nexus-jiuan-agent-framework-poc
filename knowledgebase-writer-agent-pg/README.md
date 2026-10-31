@@ -81,6 +81,8 @@ PostgreSQL + pgvector（kb/ 部署的那一套）
 OP="python3 -I skills/nexus-ai-operator/scripts/nexus.py --profile <你的 profile>"
 ```
 
+**写操作先看再做。** 下文 `call POST` / `PUT` 的命令都没有写 `--yes`：照原样跑，Operator 只打印将要发的请求、不发（退出码 9）；看过、确认这一条之后，再在末尾加 `--yes` 重跑。删除类操作还要 `--confirm-destructive`，每一项单独确认。编码工具照部署手册 `pg-kb-steward-deploy` 第 0 节做（交付 zip 里的 `repo/skills/pg-kb-steward-deploy/SKILL.md`），不替人加 `--yes`。
+
 ## 1　填 deploy.env
 
 ```bash
@@ -126,7 +128,7 @@ Nexus v0.3.28 没有「空白建 Agent」的接口，复制一个最省事：
 
 ```bash
 ${=OP} call GET "/api/v2/agents/<源 AGENT_ID>/clone-preview"        # 看会复制什么、有没有阻止项
-${=OP} call POST "/api/v2/agents/<源 AGENT_ID>/clone" --data '{"name_cn":"知识库文档管家（PG 版）","name_en":"knowledgebase_writer_agent_pg","locale":"zh-CN","description":"把制度文档写进审核 Agent 共用的 PG 规则库，并提供检索与管理"}' --yes
+${=OP} call POST "/api/v2/agents/<源 AGENT_ID>/clone" --data '{"name_cn":"知识库文档管家（PG 版）","name_en":"knowledgebase_writer_agent_pg","locale":"zh-CN","description":"把制度文档写进审核 Agent 共用的 PG 规则库，并提供检索与管理"}'
 ${=OP} call GET "/api/v2/agents/<新 AGENT_ID>/clone-status"          # status=completed
 ```
 
@@ -161,7 +163,7 @@ bash knowledgebase-writer-agent-pg/scripts/admin_run.sh verify --module pg --dir
 用 Agent 和发布的**属主**身份做（Operator 的 profile 就是属主时）：
 
 ```bash
-${=OP} call PUT /api/v2/keys/tool-bindings --data '{"module_path":"imported_tools/<DIR_NAME>/pg_kb_tools","key_name":"pg_kb","key_id":"<KEY_ID>"}' --yes
+${=OP} call PUT /api/v2/keys/tool-bindings --data '{"module_path":"imported_tools/<DIR_NAME>/pg_kb_tools","key_name":"pg_kb","key_id":"<KEY_ID>"}'
 bash knowledgebase-writer-agent-pg/scripts/admin_run.sh verify --module pg --dir <DIR_NAME>      # 3 个都应是 configured=True
 ```
 
@@ -174,7 +176,7 @@ bash knowledgebase-writer-agent-pg/scripts/admin_run.sh verify --module pg --dir
 ```bash
 ${=OP} call GET "/api/v2/agents/<AGENT_ID>/files/prompt" > <仓库外的目录>/prompt-before.json      # 先存一份现在的，回滚用
 python3 -I knowbase-s3vectors-agent/scripts/render.py prompt --package knowledgebase-writer-agent-pg --tool-dir <DIR_NAME>
-${=OP} call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file knowledgebase-writer-agent-pg/.build/prompt-body.json --yes
+${=OP} call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file knowledgebase-writer-agent-pg/.build/prompt-body.json
 ```
 
 - `render.py` 只写本地：`knowledgebase-writer-agent-pg/.build/prompt.yaml` 与 `prompt-body.json`（PUT 的请求体）。它打印一行 JSON，`tools` 应是 `3`（引用了 3 个工具）。
@@ -196,7 +198,7 @@ ${=OP} call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file knowledgeba
 ## 8　发布成 A2A / MCP，发调用密钥，A2A 自测
 
 ```bash
-${=OP} call POST /api/v2/publications --data '{"agent_id":"<AGENT_ID>","channels":["a2a","mcp"],"follow_updates":true,"display_name":"知识库文档管家（PG 版）","description":"把制度文档（Word / Excel / PDF / Markdown）写进审核 Agent 共用的 PG 规则库；kb.rules/v1"}' --yes
+${=OP} call POST /api/v2/publications --data '{"agent_id":"<AGENT_ID>","channels":["a2a","mcp"],"follow_updates":true,"display_name":"知识库文档管家（PG 版）","description":"把制度文档（Word / Excel / PDF / Markdown）写进审核 Agent 共用的 PG 规则库；kb.rules/v1"}'
 curl -s https://<env>.<domain>/a2a/<PUBLISH_ID>/.well-known/agent-card.json | head -c 400      # 公开名片
 bash knowledgebase-writer-agent-pg/scripts/admin_run.sh issue-call-key --publish-id <PUBLISH_ID>  # → .state/a2a-call-key（600）
 ```
@@ -250,7 +252,7 @@ bash knowledgebase-writer-agent-pg/scripts/admin_run.sh verify  --module pg --di
 
 ```bash
 python3 -I knowbase-s3vectors-agent/scripts/render.py prompt --package knowledgebase-writer-agent-pg --tool-dir <DIR_NAME>
-"${OP[@]}" call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file knowledgebase-writer-agent-pg/.build/prompt-body.json --yes
+"${OP[@]}" call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file knowledgebase-writer-agent-pg/.build/prompt-body.json
 ```
 
 - 改共用片段会同时改两个 Agent 的提示词：S3 Vectors 版也要照它的指南重存一次；`admin_test.py` 钉着 S3 Vectors 版的输出，改动是有意的就同步更新那几个哈希。
@@ -461,13 +463,13 @@ Agent 只回工具返回的那个 JSON：不加文字、不改字段、不翻译
 
 1. **提示词**：把第 6 步存下的那一份 PUT 回去。请求体是 `{"content": "<prompt-before.json 里的 content>", "file_type": "prompt"}`，先存成仓库外的一个文件：
    ```bash
-   "${OP[@]}" call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file <仓库外的目录>/prompt-rollback.json --yes
+   "${OP[@]}" call PUT "/api/v2/agents/<AGENT_ID>/files/prompt" --data-file <仓库外的目录>/prompt-rollback.json
    ```
-2. **工具代码**：回到第 N 版（`--profile` 要是管理员的）：`"${OP[@]}" call POST "/api/v2/tools/registered/<TOOL_ID>/versions/<N>/activate" --yes`；或从旧的提交重新打包，照第 10 节发布。
+2. **工具代码**：回到第 N 版（`--profile` 要是管理员的）：`"${OP[@]}" call POST "/api/v2/tools/registered/<TOOL_ID>/versions/<N>/activate"`（看过请求、确认后加 `--yes`）；或从旧的提交重新打包，照第 10 节发布。
 3. **一份制度的数据**：`deactivate` 先下线（可恢复）；要回到旧版本，就用同一个制度标识再入库旧版文件。`delete` 不可恢复。
 4. **向量模型**（换模型后对比或端到端不过）：照 `kb/GUIDE.md` 7.6 第 4 步回退到 Titan：`kb/deploy.env` 里 `EMBED_MODEL_ID` 改回 Titan，`kb/deploy.sh db --dry-run --restore-embeddings` 看过再 `kb/deploy.sh db --restore-embeddings`。要用备份表 `approval_rules_titan_backup`。本 Agent 不用改：向量始终由库里登记的模型算。
 5. **待清理的东西**（参考环境，各自另行确认）：
-   - 测试用的调用密钥：网页上停用，或 `DELETE /api/v2/publications/<PUBLISH_ID>/keys/<CREDENTIAL_ID>`；再删本机的 `knowledgebase-writer-agent-pg/.state/a2a-call-key`。
+   - 测试用的调用密钥：在网页的发布详情里停用。经 Operator 调 `DELETE /api/v2/publications/<PUBLISH_ID>/keys/<CREDENTIAL_ID>` 多半会被拒（连接档位「搭建」不含删除，退出码 4），所以用网页。停用后再删本机的 `knowledgebase-writer-agent-pg/.state/a2a-call-key`。
    - 探针工具目录 `kb_pg_probe_<hash>`，调它的测试会话和那份会话级动态配置；对话端到端在本 Agent 上建的测试会话。
    - 复制 Agent 时带来的旧工具目录。
    - 备份表 `approval_rules_titan_backup`：**留到项目负责人决定**。删了就不能回退到 Titan；不删就不能再迁移一次。删时以 postgres 在 PG 主机上 `DROP TABLE approval_rules_titan_backup`。
