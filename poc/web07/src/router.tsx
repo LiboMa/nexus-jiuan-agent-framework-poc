@@ -14,11 +14,11 @@ import { SessionGate } from './shell/SessionGate';
 import { Login } from './pages/Login';
 import type { PageKey } from './shell/nav';
 
-const Placeholder = lazy(() => import('./pages/Placeholder').then(module => ({ default: module.Placeholder })));
 const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
 const Documents = lazy(() => import('./pages/Documents').then(module => ({ default: module.Documents })));
 const Knowledge = lazy(() => import('./pages/Knowledge').then(module => ({ default: module.Knowledge })));
 const MyRules = lazy(() => import('./pages/MyRules').then(module => ({ default: module.MyRules })));
+const Agents = lazy(() => import('./pages/Agents').then(module => ({ default: module.Agents })));
 const Settings = lazy(() => import('./pages/Settings').then(module => ({ default: module.Settings })));
 
 // key：换页时整页（含「没有打开」的状态）换掉，不带到下一页
@@ -34,7 +34,7 @@ export const routes: RouteObject[] = [
       { path: 'documents', element: page('documents', <Documents />) },
       { path: 'knowledge', element: page('knowledge', <Knowledge />) },
       { path: 'my-rules', element: page('myRules', <MyRules />) },
-      { path: 'agents', element: page('agents', <Placeholder page="agents" />) },
+      { path: 'agents', element: page('agents', <Agents />) },
       { path: 'settings', element: page('settings', <Settings />) },
       { path: '*', element: <Navigate to="/" replace /> },
     ],

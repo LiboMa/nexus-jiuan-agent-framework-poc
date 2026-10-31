@@ -23,6 +23,8 @@ const SHAPES = {
   refresh: <><path d="M5 11V5h12" /><path d="M14 2l3 3-3 3" /><path d="M19 13v6H7" /><path d="M10 22l-3-3 3-3" /></>,
   warning: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 17v2" /></>,
   logout: <><path d="M10 4H4v16h6" /><path d="M14 8l4 4-4 4M18 12H9" /></>,
+  // 方头钥匙：粘贴调用密钥、换钥匙、连接 Nexus。
+  key: <><rect x="3" y="8" width="8" height="8" /><path d="M11 12h10M17 12v4M20 12v3" /></>,
 } satisfies Record<string, ReactElement>;
 
 export type IconName = keyof typeof SHAPES;

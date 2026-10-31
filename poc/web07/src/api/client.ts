@@ -20,11 +20,14 @@ export interface ApiInit {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  /** 服务端随错误给的补充（例如请求信封测试查不过的地方 details.problems）；没有就是 undefined。 */
+  readonly details: unknown;
+  constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -90,12 +93,12 @@ export async function api<T = unknown>(path: string, init: ApiInit = {}): Promis
 
   let payload: unknown;
   try { payload = await response.json(); } catch { payload = undefined; }
-  const envelope = (payload && typeof payload === 'object' ? payload : {}) as { data?: unknown; error?: { code?: unknown; message?: unknown } };
+  const envelope = (payload && typeof payload === 'object' ? payload : {}) as { data?: unknown; error?: { code?: unknown; message?: unknown; details?: unknown } };
 
   if (!response.ok) {
     const error = envelope.error && typeof envelope.error === 'object'
       ? new ApiError(response.status, typeof envelope.error.code === 'string' ? envelope.error.code : `HTTP_${response.status}`,
-        hasChinese(envelope.error.message) ? envelope.error.message : fallbackMessage(response.status))
+        hasChinese(envelope.error.message) ? envelope.error.message : fallbackMessage(response.status), envelope.error.details)
       : new ApiError(response.status, 'BAD_RESPONSE', `服务器返回了看不懂的内容（HTTP ${response.status}），请刷新页面重试；一直这样请联系管理员。`);
     if (response.status === 401 && !SIGN_IN_PATHS.has(url.split('?')[0])) unauthorizedHandler?.(error);
     throw error;
