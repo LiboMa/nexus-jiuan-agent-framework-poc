@@ -3,12 +3,12 @@
  * 「待复核（pending + outdated）/ 已复核（reviewed）/ 全部」。最多读 500 张（每页 50 张），状态 50 张一批问；页签、翻页都在页面里做（Ruling T5d）。
  * 点一行开右侧抽屉（地址 ?doc=<id>）；抽屉开着时表格照样能点，点另一行就换单。提交复核后开「待复核」里的下一张（Ruling T5f）。
  */
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { ApiError } from '../api/client';
 import { useSession } from '../api/session';
-import { POOL_MAX, amountText, itemText, keys, loadPool, loadStates, type DocumentItem, type LatestState } from '../api/documents';
+import { POOL_MAX, SCAN_MAX, amountText, itemText, keys, loadPool, loadStates, type DocumentItem, type LatestState } from '../api/documents';
 import { PageHeader } from '../shell/PageHeader';
 import { DocumentDrawer } from '../documents/DocumentDrawer';
 import { adviceLabel, reviewLabel } from '../documents/labels';
@@ -34,7 +34,8 @@ export function Documents() {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [notice, setNotice] = useState<string | null>(null);
-  const lastOpened = useRef<string | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
 
   const pool = useQuery({ queryKey: keys.pool(q), queryFn: () => loadPool(q) });
   const items = useMemo(() => pool.data?.items ?? [], [pool.data]);
@@ -55,6 +56,11 @@ export function Documents() {
   const current = Math.min(page, pages);
   const rows = shown.slice((current - 1) * PAGE_ROWS, current * PAGE_ROWS);
   const counted = states.isSuccess || ids.length === 0;
+  // 复核的回调可能来自更早的一次渲染（提交还在路上时人换了单）：现在开着哪张、待复核的顺序都从这两个 ref 读
+  const currentDoc = useRef(docParam);
+  currentDoc.current = docParam;
+  const pendingOrder = useRef<string[]>([]);
+  pendingOrder.current = lists.pending.map(item => item.id);
 
   function setDoc(id: string | null) {
     setParams(previous => {
@@ -64,17 +70,18 @@ export function Documents() {
     }, { replace: true });
   }
   function open(id: string) {
-    lastOpened.current = id;
     setNotice(null);
     setDoc(id);
   }
   /** 「待复核」里接着这一张往下的那一张（到底了从头找）；没有了回 null。 */
   function nextPending(from: string): string | null {
-    const order = lists.pending.map(item => item.id);
+    const order = pendingOrder.current;
     const at = order.indexOf(from);
     return [...order.slice(at + 1), ...order.slice(0, Math.max(at, 0))].find(id => id !== from) ?? null;
   }
   function afterReview(id: string) {
+    // 这一次复核提交时人已经换到别的单上了：记下就好，不把人拉走
+    if (currentDoc.current !== id) return;
     const next = nextPending(id);
     if (next) { open(next); return; }
     setDoc(null);
@@ -93,8 +100,16 @@ export function Documents() {
   }));
   const poolItem = docParam ? items.find(item => item.id === docParam) : undefined;
 
+  /** 关抽屉后焦点回到那一行；那一行不在这一页（或已离开这个页签）就落到表格上，表格也没有就落到搜索框。 */
+  function focusAfterClose(closedId: string) {
+    const row = closedId && isRowId(closedId) ? document.querySelector<HTMLButtonElement>(`[data-open-doc="${closedId}"]`) : null;
+    (row ?? tableRef.current ?? searchRef.current)?.focus();
+  }
+
+  const drawerOpen = Boolean(docParam);
   return (
-    <>
+    // 抽屉开着时宽屏（≥ 1280 px）让出它的 430 px（内容区自己有 26 px 右边距，再留 16 px 空），表格每一栏、搜索框都看得见；窄屏照旧叠在上面
+    <div data-testid="pool-content" data-drawer-open={drawerOpen ? 'true' : 'false'} className={cx(drawerOpen && 'xl:mr-[420px]')}>
       <PageHeader
         title="单据池"
         note="对公付款单的 AI 建议与复核"
@@ -103,7 +118,7 @@ export function Documents() {
             <label className="flex h-[30px] w-[240px] items-center gap-2 rounded-ctl border border-line bg-surface px-[10px] text-steel focus-within:border-blue">
               <Icon name="search" size={16} />
               <input
-                type="search" value={draft} onChange={event => setDraft(event.target.value)} maxLength={100} autoComplete="off"
+                ref={searchRef} type="search" value={draft} onChange={event => setDraft(event.target.value)} maxLength={100} autoComplete="off"
                 aria-label="搜索单号、收款方" placeholder="搜索单号、收款方" className="min-w-0 flex-1 bg-transparent text-13 text-ink outline-none placeholder:text-faint"
               />
             </label>
@@ -128,7 +143,7 @@ export function Documents() {
         </div>
       )}
 
-      <Panel className="mt-[14px] overflow-hidden">
+      <Panel className="mt-[14px] overflow-x-auto">
         {pool.isPending ? <p role="status" className="m-0 px-4 py-10 text-center text-13 text-steel">正在读取单据…</p>
           : pool.isError ? (
             <Empty icon="warning" title="单据池没有读出来" description={messageOf(pool.error)}
@@ -146,7 +161,7 @@ export function Documents() {
                     ? <Empty icon="check" title="没有待复核的单据" description="AI 给出新建议后，单据会出现在这里；复核过的在「已复核」里。" />
                     : <Empty title="还没有复核过的单据" description="在「待复核」里打开一张单，采纳或改判 AI 建议后，它会出现在这里。" />
                 ) : (
-                  <PoolTable rows={rows} selected={docParam} stateOf={stateOf} statesReady={states.isSuccess} onOpen={open} />
+                  <PoolTable tableRef={tableRef} rows={rows} selected={docParam} stateOf={stateOf} statesReady={states.isSuccess} onOpen={open} />
                 )}
       </Panel>
 
@@ -158,7 +173,11 @@ export function Documents() {
         </div>
       )}
       {pool.data?.capped && (
-        <p className="m-0 mt-3 text-12 text-steel">只列出了最近的 {POOL_MAX} 张对公付款单：要找更早的单，请按单号或收款方搜索。</p>
+        <p className="m-0 mt-3 text-12 text-steel">
+          {pool.data.stoppedBy === 'scan'
+            ? `只读了最近的 ${SCAN_MAX.toLocaleString('en-US')} 张单据，其中 ${items.length.toLocaleString('en-US')} 张对公付款单：要找更早的单，请按单号或收款方搜索。`
+            : `只列出了最近的 ${POOL_MAX} 张对公付款单：要找更早的单，请按单号或收款方搜索。`}
+        </p>
       )}
 
       <DocumentDrawer
@@ -169,23 +188,23 @@ export function Documents() {
         onReviewed={afterReview}
         onNext={docParam ? () => { const next = nextPending(docParam); if (next) open(next); } : undefined}
         hasNext={docParam ? nextPending(docParam) !== null : false}
-        returnFocus={() => {
-          const id = lastOpened.current;
-          // 编号已按 [a-zA-Z0-9_-] 校验过（loadPool），可以直接放进选择器
-          if (id) document.querySelector<HTMLButtonElement>(`[data-open-doc="${id}"]`)?.focus();
-        }}
+        returnFocus={focusAfterClose}
       />
-    </>
+    </div>
   );
 }
 
-function PoolTable({ rows, selected, stateOf, statesReady, onOpen }: {
-  rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined; statesReady: boolean; onOpen: (id: string) => void;
+// 放进选择器之前再认一次编号（和 loadPool 的校验一样）
+const isRowId = (id: string) => /^[a-zA-Z0-9_-]{1,160}$/.test(id);
+
+function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen }: {
+  tableRef: Ref<HTMLTableElement>; rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined; statesReady: boolean; onOpen: (id: string) => void;
 }) {
   const head = 'whitespace-nowrap border-b border-line px-3 py-[9px] text-left text-12 font-medium text-steel';
   const cell = 'whitespace-nowrap border-b border-line px-3 py-[11px]';
   return (
-    <table aria-label="单据" className="w-full border-collapse">
+    // tabIndex -1：关抽屉后那一行不在屏上时，焦点落在表格上（不进 Tab 顺序）
+    <table ref={tableRef} tabIndex={-1} aria-label="单据" className="w-full border-collapse">
       <thead>
         <tr>
           <th scope="col" className={head}>单号</th>

@@ -20,15 +20,21 @@ const TAG_TONES = {
   neutral: 'border-line bg-surface text-steel',
 } as Record<string, string>;
 
-export function AdviceTab({ id, version, role, advice }: { id: string; version: string; role?: Role; advice: UseQueryResult<Advice, Error> }) {
+/** 从「原件」依据跳到原件页签的那一页。 */
+export interface PageTarget { ref: string; page: number }
+
+export function AdviceTab({ id, version, role, advice, onOpenPage }: {
+  id: string; version: string; role?: Role; advice: UseQueryResult<Advice, Error>; onOpenPage?: (target: PageTarget) => void;
+}) {
   const queryClient = useQueryClient();
   const actor = canAct(role);
+  // 单据编号作为这一次提交的变量：回调写回发起的那张单（抽屉换单时这一页签也整个换掉，见 DocumentDrawer）
   const start = useMutation({
-    mutationFn: () => startAdvice(id, version),
-    onSuccess: data => {
-      queryClient.setQueryData(keys.advice(id), data);
+    mutationFn: (vars: { id: string; version: string }) => startAdvice(vars.id, vars.version),
+    onSuccess: (data, vars) => {
+      queryClient.setQueryData(keys.advice(vars.id), data);
       void queryClient.invalidateQueries({ queryKey: ['reviews'] });
-      void queryClient.invalidateQueries({ queryKey: keys.rounds(id) });
+      void queryClient.invalidateQueries({ queryKey: keys.rounds(vars.id) });
     },
   });
   const value = advice.data;
@@ -39,7 +45,7 @@ export function AdviceTab({ id, version, role, advice }: { id: string; version: 
   if (!value) return null;
 
   const rerun = (label: string) => actor && value.canRun !== false
-    ? <Button size="sm" icon="refresh" busy={start.isPending} disabled={!version} onClick={() => start.mutate()}>{label}</Button>
+    ? <Button size="sm" icon="refresh" busy={start.isPending} disabled={!version} onClick={() => start.mutate({ id, version })}>{label}</Button>
     : null;
   const failure = start.isError ? <p role="alert" className="m-0 mt-2 text-13 text-fail-ink">{start.error.message}</p> : null;
   // 没有权限的人看到的下一步：找能动手的人
@@ -47,7 +53,7 @@ export function AdviceTab({ id, version, role, advice }: { id: string; version: 
 
   const stale = value.stale === true && ['completed', 'failed', 'declined'].includes(value.status);
   if (value.status === 'completed' && !stale && (value.result === 'pass' || value.result === 'fail')) {
-    return <Body><Completed advice={value} action={rerun('重新审核')} />{failure}</Body>;
+    return <Body><Completed advice={value} action={rerun('重新审核')} onOpenPage={onOpenPage} />{failure}</Body>;
   }
   let state: ReactNode;
   if (stale) {
@@ -92,7 +98,7 @@ function State({ icon, tone, title, text, action, children }: { icon: IconName; 
   );
 }
 
-function Completed({ advice, action }: { advice: Advice; action: ReactNode }) {
+function Completed({ advice, action, onOpenPage }: { advice: Advice; action: ReactNode; onOpenPage?: (target: PageTarget) => void }) {
   const pass = advice.result === 'pass';
   const seconds = secondsBetween(advice.startedAt, advice.finishedAt);
   const owner = customRulesOwner(advice.note);
@@ -120,7 +126,7 @@ function Completed({ advice, action }: { advice: Advice; action: ReactNode }) {
       )}
       {basis.length > 0 ? (
         <ul aria-label="依据" className="m-0 mt-2 list-none p-0">
-          {basis.map((item, index) => <BasisRow key={index} item={item} />)}
+          {basis.map((item, index) => <BasisRow key={index} item={item} onOpenPage={onOpenPage} />)}
         </ul>
       ) : <p className="m-0 mt-3 text-13 text-steel">AI 没有列出依据。</p>}
       {note && (
@@ -133,8 +139,9 @@ function Completed({ advice, action }: { advice: Advice; action: ReactNode }) {
   );
 }
 
-function BasisRow({ item }: { item: BasisItem }) {
+function BasisRow({ item, onOpenPage }: { item: BasisItem; onOpenPage?: (target: PageTarget) => void }) {
   const tag = basisTag(item);
+  const page = item.kind === 'evidence' && Number.isSafeInteger(item.page) ? item.page as number : null;
   return (
     <li className="grid grid-cols-[70px_1fr] gap-[10px] border-t border-line py-[10px] first:border-t-0">
       <span data-basis-tag="" data-tone={tag.tone} className={cx('self-start justify-self-start whitespace-nowrap rounded-ctl border px-[6px] py-px text-12 font-semibold', TAG_TONES[tag.tone])}>
@@ -143,7 +150,9 @@ function BasisRow({ item }: { item: BasisItem }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <b className="font-semibold break-words">{tag.title || '—'}</b>
-          {item.kind === 'evidence' && Number.isSafeInteger(item.page) && <span className="text-12 text-steel">第 {item.page} 页</span>}
+          {page !== null && (onOpenPage
+            ? <button type="button" aria-label={`看原件第 ${page} 页`} onClick={() => onOpenPage({ ref: item.ref, page })} className="text-12 text-blue hover:underline">第 {page} 页</button>
+            : <span className="text-12 text-steel">第 {page} 页</span>)}
         </div>
         {item.note && <div className="text-13 text-steel">{item.note}</div>}
       </div>

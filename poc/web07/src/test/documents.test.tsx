@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { startApp } from './startApp';
 import { DOCS, adviceOf, defaultStates, fakeBench, type FakeDoc } from './documentsFake';
 
@@ -46,7 +46,7 @@ describe('单据池: tabs by review state', () => {
     expect(new URLSearchParams(latest[0].search).get('ids')).toBe('doc-1,doc-2,doc-3,doc-4');
   });
 
-  it('names every state of the AI advice with a word, a mark and the next step in the drawer — never an error', async () => {
+  it('names every state of the AI advice in the table with a word and a mark — never an error', async () => {
     const states = defaultStates();
     states.get('doc-2')!.latest = { state: 'no_advice', current: null, review: null };
     states.get('doc-3')!.latest = { state: 'no_advice', current: { round: 1, result: null, status: 'failed' }, review: null };
@@ -101,6 +101,21 @@ describe('单据池: loading and paging (T5d)', () => {
     // 换页签回到第一页
     await user.click(within(tabs()).getByRole('radio', { name: '全部 500' }));
     expect(screen.getByText('第 1 / 25 页')).toBeInTheDocument();
+  });
+
+  it('when the 2,000-row scan stops before 500 payments, the footnote gives the real numbers', async () => {
+    const many: FakeDoc[] = [];
+    for (let n = 1; n <= 2050; n += 1) {
+      const payment = n % 100 === 0; // 每 100 张里只有 1 张对公付款单
+      many.push({ ...DOCS[0], id: `s-${n}`, number: `DGZF-S-${String(n).padStart(4, '0')}`, type: payment ? 'corporate_payment' : 'employee_expense' });
+    }
+    const states = defaultStates(many);
+    for (const s of states.values()) s.latest = { state: 'pending', current: { round: 1, result: 'pass', status: 'completed' }, review: null };
+    const { bench } = await openPool({ docs: many, states });
+    expect(await within(tabs()).findByRole('radio', { name: '待复核 20' }, { timeout: 4000 })).toBeInTheDocument();
+    expect(bench.find('GET', '/api/analysis/v1/documents')).toHaveLength(40);
+    expect(screen.getByText('只读了最近的 2,000 张单据，其中 20 张对公付款单：要找更早的单，请按单号或收款方搜索。')).toBeInTheDocument();
+    expect(screen.queryByText(/只列出了最近的 500 张/)).not.toBeInTheDocument();
   });
 
   it('no footnote when everything fits', async () => {
@@ -166,6 +181,22 @@ describe('单据池: the drawer', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(window.location.hash).toBe('#/documents');
+  });
+
+  it('on wide screens the page makes room for the open drawer, so every column and the search box stay visible (V1, V2)', async () => {
+    const { user } = await openPool();
+    const content = screen.getByTestId('pool-content');
+    expect(content).toHaveAttribute('data-drawer-open', 'false');
+    expect(content.className).not.toMatch(/mr-\[/);
+    await user.click(await screen.findByRole('button', { name: 'DGZF-F07-001' }));
+    await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+    expect(content).toHaveAttribute('data-drawer-open', 'true');
+    // 宽屏（≥ 1280 px）让出抽屉的 430 px（内容区自己有 26 px 右边距，再留 16 px 空）；窄屏照旧叠在上面
+    expect(content.className).toMatch(/(^| )xl:mr-\[420px\]( |$)/);
+    expect(within(content).getByRole('searchbox', { name: '搜索单号、收款方' })).toBeInTheDocument();
+    expect(within(content).getByRole('table', { name: '单据' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(content).toHaveAttribute('data-drawer-open', 'false'));
   });
 
   it('opens straight from the address, and rows open with the keyboard too', async () => {

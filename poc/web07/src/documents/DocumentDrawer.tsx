@@ -14,7 +14,7 @@ import {
 import { Drawer } from '../ui/Drawer';
 import { Pill } from '../ui/Pill';
 import { Tabs } from '../ui/Tabs';
-import { AdviceTab } from './AdviceTab';
+import { AdviceTab, type PageTarget } from './AdviceTab';
 import { DetailTab } from './DetailTab';
 import { EvidenceTab } from './EvidenceTab';
 import { HistoryTab } from './HistoryTab';
@@ -24,7 +24,7 @@ import { EVIDENCE_PENDING, canAct } from './labels';
 
 export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, hasNext, returnFocus }: {
   id: string | null; item?: DocumentItem; role?: Role; onClose: () => void; onReviewed: (id: string) => void;
-  onNext?: () => void; hasNext: boolean; returnFocus?: () => void;
+  onNext?: () => void; hasNext: boolean; returnFocus?: (closedId: string) => void;
 }) {
   // 关的时候（动画还在放）留着上一张的内容
   const last = useRef<string | null>(null);
@@ -35,10 +35,19 @@ export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, ha
   const live = open && valid;
   const docId = shownId ?? '';
   const queryClient = useQueryClient();
-  // 换一张单回到「AI 建议」页签
-  const [tabOf, setTabOf] = useState<{ id: string | null; tab: string }>({ id: null, tab: 'advice' });
-  const tab = tabOf.id === shownId ? tabOf.tab : 'advice';
-  const setTab = (next: string) => setTabOf({ id: shownId, tab: next });
+  // 换一张单回到「AI 建议」页签；从「原件」依据跳过去时带上要看的那一页
+  const [tabOf, setTabOf] = useState<{ id: string | null; tab: string; target: PageTarget | null }>({ id: null, tab: 'advice', target: null });
+  // 关上再打开（哪怕是同一张）也从「AI 建议」开始
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (!open) setTabOf({ id: null, tab: 'advice', target: null });
+  }
+  const mine = tabOf.id === shownId;
+  const tab = mine ? tabOf.tab : 'advice';
+  const target = mine ? tabOf.target : null;
+  const setTab = (next: string) => setTabOf({ id: shownId, tab: next, target: null });
+  const openPage = (page: PageTarget) => setTabOf({ id: shownId, tab: 'evidence', target: page });
 
   const doc = useQuery({ queryKey: keys.document(docId), queryFn: () => fetchDocument(docId), enabled: live });
   const latest = useQuery({ queryKey: keys.latest(docId), queryFn: () => fetchLatest(docId), enabled: live });
@@ -68,12 +77,15 @@ export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, ha
   const body = !valid
     ? <p role="alert" className="m-0 px-[18px] py-6 text-13 text-steel">这个地址里的单据编号不对：请回到单据池重新打开。</p>
     : (
+      // key：换单时页签里的一切（含「重新审核」「读取原件」的提交状态）整个换掉，不带到下一张单上
       <Tabs
-        label="单据内容" value={tab} onValueChange={setTab} className="min-h-0 flex-1"
+        key={docId} label="单据内容" value={tab} onValueChange={setTab} className="min-h-0 flex-1"
+        // 抽屉正文整体滚动时页签栏贴在顶上（跳到原件某一页后还看得到页签）
+        listClassName="sticky top-0 z-10 bg-surface"
         items={[
-          { value: 'advice', label: 'AI 建议', content: <AdviceTab id={docId} version={version} role={role} advice={advice} /> },
+          { value: 'advice', label: 'AI 建议', content: <AdviceTab id={docId} version={version} role={role} advice={advice} onOpenPage={openPage} /> },
           { value: 'evidence', label: '原件', count: Array.isArray(files) ? files.length : undefined,
-            content: <EvidenceTab id={docId} version={version} role={role} evidence={evidence} basis={advice.data?.basis ?? []} /> },
+            content: <EvidenceTab id={docId} version={version} role={role} evidence={evidence} basis={advice.data?.basis ?? []} target={target} /> },
           { value: 'detail', label: '单据信息', content: <DetailTab id={docId} /> },
           { value: 'history', label: '历史', content: <HistoryTab id={docId} /> },
         ]}
@@ -86,7 +98,7 @@ export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, ha
       onOpenChange={next => { if (!next) onClose(); }}
       modal={false}
       closeOnOutside={false}
-      onCloseAutoFocus={event => { event.preventDefault(); returnFocus?.(); }}
+      onCloseAutoFocus={event => { event.preventDefault(); returnFocus?.(docId); }}
       title={data?.number || (doc.isError ? '单据' : '正在读取单据…')}
       headerExtra={(
         <span className="flex min-w-0 items-center gap-2">
@@ -96,7 +108,7 @@ export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, ha
       )}
       subtitle={data ? `${amountText(data.amount, data.currency)} · 提交于 ${dayText(data.submittedAt)}` : undefined}
       footer={!valid ? undefined : canAct(role)
-        ? <ReviewForm key={docId} id={docId} version={version} latest={latest} onReviewed={() => onReviewed(docId)} onNext={onNext} hasNext={hasNext} />
+        ? <ReviewForm key={docId} id={docId} version={version} latest={latest} onReviewed={onReviewed} onNext={onNext} hasNext={hasNext} />
         : role === 'policy_reviewer'
           ? <p className="m-0 text-13 text-steel">你是规则发布复核人，这里只能查看：复核、重新审核和读取原件请换管理员或分析员账号。</p>
           : undefined}

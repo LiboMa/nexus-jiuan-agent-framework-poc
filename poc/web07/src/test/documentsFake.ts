@@ -19,6 +19,8 @@ export interface FakeDocState {
   reviews: Array<Record<string, unknown>>;
   evidence: Record<string, unknown>;
   page: Record<string, unknown>;
+  /** 外壳 /poc/evidence-pages 的 files（按页的文字）。 */
+  pages: Array<Record<string, unknown>>;
 }
 
 const doc = (n: number, companyName: string, title: string, amount: number | string, extra: Partial<FakeDoc> = {}): FakeDoc => ({
@@ -71,6 +73,18 @@ function evidenceOf(d: FakeDoc, over: Record<string, unknown> = {}) {
   };
 }
 
+/** 原件按页的文字（全部虚构；第 3 页故意带尖括号，页面必须当纯文字显示）。 */
+export function pagesOf(d: FakeDoc) {
+  return [
+    { id: 'a-1', name: '虚构合同.pdf', status: 'ready', totalPages: 3, pages: [
+      { page: 1, text: `${d.number} 虚构合同 第一页：甲方示例公司，乙方示例供应商。` },
+      { page: 2, text: '合同金额 110,000 元（虚构）。\n付款方式：验收后付款。' },
+      { page: 3, text: '<b>不是标签</b> 落款（虚构）' },
+    ] },
+    { id: 'a-2', name: '虚构发票.pdf', status: 'extraction_partial', totalPages: 2, pages: [{ page: 1, text: '' }, { page: 2, text: '虚构发票 128,500.00' }] },
+  ];
+}
+
 function pageOf(d: FakeDoc) {
   return {
     supported: true, version: d.version, dataAsOf: '2026-10-30 09:00',
@@ -93,7 +107,7 @@ function pageOf(d: FakeDoc) {
 export function defaultStates(docs = DOCS): Map<string, FakeDocState> {
   const states = new Map<string, FakeDocState>();
   for (const d of docs) {
-    states.set(d.id, { doc: d, advice: adviceOf(d), latest: { state: 'no_advice', current: null, review: null }, rounds: [], reviews: [], evidence: evidenceOf(d), page: pageOf(d) });
+    states.set(d.id, { doc: d, advice: adviceOf(d), latest: { state: 'no_advice', current: null, review: null }, rounds: [], reviews: [], evidence: evidenceOf(d), page: pageOf(d), pages: pagesOf(d) });
   }
   const [d1, d2, d3, d4] = docs;
   const s1 = states.get(d1.id)!;
@@ -163,6 +177,10 @@ export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaul
       const s = states.get(new URLSearchParams(call.search).get('documentId') ?? '');
       return s ? ok({ items: s.reviews }) : refuse(404, 'REVIEW_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
     },
+    [`GET ${API}/poc/evidence-pages`]: call => {
+      const s = states.get(new URLSearchParams(call.search).get('documentId') ?? '');
+      return s ? ok({ documentId: s.doc.id, documentVersion: s.doc.version, files: s.pages }) : refuse(404, 'EVIDENCE_PAGES_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
+    },
     [`GET ${API}/poc/advice-rounds`]: call => {
       const s = states.get(new URLSearchParams(call.search).get('documentId') ?? '');
       return s ? ok({ documentId: s.doc.id, documentVersion: s.doc.version, items: s.rounds }) : refuse(404, 'ADVICE_ROUNDS_NOT_FOUND', '找不到这张单据：刷新单据池后再试。');
@@ -189,4 +207,11 @@ export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaul
   Object.assign(routes, overrides);
   const server = fakeApi(routes);
   return { ...server, states, docs };
+}
+
+/** 一个先不回答的请求：resolve(reply) 时才回。用来测「请求还在路上时换了单」。 */
+export function deferred() {
+  let resolve!: (reply: FakeReply) => void;
+  const promise = new Promise<FakeReply>(done => { resolve = done; });
+  return { route: () => promise, resolve };
 }

@@ -7,7 +7,7 @@ import { useRef, useState, type KeyboardEvent } from 'react';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import {
-  NOTE_MAX, OVERRIDE_REASONS, REASON_LABELS, keys, submitReview, timeText, type AiResult, type LatestState, type OverrideReason, type Review, type ReviewInput,
+  NOTE_MAX, OVERRIDE_REASONS, REASON_LABELS, keys, limitNote, noteLength, submitReview, timeText, type AiResult, type LatestState, type OverrideReason, type ReviewInput,
 } from '../api/documents';
 import { Button } from '../ui/Button';
 import { cx } from '../ui/cx';
@@ -19,33 +19,40 @@ const REFRESH_ON = new Set(['REVIEW_STALE', 'REVIEW_ADVICE_NOT_READY']);
 const field = 'w-full rounded-ctl border border-line bg-surface px-[10px] text-13 text-ink hover:border-faint focus:border-blue disabled:opacity-55';
 
 export function ReviewForm({ id, version, latest, onReviewed, onNext, hasNext }: {
-  id: string; version: string; latest: UseQueryResult<LatestState | null, Error>; onReviewed: (review: Review) => void; onNext?: () => void; hasNext: boolean;
+  id: string; version: string; latest: UseQueryResult<LatestState | null, Error>; onReviewed: (documentId: string) => void; onNext?: () => void; hasNext: boolean;
 }) {
   const queryClient = useQueryClient();
   const [decision, setDecision] = useState<Decision>('adopt');
   const [reason, setReason] = useState<OverrideReason | ''>('');
   const [note, setNote] = useState('');
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  // 正在提交：按钮要等下一次渲染才变灰，连点两下的第二下在这里挡住
+  const inFlight = useRef(false);
   const value = latest.data;
   const ai = value?.current?.result;
   const round = value?.current?.round;
   const ready = Boolean(value && ['pending', 'outdated', 'reviewed'].includes(value.state) && (ai === 'pass' || ai === 'fail') && Number.isSafeInteger(round) && version);
 
+  // 回调里一律用这一次提交的单据（变量），不用渲染时的 id：提交还在路上时人可能已经换了单
   const submit = useMutation({
     mutationFn: (input: ReviewInput) => submitReview(input),
-    onSuccess: ({ review }) => {
+    onSuccess: ({ review }, input) => {
+      const doc = input.documentId;
       // 先把这张单在各处的复核状态改成「已复核」（单据池马上换页签），再整体刷新
       queryClient.setQueriesData<Record<string, LatestState>>({ queryKey: ['reviews', 'latest', 'pool'] },
-        old => (old?.[id] ? { ...old, [id]: { ...old[id], state: 'reviewed', review } } : old));
-      queryClient.setQueryData<LatestState | null>(keys.latest(id), old => (old ? { ...old, state: 'reviewed', review } : old));
+        old => (old?.[doc] ? { ...old, [doc]: { ...old[doc], state: 'reviewed', review } } : old));
+      queryClient.setQueryData<LatestState | null>(keys.latest(doc), old => (old ? { ...old, state: 'reviewed', review } : old));
       void queryClient.invalidateQueries({ queryKey: ['reviews'] });
-      onReviewed(review);
+      void queryClient.invalidateQueries({ queryKey: keys.rounds(doc) });
+      onReviewed(doc);
     },
-    onError: error => {
+    onError: (error, input) => {
       if (error instanceof ApiError && REFRESH_ON.has(error.code)) {
-        for (const key of [keys.advice(id), keys.document(id), keys.rounds(id), ['reviews']]) void queryClient.invalidateQueries({ queryKey: key });
+        const doc = input.documentId;
+        for (const key of [keys.advice(doc), keys.document(doc), keys.rounds(doc), ['reviews']]) void queryClient.invalidateQueries({ queryKey: key });
       }
     },
+    onSettled: () => { inFlight.current = false; },
   });
 
   const trimmed = note.trim();
@@ -55,7 +62,8 @@ export function ReviewForm({ id, version, latest, onReviewed, onNext, hasNext }:
     : decision === 'override' && !picked ? '选一个改判原因再提交'
       : decision === 'override' && picked === 'other' && !trimmed ? '选了「其他」，写上备注再提交' : null;
   function send() {
-    if (!ready || problem || !value?.current || !ai) return;
+    if (inFlight.current || !ready || problem || !value?.current || !ai) return;
+    inFlight.current = true;
     submit.mutate({ documentId: id, sourceVersion: version, round: value.current.round, decision,
       ...(decision === 'override' && picked ? { reason: picked } : {}), ...(decision === 'override' && trimmed ? { note: trimmed } : {}) });
   }
@@ -100,13 +108,14 @@ export function ReviewForm({ id, version, latest, onReviewed, onNext, hasNext }:
         </p>
       )}
 
-      <div role="radiogroup" aria-label="复核结论" className="mt-[10px] grid grid-cols-2 gap-2">
+      {/* 还不能复核时不画两个选项：免得看起来像已经选了「采纳」 */}
+      {ready && <div role="radiogroup" aria-label="复核结论" className="mt-[10px] grid grid-cols-2 gap-2">
         {options.map((option, index) => {
           const on = decision === option.value;
           return (
             <button
               key={option.value} ref={node => { refs.current[index] = node; }} type="button" role="radio" aria-checked={on} tabIndex={on ? 0 : -1}
-              disabled={!ready || submit.isPending} onClick={() => choose(option.value)} onKeyDown={event => onKeyDown(event, index)}
+              disabled={submit.isPending} onClick={() => choose(option.value)} onKeyDown={event => onKeyDown(event, index)}
               className={cx('border bg-surface px-3 py-[10px] text-left disabled:cursor-not-allowed disabled:opacity-55', on ? 'border-blue shadow-[inset_0_0_0_1px_var(--color-blue)]' : 'border-line hover:border-faint')}
             >
               <b className="block text-13 font-semibold">{option.title}</b>
@@ -114,7 +123,7 @@ export function ReviewForm({ id, version, latest, onReviewed, onNext, hasNext }:
             </button>
           );
         })}
-      </div>
+      </div>}
 
       {decision === 'override' && ready && ai && (
         <div className="mt-2 flex flex-col gap-2">
@@ -125,10 +134,10 @@ export function ReviewForm({ id, version, latest, onReviewed, onNext, hasNext }:
           <div>
             <textarea
               aria-label="备注" rows={2} value={note} disabled={submit.isPending}
-              onChange={event => setNote(Array.from(event.target.value).slice(0, NOTE_MAX).join(''))}
+              onChange={event => setNote(limitNote(event.target.value))}
               placeholder={picked === 'other' ? '写一下为什么改判（必填）' : '写一下为什么改判（选填）'} className={cx(field, 'block resize-none py-[6px]')}
             />
-            <div className="mt-[2px] text-right text-12 text-faint">{Array.from(note).length} / {NOTE_MAX}</div>
+            <div className="mt-[2px] text-right text-12 text-steel">{noteLength(note)} / {NOTE_MAX}</div>
           </div>
         </div>
       )}

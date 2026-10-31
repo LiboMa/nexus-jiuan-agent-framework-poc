@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { startApp } from './startApp';
-import { DOCS, FULL_BASIS, adviceOf, defaultStates, fakeBench, roundOf, version } from './documentsFake';
+import { DOCS, FULL_BASIS, adviceOf, defaultStates, deferred, fakeBench, roundOf, version } from './documentsFake';
+import { queryClient } from '../api/queryClient';
 import type { Role } from '../api/session';
 
 // 单据抽屉（样稿 drawer-a.html；Spec 第 6 节、第 9 节；Review Focus 2）。
@@ -86,19 +87,75 @@ describe('drawer: AI 建议', () => {
     expect(reads()).toBe(settled);
   });
 
-  it('does not poll a drawer that was closed or switched to another document', async () => {
+  it('does not poll a drawer that was switched to another document, nor one that was closed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const { bench, drawer } = await openDrawer('doc-4');
+    const states = defaultStates();
+    states.get('doc-1')!.latest = { state: 'pending', current: { round: 1, result: 'fail', status: 'completed' }, review: null };
+    const { bench, drawer } = await openDrawer('doc-4', { states });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     expect(await within(drawer).findByText('AI 正在审核')).toBeInTheDocument();
-    const reads = () => bench.find('GET', '/api/analysis/v1/documents/doc-4/advice').length;
+    const reads = (id: string) => bench.find('GET', `/api/analysis/v1/documents/${id}/advice`).length;
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-    const open = reads();
-    expect(open).toBeGreaterThanOrEqual(2);
-    await user.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(reads('doc-4')).toBeGreaterThanOrEqual(2);
+    // 换到另一张（doc-1 已完成）：doc-4 不再读
+    await user.click(screen.getByRole('radio', { name: /^全部/ }));
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
+    const first = await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+    await within(first).findByRole('region', { name: 'AI 结论' });
+    const switched = reads('doc-4');
     await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
-    expect(reads()).toBe(open);
+    expect(reads('doc-4')).toBe(switched);
+    // 回到 doc-4 再关掉：关了也不读
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-004' }));
+    await within(await screen.findByRole('dialog', { name: 'DGZF-F07-004' })).findByText('AI 正在审核');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const closed = reads('doc-4');
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+    expect(reads('doc-4')).toBe(closed);
+  });
+
+  it('a failed 「重新审核」 on one document does not follow the user to the next one', async () => {
+    const { drawer, user } = await openDrawer('doc-1', { overrides: {
+      'POST /api/analysis/v1/documents/doc-1/advice': { status: 429, body: { error: { code: 'RATE_LIMIT', message: '操作太频繁，请一分钟后再试。' } } },
+      'POST /api/analysis/v1/documents/doc-1/evidence/read': { status: 429, body: { error: { code: 'RATE_LIMIT', message: '读取太频繁，请一分钟后再试。' } } },
+    } });
+    await within(drawer).findByRole('region', { name: 'AI 结论' });
+    await user.click(within(drawer).getByRole('button', { name: '重新审核' }));
+    expect(await within(drawer).findByRole('alert')).toHaveTextContent('操作太频繁，请一分钟后再试。');
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-002' }));
+    const second = await screen.findByRole('dialog', { name: 'DGZF-F07-002' });
+    await within(second).findByRole('region', { name: 'AI 结论' });
+    expect(within(second).queryByRole('alert')).not.toBeInTheDocument();
+    // 原件也一样
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
+    const back = await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+    await user.click(await within(back).findByRole('tab', { name: /^原件/ }));
+    await user.click(await within(back).findByRole('button', { name: '读取原件' }));
+    expect(await within(back).findByRole('alert')).toHaveTextContent('读取太频繁，请一分钟后再试。');
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-002' }));
+    const again = await screen.findByRole('dialog', { name: 'DGZF-F07-002' });
+    await user.click(await within(again).findByRole('tab', { name: /^原件/ }));
+    await within(again).findByRole('button', { name: '读取原件' });
+    expect(within(again).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('a 「重新审核」 still on its way when the user switches lands on its own document, not on the one now open', async () => {
+    const late = deferred();
+    const { drawer, user, bench } = await openDrawer('doc-1', { overrides: { 'POST /api/analysis/v1/documents/doc-1/advice': late.route } });
+    await within(drawer).findByRole('region', { name: 'AI 结论' });
+    await user.click(within(drawer).getByRole('button', { name: '重新审核' }));
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-002' }));
+    const second = await screen.findByRole('dialog', { name: 'DGZF-F07-002' });
+    expect(await within(second).findByText('建议通过')).toBeInTheDocument();
+    const roundsBefore = bench.find('GET', '/api/analysis/v1/poc/advice-rounds').length;
+    await act(async () => { late.resolve({ status: 202, body: { data: adviceOf(DOCS[0], { status: 'running', result: null, basis: [], finishedAt: null, canRun: false }) } }); });
+    // doc-2 还是它自己的建议；doc-1 的回答记在 doc-1 上
+    await waitFor(() => expect(queryClient.getQueryData(['advice', 'doc-1'])).toMatchObject({ documentId: 'doc-1', status: 'running' }));
+    expect(queryClient.getQueryData(['advice', 'doc-2'])).toMatchObject({ documentId: 'doc-2', status: 'completed' });
+    expect(within(second).getByText('建议通过')).toBeInTheDocument();
+    expect(within(second).queryByText('AI 正在审核')).not.toBeInTheDocument();
+    expect(bench.find('GET', '/api/analysis/v1/poc/advice-rounds').length).toBe(roundsBefore);
   });
 
   it('no advice yet: says so and how it starts; admin can start one', async () => {
@@ -205,6 +262,48 @@ describe('drawer: 原件, 单据信息, 历史', () => {
     await user.click(within(drawer).getByRole('button', { name: '读取原件' }));
     expect(bench.find('POST', '/api/analysis/v1/documents/doc-1/evidence/read').map(call => call.body)).toEqual([{ sourceVersion: version(1) }]);
     expect(await within(drawer).findByText('正在读取原件')).toBeInTheDocument();
+  });
+
+  it('原件 shows each file\'s pages, page numbers labelled, text as plain text in a scrollable block', async () => {
+    const { drawer, user, bench } = await openDrawer('doc-1', as('policy_reviewer'));
+    await user.click(await within(drawer).findByRole('tab', { name: '原件 3' }));
+    const contract = await within(drawer).findByRole('region', { name: '虚构合同.pdf 的文字' });
+    const pages = within(contract).getAllByRole('article');
+    expect(pages.map(page => page.getAttribute('aria-label'))).toEqual(['虚构合同.pdf 第 1 页', '虚构合同.pdf 第 2 页', '虚构合同.pdf 第 3 页']);
+    expect(within(pages[1]).getByText('第 2 页')).toBeInTheDocument();
+    expect(pages[1].querySelector('[data-page-text]')).toHaveTextContent('合同金额 110,000 元（虚构）。 付款方式：验收后付款。');
+    expect(pages[1].querySelector('[data-page-text]')!.className).toMatch(/overflow-auto/);
+    // 尖括号照原样显示，不当成标签
+    expect(pages[2].querySelector('[data-page-text]')!.textContent).toBe('<b>不是标签</b> 落款（虚构）');
+    expect(pages[2].querySelector('b')).toBeNull();
+    const invoice = within(drawer).getByRole('region', { name: '虚构发票.pdf 的文字' });
+    expect(within(invoice).getAllByRole('article')[0]).toHaveTextContent('这一页没有识别出文字');
+    expect(new URLSearchParams(bench.find('GET', '/api/analysis/v1/poc/evidence-pages')[0].search).get('documentId')).toBe('doc-1');
+  });
+
+  it('an 「原件」 basis item opens the 原件 tab at the page the AI cited', async () => {
+    const { drawer, user } = await openDrawer('doc-1');
+    await within(drawer).findByRole('region', { name: 'AI 结论' });
+    await user.click(within(drawer).getByRole('button', { name: '看原件第 2 页' }));
+    expect(within(drawer).getByRole('tab', { name: '原件 3' })).toHaveAttribute('aria-selected', 'true');
+    const cited = await within(drawer).findByRole('article', { name: '虚构合同.pdf 第 2 页' });
+    expect(cited).toHaveAttribute('aria-current', 'true');
+    expect(within(cited).getByText('AI 引用')).toBeInTheDocument();
+    expect(within(drawer).getByRole('article', { name: '虚构合同.pdf 第 1 页' })).not.toHaveAttribute('aria-current');
+    // 关上再打开同一张：回到「AI 建议」
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
+    const again = await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+    expect(within(again).getByRole('tab', { name: 'AI 建议' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('原件 without any read text says how to get it', async () => {
+    const states = defaultStates();
+    states.get('doc-1')!.pages = [];
+    const { drawer, user } = await openDrawer('doc-1', { states });
+    await user.click(await within(drawer).findByRole('tab', { name: '原件 3' }));
+    expect(await within(drawer).findByText(/还没有读出文字的原件/)).toBeInTheDocument();
   });
 
   it('单据信息 shows the fields, the payment lines and the approval flow from the 1:1 page', async () => {

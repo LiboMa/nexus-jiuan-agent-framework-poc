@@ -22,25 +22,30 @@ export const CORPORATE_PAYMENT = 'corporate_payment';
 export const POOL_MAX = 500;
 export const LIST_PAGE = 50;
 /** 夹着别的类型时最多翻这么多张，免得一直翻下去。 */
-const SCAN_MAX = 2000;
+export const SCAN_MAX = 2000;
 const DOCUMENT_ID = /^[a-zA-Z0-9_-]{1,160}$/;
 export const isDocumentId = (id: unknown): id is string => typeof id === 'string' && DOCUMENT_ID.test(id);
 const enc = encodeURIComponent;
 
-/** 当前搜索下的对公付款单，按九安的顺序（最近收到的在前）；capped = 后面还有没读的。 */
-export async function loadPool(q: string): Promise<{ items: DocumentItem[]; capped: boolean }> {
+/**
+ * 当前搜索下的对公付款单，按九安的顺序（最近收到的在前）。capped = 后面还有没读的；stoppedBy 说停在哪：
+ * 'max' 读满 500 张对公付款单，'scan' 翻满 2,000 张单据（夹着别的类型）还没满 500 张。scanned = 翻过的单据数。
+ */
+export async function loadPool(q: string): Promise<{ items: DocumentItem[]; capped: boolean; stoppedBy: 'max' | 'scan' | null; scanned: number }> {
   const found = new Map<string, DocumentItem>();
-  let offset = 0, more = true;
+  let offset = 0, more = true, scanned = 0;
   while (more && found.size < POOL_MAX && offset < SCAN_MAX) {
     const params = new URLSearchParams({ ...(q ? { q } : {}), limit: String(LIST_PAGE), offset: String(offset) });
     const page = await api<{ items?: DocumentItem[]; total?: number }>(`/documents?${params}`);
     const rows = Array.isArray(page?.items) ? page.items : [];
+    scanned += rows.length;
     for (const row of rows) if (row?.type === CORPORATE_PAYMENT && isDocumentId(row.id) && !found.has(row.id)) found.set(row.id, row);
     offset += LIST_PAGE;
     more = rows.length === LIST_PAGE && !(typeof page?.total === 'number' && offset >= page.total);
   }
   const items = [...found.values()];
-  return { items: items.slice(0, POOL_MAX), capped: more || items.length > POOL_MAX };
+  const capped = more || items.length > POOL_MAX;
+  return { items: items.slice(0, POOL_MAX), capped, stoppedBy: !capped ? null : items.length >= POOL_MAX ? 'max' : 'scan', scanned };
 }
 
 export const fetchDocument = (id: string) => api<DocumentItem>(`/documents/${enc(id)}`);
@@ -81,6 +86,14 @@ export const REASON_LABELS: Record<OverrideReason, string> = {
   evidence_missing: '原件缺失或不符', amount_mismatch: '金额不符', payee_mismatch: '收款方不符', other: '其他',
 };
 export const NOTE_MAX = 200;
+/** 备注的字数：和外壳 reviews.mjs 一样，去掉首尾空白后按码点数。 */
+export const noteLength = (note: string) => Array.from(note.trim()).length;
+/** 备注输入框的值：去掉首尾空白后最多 NOTE_MAX 个码点（开头的空白留着，超出的从后面截掉）。 */
+export function limitNote(value: string): string {
+  if (noteLength(value) <= NOTE_MAX) return value;
+  const lead = /^\s*/.exec(value)?.[0] ?? '';
+  return lead + Array.from(value.slice(lead.length)).slice(0, NOTE_MAX).join('');
+}
 
 export interface ReviewInput { documentId: string; sourceVersion: string; round: number; decision: 'adopt' | 'override'; reason?: OverrideReason; note?: string }
 export const submitReview = (input: ReviewInput) => api<{ review: Review }>('/poc/reviews', { method: 'POST', body: input });
@@ -126,6 +139,13 @@ export interface Evidence {
 export const fetchEvidence = (id: string) => api<Evidence>(`/documents/${enc(id)}/evidence`);
 export const readEvidence = (id: string, sourceVersion: string) => api<Evidence>(`/documents/${enc(id)}/evidence/read`, { method: 'POST', body: { sourceVersion } });
 
+/** 原件按页的文字（外壳 /poc/evidence-pages，Ruling T5g；九安的 evidence 接口不给文字）。文字只当纯文字显示。 */
+export interface EvidencePages {
+  documentId: string; documentVersion: string;
+  files: Array<{ id: string; name: string; status: string | null; totalPages: number | null; pages: Array<{ page: number; text: string }> }>;
+}
+export const fetchEvidencePages = (id: string) => api<EvidencePages>(`/poc/evidence-pages?documentId=${enc(id)}`);
+
 // ---- 单据页模型（九安 document-page-model：值都已格式化好）----
 
 export interface PageModel {
@@ -159,6 +179,7 @@ export const keys = {
   document: (id: string) => ['document', id] as const,
   advice: (id: string) => ['advice', id] as const,
   evidence: (id: string) => ['evidence', id] as const,
+  evidencePages: (id: string) => ['evidence-pages', id] as const,
   page: (id: string) => ['document-page', id] as const,
   rounds: (id: string) => ['advice-rounds', id] as const,
 };
