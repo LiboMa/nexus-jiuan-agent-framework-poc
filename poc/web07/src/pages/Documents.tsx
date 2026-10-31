@@ -71,8 +71,8 @@ export function Documents() {
   const current = Math.min(page, pages);
   const rows = shown.slice((current - 1) * PAGE_ROWS, current * PAGE_ROWS);
   const counted = states.isSuccess || ids.length === 0;
-  // 这一页有审核中的行（等它出结果），或「待复核」是空的（等新的单）：每 12 秒问一次
-  pollStates.current = polling && states.isSuccess && (rows.some(item => states.data?.[item.id]?.state === 'running') || lists.pending.length === 0);
+  // 单据池里有审核中的单（等它出结果；默认的「待复核」页签里看不到它们），或「待复核」是空的（等新的单）：每 12 秒问一次
+  pollStates.current = polling && states.isSuccess && (items.some(item => states.data?.[item.id]?.state === 'running') || lists.pending.length === 0);
   // 复核的回调可能来自更早的一次渲染（提交还在路上时人换了单）：现在开着哪张、待复核的顺序都从这两个 ref 读
   const currentDoc = useRef(docParam);
   currentDoc.current = docParam;

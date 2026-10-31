@@ -290,6 +290,21 @@ describe('单据池: refreshes while it is open (F2)', () => {
     expect(listCalls(bench)).toBe(1);
   });
 
+  it('on the default 待复核 tab it still waits for a round running elsewhere in the pool', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench } = await openPool();
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    const before = latestCalls(bench);
+    // doc-4 在「全部」里审核中；人一直停在「待复核」
+    bench.states.get('doc-4')!.latest = { state: 'pending', current: { round: 1, result: 'pass', status: 'completed' }, review: null };
+    await advance(12_500);
+    expect(latestCalls(bench)).toBe(before + 1);
+    expect(await within(tabs()).findByRole('radio', { name: '待复核 3' })).toBeInTheDocument();
+    expect(rowOf('DGZF-F07-004')).toBeInTheDocument();
+    await advance(40_000);
+    expect(latestCalls(bench)).toBe(before + 1);
+  });
+
   it('while 待复核 is empty it keeps asking, so new work shows up by itself', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const states = defaultStates();
