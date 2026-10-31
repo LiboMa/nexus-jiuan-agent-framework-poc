@@ -62,7 +62,7 @@ const send = (res, status, payload) => { res.writeHead(status, { 'Content-Type':
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = value => typeof value === 'string' && TEXT.test(value) && value.trim() === value;
 const absent = value => value === undefined || value === null;
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/u;
+const ISO_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(?:Z|([+-])(\d{2}):(\d{2}))$/u;
 const CODE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
 const COLUMNS = 'id, document_id, document_version, advice_round, ai_result, decision, final_result, reason, note, actor, created_at';
@@ -84,10 +84,25 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS poc_review_decisions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`;
 /** ISO 时间 ↔ UTC 的 DATETIME(3) 文字（'2026-10-30 08:00:01.000'），不经 pool 的时区换算。 */
 const sqlTime = at => new Date(at).toISOString().slice(0, 23).replace('T', ' ');
-/** 统计起点：Date，或带时差（Z / ±hh:mm）的 ISO 时间；DATETIME 只到 1000–9999 年。别的一律 REVIEW_INVALID。 */
+/**
+ * 带时差的 ISO 时间 → Date；日历上没有的（2026-02-30、24:00、:60 秒、时差 +24:00 …）回 null，不像 new Date() 那样滚到下一天：
+ * 按写的时刻（不算时差）拼一个 UTC 时间，toISOString() 回来的年月日时分秒毫秒要和写的一样，再减时差。
+ */
+function isoDate(text) {
+  const parts = ISO_TIME.exec(text);
+  if (!parts) return null;
+  const [, year, month, day, hour, minute, second = '00', fraction = '', sign, offsetHours = '00', offsetMinutes = '00'] = parts;
+  if (Number(offsetHours) > 23 || Number(offsetMinutes) > 59) return null;
+  const wall = `${year}-${month}-${day}T${hour}:${minute}:${second}.${fraction.padEnd(3, '0')}Z`;
+  const ms = Date.parse(wall);
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== wall) return null;
+  const offset = (sign === '-' ? -1 : 1) * (Number(offsetHours) * 60 + Number(offsetMinutes)) * 60_000;
+  return new Date(ms - offset);
+}
+/** 统计起点：Date，或带时差（Z / ±hh:mm）、日历上有的 ISO 时间；DATETIME 只到 1000–9999 年。别的一律 REVIEW_INVALID。 */
 function sinceOf(since) {
   if (absent(since)) return new Date(0);
-  const at = since instanceof Date ? since : typeof since === 'string' && ISO_TIME.test(since) ? new Date(since) : null;
+  const at = since instanceof Date ? since : typeof since === 'string' ? isoDate(since) : null;
   const year = at ? at.getUTCFullYear() : NaN;
   if (!(year >= 1000 && year <= 9999)) fail('REVIEW_INVALID', INVALID.since);
   return at;
