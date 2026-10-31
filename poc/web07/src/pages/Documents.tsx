@@ -198,7 +198,7 @@ export function Documents() {
                     ? <Empty icon="check" title="没有待复核的单据" description="AI 给出新建议后，单据会出现在这里；复核过的在「已复核」里。" />
                     : <Empty title="还没有复核过的单据" description="在「待复核」里打开一张单，采纳或改判 AI 建议后，它会出现在这里。" />
                 ) : (
-                  <PoolTable tableRef={tableRef} rows={rows} selected={docParam} stateOf={stateOf} statesReady={states.isSuccess} onOpen={open} />
+                  <PoolTable tableRef={tableRef} rows={rows} selected={docParam} stateOf={stateOf} statesReady={states.isSuccess} onOpen={open} compact={drawerOpen} />
                 )}
       </Panel>
 
@@ -231,14 +231,26 @@ export function Documents() {
   );
 }
 
-function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen }: {
+/**
+ * 抽屉开着时（compact，P1）：宽屏上表格只剩视口减去侧栏和抽屉的宽度（1280 px、侧栏展开时约 586 px），六栏都要放下、不横向滚动——
+ * 单号、金额、AI 建议、复核定宽（放得下单号、百万级的金额和最长的状态），板块和事项平分剩下的，最多两行，放不下的截掉（悬停看全文）；格子左右边距收窄。
+ */
+const COMPACT_WIDTHS = [116, null, null, 104, 112, 128] as const;
+
+function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen, compact }: {
   tableRef: Ref<HTMLTableElement>; rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined; statesReady: boolean; onOpen: (id: string) => void;
+  compact: boolean;
 }) {
-  const head = 'whitespace-nowrap border-b border-line px-3 py-[9px] text-left text-12 font-medium text-steel';
-  const cell = 'whitespace-nowrap border-b border-line px-3 py-[11px]';
+  const pad = compact ? 'px-2' : 'px-3';
+  const head = cx('whitespace-nowrap border-b border-line py-[9px] text-left text-12 font-medium text-steel', pad);
+  const cell = cx('whitespace-nowrap border-b border-line py-[11px]', pad);
+  // 板块、事项：宽的时候一行、截到最宽；挤的时候最多两行
+  const wraps = (wide: string) => (compact ? cx('border-b border-line py-[11px]', pad) : cx(cell, wide));
+  const clamp = 'line-clamp-2 whitespace-normal [overflow-wrap:anywhere]';
   return (
     // tabIndex -1：关抽屉后那一行不在屏上时，焦点落在表格上（不进 Tab 顺序）
-    <table ref={tableRef} tabIndex={-1} aria-label="单据" className="w-full border-collapse">
+    <table ref={tableRef} tabIndex={-1} aria-label="单据" className={cx('w-full border-collapse', compact && 'table-fixed')}>
+      {compact && <colgroup>{COMPACT_WIDTHS.map((width, index) => <col key={index} style={width ? { width } : undefined} />)}</colgroup>}
       <thead>
         <tr>
           <th scope="col" className={head}>单号</th>
@@ -263,8 +275,12 @@ function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen }: {
               <td className={cell}>
                 <button type="button" data-open-doc={item.id} className="font-semibold text-ink hover:text-blue">{item.number || item.id}</button>
               </td>
-              <td className={cx(cell, 'max-w-[180px] truncate')}>{item.companyName || '—'}</td>
-              <td className={cx(cell, 'max-w-[260px] truncate text-steel')}>{itemText(item)}</td>
+              <td className={wraps('max-w-[180px] truncate')}>
+                {compact ? <span className={clamp} title={item.companyName || undefined}>{item.companyName || '—'}</span> : item.companyName || '—'}
+              </td>
+              <td className={cx(wraps('max-w-[260px] truncate'), 'text-steel')}>
+                {compact ? <span className={clamp} title={itemText(item)}>{itemText(item)}</span> : itemText(item)}
+              </td>
               <td className={cx(cell, 'text-right')}>{amountText(item.amount, item.currency)}</td>
               <td className={cell}>{advice ? <Pill tone={advice.tone} icon={advice.icon}>{advice.text}</Pill> : <span className="text-faint">—</span>}</td>
               <td className={cell}>

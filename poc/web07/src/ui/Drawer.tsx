@@ -27,7 +27,8 @@ export function Drawer({ open, onOpenChange, title, subtitle, headerExtra, foote
         >
           <header className="px-[18px] pt-4">
             <div className="flex items-center gap-2">
-              <Dialog.Title className="m-0 truncate text-16 font-semibold">{title}</Dialog.Title>
+              {/* 单号不让位：头部挤的时候先截后面的公司 · 事项 */}
+              <Dialog.Title className="m-0 max-w-[60%] shrink-0 truncate text-16 font-semibold">{title}</Dialog.Title>
               {headerExtra}
               <Dialog.Close className="-mr-1 ml-auto grid h-[26px] w-[26px] shrink-0 place-items-center rounded-ctl text-steel hover:bg-canvas hover:text-ink" aria-label="关闭">
                 <Icon name="close" />

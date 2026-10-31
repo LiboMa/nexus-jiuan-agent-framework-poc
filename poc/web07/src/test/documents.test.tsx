@@ -200,6 +200,27 @@ describe('单据池: the drawer', () => {
     await waitFor(() => expect(content).toHaveAttribute('data-drawer-open', 'false'));
   });
 
+  it('P1: with the drawer open the six columns pack in from 1280 px up — fixed widths for 单号 / 金额 / AI 建议 / 复核, 板块 and 事项 share the rest on up to two lines', async () => {
+    const { user } = await openPool();
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    expect(table().className).not.toMatch(/table-fixed/);
+    expect(table().querySelector('colgroup')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
+    await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+    expect(table().className).toMatch(/(^| )table-fixed( |$)/);
+    expect([...table().querySelectorAll('col')].map(col => (col as HTMLElement).style.width)).toEqual(['116px', '', '', '104px', '112px', '128px']);
+    const row = rowOf('DGZF-F07-001');
+    for (const text of ['九安', '房租 · 年度框架合同']) {
+      const cell = within(row).getByText(text);
+      expect(cell.className).toMatch(/line-clamp-2/);
+      expect(cell).toHaveAttribute('title', text);
+    }
+    // 单号、金额、两个状态不折行
+    expect(within(row).getByText('¥36,000.00').closest('td')!.className).toMatch(/whitespace-nowrap/);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(table().className).not.toMatch(/table-fixed/));
+  });
+
   it('opens straight from the address, and rows open with the keyboard too', async () => {
     const { user } = await openPool({}, '#/documents?doc=doc-3');
     expect(await screen.findByRole('dialog', { name: 'DGZF-F07-003' })).toBeInTheDocument();

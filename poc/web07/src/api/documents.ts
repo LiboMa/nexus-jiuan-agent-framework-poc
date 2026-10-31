@@ -29,23 +29,22 @@ const enc = encodeURIComponent;
 
 /**
  * 当前搜索下的对公付款单，按九安的顺序（最近收到的在前）。capped = 后面还有没读的；stoppedBy 说停在哪：
- * 'max' 读满 500 张对公付款单，'scan' 翻满 2,000 张单据（夹着别的类型）还没满 500 张。scanned = 翻过的单据数。
+ * 'max' 读满 500 张对公付款单，'scan' 翻满 2,000 张单据（夹着别的类型）还没满 500 张。
  */
-export async function loadPool(q: string): Promise<{ items: DocumentItem[]; capped: boolean; stoppedBy: 'max' | 'scan' | null; scanned: number }> {
+export async function loadPool(q: string): Promise<{ items: DocumentItem[]; capped: boolean; stoppedBy: 'max' | 'scan' | null }> {
   const found = new Map<string, DocumentItem>();
-  let offset = 0, more = true, scanned = 0;
+  let offset = 0, more = true;
   while (more && found.size < POOL_MAX && offset < SCAN_MAX) {
     const params = new URLSearchParams({ ...(q ? { q } : {}), limit: String(LIST_PAGE), offset: String(offset) });
     const page = await api<{ items?: DocumentItem[]; total?: number }>(`/documents?${params}`);
     const rows = Array.isArray(page?.items) ? page.items : [];
-    scanned += rows.length;
     for (const row of rows) if (row?.type === CORPORATE_PAYMENT && isDocumentId(row.id) && !found.has(row.id)) found.set(row.id, row);
     offset += LIST_PAGE;
     more = rows.length === LIST_PAGE && !(typeof page?.total === 'number' && offset >= page.total);
   }
   const items = [...found.values()];
   const capped = more || items.length > POOL_MAX;
-  return { items: items.slice(0, POOL_MAX), capped, stoppedBy: !capped ? null : items.length >= POOL_MAX ? 'max' : 'scan', scanned };
+  return { items: items.slice(0, POOL_MAX), capped, stoppedBy: !capped ? null : items.length >= POOL_MAX ? 'max' : 'scan' };
 }
 
 export const fetchDocument = (id: string) => api<DocumentItem>(`/documents/${enc(id)}`);

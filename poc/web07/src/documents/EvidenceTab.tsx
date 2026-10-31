@@ -2,7 +2,8 @@
  * 抽屉的「原件」页签：原件清单、每个原件的读取状态和识别出文字的页数（字样照九安 analysisEvidenceView），AI 依据引用了哪一页；
  * 按页看抽取的文字（外壳 GET /poc/evidence-pages，Ruling T5g）：每页标页码，文字在能滚动的块里，只当纯文字显示（不经 innerHTML）。
  * 从「AI 建议」里的「原件」依据点过来时，标出并滚到 AI 引用的那一页。
- * 「读取原件」= 九安的 POST /documents/:id/evidence/read {sourceVersion}（一次最多 3 个），读的时候每 3 秒看一次。规则发布复核人只看。
+ * 「读取原件」= 九安的 POST /documents/:id/evidence/read {sourceVersion}（一次最多 3 个），读的时候每 3 秒看一次（DocumentDrawer 里的查询），
+ * 读完时按页的文字由 DocumentDrawer 刷新（这个页签离开时就不在了，P2）。规则发布复核人只看。
  */
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
@@ -54,13 +55,6 @@ export function EvidenceTab({ id, version, role, evidence, basis, target }: {
     onSuccess: (data, vars) => { queryClient.setQueryData(keys.evidence(vars.id), data); },
   });
   const pages = useQuery({ queryKey: keys.evidencePages(id), queryFn: () => fetchEvidencePages(id) });
-  // 读取从进行中停下来：按页的文字跟着刷新
-  const status = evidence.data?.status;
-  const previous = useRef(status);
-  useEffect(() => {
-    if (previous.current && EVIDENCE_PENDING.has(previous.current) && status && !EVIDENCE_PENDING.has(status)) void queryClient.invalidateQueries({ queryKey: keys.evidencePages(id) });
-    previous.current = status;
-  }, [status, id, queryClient]);
 
   const value = evidence.data;
   if (evidence.isPending) return <div className="px-[18px] py-[14px]"><p role="status" className="m-0 text-13 text-steel">正在读取原件状态…</p></div>;

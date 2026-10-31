@@ -31,6 +31,13 @@ describe('drawer: header and the four tabs', () => {
     expect(within(list).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['AI 建议', '原件 3', '单据信息', '历史']);
     expect(within(list).getByRole('tab', { name: 'AI 建议' })).toHaveAttribute('aria-selected', 'true');
   });
+
+  it('a long company name shrinks before the number does: the number in the title never truncates first', async () => {
+    const { drawer } = await openDrawer('doc-2');
+    const title = within(drawer).getByRole('heading', { name: 'DGZF-F07-002' });
+    expect(title.className).toMatch(/(^| )shrink-0( |$)/);
+    expect(within(drawer).getByText('柯顿 · 运维服务费').className).toMatch(/truncate/);
+  });
 });
 
 describe('drawer: AI 建议', () => {
@@ -226,6 +233,71 @@ describe('drawer: AI 建议', () => {
     await within(drawer).findByRole('region', { name: 'AI 结论' });
     await user.click(within(drawer).getByRole('button', { name: '重新审核' }));
     expect(await within(drawer).findByRole('alert')).toHaveTextContent('操作太频繁，请一分钟后再试。');
+  });
+});
+
+describe('drawer: the tab while it closes, and page text after 读取原件 (P2, P3)', () => {
+  /** jsdom 不放动画：让 Radix 以为抽屉有进出场动画（data-state=open → drawer-in，closed → drawer-out），关的时候就像真浏览器那样留在页面上，直到动画放完。 */
+  function withDrawerAnimation() {
+    const real = window.getComputedStyle.bind(window);
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element: Element, pseudo?: string | null) => {
+      const styles = real(element, pseudo);
+      if (!(element instanceof HTMLElement) || element.getAttribute('role') !== 'dialog') return styles;
+      return new Proxy(styles, { get: (target, name) => {
+        if (name === 'animationName') return element.getAttribute('data-state') === 'closed' ? 'drawer-out' : 'drawer-in';
+        const value = Reflect.get(target, name);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+    });
+    if (typeof globalThis.CSS?.escape !== 'function') vi.stubGlobal('CSS', { ...globalThis.CSS, escape: (text: string) => text });
+    const finish = (dialog: HTMLElement) => act(() => {
+      const event = new Event('animationend', { bubbles: true });
+      Object.defineProperty(event, 'animationName', { value: 'drawer-out' });
+      dialog.dispatchEvent(event);
+    });
+    return { finish, restore: () => spy.mockRestore() };
+  }
+
+  it('P3: closing keeps the tab the user was on while the drawer slides out; opening again starts at AI 建议', async () => {
+    const animation = withDrawerAnimation();
+    try {
+      const { drawer, user } = await openDrawer('doc-1');
+      await user.click(await within(drawer).findByRole('tab', { name: '原件 3' }));
+      expect(within(drawer).getByRole('tab', { name: '原件 3' })).toHaveAttribute('aria-selected', 'true');
+      await user.keyboard('{Escape}');
+      // 还在放关的动画：页签不跳回「AI 建议」
+      expect(drawer).toBeInTheDocument();
+      expect(drawer).toHaveAttribute('data-state', 'closed');
+      expect(within(drawer).getByRole('tab', { name: '原件 3' })).toHaveAttribute('aria-selected', 'true');
+      expect(within(drawer).getByRole('tab', { name: 'AI 建议' })).toHaveAttribute('aria-selected', 'false');
+      animation.finish(drawer);
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
+      const again = await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+      expect(within(again).getByRole('tab', { name: 'AI 建议' })).toHaveAttribute('aria-selected', 'true');
+    } finally {
+      animation.restore();
+    }
+  });
+
+  it('P2: after 读取原件, leaving the 原件 tab and coming back within 30 s shows the new page text', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench, drawer } = await openDrawer('doc-1');
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(await within(drawer).findByRole('tab', { name: '原件 3' }));
+    expect(await within(drawer).findByText(/虚构合同 第一页/)).toBeInTheDocument();
+    await user.click(within(drawer).getByRole('button', { name: '读取原件' }));
+    expect(await within(drawer).findByText('正在读取原件')).toBeInTheDocument();
+    // 去看别的页签；读取在后台读完了，第 3 张原件的文字也有了
+    await user.click(within(drawer).getByRole('tab', { name: 'AI 建议' }));
+    const s = bench.states.get('doc-1')!;
+    s.evidence = { ...s.evidence, status: 'completed', canRun: true };
+    s.pages = [...s.pages, { id: 'a-3', name: '虚构验收单.xlsx', status: 'ready', totalPages: 1, pages: [{ page: 1, text: '验收单：已验收（虚构）' }] }];
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    // 10 秒后回来（还在 30 秒的新鲜期里）
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    await user.click(within(drawer).getByRole('tab', { name: '原件 3' }));
+    expect(await within(drawer).findByText('验收单：已验收（虚构）')).toBeInTheDocument();
   });
 });
 

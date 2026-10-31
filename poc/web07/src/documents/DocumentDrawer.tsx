@@ -3,6 +3,8 @@
  * 关闭按钮和 Esc 关它。头部：单号、公司 · 事项、金额 · 提交日期，AI 建议更新过时标「AI 建议已更新」。
  * 页签：AI 建议 / 原件 N / 单据信息 / 历史；底部复核区（管理员、分析员）或只读说明（规则发布复核人）。
  * AI 建议进行中时每 3 秒读一次（只在抽屉开着、看的就是这张单时），停在结果上；停下时刷新复核状态和各轮。
+ * 原件读取也一样：停下时刷新按页的文字——在抽屉里看，不在「原件」页签里（人离开那个页签时它不在，回来时就会看到旧的文字，P2）。
+ * 页签在抽屉打开时回到「AI 建议」，不在关的时候（关的动画里还看得到，P3）。
  */
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -37,11 +39,11 @@ export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, ha
   const queryClient = useQueryClient();
   // 换一张单回到「AI 建议」页签；从「原件」依据跳过去时带上要看的那一页
   const [tabOf, setTabOf] = useState<{ id: string | null; tab: string; target: PageTarget | null }>({ id: null, tab: 'advice', target: null });
-  // 关上再打开（哪怕是同一张）也从「AI 建议」开始
+  // 关上再打开（哪怕是同一张）也从「AI 建议」开始：打开时换，关的动画里留着人看的那个页签
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (!open) setTabOf({ id: null, tab: 'advice', target: null });
+    if (open) setTabOf({ id: null, tab: 'advice', target: null });
   }
   const mine = tabOf.id === shownId;
   const tab = mine ? tabOf.tab : 'advice';
@@ -66,6 +68,17 @@ export function DocumentDrawer({ id, item, role, onClose, onReviewed, onNext, ha
     }
     previous.current = { id: docId, status };
   }, [docId, status, queryClient]);
+
+  // 原件读取从进行中停下来：按页的文字跟着刷新（不管人现在在哪个页签）
+  const evidenceStatus = evidence.data?.status;
+  const previousEvidence = useRef<{ id: string; status?: string }>({ id: '' });
+  useEffect(() => {
+    const before = previousEvidence.current;
+    if (before.id === docId && before.status && EVIDENCE_PENDING.has(before.status) && evidenceStatus && !EVIDENCE_PENDING.has(evidenceStatus)) {
+      void queryClient.invalidateQueries({ queryKey: keys.evidencePages(docId) });
+    }
+    previousEvidence.current = { id: docId, status: evidenceStatus };
+  }, [docId, evidenceStatus, queryClient]);
 
   const data = doc.data ?? item;
   const version = doc.data?.version ?? item?.version ?? '';
