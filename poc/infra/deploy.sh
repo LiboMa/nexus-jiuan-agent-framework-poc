@@ -59,12 +59,15 @@ say "生成前端副本"
 say "构建九安副本（开发包 + 补丁 + mysql2）"
 "$POC_DIR/bench/build-jiuan.sh"
 
-say "构建九安 v0.7.10 副本（按清单复制 + mysql2），跑测试台外壳的单元测试"
+say "构建九安 v0.7.10 副本（按清单复制 + mysql2）"
 "$POC_DIR/bench/build-jiuan07.sh"
-unit_tests "$POC_DIR/app07"
 
 say "构建九安 v0.7.10 测试台的新前端（poc/web07：npm ci、测试、构建）"
 web_build "$POC_DIR/web07"
+
+# 前门对真实构建产物（poc/web07/dist）的那条测试要测这次构建、要发出去的那份：所以在 web_build 之后跑
+say "跑测试台外壳的单元测试"
+unit_tests "$POC_DIR/app07"
 
 if ! $CODE_ONLY; then
   say "建栈或更新栈 ${STACK}（第一次建 CloudFront 约需 5–15 分钟）"

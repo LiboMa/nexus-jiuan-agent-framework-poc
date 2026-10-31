@@ -100,14 +100,17 @@ test('deploy.sh：构建 v0.7.10 副本、把 app07 和副本打进发布包；�
 const WEB_BUILD = 'web_build() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && npm ci && npm test && npm run build); }';
 const WEB_RSYNC = 'rsync -a --exclude .DS_Store "$POC_DIR/web07/dist/" "$STAGE/release/web07/dist/"';
 
-test('deploy.sh：动 AWS 资源之前先构建新前端（npm ci → npm test → npm run build），dist/ 打进构件的 web07/dist；外壳默认就找这里', async () => {
+test('deploy.sh：动 AWS 资源之前先构建新前端（npm ci → npm test → npm run build），再跑外壳的单元测试（前门对真实 dist 的那条测的就是要发的这份）；dist/ 打进构件的 web07/dist；外壳默认就找这里', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   const lines = deploy.split('\n');
   assert.ok(lines.find(line => line.startsWith('for tool in ')).split(' ').includes('npm'), '检查工具时要有 npm');
   assert.equal(lines.find(line => line.startsWith('web_build() ')), WEB_BUILD);
   const at = text => { const index = lines.indexOf(text); assert.ok(index > 0, `deploy.sh 里没有这一行：${text}`); return index; };
   const build = at('web_build "$POC_DIR/web07"');
-  assert.ok(at('unit_tests "$POC_DIR/app07"') < build, '先跑外壳的单元测试');
+  const shellTests = at('unit_tests "$POC_DIR/app07"');
+  assert.ok(at('"$POC_DIR/bench/build-jiuan07.sh"') < build, '先构建九安 v0.7.10 副本');
+  assert.ok(build < shellTests, '先构建新前端，再跑外壳的单元测试：前门对 poc/web07/dist 的那条测试测的是这次构建、要发出去的那份');
+  assert.ok(shellTests < lines.findIndex(line => line.includes('aws cloudformation deploy')), '外壳的单元测试不过就不建栈、不更新栈');
   assert.ok(build < lines.findIndex(line => line.includes('aws cloudformation deploy')), '新前端构建不过就不建栈、不更新栈');
   const mkdir = lines.find(line => line.startsWith('mkdir -p "$STAGE/release/app"'));
   assert.ok(mkdir.includes('"$STAGE/release/web07/dist"'), '构件里先建好 web07/dist');
