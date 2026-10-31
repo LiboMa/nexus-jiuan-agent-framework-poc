@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { todayText } from '../dashboard/format';
 import { startApp } from './startApp';
-import { DASHBOARD, LONG_RULE, empty, fakeDashboard, fortnight, type DashboardOptions } from './dashboardFake';
-import { docxFile } from './knowledgeFake';
+import { DASHBOARD, LONG_RULE, empty, fakeDashboard, fortnight, month, today, type DashboardOptions } from './dashboardFake';
+import { deferred, docxFile } from './knowledgeFake';
 
 // 工作台（Spec 第 6 节；样稿 dashboard-a-v9.html；Task 7 的 Ruling T7a–T7d）：右上「今天 / 近 14 天 / 本月」（默认近 14 天）、管理员的「上传制度」；
 // 四个数；每天的 AI 建议（堆叠柱）；不通过最常见的依据；人工改判率（折线，没有复核的日子断开）；按审核员；知识库、最常引用的规则、我的规则。
@@ -101,6 +101,18 @@ describe('工作台: the four numbers match the API', () => {
     expect(screen.getByRole('radio', { name: /^待复核/ })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('建议通过 never says 100% unless all passed, nor 0% unless none did', async () => {
+    const { user } = await openDashboard({ data: {
+      '14d': { ...fortnight(), advice: { ...fortnight().advice, completed: 200, pass: 199, fail: 1, passRate: 199 / 200 } },
+      today: { ...today(), advice: { ...today().advice, completed: 300, pass: 1, fail: 299, passRate: 1 / 300 } },
+    } });
+    await waitFor(() => expect(valueOf('建议通过')).toBe('99%'));
+    expect(detailOf('建议通过')).toBe('199 / 200');
+    await user.click(screen.getByRole('radio', { name: '今天' }));
+    await waitFor(() => expect(valueOf('建议通过')).toBe('1%'));
+    expect(detailOf('建议通过')).toBe('1 / 300');
+  });
+
   it('null averages and rate show 「—」, never NaN', async () => {
     const data = { ...fortnight(), advice: { completed: 0, pass: 0, fail: 0, overrides: 0, passRate: null, avgDurationMs: null, maxDurationMs: null } };
     await openDashboard({ data: { '14d': data } });
@@ -122,12 +134,16 @@ describe('每天的 AI 建议 (stacked bars)', () => {
     expect(segments.map(segment => segment.getAttribute('data-segment'))).toEqual(['pass', 'fail', 'running']);
     expect(segments.map(segment => segment.getAttribute('fill'))).toEqual(['var(--color-pass)', 'var(--color-fail)', 'var(--color-wait)']);
     const [pass, fail, running] = segments.map(box);
-    expect(pass.y - (fail.y + fail.height)).toBeCloseTo(2, 1);
-    expect(fail.y - (running.y + running.height)).toBeCloseTo(2, 1);
+    expect(pass.y - (fail.y + fail.height)).toBe(2);
+    expect(fail.y - (running.y + running.height)).toBe(2);
     // 只有不是 0 的段才画
     expect([...bars[0].querySelectorAll('[data-segment]')].map(segment => segment.getAttribute('data-segment'))).toEqual(['pass', 'fail']);
     const marks = bars.map(bar => box(bar.querySelector('[data-segment]')!));
     for (let at = 1; at < marks.length; at += 1) expect(marks[at].x - (marks[at - 1].x + marks[at - 1].width)).toBeGreaterThanOrEqual(2);
+    // 整像素：crispEdges 下缝才是不多不少的 2 px
+    for (const rect of barChart().querySelectorAll('[data-segment], [data-hit]')) {
+      for (const name of ['x', 'y', 'width', 'height']) expect(Number.isInteger(Number(rect.getAttribute(name))), `${name}=${rect.getAttribute(name)}`).toBe(true);
+    }
     expect(Math.max(...marks.map(mark => mark.width))).toBeLessThanOrEqual(24);
     // 悬停区比柱子大：整个格子、整个绘图高度
     const hit = box(bars[13].querySelector('[data-hit]')!);
@@ -140,7 +156,10 @@ describe('每天的 AI 建议 (stacked bars)', () => {
     await user.click(screen.getByRole('radio', { name: '本月' }));
     await waitFor(() => expect(within(barChart()).getAllByRole('img')).toHaveLength(30));
     const marks = within(barChart()).getAllByRole('img').map(bar => box(bar.querySelector('[data-segment]')!));
-    for (let at = 1; at < marks.length; at += 1) expect(marks[at].x - (marks[at - 1].x + marks[at - 1].width)).toBeCloseTo(2, 1);
+    for (let at = 1; at < marks.length; at += 1) expect(marks[at].x - (marks[at - 1].x + marks[at - 1].width)).toBe(2);
+    for (const rect of barChart().querySelectorAll('[data-segment]')) {
+      for (const name of ['x', 'y', 'width', 'height']) expect(Number.isInteger(Number(rect.getAttribute(name)))).toBe(true);
+    }
   });
 
   it('a legend of three items, each with text; 建议通过 / 不建议通过 carry ✓ / ✕; text never wears the series color', async () => {
@@ -187,6 +206,19 @@ describe('每天的 AI 建议 (stacked bars)', () => {
     expect(document.activeElement).toBe(bars[12]);
     await user.keyboard('{Home}');
     expect(screen.getByRole('tooltip')).toHaveTextContent('10 月 17 日');
+  });
+
+  it('a mouse click on a day draws no focus ring: the ring is keyboard-only (:focus-visible)', async () => {
+    const { user } = await openDashboard();
+    for (const chart of [barChart(), lineChart()]) {
+      const day = within(chart).getAllByRole('img').at(-1)!;
+      await user.click(day);
+      expect(document.activeElement).toBe(day);
+      const hit = day.querySelector('[data-hit]')!;
+      expect(hit).not.toHaveAttribute('stroke');
+      expect(hit.getAttribute('class')).toMatch(/group-focus-visible:stroke-blue/);
+      expect(day.getAttribute('class')).toMatch(/(^| )group( |$)/);
+    }
   });
 
   it('「表格」 switches to a table view of every day, and back', async () => {
@@ -331,6 +363,9 @@ describe('按审核员', () => {
     const panel = region('按审核员');
     expect(within(panel).queryByRole('table')).not.toBeInTheDocument();
     expect(within(panel).getByText('你的账号不做复核，这里没有按审核员的统计。')).toBeInTheDocument();
+    // 没有「我的规则」：表头不写「0 份」
+    expect(within(region('我的规则')).getByText('你的账号没有「我的规则」。')).toBeInTheDocument();
+    expect(within(region('我的规则')).queryByText(/份/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '上传制度' })).not.toBeInTheDocument();
   });
 });
@@ -450,6 +485,10 @@ describe('上传制度 on the dashboard (T7a: admins only)', () => {
 
   it('closing while it still ingests leaves a notice with a link to the knowledge page', async () => {
     const { user } = await openDashboard();
+    // 读屏只念「后来填进去的」：提示区一开始就在、是空的，提示的字后填进同一个节点
+    const live = document.querySelector('[data-notice]')!;
+    expect(live).toHaveAttribute('role', 'status');
+    expect(live).toBeEmptyDOMElement();
     await user.click(screen.getByRole('button', { name: '上传制度' }));
     const dialog = await screen.findByRole('dialog', { name: '上传制度' });
     await within(dialog).findByText('把制度 .docx 拖到这里，或');
@@ -459,9 +498,12 @@ describe('上传制度 on the dashboard (T7a: admins only)', () => {
     await user.click(within(dialog).getByRole('button', { name: '稍后再看' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const notice = screen.getByText('入库在后台继续，稍后在知识库页的上传记录里看结果').closest('[role="status"]')!;
+    expect(notice).toBe(live);
     expect(within(notice as HTMLElement).getByRole('link', { name: '打开知识库' })).toHaveAttribute('href', '#/knowledge');
     await user.click(within(notice as HTMLElement).getByRole('button', { name: '关掉提示' }));
     expect(screen.queryByText('入库在后台继续，稍后在知识库页的上传记录里看结果')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-notice]')).toBe(live);
+    expect(live).toBeEmptyDOMElement();
   });
 
   it('closing without an upload leaves no notice', async () => {
@@ -480,5 +522,65 @@ describe('上传制度 on the dashboard (T7a: admins only)', () => {
     await screen.findByRole('tooltip');
     await user.click(within(region('人工改判率')).getByRole('button', { name: '表格' }));
     expect(document.querySelectorAll('style')).toHaveLength(0);
+  });
+});
+
+describe('switching window while hovering (fix round 1)', () => {
+  const windowOf = (search: string) => new URLSearchParams(search).get('window');
+
+  it('keeps the old numbers faded (aria-busy) while a shorter window loads; a day hovered meanwhile does not crash the page when the new days arrive', async () => {
+    const slow = deferred();
+    const { user, bench } = await openDashboard({ route: call => (windowOf(call.search) === 'today' ? slow.route() : { body: { data: fortnight() } }) });
+    await waitFor(() => expect(valueOf('AI 已出建议')).toBe('221张'));
+    await user.click(screen.getByRole('radio', { name: '今天' }));
+    await waitFor(() => expect(searches(bench)).toEqual(['?window=14d', '?window=today']));
+    // 新窗口的数还没到：旧的 14 天留着、变淡、标「正在读取」
+    const content = screen.getByTestId('dashboard-content');
+    expect(content).toHaveAttribute('aria-busy', 'true');
+    expect(content.className).toMatch(/opacity-60/);
+    expect(screen.getByRole('radio', { name: '今天' })).toHaveAttribute('aria-checked', 'true');
+    expect(valueOf('AI 已出建议')).toBe('221张');
+    expect(within(lineChart()).getAllByRole('img')).toHaveLength(14);
+    // 这时指到旧图后面的一天（新窗口只有 1 天）
+    await user.hover(within(lineChart()).getAllByRole('img')[12]);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('10 月 29 日');
+    await act(async () => { slow.resolve({ body: { data: today() } }); });
+    await settled();
+    expect(screen.getByTestId('dashboard-content')).toHaveAttribute('aria-busy', 'false');
+    expect(screen.queryByText('这一页没有打开')).not.toBeInTheDocument();
+    expect(valueOf('AI 已出建议')).toBe('3张');
+    expect(within(lineChart()).getAllByRole('img')).toHaveLength(1);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expectNoBadNumbers();
+  });
+
+  it('a hovered bar does not carry its index into the next window (no tooltip for the wrong day); moving the pointer shows the new day', async () => {
+    const slow = deferred();
+    await openDashboard({ route: call => (windowOf(call.search) === 'month' ? slow.route() : { body: { data: fortnight() } }) });
+    const user = (await import('@testing-library/user-event')).default.setup();
+    await user.hover(within(barChart()).getAllByRole('img')[3]);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('10 月 20 日');
+    // 指针不动，点「本月」（键盘或别的方式，不经过柱子以外的地方）
+    fireEvent.click(screen.getByRole('radio', { name: '本月' }));
+    await act(async () => { slow.resolve({ body: { data: month() } }); });
+    await settled();
+    expect(within(barChart()).getAllByRole('img')).toHaveLength(30);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    const bars = within(barChart()).getAllByRole('img');
+    fireEvent.pointerMove(bars[3]);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('10 月 4 日');
+  });
+
+  it('a day focused by keyboard past the end of the new window leaves no stale tooltip either', async () => {
+    const slow = deferred();
+    await openDashboard({ route: call => (windowOf(call.search) === 'today' ? slow.route() : { body: { data: fortnight() } }) });
+    const days = within(lineChart()).getAllByRole('img');
+    act(() => { (days[13] as unknown as HTMLElement).focus(); });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('10 月 30 日');
+    fireEvent.click(screen.getByRole('radio', { name: '今天' }));
+    await act(async () => { slow.resolve({ body: { data: today() } }); });
+    await settled();
+    expect(screen.queryByText('这一页没有打开')).not.toBeInTheDocument();
+    expect(within(lineChart()).getAllByRole('img')).toHaveLength(1);
   });
 });

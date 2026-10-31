@@ -6,7 +6,7 @@ import { useId, type ReactNode } from 'react';
 import { ADVICE_LIMIT_S, type Dashboard } from '../api/dashboard';
 import type { Role } from '../api/session';
 import { cx } from '../ui/cx';
-import { NONE, countText, secondsText } from './format';
+import { NONE, countText, percentFigure, secondsText } from './format';
 
 const BOX = 'block min-w-0 rounded-box border bg-surface px-4 py-[14px]';
 
@@ -29,7 +29,8 @@ function Tile(props: { label: string; value: string; unit: string; detail: React
 
 export function StatTiles({ data, role }: { data: Dashboard; role: Role | undefined }) {
   const { pendingReview: pending, advice } = data;
-  const rate = advice.passRate === null ? NONE : String(Math.round(advice.passRate * 100));
+  // 不全通过就不写 100%，有通过的就不写 0%
+  const rate = percentFigure(advice.passRate);
   const longest = advice.maxDurationMs === null ? NONE : `${secondsText(advice.maxDurationMs)} 秒`;
   return (
     <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">

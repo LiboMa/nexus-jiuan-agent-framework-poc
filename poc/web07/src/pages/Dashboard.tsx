@@ -3,6 +3,7 @@
  * 右上「今天 / 近 14 天 / 本月」每换一次重读；换窗口时上一份数留着、变淡，不闪空。
  * 上排四个数；中间每天的 AI 建议、不通过最常见的依据；人工改判率、按审核员；底排知识库、最常引用的规则、我的规则。
  * 「上传制度」只给管理员（知识库暂时只给管理员，Ruling T7a）：用知识库页的同一个弹框；关弹框时还在入库，就在这里提示去知识库页看结果。
+ * 那句提示放在一直挂着的空播报区（role="status"）里、后填进去：带着字一起插进页面的播报区，有的读屏不念。
  */
 import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
@@ -80,17 +81,19 @@ export function Dashboard() {
           {admin && <Button variant="primary" icon="upload" onClick={() => setUploading(true)}>上传制度</Button>}
         </>}
       />
-      {ingestNotice && (
-        <div role="status" className="mt-3 flex items-center gap-3 rounded-box border border-blue-200 bg-blue-50 px-4 py-[10px] text-13 text-ink">
-          <span className="text-blue"><Icon name="refresh" size={16} /></span>
-          <span>入库在后台继续，稍后在知识库页的上传记录里看结果</span>
-          <a href="#/knowledge" className="whitespace-nowrap font-semibold text-blue hover:underline">打开知识库</a>
-          <button type="button" aria-label="关掉提示" onClick={() => setIngestNotice(false)}
-            className="ml-auto grid h-[26px] w-[26px] shrink-0 place-items-center rounded-ctl text-steel hover:bg-surface hover:text-ink">
-            <Icon name="close" size={16} />
-          </button>
-        </div>
-      )}
+      <div role="status" data-notice="">
+        {ingestNotice && (
+          <div className="mt-3 flex items-center gap-3 rounded-box border border-blue-200 bg-blue-50 px-4 py-[10px] text-13 text-ink">
+            <span className="text-blue"><Icon name="refresh" size={16} /></span>
+            <span>入库在后台继续，稍后在知识库页的上传记录里看结果</span>
+            <a href="#/knowledge" className="whitespace-nowrap font-semibold text-blue hover:underline">打开知识库</a>
+            <button type="button" aria-label="关掉提示" onClick={() => setIngestNotice(false)}
+              className="ml-auto grid h-[26px] w-[26px] shrink-0 place-items-center rounded-ctl text-steel hover:bg-surface hover:text-ink">
+              <Icon name="close" size={16} />
+            </button>
+          </div>
+        )}
+      </div>
       {body}
       {admin && <UploadPolicyModal open={uploading} onClose={result => { setUploading(false); if (result?.ingesting) setIngestNotice(true); }} />}
     </>

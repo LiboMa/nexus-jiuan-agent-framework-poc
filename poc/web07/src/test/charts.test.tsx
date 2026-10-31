@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { niceScale, tickEvery } from '../charts/scale';
 import { stackSegments } from '../charts/StackedBarChart';
 import { lineRuns } from '../charts/LineChart';
-import { percentText, rateOf, secondsText } from '../dashboard/format';
+import { percentFigure, percentText, rateOf, secondsText } from '../dashboard/format';
 
 // 图表的几何（src/charts/*）：刻度、堆叠段、断开的折线；空数据不除以 0（Review Focus 4）。
 describe('niceScale: 0-based ticks with 1 / 2 / 5 × 10ⁿ steps, never a zero or broken max', () => {
@@ -48,6 +48,12 @@ describe('stackSegments: bottom-up, a 2 px gap between segments, zero segments s
     expect(stackSegments([0, 0, 0], { bottom: 166, unit: 5 })).toEqual([]);
   });
 
+  it('works in whole pixels (crispEdges keeps the gap exactly 2 px)', () => {
+    const segments = stackSegments([3, 2, 1], { bottom: 166, unit: 154 / 30 });
+    for (const { y, height } of segments) { expect(Number.isInteger(y)).toBe(true); expect(Number.isInteger(height)).toBe(true); }
+    for (let at = 1; at < segments.length; at += 1) expect(segments[at - 1].y - (segments[at].y + segments[at].height)).toBe(2);
+  });
+
   it('a tiny segment is still at least 1 px tall, and the gap stays 2 px', () => {
     const [low, high] = stackSegments([1, 1], { bottom: 166, unit: 1 });
     expect(low).toEqual({ series: 0, y: 165, height: 1 });
@@ -73,6 +79,16 @@ describe('dashboard number formats', () => {
     expect(percentText(0.0625, 1)).toBe('6.3%');
     expect(percentText(176 / 221)).toBe('80%');
     expect(percentText(null)).toBe('—');
+    // 不全是才不写 100%，不是一个没有才不写 0%（四舍五入到头时往里收一格）
+    expect(percentText(199 / 200)).toBe('99%');
+    expect(percentText(1 / 300)).toBe('1%');
+    expect(percentText(1)).toBe('100%');
+    expect(percentText(0)).toBe('0%');
+    expect(percentText(1999 / 2000, 1)).toBe('99.9%');
+    expect(percentText(1 / 2000, 1)).toBe('0.1%');
+    expect(percentText(0, 1)).toBe('0.0%');
+    expect(percentFigure(199 / 200)).toBe('99');
+    expect(percentFigure(null)).toBe('—');
     expect(rateOf(1, 16)).toBe(0.0625);
     expect(rateOf(0, 0)).toBeNull();
     expect(rateOf(3, -1)).toBeNull();

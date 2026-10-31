@@ -47,8 +47,8 @@ export function OverrideRateChart({ days }: { days: DailyRate[] }) {
               { header: '改判率', numeric: true, cell: (_day, index) => percentText(rates[index], 1) },
             ]} />
           ) : (
-            // 百分数作单位画（刻度是整数的 %）
-            <LineChart label="人工改判率" height={HEIGHT} describe={describe} tip={tip} format={value => `${value.toFixed(1)}%`} tickFormat={value => `${value}%`}
+            // 百分数作单位画（刻度是整数的 %）；直接标的数和表格、提示同一个写法
+            <LineChart label="人工改判率" height={HEIGHT} describe={describe} tip={tip} format={value => percentText(value / 100, 1)} tickFormat={value => `${value}%`}
               points={days.map((day, index) => ({ tick: shortDay(day.date), value: rates[index] === null ? null : rates[index]! * 100 }))} />
           )}
       </div>

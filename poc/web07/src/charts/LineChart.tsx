@@ -2,7 +2,7 @@ import { useId, type ReactNode } from 'react';
 import { YGrid, XTicks } from './axes';
 import { ChartTip } from './ChartTip';
 import { niceScale, plotArea, r1 } from './scale';
-import { useRoving } from './useRoving';
+import { DAY_CLASS, RING_CLASS, useRoving } from './useRoving';
 import { useWidth } from './useWidth';
 
 /**
@@ -37,13 +37,16 @@ export function LineChart({ label, points, height = 190, minStep = 1, format, ti
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const tipId = useId();
-  const { active, focused, itemProps } = useRoving(points.length);
+  const { active, itemProps } = useRoving(points.length, points.map(point => point.tick).join('|'));
   const values = points.map(point => (typeof point.value === 'number' && Number.isFinite(point.value) && point.value >= 0 ? point.value : null));
   const known = values.filter((value): value is number => value !== null);
   const scale = niceScale(known.length ? Math.max(...known) : 0, { minStep });
   const area = plotArea(width, height, points.length);
   const xOf = (index: number) => r1(area.left + (index + 0.5) * area.slot);
   const yOf = (value: number) => r1(area.bottom - (value / scale.max) * area.plotHeight);
+  // 悬停区、记号取整像素（边缘清楚）；线照实际位置画
+  const edge = (index: number) => Math.round(area.left + index * area.slot);
+  const markAt = (index: number, value: number) => ({ x: Math.round(xOf(index)) - MARK / 2, y: Math.round(yOf(value)) - MARK / 2 });
 
   const runs = lineRuns(values);
   const last = runs.at(-1)?.at(-1) ?? null;
@@ -55,7 +58,7 @@ export function LineChart({ label, points, height = 190, minStep = 1, format, ti
     x: nearLeft ? xOf(last) + 9 : xOf(last) - 9, anchor: (nearLeft ? 'start' : 'end') as 'start' | 'end',
     y: yOf(lastValue) < area.top + 14 ? yOf(lastValue) + 20 : yOf(lastValue) - 10,
   };
-  const activeValue = active === null ? null : values[active];
+  const activeValue = active === null ? null : values[active] ?? null;
 
   return (
     <div ref={ref} className="relative">
@@ -67,18 +70,17 @@ export function LineChart({ label, points, height = 190, minStep = 1, format, ti
             fill="none" stroke="var(--color-blue)" strokeWidth="2" strokeLinejoin="miter" strokeLinecap="square" />
         ))}
         {marked.map(at => (
-          <rect key={at} data-marker={at} x={xOf(at) - MARK / 2} y={yOf(values[at]!) - MARK / 2} width={MARK} height={MARK} fill="var(--color-blue)" stroke="var(--color-surface)" strokeWidth={2} />
+          <rect key={at} data-marker={at} {...markAt(at, values[at]!)} width={MARK} height={MARK} fill="var(--color-blue)" stroke="var(--color-surface)" strokeWidth={2} />
         ))}
         {active !== null && activeValue !== null && !marked.includes(active) && (
-          <rect aria-hidden="true" x={xOf(active) - MARK / 2} y={yOf(activeValue) - MARK / 2} width={MARK} height={MARK} fill="var(--color-blue)" stroke="var(--color-surface)" strokeWidth={2} />
+          <rect aria-hidden="true" {...markAt(active, activeValue)} width={MARK} height={MARK} fill="var(--color-blue)" stroke="var(--color-surface)" strokeWidth={2} />
         )}
         {labelAt && lastValue !== null && (
           <text data-label="" x={labelAt.x} y={labelAt.y} textAnchor={labelAt.anchor} fontSize={12} fontWeight={600} fill="var(--color-ink)">{format(lastValue)}</text>
         )}
         {points.map((_, index) => (
-          <g key={index} role="img" aria-label={describe(index)} aria-describedby={active === index ? tipId : undefined} data-x={xOf(index)} className="outline-none" {...itemProps(index)}>
-            <rect data-hit="" x={r1(area.left + index * area.slot)} y={area.top} width={r1(area.slot)} height={area.plotHeight} fill="transparent"
-              stroke={focused === index ? 'var(--color-blue)' : 'none'} strokeWidth={focused === index ? 1.5 : 0} />
+          <g key={index} role="img" aria-label={describe(index)} aria-describedby={active === index ? tipId : undefined} data-x={xOf(index)} className={DAY_CLASS} {...itemProps(index)}>
+            <rect data-hit="" x={edge(index)} y={area.top} width={edge(index + 1) - edge(index)} height={area.plotHeight} fill="transparent" className={RING_CLASS} />
           </g>
         ))}
         <XTicks ticks={points.map(point => point.tick)} area={area} height={height} />
