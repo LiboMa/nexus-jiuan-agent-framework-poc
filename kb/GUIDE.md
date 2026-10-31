@@ -412,7 +412,7 @@ SELECT rule_id, business_item, segment, left(amount_tier,80) AS amount_tier, fin
 4. 若 `RULES_DOC_TITLE` 变了，再跑 `./deploy.sh agent` 更新第 8 条里的来源名。
 5. `./deploy.sh verify --e2e`；若规则编号体系变了，同步改 `E2E_EXPECT`。
 
-页面上传（7.5）和本工具入库写的是同一张表：同一份制度在两处都用同一个文件名（`source_doc`，本工具取 `RULES_DOCX` 的文件名）、同一个 `RULES_SOURCE_TAG`（默认 `finance-approval-v4`）和 `RULES_SOURCE_VERSION`——这三项都算进 `record_sha256`。不一样时不出错，只是每次都「仅更新其他列」，把对方写的元数据改回去（不重算向量）。页面上传同名文件时会预填库里现有的标签和版本。
+经文档管家入库（7.5）和本工具入库写的是同一张表：同一份制度在两处都用同一个文件名（`source_doc`，本工具取 `RULES_DOCX` 的文件名）、同一个 `RULES_SOURCE_TAG`（默认 `finance-approval-v4`）和 `RULES_SOURCE_VERSION`——这三项都算进 `record_sha256`。不一样时不出错，只是每次都「仅更新其他列」，把对方写的元数据改回去（不重算向量）。经文档管家（页面或 A2A）入库时，`source_id` 即 `source_tag`，`title` 即 `source_doc`：要和本工具入的那份对上，`title` 填带扩展名的原文件名（不给 `title` 时取附件的文件名）。
 
 **一张表只放一套规则编号。** `rule_id` 是主键，审批矩阵都按 `C<章>-<序号>` 编号，第二份制度几乎一定撞号：入库会被拒绝（`conflicts`，5.7）。要放多份制度，见 13。
 

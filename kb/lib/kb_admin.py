@@ -1,7 +1,7 @@
-"""「规则库 › 制度知识库」页的管理命令：上传历史、现有标签、语义检索、检索日志（表和函数由 sql/kb_search.sql 建）。
+"""规则库的管理命令：上传历史、现有标签、语义检索、检索日志（表和函数由 sql/kb_search.sql 建）。运维排查用；前端经文档管家（A2A）。
 SQL 都在 kb_store（与 Nexus 工具同一份），这里只是命令行。
 
-用法（外壳 poc/app07 在测试台上以子进程调用；每个命令只打印一行 JSON）:
+用法（每个命令只打印一行 JSON）:
     python3 -I kb_admin.py --host H --port P --db D --user U --password-file F [--table approval_rules] <命令> ...
 
     record --name N --sha256 S --size B --by U --report FILE      记一次上传（已解析）→ {"id": int}

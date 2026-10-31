@@ -2,7 +2,7 @@
 
 > 来源：`nexus-customer-deploy/pgvector-rules-kb`（2026-10-26 复制进本仓库，此后在这里维护）。在本仓库里和测试台共用一套 IaC：PG 跑在测试台实例上（existing 模式），PG 端口的入站规则由测试台的栈管，用 `poc/infra/kb.sh` 驱动本工具（它从栈里取实例、网段和 Nexus 地址，生成配置后调用 `kb/deploy.sh --config`）。单独部署到别的环境时照本文和 [GUIDE.md](GUIDE.md) 用 `deploy.env`。
 
-把制度文档（审批矩阵格式的 .docx）做成规则库，存进 **PostgreSQL + pgvector**，经 **Nexus 数据连接器**接到**审核 Agent**：用户在 Nexus 对话里按制度查询审批规则、对单据做初审（通过 / 不通过，附规则编号与原文依据）。库里有**库内语义检索** `kb_search(问题, k)`：PG 里的 PL/Python 用主机的实例角色调 Bedrock 把问题向量化，Agent 经同一个连接器一条 SQL 就能检索。九安 v0.7.10 测试台的「规则库 › 制度知识库」页可以上传制度、看历史、检索、看检索日志（GUIDE 7.5）。
+把制度文档（审批矩阵格式的 .docx）做成规则库，存进 **PostgreSQL + pgvector**，经 **Nexus 数据连接器**接到**审核 Agent**：用户在 Nexus 对话里按制度查询审批规则、对单据做初审（通过 / 不通过，附规则编号与原文依据）。库里有**库内语义检索** `kb_search(问题, k)`：PG 里的 PL/Python 用主机的实例角色调 Bedrock 把问题向量化，Agent 经同一个连接器一条 SQL 就能检索。制度文档的上传、清单、检索也可以交给 Nexus 上的「知识库文档管家（PG 版）」（`knowledgebase-writer-agent-pg/`，经 A2A 的 kb.rules/v1）：前端只调它，不直连 PG（GUIDE 7.5）。
 
 一份配置（`deploy.env`）+ 一条命令（`./deploy.sh all`）完成部署；全程幂等，可对已部署的环境重跑来接管或对齐。
 
