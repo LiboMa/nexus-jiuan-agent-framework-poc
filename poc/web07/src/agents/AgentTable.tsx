@@ -62,7 +62,8 @@ function Row({ agent, approval, listed, busy, on }: { agent: AgentRow; approval:
       </td>
       <td className={cx(cell, 'min-w-[150px] max-w-[220px]')}>
         <Pill tone={status.tone} icon={status.tone === 'wait' ? 'warning' : undefined}>{status.text}</Pill>
-        {problems.map(problem => <span key={problem} className="mt-1 block text-12 text-wait-ink">{record ? `Nexus 上现在：${problem}` : problem}</span>)}
+        {/* 两条原因可能一字不差：按位置作 key */}
+        {problems.map((problem, index) => <span key={index} className="mt-1 block text-12 text-wait-ink">{record ? `Nexus 上现在：${problem}` : problem}</span>)}
         {record?.status === 'invalid' && record.invalidReason && <span className="mt-1 block text-12 text-fail-ink">失效原因：{resultText(record.invalidReason)}</span>}
       </td>
       <td className={cx(cell, 'whitespace-nowrap')}>

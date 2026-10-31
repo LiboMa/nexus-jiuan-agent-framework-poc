@@ -1,7 +1,7 @@
 /**
  * 粘贴密钥的弹框（Spec 第 2 节「粘贴调用密钥」；Ruling T8c）：调用密钥（启用、重新启用、换钥匙、手动添加）和 Nexus API 密钥（连接 Nexus）共用。
- * 密钥框是不受控的 <input type="password" autocomplete="off">：值不进 React 状态，也不会写成 DOM 的 value 属性；
- * 提交时读出来马上清空（不管成没成），关弹框时清空，出错时已经是空的。密钥只作为参数交给 ask.submit() 放进请求体：
+ * 密钥框是不受控的 <input type="password" autocomplete="new-password">（见下面 Ruling T8f）：值不进 React 状态，也不会写成 DOM 的 value 属性；
+ * 提交时读出来马上清空（不管成没成），关弹框时清空，出错时已经是空的。手动添加先认 A2A 地址：认不出时不动密钥框，改好地址再点就行。密钥只作为参数交给 ask.submit() 放进请求体：
  * 不进查询键和 React Query 缓存（不经 useMutation 的 variables）、不进日志和错误文字（万一服务端的话里带了也换掉）、不进地址栏。
  * 验证要等（最长约三分钟）时可以先关掉弹框：结果由 onDone / onLate 交给页面说。
  * 不让浏览器把它当成这个网站的登录密码存（Ruling T8f）：不用 <form> 提交（按钮 onClick、框里回车自己处理），
@@ -65,11 +65,12 @@ function KeyForm({ ask, one, keyRef, onCancel, onDone, onLate }: {
 
   async function submit() {
     if (one.isBusy()) return;
+    // 先认地址：认不出就不读、不清密钥框（不让人因为地址贴错再贴一次密钥）
+    const publishId = ask.address ? publishIdFrom(address) : null;
+    if (ask.address && !publishId) { setProblem('认不出发布：请粘贴这个发布的 A2A 地址（含 /a2a/pub_…）'); return; }
     const input = keyRef.current;
     const key = input?.value.trim() ?? '';
     if (input) input.value = '';
-    const publishId = ask.address ? publishIdFrom(address) : null;
-    if (ask.address && !publishId) { setProblem('认不出发布：请粘贴这个发布的 A2A 地址（含 /a2a/pub_…）'); return; }
     if (!key) { setProblem(rule.empty); return; }
     if (rule.other.test(key)) { setProblem(rule.otherText); return; }
     setProblem(null);
@@ -84,9 +85,10 @@ function KeyForm({ ask, one, keyRef, onCancel, onDone, onLate }: {
     }
   }
 
-  // 框里回车就提交（没有 <form>，浏览器不会替我们做；输入法选字时的回车不算）
+  // 框里回车就提交（没有 <form>，浏览器不会替我们做）。输入法选字时的回车不算：isComposing，
+  // 以及 Safari 选字时 isComposing 是 false、keyCode 是 229 的那一下；按住不放的回车（repeat）也不算
   const onEnter = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    if (event.key !== 'Enter' || event.repeat || event.nativeEvent.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     void submit();
   };

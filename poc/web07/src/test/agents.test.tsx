@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { queryClient } from '../api/queryClient';
 import type { Role } from '../api/session';
@@ -363,15 +363,58 @@ describe('Agent 接入: paste a call key (T8c)', () => {
     await user.type(key, FAKE_KEY);
     await user.click(within(dialog).getByRole('button', { name: '验证并添加' }));
     expect(within(dialog).getByRole('alert')).toHaveTextContent('认不出发布：请粘贴这个发布的 A2A 地址（含 /a2a/pub_…）');
-    expect(key.value).toBe('');
+    // 地址不对时先不动密钥框：改好地址直接再点，不用重贴密钥（T8）
+    expect(key.value).toBe(FAKE_KEY);
     expect(bench.find('POST', BASE)).toEqual([]);
     await user.clear(address);
     await user.type(address, 'https://nexus.example/a2a/pub_newone0007gggg/.well-known/agent-card.json');
-    await user.type(key, FAKE_KEY);
     await user.click(within(dialog).getByRole('button', { name: '验证并添加' }));
+    expect(key.value).toBe('');
     expect(bench.find('POST', BASE)[0].body).toEqual({ publishId: 'pub_newone0007gggg', key: FAKE_KEY, reason: '在「Agent 接入」页手动添加（A2A 地址 + 调用密钥）' });
     expect(await rowOf('pub_newone0007gggg')).toBeInTheDocument();
     nowhere(FAKE_KEY);
+  });
+});
+
+describe('Agent 接入: Enter in the key boxes (T8)', () => {
+  async function openManual() {
+    const { bench, user } = await openAgents({ connected: false });
+    await user.click(await screen.findByRole('button', { name: '手动添加 Agent' }));
+    const dialog = await screen.findByRole('dialog', { name: '手动添加 Agent' });
+    return { bench, user, dialog, address: within(dialog).getByLabelText('A2A 地址') as HTMLInputElement, key: within(dialog).getByLabelText('调用密钥') as HTMLInputElement };
+  }
+  it('an IME Enter (Safari: keyCode 229, isComposing false) and a held-down Enter send nothing and keep the pasted key', async () => {
+    const { bench, user, dialog, address, key } = await openManual();
+    await user.type(key, FAKE_KEY);
+    await user.type(address, 'https://nexus.example/a2a/pub_newone0007gggg');
+    for (const box of [address, key]) {
+      fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 229, which: 229 });
+      fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13, repeat: true });
+    }
+    expect(bench.find('POST', BASE)).toEqual([]);
+    expect(key.value).toBe(FAKE_KEY);
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    // 一下真的回车：发出去，密钥框清空
+    fireEvent.keyDown(address, { key: 'Enter', code: 'Enter', keyCode: 13 });
+    await waitFor(() => expect(bench.find('POST', BASE)).toHaveLength(1));
+    expect(bench.find('POST', BASE)[0].body).toEqual({ publishId: 'pub_newone0007gggg', key: FAKE_KEY, reason: '在「Agent 接入」页手动添加（A2A 地址 + 调用密钥）' });
+    expect(key.value).toBe('');
+    void user;
+  });
+});
+
+describe('Agent 接入: a row with two identical problems', () => {
+  it('shows both and gives React no duplicate key (rows of problems are keyed by position)', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const publications = PUBLICATIONS().map(item => (item.publishId === BROKEN_PUB ? { ...item, problems: ['名片不合契约', '名片不合契约'] } : item));
+      await openAgents({ publications });
+      const row = await rowOf(BROKEN_PUB);
+      expect(within(row).getAllByText('名片不合契约')).toHaveLength(2);
+      expect(spy.mock.calls.flat().join(' ')).not.toMatch(/same key|unique "key"/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

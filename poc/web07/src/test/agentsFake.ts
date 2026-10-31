@@ -1,5 +1,5 @@
 // 「Agent 接入」测试用的假测试台：九安的 /platform/agent-access（启用服务，补丁 0003 的 view）和外壳挂在上面的 nexus / publications / test / tests / calls。
-// 有状态：启用、换钥匙、停用、复核、设为 / 取消审批 Agent 改记录；连接 / 断开改 Nexus 状态；测试记一条「进行中」，由测试 finish() 收尾。
+// 有状态：启用、换钥匙、停用、重新验证、设为 / 取消审批 Agent 改记录；连接 / 断开改 Nexus 状态；测试记一条「进行中」，由测试 finish() 收尾。
 // 名称、单据、密钥全部虚构（密钥形如 nxa_FAKE…，不是真的）；知识库 Agent 的发布编号照项目里写明的那个（不是秘密）。
 import type { Role } from '../api/session';
 import { fakeApi, sessionBody, type FakeCall, type FakeReply, type FakeRoute } from './fakeApi';
