@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { startApp } from './startApp';
-import { fakeKb, type KbOptions } from './knowledgeFake';
+import { deferred, fakeKb, type KbOptions } from './knowledgeFake';
 
-// 「检索」弹框（Spec 第 6 节；补丁 0005）：问题必填，板块、金额可空（空的不传）；条数 8；工具失败（200 + success:false）当失败显示。
+// 「检索」弹框（Spec 第 6 节；补丁 0005）：问题必填，板块、金额可空（空的不传）；条数 8；工具失败（200 + success:false）当失败显示；一次一个请求。
 async function openSearch(options: KbOptions = {}) {
   const bench = fakeKb(options);
   const app = await startApp('#/knowledge');
@@ -17,7 +17,7 @@ const searches = (bench: ReturnType<typeof fakeKb>) => bench.find('GET', '/api/a
 describe('检索', () => {
   it('sends only the question (and k) when 板块 and 金额 are empty, and lists the hits', async () => {
     const { user, bench, dialog } = await openSearch();
-    expect(within(dialog).getByText(/kb_search/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/和 AI 审单时用的是同一个检索/)).toBeInTheDocument();
     await user.type(within(dialog).getByRole('textbox', { name: '问题' }), '房租 年度框架合同 谁最终审批');
     await user.click(within(dialog).getByRole('button', { name: '检索' }));
     const results = await within(dialog).findByRole('list', { name: '检索结果' });
@@ -71,11 +71,16 @@ describe('检索', () => {
     expect(await within(dialog).findByText('没有找到规则')).toBeInTheDocument();
   });
 
-  it('an analyst can search too', async () => {
-    const { user, bench, dialog } = await openSearch({ role: 'analyst' });
+  it('two clicks on 检索 in the same tick send one search', async () => {
+    const slow = deferred();
+    const { user, bench, dialog } = await openSearch({ overrides: { 'GET /api/analysis/v1/poc/kb/search': slow.route } });
     await user.type(within(dialog).getByRole('textbox', { name: '问题' }), '房租');
-    await user.click(within(dialog).getByRole('button', { name: '检索' }));
-    await within(dialog).findByRole('list', { name: '检索结果' });
+    const go = within(dialog).getByRole('button', { name: '检索' });
+    // 同一拍里点两下（同一个 act 里，中间不重新渲染）：只有在途标记挡得住第二下
+    act(() => { fireEvent.click(go); fireEvent.click(go); });
+    expect(await within(dialog).findByText('正在处理（约 10–20 秒）')).toBeInTheDocument();
     expect(searches(bench)).toHaveLength(1);
+    slow.resolve({ body: { data: { success: true, filter: {}, results: [] } } });
+    expect(await within(dialog).findByText('没有找到规则')).toBeInTheDocument();
   });
 });

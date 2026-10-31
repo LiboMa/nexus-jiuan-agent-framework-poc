@@ -1,8 +1,9 @@
 /**
  * 「上传制度」弹框（Spec 第 6 节；补丁 0005；样稿 A 版的上传弹框）。知识库页和工作台都用它：要的数据（/mode、制度清单）自己读。
  * 拖入或选一份 .docx（20 MB 以内）→ 制度标识按文件名预填、文档名按 Ruling T6b 预填、版本说明 →「上传并入库」（POST 原文，202）→
- * 每 2.5 秒问一次上传记录，停在 ingested / skipped / failed 上，给出条数。进行中「上传并入库」不可点；关掉弹框不中断入库（状态留着，再打开还在）。
- * 只给管理员（外壳那头也只认管理员）。
+ * 每 2.5 秒问一次上传记录，停在 ingested / skipped / failed 上，给出条数；上传记录读成 4xx（比如找不到了）也算停，回到表单说原因。
+ * 进行中「上传并入库」不可点；关掉弹框不中断入库（状态留着，再打开还在），onClose({ ingesting: true }) 告诉宿主页面还在入库（工作台据此提示）。
+ * 文档名清空了就用预填的（不发空标题）。只给管理员（外壳那头也只认管理员）。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -25,7 +26,10 @@ interface Draft { file: File; sourceId: string | null; title: string | null; ver
 const ID_RULE = '制度标识只能用小写字母、数字和连字符（2–63 位，字母或数字开头），例如 fin-approval。';
 const inputClass = 'h-[30px] w-full rounded-ctl border border-line bg-surface px-[10px] text-13 text-ink hover:border-faint focus:border-blue disabled:opacity-55';
 
-export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** 关弹框时告诉宿主页面：ingesting = 入库还在后台进行（关弹框不会中断它）。 */
+export interface UploadCloseResult { ingesting: boolean }
+
+export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (result?: UploadCloseResult) => void }) {
   const session = useSessionQuery();
   const admin = session.data?.user.role === 'admin';
   const queryClient = useQueryClient();
@@ -45,12 +49,14 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
     onError: error => { if (error instanceof ApiError && NOT_READY_CODES.has(error.code)) void queryClient.invalidateQueries({ queryKey: kbKeys.mode }); },
     onSettled: () => { inFlight.current = false; },
   });
-  // 弹框关着也接着问（组件一直挂着），停在结果上
+  // 弹框关着也接着问（组件一直挂着），停在结果上；4xx（找不到这条记录、没有权限……）再问也一样，也停
+  const final = (error: unknown) => error instanceof ApiError && error.status >= 400 && error.status < 500;
   const record = useQuery({
     queryKey: kbKeys.upload(uploadId ?? 0), queryFn: () => fetchUpload(uploadId!), enabled: uploadId !== null,
-    refetchInterval: query => (query.state.data && query.state.data.status !== 'ingesting') || (query.state.error instanceof ApiError && query.state.error.status === 404) ? false : KB_POLL_MS,
+    refetchInterval: query => ((query.state.data && query.state.data.status !== 'ingesting') || final(query.state.error) ? false : KB_POLL_MS),
   });
   const settled = record.data && record.data.status !== 'ingesting' ? record.data : null;
+  const recordGone = !settled && final(record.error);
   const settledStatus = settled?.status;
   useEffect(() => {
     if (!settledStatus) return;
@@ -59,15 +65,20 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
   }, [settledStatus, uploadId, queryClient]);
 
   // 失败了回到表单（改了标识可以再传）；成功或没有变化才是「完成」
-  const phase = send.isPending ? 'sending' : uploadId !== null && !settled ? 'ingesting' : settled && settled.status !== 'failed' ? 'done' : draft ? 'form' : 'pick';
+  const phase = send.isPending ? 'sending' : uploadId !== null && !settled && !recordGone ? 'ingesting' : settled && settled.status !== 'failed' ? 'done' : draft ? 'form' : 'pick';
   const working = phase === 'sending' || phase === 'ingesting';
   const sourceId = draft ? draft.sourceId ?? prefillSourceId(draft.file.name, list) : '';
-  const title = draft ? draft.title ?? prefillTitle(sourceId.trim(), draft.file.name, list) : '';
+  const prefilled = draft ? prefillTitle(sourceId.trim(), draft.file.name, list) : '';
+  const title = draft ? draft.title ?? prefilled : '';
   const same = list.find(source => source.source_id === sourceId.trim());
 
   function reset() { setDraft(null); setProblem(null); setUploadId(null); send.reset(); }
   // 入库进行中关掉：什么都不动，服务端照样入库；再打开还看得到
-  function close() { if (!working) reset(); onClose(); }
+  function close() {
+    const ingesting = working;
+    if (!ingesting) reset();
+    onClose({ ingesting });
+  }
   function pick(file: File) {
     if (working) return;
     if (!/\.docx$/iu.test(file.name)) { setProblem('只收 .docx 文件（审批矩阵格式的 Word 文档）'); return; }
@@ -79,7 +90,8 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
   }
   function submit() {
     if (inFlight.current || working || !draft) return;
-    const input = { file: draft.file, sourceId: sourceId.trim(), sourceVersion: draft.version.trim(), title: title.trim() };
+    // 文档名清空了就用预填的：外壳收空标题，Agent 会登记成没有名字的制度
+    const input = { file: draft.file, sourceId: sourceId.trim(), sourceVersion: draft.version.trim(), title: title.trim() || prefilled.trim() };
     if (!SOURCE_ID.test(input.sourceId)) { setProblem(ID_RULE); return; }
     inFlight.current = true;
     setProblem(null);
@@ -90,11 +102,11 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
   let body: ReactNode;
   if (session.isPending) body = <p role="status" className="m-0 text-13 text-steel">正在读取登录状态…</p>;
   else if (!admin) body = <Notice title="只有管理员能上传制度" text="需要上传制度请找管理员；你可以在知识库页看制度清单、检索。" />;
-  else if (!agent) body = <AgentNotice mode={mode} admin />;
+  else if (!agent) body = <AgentNotice mode={mode} />;
   else if (phase === 'pick') {
     body = (
       <>
-        <p className="m-0 mb-3 text-13 text-steel">填好制度标识、文档名和版本说明后上传：{agent.lead}解析、给每条规则生成向量并写入规则库，写完在上传记录里看结果。同一个标识再上传就是新版本。</p>
+        <p className="m-0 mb-3 text-13 text-steel">填好制度标识、文档名和版本说明后上传：{agent.lead}会把制度拆成一条条规则写进知识库，写完在上传记录里看结果。同一个标识再上传就是新版本。</p>
         <DropZone lead="把制度 .docx 拖到这里，或" hint="审批矩阵格式：每章一张表，表头第一列是「序号」；20 MB 以内" accept={`.docx,${DOCX}`} inputLabel="选择制度文件" onPick={pick} />
       </>
     );
@@ -127,6 +139,7 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
             {sources.isPending && <p className="m-0 text-12 text-steel">正在读取制度清单（约 10–20 秒）：读到后按清单预填标识和文档名。</p>}
             {sources.isError && <p className="m-0 text-12 text-wait-ink">制度清单没有读出来，没法提示标识是不是已经用过：{messageOf(sources.error)}</p>}
             {settled?.status === 'failed' && <Failure item={settled} />}
+            {recordGone && <p role="alert" className="m-0 text-13 text-fail-ink">{messageOf(record.error)}</p>}
             {send.isError && <p role="alert" className="m-0 text-13 text-fail-ink">{messageOf(send.error)}</p>}
           </div>
         )}
@@ -180,7 +193,7 @@ function FileLine({ file, extra }: { file: File; extra?: ReactNode }) {
 function Working({ agent, file, sending, error }: { agent: Agent; file: File; sending: boolean; error: string | null }) {
   return (
     <div role="status" className="mt-3 flex flex-col gap-2 text-13">
-      <p className="m-0 text-ink">{sending ? `正在上传「${file.name}」…` : `正在入库：${agent.lead}解析、生成向量并写入规则库（规则多时要几分钟）。`}</p>
+      <p className="m-0 text-ink">{sending ? `正在上传「${file.name}」…` : `正在入库：${agent.lead}正在把制度拆成规则写进知识库（规则多时要几分钟）。`}</p>
       <p className="m-0 text-steel">可以关掉这个弹框：入库在后台继续，稍后在上传记录里看结果。</p>
       {error && <p className="m-0 text-wait-ink">上传记录暂时没读到：{error}</p>}
     </div>
@@ -204,7 +217,7 @@ function Numbers({ item }: { item: KbUpload }) {
 function Outcome({ file, item }: { file: File; item: KbUpload }) {
   const name = item.title || item.sourceId || file.name;
   const text = item.status === 'ingested'
-    ? `入库完成：「${name}」共 ${item.rulesTotal ?? 0} 条规则（写入 ${item.written ?? 0}、删除 ${item.removed ?? 0}、不变 ${item.unchanged ?? 0}）。审核 Agent 下一次检索就用上新规则。`
+    ? `入库完成：「${name}」共 ${item.rulesTotal ?? 0} 条规则（写入 ${item.written ?? 0}、删除 ${item.removed ?? 0}、不变 ${item.unchanged ?? 0}）。AI 下一次审单就用上新规则。`
     : `规则库里的「${name}」已经是这一版（共 ${item.rulesTotal ?? 0} 条规则），没有重写。`;
   return (
     <>

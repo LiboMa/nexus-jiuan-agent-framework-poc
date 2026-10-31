@@ -1,7 +1,7 @@
 /**
  * 制度清单（Spec 第 6 节；补丁 0005「制度清单」）：标题、制度标识、版本、条数、状态、时间。以知识库 Agent 返回的为准。
  * 「下线」「恢复」只在 describe 的 ops 里有时显示（别的 op 不管，Ruling T6c）；「删除」先在弹框里再确认一次；「查看」开登记和规则编号。
- * 每个操作是一次 A2A 调用（约 10–20 秒），一次一个：进行中清单的按钮和「刷新清单」都不可用。分析员只能看和查看（按钮不画）。
+ * 每个操作是一次 A2A 调用（约 10–20 秒），一次一个：进行中清单的按钮和「刷新清单」都不可用。
  */
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,7 +19,7 @@ import { messageOf } from './AgentNotice';
 const STATUS: Record<string, { text: string; tone: 'pass' | 'wait' }> = { active: { text: '有效', tone: 'pass' }, inactive: { text: '已下线', tone: 'wait' } };
 type Notice = { text: string; ok: boolean };
 
-export function PolicyList({ agent, ops, admin, onUpload }: { agent: Agent; ops: readonly string[]; admin: boolean; onUpload: () => void }) {
+export function PolicyList({ agent, ops, onUpload }: { agent: Agent; ops: readonly string[]; onUpload: () => void }) {
   const queryClient = useQueryClient();
   const can = (op: string) => ops.includes(op);
   const sources = useQuery({ queryKey: kbKeys.sources, queryFn: () => fetchSources(agent), retry: false });
@@ -30,8 +30,8 @@ export function PolicyList({ agent, ops, admin, onUpload }: { agent: Agent; ops:
   const notReady = (error: unknown) => error instanceof ApiError && NOT_READY_CODES.has(error.code);
 
   const done: Record<KbOp, (source: KbSource, count: number) => string> = {
-    deactivate: (source, count) => `已下线「${nameOf(source)}」（${count} 条规则）：审核 Agent 检索不到了${can('restore') ? '，可以恢复' : ''}。`,
-    restore: (source, count) => `已恢复「${nameOf(source)}」（${count} 条规则）：又能检索到了。`,
+    deactivate: (source, count) => `已下线「${nameOf(source)}」（${count} 条规则）：AI 审单时用不到了${can('restore') ? '，可以恢复' : ''}。`,
+    restore: (source, count) => `已恢复「${nameOf(source)}」（${count} 条规则）：AI 审单时又能用上了。`,
     delete: (source, count) => `已删除「${nameOf(source)}」：${count} 条规则和登记都删掉了。`,
   };
   // 操作成功后再读一次清单；清单没读成也说清操作本身已经成了
@@ -72,7 +72,7 @@ export function PolicyList({ agent, ops, admin, onUpload }: { agent: Agent; ops:
       extra={<>{sources.isSuccess && <span>{list.length} 份</span>}<Button size="sm" icon="refresh" disabled={busy} onClick={() => { setNotice(null); void sources.refetch(); }}>刷新清单</Button></>}
     >
       <p className="m-0 px-4 pt-3 text-12 text-steel">
-        以{agent.lead}返回的为准。{admin && <>{can('deactivate') && `「下线」后审核 Agent 检索不到这份制度的规则${can('restore') ? '，可以恢复' : ''}；`}「删除」连规则带登记一起删掉，不能恢复。</>}
+        清单以{agent.lead}那边的为准。{can('deactivate') && `「下线」后 AI 审单时用不到这份制度的规则${can('restore') ? '，可以恢复' : ''}；`}「删除」连规则带登记一起删掉，不能恢复。
       </p>
       {busy && sources.data ? <p role="status" className="m-0 px-4 pt-2 text-13 text-wait-ink">{WORKING}</p>
         : notice ? <p role={notice.ok ? 'status' : 'alert'} className={cx('m-0 px-4 pt-2 text-13', notice.ok ? 'text-pass-ink' : 'text-fail-ink')}>{notice.text}</p>
@@ -84,8 +84,8 @@ export function PolicyList({ agent, ops, admin, onUpload }: { agent: Agent; ops:
             action={<Button icon="refresh" onClick={() => void sources.refetch()}>重新读取</Button>} />
         ) : !list.length ? (
           <Empty icon="knowledge" title="规则库里还没有制度"
-            description={admin ? '点右上角「上传制度」，把审批矩阵格式的制度 .docx 交给知识库入库。' : '管理员上传制度后会出现在这里。'}
-            action={admin ? <Button variant="primary" icon="upload" onClick={onUpload}>上传制度</Button> : undefined} />
+            description="点右上角「上传制度」，把审批矩阵格式的制度 .docx 交给知识库入库。"
+            action={<Button variant="primary" icon="upload" onClick={onUpload}>上传制度</Button>} />
         ) : (
           <div className="mt-2 overflow-x-auto">
             <table aria-label="制度清单" className="w-full border-collapse">
@@ -110,10 +110,10 @@ export function PolicyList({ agent, ops, admin, onUpload }: { agent: Agent; ops:
                       <td className={cell}>
                         <div className="flex gap-[6px]">
                           <Button size="sm" disabled={busy} onClick={() => setViewing(source)}>查看</Button>
-                          {admin && (inactive
+                          {inactive
                             ? can('restore') && <Button size="sm" disabled={busy} onClick={() => run('restore', source)}>恢复</Button>
-                            : can('deactivate') && <Button size="sm" disabled={busy} onClick={() => run('deactivate', source)}>下线</Button>)}
-                          {admin && <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirming(source)}>删除</Button>}
+                            : can('deactivate') && <Button size="sm" disabled={busy} onClick={() => run('deactivate', source)}>下线</Button>}
+                          <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirming(source)}>删除</Button>
                         </div>
                       </td>
                     </tr>

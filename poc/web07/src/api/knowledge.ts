@@ -36,14 +36,17 @@ export interface KbUpload {
 }
 export interface KbHit { rule_id: string; segments?: string[] | null; source_id?: string | null; text?: string | null; distance?: number | null }
 
-/** 两种方式各自的 Agent 叫法和说明（同补丁 0005）；lead 是放在句首、后面直接接汉字时的写法（「知识库 Agent」后空一格）。 */
+/**
+ * 两种方式各自的 Agent 叫法和页面上的说明（照补丁 0005 的事实，换成审核员看得懂的话：不提 A2A、向量、数据库、连接器、工具名）。
+ * lead 是放在句首、后面直接接汉字时的写法（「知识库 Agent」后空一格）。
+ */
 export const AGENTS = {
   pg: { name: '知识库 Agent', lead: '知识库 Agent ',
-    lede: '规则库在知识库的 PostgreSQL 里，由 Nexus 上的「知识库 Agent」经 A2A 读写：上传审批矩阵格式的制度，一行一条审批路径，规则编号和原文序号对应。审核 Agent 经 Nexus 数据连接器检索这里的规则（kb_search），审单时引用规则编号。',
-    search: '和审核 Agent 审单时用的是同一个检索（知识库里的 kb_search）。关键词用空格隔开更准，例如「房租 年度框架合同 九安」：含这些词越多的规则越靠前，同样多的再按语义相似度排。板块、金额可空。距离越小越相近。' },
+    lede: '公司制度存在知识库里，由知识库 Agent 负责写入和维护。上传审批矩阵格式的制度后，一行就是一条规则：一条审批路径，规则编号和原文的序号对应；AI 审单时按规则编号引用这里的规则。',
+    search: '和 AI 审单时用的是同一个检索。关键词用空格隔开更准，例如「房租 年度框架合同 九安」：含这些词越多的规则越靠前，一样多的再按意思接近的程度排。板块、金额可空。距离越小越接近。' },
   s3vectors: { name: '知识库文档管家', lead: '知识库文档管家',
-    lede: '规则库在 Amazon S3 Vectors 里，由「知识库文档管家」经 A2A 读写：上传审批矩阵格式的制度，一行一条审批路径，规则编号和原文序号对应。审核 Agent 用 rules_search 检索有效的规则，审单时引用规则编号。',
-    search: '和审核 Agent 审单时用的是同一个检索（文档管家的 rules_search）：只查有效的规则；填了板块只留这个板块和适用全部板块的规则，填了金额只留金额落在档位里的规则（不是金额条件的规则照样保留）。距离越小越相近。' },
+    lede: '公司制度存在知识库里，由知识库文档管家负责写入和维护。上传审批矩阵格式的制度后，一行就是一条规则：一条审批路径，规则编号和原文的序号对应；AI 审单时只查有效的规则，按规则编号引用。',
+    search: '和 AI 审单时用的是同一个检索：只查有效的规则；填了板块只留这个板块和适用全部板块的规则，填了金额只留金额落在档位里的规则（不按金额分档的规则照样保留）。距离越小越接近。' },
 } as const;
 export type Agent = (typeof AGENTS)[keyof typeof AGENTS];
 export const agentOf = (mode: string | undefined): Agent | null => (mode && Object.hasOwn(AGENTS, mode) ? AGENTS[mode as keyof typeof AGENTS] : null);

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { startApp } from './startApp';
 import { ALL_OPS, PG_OPS, deferred, fakeKb, uploadOf, type KbOptions } from './knowledgeFake';
 
 // 知识库页（Spec 第 6 节；补丁 0005 的 kb-page.js；Ruling T6c 与角色）：先问 /poc/kb/mode；没配置 / 没启用整页只说明怎么办；
-// 就绪时制度清单（下线 / 恢复按 describe 的 ops，删除二次确认）、上传记录、检索；工具失败（200 + success:false）当失败显示；分析员只读。
+// 就绪时制度清单（下线 / 恢复按 describe 的 ops，删除二次确认）、上传记录、检索；工具失败（200 + success:false）当失败显示。
+// 知识库暂时只给管理员（分析员进不来，见 roles.test.tsx）。
 async function openKnowledge(options: KbOptions = {}) {
   const bench = fakeKb(options);
   const app = await startApp('#/knowledge');
@@ -37,13 +38,6 @@ describe('知识库: before the agent is ready, the whole page only says what to
   it('names the s3vectors agent 知识库文档管家', async () => {
     await openKnowledge({ mode: { mode: 's3vectors', configured: true, ready: false, ops: [] } });
     expect(await screen.findByText('先在『Agent 接入』页启用知识库文档管家')).toBeInTheDocument();
-  });
-
-  it('an analyst is told to ask an admin, with no link to a page they cannot open', async () => {
-    await openKnowledge({ role: 'analyst', mode: { mode: 'pg', configured: true, ready: false, ops: [] } });
-    expect(await screen.findByText('先在『Agent 接入』页启用知识库 Agent')).toBeInTheDocument();
-    expect(screen.getByText(/请管理员/)).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: '打开 Agent 接入' })).not.toBeInTheDocument();
   });
 
   it('when /mode fails, shows the shell message as it came and 「重试」 asks again', async () => {
@@ -98,25 +92,25 @@ describe('知识库: ready', () => {
     expect(within(await rowOf('travel-rules')).getAllByRole('button').map(button => button.textContent)).toEqual(['查看', '恢复', '删除']);
     const reads = bench.find('GET', '/api/analysis/v1/poc/kb/sources').length;
     await user.click(within(await rowOf('fin-approval')).getByRole('button', { name: '下线' }));
-    expect(await screen.findByText('已下线「虚构财务审批办法V4.docx」（128 条规则）：审核 Agent 检索不到了，可以恢复。')).toBeInTheDocument();
+    expect(await screen.findByText('已下线「虚构财务审批办法V4.docx」（128 条规则）：AI 审单时用不到了，可以恢复。')).toBeInTheDocument();
     const [call] = bench.find('POST', '/api/analysis/v1/poc/kb/sources/fin-approval/deactivate');
     expect(call.headers.get('X-CSRF-Token')).toBe('csrf-1');
     expect(bench.find('GET', '/api/analysis/v1/poc/kb/sources').length).toBe(reads + 1);
     expect(within(await rowOf('fin-approval')).getByText('已下线')).toBeInTheDocument();
   });
 
-  it('while one operation runs (10–20 s), every row button and 刷新 is disabled, and a second click sends nothing', async () => {
+  it('while one operation runs (10–20 s), every row button and 刷新 is disabled; two clicks in the same tick send one request', async () => {
     const slow = deferred();
-    const { user, bench } = await openKnowledge({ overrides: { 'POST /api/analysis/v1/poc/kb/sources/travel-rules/restore': slow.route } });
+    const { bench } = await openKnowledge({ overrides: { 'POST /api/analysis/v1/poc/kb/sources/travel-rules/restore': slow.route } });
     const restore = within(await rowOf('travel-rules')).getByRole('button', { name: '恢复' });
-    await user.click(restore);
+    // 同一拍里点两下（同一个 act 里，中间不重新渲染）：按钮还没来得及变灰，只有在途标记挡得住第二下
+    act(() => { fireEvent.click(restore); fireEvent.click(restore); });
     expect(await screen.findByText('正在处理（约 10–20 秒）')).toBeInTheDocument();
     for (const button of within(await sourcesTable()).getAllByRole('button')) expect(button).toBeDisabled();
     expect(screen.getByRole('button', { name: '刷新清单' })).toBeDisabled();
-    await user.click(restore);
     expect(bench.find('POST', '/api/analysis/v1/poc/kb/sources/travel-rules/restore')).toHaveLength(1);
     slow.resolve({ body: { data: { success: true, source_id: 'travel-rules', affected: 12 } } });
-    expect(await screen.findByText('已恢复「虚构差旅制度」（12 条规则）：又能检索到了。')).toBeInTheDocument();
+    expect(await screen.findByText('已恢复「虚构差旅制度」（12 条规则）：AI 审单时又能用上了。')).toBeInTheDocument();
     expect(within(await rowOf('travel-rules')).getByRole('button', { name: '恢复' })).toBeEnabled();
   });
 
@@ -200,25 +194,5 @@ describe('知识库: ready', () => {
     expect(within(rows[2]).getByText('已入库').closest('[data-tone]')).toHaveAttribute('data-tone', 'pass');
     expect(within(rows[2]).getByText('写入 3 / 删除 1 / 不变 124')).toBeInTheDocument();
     expect(within(rows[2]).getByText('90 秒')).toBeInTheDocument();
-  });
-});
-
-describe('知识库: an analyst reads only (spec §6 roles)', () => {
-  it('sees the list, 查看 and 检索 — no 上传制度, 下线, 恢复, 删除, nor the upload history', async () => {
-    const { bench } = await openKnowledge({ role: 'analyst' });
-    const fin = await rowOf('fin-approval');
-    expect(within(fin).getAllByRole('button').map(button => button.textContent)).toEqual(['查看']);
-    expect(within(await rowOf('travel-rules')).getAllByRole('button').map(button => button.textContent)).toEqual(['查看']);
-    expect(screen.getByRole('button', { name: '检索' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '上传制度' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('table', { name: '上传记录' })).not.toBeInTheDocument();
-    expect(bench.find('GET', '/api/analysis/v1/poc/kb/uploads')).toEqual([]);
-  });
-
-  it('when the shell refuses, its message is shown as it came', async () => {
-    await openKnowledge({ role: 'analyst', overrides: {
-      'GET /api/analysis/v1/poc/kb/mode': { status: 403, body: { error: { code: 'KB_FORBIDDEN', message: '只有管理员能管理制度知识库。' } } },
-    } });
-    expect(await screen.findByText('只有管理员能管理制度知识库。')).toBeInTheDocument();
   });
 });

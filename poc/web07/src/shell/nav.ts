@@ -1,6 +1,7 @@
 /**
  * 导航与角色（Spec 第 2、6 节）：工作台；分组「审核」：单据池、知识库、我的规则；分组「平台」：Agent 接入、设置。
- * 管理员看到全部；分析员没有「Agent 接入」「设置」（知识库只读，由页面自己处理）；policy_reviewer 只有工作台和单据池（只读）。
+ * 管理员看到全部；分析员没有「知识库」「Agent 接入」「设置」（知识库暂时只给管理员：项目负责人 2026-10-31 定的，外壳的 /poc/kb/* 也只认管理员）；
+ * policy_reviewer 只有工作台和单据池（只读）。
  * 这里只管「看不看得到入口、进不进得去页面」；接口那头九安和外壳照样按角色拒绝。
  */
 import type { IconName } from '../ui/icons';
@@ -29,7 +30,7 @@ export const NAV_GROUPS: Array<{ label: string | null; items: PageKey[] }> = [
 
 const ACCESS: Record<Role, ReadonlySet<PageKey>> = {
   admin: new Set<PageKey>(['dashboard', 'documents', 'knowledge', 'myRules', 'agents', 'settings']),
-  analyst: new Set<PageKey>(['dashboard', 'documents', 'knowledge', 'myRules']),
+  analyst: new Set<PageKey>(['dashboard', 'documents', 'myRules']),
   policy_reviewer: new Set<PageKey>(['dashboard', 'documents']),
 };
 

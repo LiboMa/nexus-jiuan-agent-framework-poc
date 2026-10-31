@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { startApp } from './startApp';
 import { DOCX, OWN_RULES, RULE_TEXT, deferred, docxFile, fakeKb, mdFile, type KbOptions } from './knowledgeFake';
@@ -79,6 +79,17 @@ describe('我的规则: upload', () => {
     expect(screen.getByText('已用 1,234 / 5,000 字')).toBeInTheDocument();
   });
 
+  it('the eleventh file: the shell\'s refusal as it came', async () => {
+    const ten = Array.from({ length: 10 }, (_, n) => ({ ...OWN_RULES[1], id: `t-${n}`, title: `规则 ${n + 1}（虚构）.md`, chars: 10 }));
+    const { user, bench } = await openRules({ rules: ten });
+    await rulesTable();
+    expect(screen.getByText('10 / 10 份')).toBeInTheDocument();
+    await user.upload(input(), mdFile('第十一份（虚构）.md', '多的'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('每人最多 10 份规则：先删掉一份再上传。');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules')).toHaveLength(1);
+  });
+
   it('checks the type and the 2 MB size on the page before sending', async () => {
     const { bench } = await openRules();
     await rulesTable();
@@ -91,16 +102,19 @@ describe('我的规则: upload', () => {
     expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules')).toEqual([]);
   });
 
-  it('while a request runs, 选择文件 and every row button are disabled, and another file is not sent', async () => {
+  it('while a request runs, 选择文件 and every row button are disabled; two files dropped in the same tick send one upload', async () => {
     const slow = deferred();
     const { bench } = await openRules({ overrides: { 'POST /api/analysis/v1/poc/custom-rules': slow.route } });
     await rulesTable();
-    const user = userEvent.setup({ applyAccept: false });
-    await user.upload(input(), mdFile('一（虚构）.md', '一'));
+    const user = userEvent.setup();
+    // 同一拍里拖进两份（同一个 act 里，中间不重新渲染）：拖放区还没来得及变灰，只有在途标记挡得住第二份
+    act(() => {
+      fireEvent.drop(dropZone(), { dataTransfer: { files: [mdFile('一（虚构）.md', '一')] } });
+      fireEvent.drop(dropZone(), { dataTransfer: { files: [mdFile('二（虚构）.md', '二')] } });
+    });
     expect(await screen.findByText('正在上传「一（虚构）.md」并转成文字…')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '选择文件' })).toBeDisabled();
     for (const button of within(await rulesTable()).getAllByRole('button')) expect(button).toBeDisabled();
-    fireEvent.drop(dropZone(), { dataTransfer: { files: [mdFile('二（虚构）.md', '二')] } });
     expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules')).toHaveLength(1);
     slow.resolve({ status: 201, body: { data: { id: 'r-9', title: '一（虚构）.md', format: 'md', chars: 1, uploadedAt: '2026-10-30T05:00:00.000Z', text: '一' } } });
     await user.click(within(await screen.findByRole('dialog', { name: '核对转出来的文字' })).getByRole('button', { name: '核对无误' }));
@@ -135,6 +149,18 @@ describe('我的规则: full text and delete', () => {
     expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules/r-1/delete')[0].headers.get('X-CSRF-Token')).toBe('csrf-1');
     expect(await screen.findByText('已用 34 / 5,000 字')).toBeInTheDocument();
     await waitFor(() => expect(within(screen.getByRole('table', { name: '我的规则' })).queryByText(OWN_RULES[0].title)).not.toBeInTheDocument());
+  });
+
+  it('two clicks on 确认删除 in the same tick send one delete', async () => {
+    const slow = deferred();
+    const { user, bench } = await openRules({ overrides: { 'POST /api/analysis/v1/poc/custom-rules/r-1/delete': slow.route } });
+    await user.click(within(await rowOf(OWN_RULES[0].title)).getByRole('button', { name: '删除' }));
+    const yes = within(await screen.findByRole('dialog', { name: '删除规则' })).getByRole('button', { name: '确认删除' });
+    act(() => { fireEvent.click(yes); fireEvent.click(yes); });
+    expect(await screen.findByText('正在删除「运维费规则（虚构）.md」…')).toBeInTheDocument();
+    expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules/r-1/delete')).toHaveLength(1);
+    slow.resolve({ body: { data: { id: 'r-1', deleted: true } } });
+    expect(await screen.findByText('已删除「运维费规则（虚构）.md」。')).toBeInTheDocument();
   });
 
   it('删掉这份 from the upload modal goes through the same confirmation', async () => {

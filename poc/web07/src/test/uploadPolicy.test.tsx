@@ -75,6 +75,25 @@ describe('上传制度: prefill (T6b)', () => {
 });
 
 describe('上传制度: checks before sending', () => {
+  it('a cleared 文档名 is sent as the prefilled one, never as an empty title', async () => {
+    const { user, bench, dialog } = await openUpload();
+    await user.upload(fileInput(dialog), docxFile('travel-rules.docx'));
+    await user.clear(field(dialog, '文档名'));
+    await user.type(field(dialog, '文档名'), '   ');
+    await user.click(within(dialog).getByRole('button', { name: '上传并入库' }));
+    await within(dialog).findByText('入库中');
+    expect(new URLSearchParams(bench.find('POST', '/api/analysis/v1/poc/kb/sources')[0].search).get('title')).toBe('虚构差旅制度');
+  });
+
+  it('a cleared 文档名 for a new id falls back to the full file name', async () => {
+    const { user, bench, dialog } = await openUpload();
+    await user.upload(fileInput(dialog), docxFile('new-policy.docx'));
+    await user.clear(field(dialog, '文档名'));
+    await user.click(within(dialog).getByRole('button', { name: '上传并入库' }));
+    await within(dialog).findByText('入库中');
+    expect(new URLSearchParams(bench.find('POST', '/api/analysis/v1/poc/kb/sources')[0].search).get('title')).toBe('new-policy.docx');
+  });
+
   it('takes only .docx (drag and drop too) and at most 20 MB', async () => {
     const { bench, dialog } = await openUpload();
     drop(dialog, new File(['x'], '虚构制度.pdf', { type: 'application/pdf' }));
@@ -132,7 +151,7 @@ describe('上传制度: upload, then poll the upload record until it settles', (
     const listReads = bench.find('GET', '/api/analysis/v1/poc/kb/sources').length;
     bench.finish(1, { status: 'ingested', rulesTotal: 40, written: 38, removed: 2, unchanged: 0, conflicts: [] });
     await act(async () => { await vi.advanceTimersByTimeAsync(KB_POLL_MS); });
-    expect(await within(dialog).findByText('入库完成：「New Policy V2.docx」共 40 条规则（写入 38、删除 2、不变 0）。审核 Agent 下一次检索就用上新规则。')).toBeInTheDocument();
+    expect(await within(dialog).findByText('入库完成：「New Policy V2.docx」共 40 条规则（写入 38、删除 2、不变 0）。AI 下一次审单就用上新规则。')).toBeInTheDocument();
     const numbers = within(dialog).getByRole('list', { name: '入库结果' });
     expect(within(numbers).getAllByRole('listitem').map(item => item.textContent)).toEqual(['规则40', '写入38', '删除2', '不变0', '冲突0']);
     await waitFor(() => expect(bench.find('GET', '/api/analysis/v1/poc/kb/sources').length).toBeGreaterThan(listReads));
@@ -142,12 +161,14 @@ describe('上传制度: upload, then poll the upload record until it settles', (
     expect(within(dialog).getByRole('button', { name: '完成' })).toBeEnabled();
   });
 
-  it('a double click sends one upload', async () => {
+  it('two clicks in the same tick send one upload', async () => {
     const slow = deferred();
     const { user, bench, dialog } = await openUpload({ overrides: { 'POST /api/analysis/v1/poc/kb/sources': slow.route } });
     await user.upload(fileInput(dialog), docxFile('new-policy.docx'));
     const go = within(dialog).getByRole('button', { name: '上传并入库' });
-    await user.dblClick(go);
+    // 同一拍里点两下（同一个 act 里，中间不重新渲染）：按钮还没来得及变灰，只有在途标记挡得住第二下
+    act(() => { fireEvent.click(go); fireEvent.click(go); });
+    await within(dialog).findByText('正在上传「new-policy.docx」…');
     expect(bench.find('POST', '/api/analysis/v1/poc/kb/sources')).toHaveLength(1);
     expect(within(dialog).getByRole('button', { name: '上传并入库' })).toBeDisabled();
     expect(within(dialog).getByText('正在上传「new-policy.docx」…')).toBeInTheDocument();
@@ -193,6 +214,27 @@ describe('上传制度: upload, then poll the upload record until it settles', (
     expect(within(dialog).getByRole('button', { name: '上传并入库' })).toBeEnabled();
   });
 
+  it('a 4xx on the upload record ends the wait: back to the form with the message, no more polling, and closing resets', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { bench, dialog } = await openUpload({ overrides: {
+      'GET /api/analysis/v1/poc/kb/uploads/1': { status: 404, body: { error: { code: 'KB_NOT_FOUND', message: '找不到这条上传记录，刷新后再试。' } } },
+    } });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.upload(fileInput(dialog), docxFile('new-policy.docx'));
+    await user.click(within(dialog).getByRole('button', { name: '上传并入库' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('找不到这条上传记录，刷新后再试。');
+    expect(within(dialog).queryByText('入库中')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '上传并入库' })).toBeEnabled();
+    const polls = bench.find('GET', '/api/analysis/v1/poc/kb/uploads/1').length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(KB_POLL_MS * 4); });
+    expect(bench.find('GET', '/api/analysis/v1/poc/kb/uploads/1')).toHaveLength(polls);
+    await user.click(within(dialog).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '上传制度' }));
+    const again = await screen.findByRole('dialog', { name: '上传制度' });
+    expect(await within(again).findByText('把制度 .docx 拖到这里，或')).toBeInTheDocument();
+  });
+
   it('closing mid-ingest does not cancel it; opening again shows the same upload, and it keeps polling', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { bench, dialog } = await openUpload();
@@ -232,7 +274,21 @@ describe('<UploadPolicyModal open onClose /> on another page (for 工作台)', (
     await user.upload(fileInput(dialog), docxFile('travel-rules.docx'));
     await waitFor(() => expect(field(dialog, '文档名').value).toBe('虚构差旅制度'));
     await user.click(within(dialog).getByRole('button', { name: '取消' }));
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith({ ingesting: false });
+  });
+
+  it('closing mid-ingest tells the host page: onClose({ ingesting: true })', async () => {
+    const { onClose } = mount();
+    const dialog = await screen.findByRole('dialog', { name: '上传制度' });
+    await within(dialog).findByText('把制度 .docx 拖到这里，或');
+    const user = userEvent.setup();
+    await user.upload(fileInput(dialog), docxFile('new-policy.docx'));
+    await user.click(within(dialog).getByRole('button', { name: '上传并入库' }));
+    await within(dialog).findByText('入库中');
+    await user.click(within(dialog).getByRole('button', { name: '稍后再看' }));
+    expect(onClose).toHaveBeenLastCalledWith({ ingesting: true });
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenLastCalledWith({ ingesting: true });
   });
 
   it('says what to do when the agent is not enabled, with no drop zone', async () => {

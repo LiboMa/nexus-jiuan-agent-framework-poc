@@ -75,7 +75,7 @@ export function MyRules() {
     <>
       <PageHeader title="我的规则" note="只有你自己看得到" />
       <p className="m-0 mt-2 max-w-[880px] text-13 text-steel">
-        你自己的附加审核要求：只在你在单据抽屉里手动发起 AI 审核（「发起审核」「重新审核」）时随请求带上，审核 Agent 把它和公司制度一起核对，只会让结论更严、不会放宽；自动初审不带。
+        你自己的附加审核要求：只在你在单据抽屉里手动发起 AI 审核（「发起审核」「重新审核」）时随请求带上，AI 把它和公司制度一起核对，只会让结论更严、不会放宽；自动初审不带。
       </p>
 
       <Panel className="mt-[14px] p-4">

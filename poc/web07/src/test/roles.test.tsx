@@ -8,7 +8,7 @@ import { startApp } from './startApp';
 const ROUTES: RouteKey[] = ['dashboard', 'documents', 'knowledge', 'myRules', 'agents', 'settings', 'login'];
 const EXPECTED: Record<Role, RouteKey[]> = {
   admin: ['dashboard', 'documents', 'knowledge', 'myRules', 'agents', 'settings', 'login'],
-  analyst: ['dashboard', 'documents', 'knowledge', 'myRules', 'login'],
+  analyst: ['dashboard', 'documents', 'myRules', 'login'],
   policy_reviewer: ['dashboard', 'documents', 'login'],
 };
 
@@ -23,6 +23,7 @@ describe('canSee(route, role)', () => {
     expect(canSee('/', 'policy_reviewer')).toBe(true);
     expect(canSee('/documents', 'policy_reviewer')).toBe(true);
     expect(canSee('/my-rules', 'analyst')).toBe(true);
+    expect(canSee('/knowledge', 'analyst')).toBe(false);
     expect(canSee('/agents', 'analyst')).toBe(false);
     expect(canSee('/settings', 'admin')).toBe(true);
   });
@@ -36,10 +37,10 @@ describe('canSee(route, role)', () => {
 });
 
 async function openAs(role: Role, hash: string) {
-  fakeApi({ 'GET /api/analysis/v1/session': { body: sessionBody(role) } });
+  const server = fakeApi({ 'GET /api/analysis/v1/session': { body: sessionBody(role) } });
   const app = await startApp(hash);
   await screen.findByRole('navigation', { name: '主导航' });
-  return app;
+  return { ...app, calls: server.calls };
 }
 const navLabels = () => within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('link').map(link => link.getAttribute('aria-label') || link.textContent);
 
@@ -56,9 +57,16 @@ describe('role guards in the shell (Review Focus 5)', () => {
     expect(await screen.findByRole('heading', { name: '没有权限' })).toBeInTheDocument();
   });
 
-  it('an analyst has no 平台 group: no Agent 接入, no 设置', async () => {
+  it('an analyst who types #/knowledge sees 「没有权限」: the knowledge base is admin-only for now', async () => {
+    const server = await openAs('analyst', '#/knowledge');
+    expect(await screen.findByRole('heading', { name: '没有权限' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: '知识库' })).not.toBeInTheDocument();
+    expect(server.calls.filter(call => call.path.startsWith('/api/analysis/v1/poc/kb/'))).toEqual([]);
+  });
+
+  it('an analyst has no 知识库 and no 平台 group (no Agent 接入, no 设置), and keeps 我的规则', async () => {
     await openAs('analyst', '#/');
-    expect(navLabels()).toEqual(['工作台', '单据池', '知识库', '我的规则']);
+    expect(navLabels()).toEqual(['工作台', '单据池', '我的规则']);
     expect(screen.queryByText('平台')).not.toBeInTheDocument();
   });
 
