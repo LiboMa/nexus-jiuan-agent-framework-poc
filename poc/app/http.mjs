@@ -5,7 +5,7 @@ import path from 'node:path';
 export const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const MIME = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml' };
 const MESSAGES = { ORIGIN_INVALID: '请从 PoC 站点地址访问。', INVALID_CREDENTIALS: '账号或口令不正确。', POC_LOGIN_RATE_LIMIT: '登录尝试过多，请一分钟后再试。',
-  NOT_FOUND: '未找到可访问的记录。', WEB_NOT_BUILT: '新前端还没构建' };
+  NOT_FOUND: '未找到可访问的记录。', WEB_NOT_BUILT: '新前端还没构建，请重新部署。' };
 
 export function fail(code, status = 400) { throw Object.assign(new Error(code), { code, status }); }
 

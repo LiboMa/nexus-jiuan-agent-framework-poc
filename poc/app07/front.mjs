@@ -4,6 +4,7 @@
  * 新前端自己画登录页、自己把 /#access=<票据> 换成会话，所以首页不再跳转。九安 v0.7.10 的登录卡只有钉钉；旧的 /poc/login 照旧：
  * 口令对了就签九安的本地票据，浏览器跳到 /#access=<票据>。登录成功时仍另设一个只作提示的 Cookie（不是凭据，九安的会话 Cookie 只挂在 /api/analysis/v1 下）。
  * 构建产物在创建前门时读一次（index.html 和 assets/ 的文件清单），重新构建后要重启外壳；没有构建产物时首页回 503。
+ * HEAD / 和 HEAD /assets/* 照 GET 答（同样的状态和头，Content-Length 是 GET 的长度），只是不带正文；不交给九安的旧页面。
  */
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -35,34 +36,35 @@ async function readBuild(webDir) {
 export function createFrontDoor({ origin, login, publicDir = path.join(here, 'public'), webDir = path.join(here, '../web07/dist') }) {
   const host = new URL(origin).host;
   const build = readBuild(webDir);   // 不会 reject：读不到就当没构建
-  function send(res, body, type, cache) {
+  function send(req, res, body, type, cache) {
     res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': cache, 'Content-Security-Policy': PAGE_CSP,
       'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
-    res.end(body);
+    res.end(req.method === 'HEAD' ? undefined : body);
   }
   return {
     /** 认得的请求处理掉并返回 true；其余返回 false，交给九安。 */
     async serve(req, res, url) {
       // /assets/ 整个归前门：原始路径在 /assets/ 下也算（/assets/../x、/assets/%2e%2e/x 规范化后不在 /assets/ 下，同样 404，不交给九安）
       const asset = url.pathname.startsWith('/assets/') || String(req.url).startsWith('/assets/');
+      const read = req.method === 'GET' || req.method === 'HEAD';
       const ours = asset || url.pathname === LOGIN_API || Object.hasOwn(PAGES, url.pathname);
-      if (!ours && !(req.method === 'GET' && url.pathname === '/')) return false;
+      if (!ours && !(read && url.pathname === '/')) return false;
       try {
         if (req.headers.host !== host) fail('ORIGIN_INVALID', 403);
         if (asset) {
           // 只认清单里的文件名本身（不解码、不拼子目录），清单在创建前门时就定了
           const name = url.pathname.startsWith('/assets/') ? url.pathname.slice('/assets/'.length) : '';
-          const type = req.method === 'GET' ? (await build).assets.get(name) : undefined;
+          const type = read ? (await build).assets.get(name) : undefined;
           if (!type) fail('NOT_FOUND', 404);
           let body;
           try { body = await readFile(path.join(webDir, 'assets', name)); } catch { fail('NOT_FOUND', 404); }
-          send(res, body, type, ASSET_CACHE);
+          send(req, res, body, type, ASSET_CACHE);
           return true;
         }
         if (url.pathname === '/') {
           const { index } = await build;
           if (!index) fail('WEB_NOT_BUILT', 503);
-          send(res, index, 'text/html; charset=utf-8', 'no-store');
+          send(req, res, index, 'text/html; charset=utf-8', 'no-store');
           return true;
         }
         if (url.pathname === LOGIN_API) {
@@ -77,7 +79,7 @@ export function createFrontDoor({ origin, login, publicDir = path.join(here, 'pu
         }
         if (req.method !== 'GET') fail('NOT_FOUND', 404);
         const [file, type] = PAGES[url.pathname];
-        send(res, await readFile(path.join(publicDir, file)), type, 'no-store');
+        send(req, res, await readFile(path.join(publicDir, file)), type, 'no-store');
       } catch (error) {
         sendError(res, error);
       }

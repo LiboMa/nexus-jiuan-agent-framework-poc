@@ -120,12 +120,34 @@ test('/assets/：只给构建产物里真实存在、类型认得的文件（长
   assert.equal((await call('GET', '/assets/index-AbC123.js', { headers: { host: 'other.invalid' } })).status, 403);
 });
 
-test('还没构建新前端：首页回 503「新前端还没构建」，/assets/ 404；口令登录页和登录接口照常', async t => {
+test('HEAD / 和 HEAD /assets/*：前门照 GET 答（同样的状态和头、Content-Length 是 GET 的长度），只是没有正文；不交给九安的旧页面', async t => {
+  const call = await serve(t, createFrontDoor({ origin: ORIGIN, login, webDir: await webBuild(t) }));
+  for (const [target, length] of [['/', INDEX.length], ['/?x=1', INDEX.length], ['/assets/index-AbC123.js', ASSETS['index-AbC123.js'].length],
+    ['/assets/logo-AbC123.svg', ASSETS['logo-AbC123.svg'].length]]) {
+    const get = await call('GET', target), head = await call('HEAD', target);
+    assert.equal(head.status, 200, target);
+    assert.equal(head.text, '', `${target}：HEAD 没有正文`);
+    assert.equal(Number(head.headers['content-length']), length, target);
+    for (const name of ['content-type', 'cache-control', 'content-security-policy', 'x-content-type-options', 'referrer-policy']) assert.equal(head.headers[name], get.headers[name], `${target} ${name}`);
+  }
+  for (const target of ['/assets/missing.js', '/assets/../server.mjs', '/assets/index-AbC123.js.map']) {
+    const miss = await call('HEAD', target);
+    assert.equal(miss.status, 404, target);
+    assert.equal(miss.text, '');
+  }
+  assert.equal((await call('HEAD', '/', { headers: { host: 'other.invalid' } })).status, 403);
+  assert.equal((await call('HEAD', '/analysis.html')).status, 599, '九安的旧页面照旧交给九安');
+});
+
+test('还没构建新前端：首页回 503「新前端还没构建，请重新部署。」，/assets/ 404；口令登录页和登录接口照常', async t => {
   for (const webDir of [path.join(tmpdir(), 'front-web-no-such-dir'), await webBuild(t, { index: null })]) {
     const call = await serve(t, createFrontDoor({ origin: ORIGIN, login, webDir }));
     const home = await call('GET', '/');
     assert.equal(home.status, 503, webDir);
-    assert.deepEqual(JSON.parse(home.text), { error: { code: 'WEB_NOT_BUILT', message: '新前端还没构建' } });
+    assert.deepEqual(JSON.parse(home.text), { error: { code: 'WEB_NOT_BUILT', message: '新前端还没构建，请重新部署。' } });
+    const head = await call('HEAD', '/');
+    assert.equal(head.status, 503, 'HEAD 也是前门答：还没构建');
+    assert.equal(head.text, '');
     assert.equal((await call('GET', '/assets/index-AbC123.js')).status, 404);
     assert.equal((await call('GET', '/poc/login')).status, 200);
     assert.equal((await call('POST', '/api/analysis/v1/poc/login', { headers: { origin: ORIGIN }, body: { account: 'poc-reviewer', password: 'right' } })).status, 200);
