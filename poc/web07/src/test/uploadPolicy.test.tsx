@@ -85,6 +85,17 @@ describe('上传制度: checks before sending', () => {
     expect(new URLSearchParams(bench.find('POST', '/api/analysis/v1/poc/kb/sources')[0].search).get('title')).toBe('虚构差旅制度');
   });
 
+  it('T6: no 版本说明 (or only spaces) sends no sourceVersion= at all; the shell reads its absence as empty', async () => {
+    const { user, bench, dialog } = await openUpload();
+    await user.upload(fileInput(dialog), docxFile('new-policy.docx'));
+    await user.type(field(dialog, '版本说明'), '   ');
+    await user.click(within(dialog).getByRole('button', { name: '上传并入库' }));
+    await within(dialog).findByText('入库中');
+    const params = new URLSearchParams(bench.find('POST', '/api/analysis/v1/poc/kb/sources')[0].search);
+    expect(params.has('sourceVersion')).toBe(false);
+    expect([...params.keys()]).toEqual(['sourceId', 'title']);
+  });
+
   it('a cleared 文档名 for a new id falls back to the full file name', async () => {
     const { user, bench, dialog } = await openUpload();
     await user.upload(fileInput(dialog), docxFile('new-policy.docx'));

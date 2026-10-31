@@ -81,9 +81,11 @@ export async function fetchUploads(): Promise<KbUpload[]> {
 export const fetchUpload = (id: number) => api<KbUpload>(`/poc/kb/uploads/${id}`);
 
 export interface UploadInput { file: File; sourceId: string; sourceVersion: string; title: string }
-export const uploadPolicy = ({ file, ...meta }: UploadInput) => api<{ id: number; status: string }>(`/poc/kb/sources?${new URLSearchParams(meta)}`, {
-  method: 'POST', raw: file, headers: { 'Content-Type': DOCX, 'X-File-Name': enc(file.name) },
-});
+/** 版本说明没写就不带 sourceVersion（外壳 kb-steward-routes.mjs 的 meta() 把没有当空的）。 */
+export function uploadPolicy({ file, sourceId, sourceVersion, title }: UploadInput) {
+  const params = new URLSearchParams({ sourceId, ...(sourceVersion.trim() ? { sourceVersion: sourceVersion.trim() } : {}), title });
+  return api<{ id: number; status: string }>(`/poc/kb/sources?${params}`, { method: 'POST', raw: file, headers: { 'Content-Type': DOCX, 'X-File-Name': enc(file.name) } });
+}
 
 export interface SearchInput { q: string; segment: string; amount: string }
 export function searchRules({ q, segment, amount }: SearchInput, agent: Agent) {
