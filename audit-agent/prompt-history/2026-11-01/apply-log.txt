@@ -1,0 +1,19 @@
+--- 线上提示词
++++ prompt.yaml（pg 方式渲染）
+@@ -38 +38 @@
+-         a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-10-31.1"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
++         a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-10-31.2"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
+@@ -43 +43 @@
+-               第 1 次，用库内检索取候选：SELECT rule_id, rule_type, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM kb_search('<板块> <业务事项或费用类型的 2–4 个关键词> <金额>', 8); 关键词用空格隔开，例如「九安 房租 对公付款 单笔3万」：含关键词越多的行越靠前，同样多的按语义相似度排。
++               第 1 次，用库内检索取候选：SELECT rule_id, rule_type, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM kb_search('<关键词>', 5); 关键词用单据「费用/付款类型」的名称（没有就用「单据事由」），在「-」处拆开，再加 1–2 个事由里的词，用空格隔开，例如「税款 增值税 缴纳」：含关键词越多的行越靠前，同样多的按语义相似度排；板块、金额的词只在找审批矩阵行时加。
+@@ -45 +45,2 @@
+-               候选里没有对口的行时，改用关键词找（关键词最好用费用类型的名称）：SELECT rule_id, rule_type, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM approval_rules WHERE (coalesce(business_item,'')||' '||coalesce(amount_tier,'')||' '||coalesce(scope_controls,'')) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY rule_type, rule_id LIMIT 10;
++               第 1 次的候选里已有和这张单费用类型对得上的卡，或对口的审批矩阵行时，就不再查别的（矩阵行只再取它的全文），直接判断。
++               候选里没有对口的行时，改用关键词找（关键词用拆开后的费用类型名称）：SELECT rule_id, rule_type, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM approval_rules WHERE (coalesce(business_item,'')||' '||coalesce(amount_tier,'')||' '||coalesce(scope_controls,'')) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY rule_type, rule_id LIMIT 6;
+@@ -72 +73 @@
+-          effort: xhigh
++          effort: high
+提示词：已写入
+动态配置：已原样重存 2eef3a9b-bf30-4e02-9e26-8e1c2fc0f34f（连接器 ['conn-6c50c2ea84ea', 'conn-f0c7233959d9']，key_match_mode exact）
+发布描述：已是最新，跳过
+核对通过：快照有第 9 条（7851 字），连接器与密钥匹配方式不变，名片有契约和任务两行（发布修订号 16）
