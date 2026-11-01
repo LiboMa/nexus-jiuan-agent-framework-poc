@@ -882,3 +882,26 @@ test('补丁 0005：「我的规则」请求进行中（读列表、上传、查
   await until(() => !row('合同要求.md'));
   assert.doesNotMatch(root.textContent, /已上传「合同要求\.md」|对公付款单金额超过 10 万元须附合同。/, '删掉刚上传的那份后它的全文框收起');
 });
+
+test('补丁 0006：构件里 review_advice@1 的时限是 180 秒（limits.timeoutMs 180000，契约允许的上限），九安的 A2A 适配层按它掐表；请求大小上限、first_review@1 和开发包都不变', async t => {
+  const out = await builtPage(t);
+  const manifest = async (root, task) => JSON.parse(await readFile(path.join(root, `src/agent-contract/tasks/${task}/v1/task.json`), 'utf8'));
+  const [built, original] = await Promise.all([manifest(out, 'review_advice'), manifest(SOURCE, 'review_advice')]);
+  assert.deepEqual(built.limits, { ...original.limits, timeoutMs: 180000 });
+  assert.equal(original.limits.timeoutMs, 120000, '开发包里还是 120 秒（只改副本）');
+  assert.equal(built.limits.maxRequestChars, 87442, '单次请求的大小上限不变');
+  assert.deepEqual({ ...built, limits: null }, { ...original, limits: null }, 'task.json 只改了时限');
+  assert.deepEqual(await manifest(out, 'first_review'), await manifest(SOURCE, 'first_review'), 'first_review@1 不变');
+  const schema = JSON.parse(await readFile(path.join(out, 'src/agent-contract/tasks/task.schema.json'), 'utf8'));
+  assert.equal(schema.properties.limits.properties.timeoutMs.maximum, 180000, '180000 正是契约允许的上限');
+  // 九安加载契约（适配层、组装器、测试台外壳都用它）读到的就是 180 秒；适配层没给 timeoutMs 时按任务清单掐表
+  const { loadContract } = await import(pathToFileURL(path.join(out, 'src/agent-contract/checks.mjs')).href);
+  const contract = loadContract();
+  assert.equal(contract.tasks.get('review_advice@1').manifest.limits.timeoutMs, 180000);
+  assert.equal(contract.tasks.get('first_review@1').manifest.limits.timeoutMs, 180000, 'first_review@1 本来就是 180 秒');
+  assert.match(await readFile(path.join(out, 'providers/nexus-a2a.mjs'), 'utf8'), /const limit = timeoutMs \?\? entry\.manifest\.limits\.timeoutMs;/);
+  // 调用中间件给 nexus-a2a 的时限本来就是 180 秒（不比这一轮短）
+  assert.match(await readFile(path.join(out, 'src/platform/call-middleware.mjs'), 'utf8'), /'nexus-a2a': Object\.freeze\(\{\n {4}timeoutMs: 180000,/);
+  // 契约来源说明里记下这一处改动（副本里这个文件的 sha256 因此和表里的不同）
+  assert.match(await readFile(path.join(out, 'src/agent-contract/SOURCE.md'), 'utf8'), /### 测试台补丁 0006：`review_advice@1` 的时限 180 秒（2026-11-01）/);
+});

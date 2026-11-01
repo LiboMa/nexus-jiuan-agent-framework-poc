@@ -1,0 +1,24 @@
+--- a/src/agent-contract/SOURCE.md	2026-10-23 12:32:26
++++ b/src/agent-contract/SOURCE.md	2026-11-01 09:36:00
+@@ -22,6 +22,10 @@
+ | `checks.mjs` | 是契约文件（任务检查的参考写法），按原字节保留；平台实际用的是 `checks.mjs`（本目录根下，我方写）里同名的两条一致性检查，测试核对两者在例子上结论一致 |
+ | 拷入时间 | 2026-10-22，分支 `feature/review-advice-nexus` |
+ 
++### 测试台补丁 0006：`review_advice@1` 的时限 180 秒（2026-11-01）
++
++只在测试台的副本里（`poc/bench/build-jiuan07.sh` 打 `patches/jiuan-v0.7.10/0006-review-advice-timeout-180s.patch`；开发包 `source/` 不动）：`tasks/review_advice/v1/task.json` 的 `limits.timeoutMs` 由 120000 改为 180000。项目负责人 2026-11-01 定：一轮审核在 3 分钟内完成算正常。180000 是 `tasks/task.schema.json` 允许的上限，也是调用中间件给 `nexus-a2a` 的时限（`src/platform/call-middleware.mjs`）。所以副本里这个文件的 sha256 和下表不同；`first_review@1` 不变。
++
+ ## 文件与 sha256
+ 
+ | 文件（相对本目录） | sha256 |
+--- a/src/agent-contract/tasks/review_advice/v1/task.json	2026-10-23 12:32:26
++++ b/src/agent-contract/tasks/review_advice/v1/task.json	2026-11-01 09:35:53
+@@ -51,7 +51,7 @@
+   "limits": {
+     "maxRequestChars": 87442,
+     "maxAnswerChars": 17074,
+-    "timeoutMs": 120000
++    "timeoutMs": 180000
+   },
+   "data": [
+     "单据字段与付款明细",
