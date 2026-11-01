@@ -7,9 +7,11 @@ ${AGENT_NAME}、${AGENT_MODEL}）后再比、再写。Agent 和发布还没有�
 1. 读线上的提示词，和渲染结果不同时打印逐行 diff（- 线上，+ 要写的）；必须和 --base 给的底稿逐字一致才写（已经是渲染结果就跳过），
    避免盖掉网页上的改动。--dry-run 时可以不给 --base，只看 diff。
 2. PUT 提示词。
-3. 原样重存发布的动态配置（overwrite_dynamic_id）：A2A 每一轮用的是动态配置里的快照，不重存就还是旧提示词。
+3. 重存发布的动态配置（overwrite_dynamic_id）：A2A 每一轮用的是动态配置里的快照，不重存就还是旧提示词。工具（tools）按
+   CONFIG_TOOLS 写（pg 方式清空；打印前后两份清单），连接器、密钥等其余字段原样带回。
 4. 发布描述写上「契约：jiuan.agent/v1」「任务：review_advice@1」两行：九安读名片时按这两行判断支持哪些任务。
-5. 只读核对：快照里有第 9 条、连接器和密钥匹配方式没变、公开名片上有这两行。
+5. 只读核对：快照里有第 9 条、工具是 CONFIG_TOOLS 那一份（去掉的工具也不在快照的 tools_dependencies 里）、连接器和密钥匹配方式
+   没变、公开名片上有这两行。
 
 经 Operator（skills/nexus-ai-operator，配置名取自环境配置的 NEXUS_PROFILE）调用；写操作都带 --yes，所以先用 --dry-run 看一遍。
 用法：python3 audit-agent/apply.py [--env poc/infra/env/<环境名>.env] --dry-run [--base <底稿>]
@@ -26,6 +28,9 @@ from nexus_common import CONFIG_FIELDS, DESCRIPTION, nexus, render_prompt, targe
 
 HERE = Path(__file__).resolve().parent
 MARKER = '9. 信封模式'
+# 动态配置里的工具（tools）每种方式留哪些；没写的方式原样保留。审核 Agent 用的工具都在 prompt.yaml 的 tools_dependencies 里
+# （pg 方式的 data_connector_* 还会由绑着的连接器带进快照），动态配置不需要再加；加了的每一轮都进模型的工具清单，白占 token。
+CONFIG_TOOLS = {'pg': []}
 NOTES = {'pg': 'v3：jiuan.agent/v1 信封模式（review_advice@1）+ 知识库只读查询（kb_search）+ 审核员自定义规则',
          's3vectors': 'v3：jiuan.agent/v1 信封模式（review_advice@1）+ 规则检索（rules_search）+ 审核员自定义规则'}
 
@@ -40,6 +45,25 @@ def print_diff(current, target_prompt, kb_mode):
                                 tofile=f'prompt.yaml（{kb_mode} 方式渲染）', n=0, lineterm='')
     for line in diff:
         print(line)
+
+
+def config_tools(config, kb_mode):
+    """动态配置要写回的 tools：这种方式在 CONFIG_TOOLS 里就用那一份，不在就原样。"""
+    return list(CONFIG_TOOLS[kb_mode]) if kb_mode in CONFIG_TOOLS else config.get('tools')
+
+
+def print_tools(before, after, kb_mode):
+    """动态配置的工具：前后两份清单（- 去掉的，+ 加上的，空格开头是留着的）。"""
+    before, after = list(before or []), list(after or [])
+    if before == after:
+        print(f'动态配置的工具：不变（{len(after)} 个）')
+        return
+    print(f'动态配置的工具（{kb_mode} 方式按 CONFIG_TOOLS）：{len(before)} 个 → {len(after)} 个')
+    for tool in before:
+        print(f'  {" " if tool in after else "-"} {tool}')
+    for tool in after:
+        if tool not in before:
+            print(f'  + {tool}')
 
 
 def main(argv=None):
@@ -78,10 +102,13 @@ def main(argv=None):
 
     config = nexus('GET', '/api/v2/publications/{publish_id}/dynamic-config', [f'publish_id={target.publication_id}'], target=target)
     body = {field: config.get(field) for field in CONFIG_FIELDS}
+    body['tools'] = config_tools(config, target.kb_mode)
     body['overwrite_dynamic_id'] = config['dynamic_id']
+    print_tools(config.get('tools'), body['tools'], target.kb_mode)
     nexus('POST', '/api/v2/publications/{publish_id}/dynamic-config', [f'publish_id={target.publication_id}'], body, write=True,
           dry_run=opts.dry_run, target=target)
-    print(f"动态配置：已原样重存 {config['dynamic_id']}（连接器 {config.get('connectors')}，key_match_mode {config.get('key_match_mode')}）")
+    print(f"动态配置：已重存 {config['dynamic_id']}（工具 {len(body['tools'] or [])} 个；其余原样：连接器 {config.get('connectors')}，"
+          f"key_match_mode {config.get('key_match_mode')}）")
 
     publication = nexus('GET', '/api/v2/publications/{publish_id}', [f'publish_id={target.publication_id}'], target=target)
     if publication.get('description') != DESCRIPTION:
@@ -98,9 +125,15 @@ def main(argv=None):
     problems = []
     if MARKER not in snapshot:
         problems.append('动态配置的快照里没有第 9 条')
-    for field in ('connectors', 'keys', 'key_match_mode', 'tools'):
+    for field in ('connectors', 'keys', 'key_match_mode'):
         if after.get(field) != config.get(field):
             problems.append(f'动态配置的 {field} 变了：{config.get(field)} → {after.get(field)}')
+    if (after.get('tools') or []) != (body['tools'] or []):
+        problems.append(f"动态配置的 tools 是 {after.get('tools')}（应当是 {body['tools']}）")
+    dependencies = (after['resolved_definition']['agent']['versions'][0].get('metadata') or {}).get('tools_dependencies') or []
+    dropped = [tool for tool in (config.get('tools') or []) if tool not in (body['tools'] or []) and tool in dependencies]
+    if dropped:
+        problems.append(f'快照的 tools_dependencies 里还有去掉的工具：{dropped}')
     with urllib.request.urlopen(f'{target.origin}/a2a/{target.publication_id}/.well-known/agent-card.json', timeout=30) as response:
         card = json.load(response)
     lines = card.get('description', '').splitlines()
@@ -109,7 +142,8 @@ def main(argv=None):
             problems.append(f'名片描述里没有「{line}」')
     if problems:
         raise SystemExit('核对没通过：' + '；'.join(problems))
-    print(f"核对通过：快照有第 9 条（{len(snapshot)} 字），连接器与密钥匹配方式不变，名片有契约和任务两行（发布修订号 {card.get('version')}）")
+    print(f"核对通过：快照有第 9 条（{len(snapshot)} 字），工具 {len(body['tools'] or [])} 个，连接器与密钥匹配方式不变，"
+          f"名片有契约和任务两行（发布修订号 {card.get('version')}）")
 
 
 if __name__ == '__main__':
