@@ -457,18 +457,18 @@
 +}
 +
 +/**
-+ * 「我的规则」：只操作当前登录账号自己的；限额（10 份、2 MB、合计 5,000 字）由外壳核对，超了照它的中文提示显示。
++ * 「我的规则」：只操作当前登录账号自己的；限额（10 份、2 MB，合计字数不设上限）由外壳核对，超了照它的中文提示显示。
 + * 一次一个请求（读列表、上传、查看全文、删除）：进行中「选择文件」和每行的按钮都不可用，再选文件也不发。
 + */
 +function ownRules({ api }) {
-+  const usage = h('span', { class: 'kb-usage' }, '已用 — / 5,000 字');
++  const usage = h('span', { class: 'kb-usage' }, '已用 — 字');
 +  const message = statusLine(), say = sayer(message), listMessage = statusLine(), sayList = sayer(listMessage);
 +  const uploaded = h('div'), listRows = h('div'), detail = h('div');
 +  let shown = null, fresh = null, busy = false, rowButtons = [];   // shown：「查看全文」打开的那份；fresh：刚上传、全文框还开着的那份
 +  const fileInput = h('input', { type: 'file', name: 'ownFile', accept: `.md,.docx,text/markdown,${DOCX}`, hidden: true });
 +  fileInput.addEventListener('change', () => pick(fileInput.files?.[0]));
 +  const choose = button('选择文件', () => fileInput.click?.(), true);
-+  const drop = dropZone('把规则文件拖到这里，或', 'Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份、合计 5,000 字', fileInput, pick, choose);
++  const drop = dropZone('把规则文件拖到这里，或', 'Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份', fileInput, pick, choose);
 +  const textBox = (head, rule, onClose) => h('div', { class: 'kb-detail' },
 +    h('div', { class: 'kb-section-head' }, h('strong', {}, head), button('收起', onClose)), h('pre', { class: 'kb-own-text' }, rule?.text || ''));
 +  const setBusy = on => { busy = on; for (const node of [choose, fileInput, ...rowButtons]) node.disabled = on; };
@@ -512,7 +512,7 @@
 +    try {
 +      const data = await api('/poc/custom-rules');
 +      sayList('');
-+      usage.textContent = `已用 ${thousands(data?.usedChars ?? 0)} / ${thousands(data?.limitChars ?? 5000)} 字`;
++      usage.textContent = `已用 ${thousands(data?.usedChars ?? 0)} 字`;
 +      const items = Array.isArray(data?.items) ? data.items : [];
 +      if (shown && !items.some(item => item.id === shown)) { detail.replaceChildren(); shown = null; }
 +      if (fresh && !items.some(item => item.id === fresh)) { uploaded.replaceChildren(); fresh = null; }

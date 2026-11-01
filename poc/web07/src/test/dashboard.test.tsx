@@ -89,7 +89,7 @@ describe('工作台: the four numbers match the API', () => {
     expect(valueOf('建议通过')).toBe('80%');
     expect(detailOf('建议通过')).toBe('176 / 221');
     expect(valueOf('出建议用时')).toBe('82秒 / 张');
-    expect(detailOf('出建议用时')).toBe('最长 101 秒，上限 120 秒');
+    expect(detailOf('出建议用时')).toBe('最长 101 秒，上限 180 秒');
   });
 
   it('clicking 待我复核 opens 单据池 on its 待复核 tab', async () => {
@@ -120,7 +120,7 @@ describe('工作台: the four numbers match the API', () => {
     expect(valueOf('建议通过')).toBe('—');
     expect(detailOf('建议通过')).toBe('0 / 0');
     expect(valueOf('出建议用时')).toBe('—');
-    expect(detailOf('出建议用时')).toBe('最长 —，上限 120 秒');
+    expect(detailOf('出建议用时')).toBe('最长 —，上限 180 秒');
     expectNoBadNumbers();
   });
 });
@@ -419,16 +419,14 @@ describe('知识库 · 最常引用的规则 · 我的规则', () => {
     ]);
   });
 
-  it('我的规则: 已用 N / 5,000 字 with a bar, and N 份', async () => {
+  it('我的规则: 已用 N 字 and N 份, no cap and no usage bar (the shell sends limitChars null)', async () => {
     await openDashboard();
     const panel = region('我的规则');
-    expect(within(panel).getByText('1,320 / 5,000 字')).toBeInTheDocument();
+    expect(within(panel).getByText('1,320 字')).toBeInTheDocument();
     expect(within(panel).getByText('2 份')).toBeInTheDocument();
-    const meter = within(panel).getByRole('meter', { name: '已用字数' });
-    expect(meter).toHaveAttribute('aria-valuenow', '1320');
-    expect(meter).toHaveAttribute('aria-valuemax', '5000');
-    expect(meter.querySelector('[data-fill]')).toHaveStyle({ width: '26.4%' });
-    expect(meter.querySelector('[data-fill]')?.className).toMatch(/bg-own\b/);
+    expect(within(panel).getByText('字数不设上限；规则越长，每一轮 AI 审核越慢')).toBeInTheDocument();
+    expect(within(panel).queryByRole('meter')).not.toBeInTheDocument();
+    expect(panel.textContent).not.toMatch(/5,000|\/ [\d,]+ 字/);
     expect(within(panel).getByRole('link', { name: '管理我的规则' })).toHaveAttribute('href', '#/my-rules');
   });
 });
@@ -455,8 +453,8 @@ describe('an empty bench (Review Focus 4)', () => {
     expect(rows.map(row => within(row).getAllByRole('cell').slice(1).map(cell => cell.textContent))).toEqual([['0', '0', '—', '—'], ['0', '0', '—', '—']]);
     expect(within(region('知识库')).getByText('0 份')).toBeInTheDocument();
     expect(within(region('知识库')).getByText('0 条')).toBeInTheDocument();
-    expect(within(region('我的规则')).getByText('0 / 5,000 字')).toBeInTheDocument();
-    expect(within(region('我的规则')).getByRole('meter').querySelector('[data-fill]')).toHaveStyle({ width: '0%' });
+    expect(within(region('我的规则')).getByText('0 字')).toBeInTheDocument();
+    expect(within(region('我的规则')).queryByRole('meter')).not.toBeInTheDocument();
     expectNoBadNumbers();
     for (const [name, window] of [['今天', 'today'], ['本月', 'month']]) {
       await user.click(screen.getByRole('radio', { name }));
@@ -473,9 +471,9 @@ describe('an empty bench (Review Focus 4)', () => {
     expect(valueOf('建议通过')).toBe('—');
     expect(within(region('每天的 AI 建议')).getByText(/这段时间还没有 AI 建议/)).toBeInTheDocument();
     expect(within(region('人工改判率')).getByText(/这段时间还没有人复核/)).toBeInTheDocument();
-    // 合计上限没给：按 5,000 字算
-    expect(within(region('我的规则')).getByText('10 / 5,000 字')).toBeInTheDocument();
-    expect(within(region('我的规则')).getByRole('meter').querySelector('[data-fill]')).toHaveStyle({ width: '0.2%' });
+    // 不管 limitChars 给了什么，都只写已用的字数（没有合计上限）
+    expect(within(region('我的规则')).getByText('10 字')).toBeInTheDocument();
+    expect(within(region('我的规则')).queryByRole('meter')).not.toBeInTheDocument();
     expectNoBadNumbers();
   });
 

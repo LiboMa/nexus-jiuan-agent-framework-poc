@@ -1,7 +1,8 @@
 /**
  * 我的规则（Spec 第 6 节；补丁 0005 的「我的规则」）：管理员、分析员各自的附加审核要求，存在测试台本机。
- * 「已用 N / 5,000 字」和份数随列表更新；上传 .md / .docx（拖入或选择）→ 弹框给出转出来的文字核对；查看全文（弹框）；删除（先确认）。
- * 限额（10 份、2 MB、合计 5,000 字）由外壳核对，超了照它的中文提示显示。一次一个请求：上传、删除进行中「选择文件」和每行的按钮都不可用。
+ * 「已用 N 字」和份数随列表更新；上传 .md / .docx（拖入或选择）→ 弹框给出转出来的文字核对；查看全文（弹框）；删除（先确认）。
+ * 限额（10 份、2 MB）由外壳核对，超了照它的中文提示显示；合计字数不设上限（没有用量条），只提一句规则越长每轮越慢。
+ * 一次一个请求：上传、删除进行中「选择文件」和每行的按钮都不可用。
  */
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -65,8 +66,6 @@ export function MyRules() {
   }
 
   const data = list.data;
-  const used = data?.usedChars ?? 0, limit = data?.limitChars ?? 5000;
-  const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   const status = upload.isPending ? `正在上传「${upload.variables?.name ?? ''}」并转成文字…` : remove.isPending ? `正在删除「${remove.variables?.title ?? ''}」…` : null;
   const head = 'whitespace-nowrap border-b border-line px-3 py-[9px] text-left text-12 font-medium text-steel';
   const cell = 'whitespace-nowrap border-b border-line px-3 py-[11px]';
@@ -80,16 +79,12 @@ export function MyRules() {
 
       <Panel className="mt-[14px] p-4">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <b className="text-16 font-semibold">{data ? `已用 ${thousands(used)} / ${thousands(limit)} 字` : `已用 — / ${thousands(limit)} 字`}</b>
+          <b className="text-16 font-semibold">{data ? `已用 ${thousands(data.usedChars)} 字` : '已用 — 字'}</b>
           {data && <span className="text-13 text-steel">{`${data.items.length} / ${data.limitFiles} 份`}</span>}
-          <span className="ml-auto text-12 text-faint">合计 5,000 字以内，一轮 AI 审核才能在时限内跑完</span>
-        </div>
-        <div role="meter" aria-label="已用字数" aria-valuemin={0} aria-valuemax={limit} aria-valuenow={used} aria-valuetext={`已用 ${thousands(used)} / ${thousands(limit)} 字`}
-          className="mt-2 h-1 bg-track">
-          <span className={cx('block h-full', percent >= 90 ? 'bg-wait' : 'bg-own')} style={{ width: `${percent}%` }} />
+          <span className="ml-auto text-12 text-faint">字数不设上限；规则越长，每一轮 AI 审核越慢</span>
         </div>
         <div className="mt-4">
-          <DropZone lead="把规则文件拖到这里，或" hint="Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份、合计 5,000 字"
+          <DropZone lead="把规则文件拖到这里，或" hint="Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份"
             accept={`.md,.docx,text/markdown,${DOCX}`} inputLabel="选择规则文件" onPick={pick} disabled={busy} />
         </div>
         {status ? <p role="status" className="m-0 mt-2 text-13 text-steel">{status}</p>

@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withAdviceActor, withCustomRules } from '../../custom-rules-advice.mjs';
-import { CUSTOM_RULES_LIMITS, createCustomRules } from '../../custom-rules.mjs';
+import { createCustomRules } from '../../custom-rules.mjs';
 import { COMPANIES, REPORTS, TENANT_ID } from '../../fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +53,17 @@ const RULES = Object.freeze({ 'poc-reviewer': { owner: 'poc-reviewer', items: [
 ] } });
 const fakeRules = (table = RULES) => ({ async forRequest(accountId) { await tick(); return table[accountId] ? structuredClone(table[accountId]) : null; } });
 const ruleChars = custom => custom.items.reduce((sum, item) => sum + chars(item.text), 0);
+const thousands = number => number.toLocaleString('en-US');
+/** 九安 fit() 最多能去到的那一步：原件的页文字一页不留（原件的编号、文件名还在），去过页时 truncated 是 true。 */
+function floorSize(request) {
+  const probe = structuredClone(request);
+  const files = probe.input.evidence.files;
+  if (files.some(file => file.pages.length)) { for (const file of files) file.pages = []; probe.input.evidence.truncated = true; }
+  return size(probe);
+}
+const tooLong = (chars, documentId = DOC.id) => ({ code: 'CUSTOM_RULES_TOO_LONG',
+  message: `我的规则合计 ${thousands(chars)} 字，加上单据后超过了九安单次请求的上限（约 8.7 万字），请删减我的规则后再发起。`,
+  log: `POC_CUSTOM_RULES_TOO_LONG ${documentId} poc-reviewer ${chars}` });
 
 // ---------- 前半：假任务服务、假组装器 ----------
 
@@ -148,32 +159,32 @@ test('person_run_attached：poc-reviewer 有两份规则 → input.customRules �
   assert.equal(h.logs.length, 1);
 });
 
-// 附规则这一层按九安的请求上限 fit()（从原件末尾逐页去，不裁规则）。规则用产品的上限（合计 5,000 字，见 over_cap_fails_before_nexus）；
+// 附规则这一层按九安的请求上限 fit()（从原件末尾逐页去，不裁规则）。规则合计 5,000 字（字数不设上限，这里只是一份不短的规则）；
 // 单据字段与付款明细已经占到契约的上限（30 个字段、12 行 × 8 列），要让 5,000 字的规则加进来整份请求就超、而且去两轮原件，
-// 这里把请求上限调到正好是九安组装出来的那么大（契约真实的上限 MAX 见后半九安真实的链）
+// 这里把请求上限调到正好是九安组装出来的那么大（契约真实的上限 MAX 见 too_long_fails_before_nexus 和后半九安真实的链）
 const capped = maxRequestChars => ({ ...task, manifest: { ...task.manifest, limits: { ...task.manifest.limits, maxRequestChars } } });
-const RULES_AT_CAP = Object.freeze({ 'poc-reviewer': { owner: 'poc-reviewer', items: [
+const LONG_RULES = Object.freeze({ 'poc-reviewer': { owner: 'poc-reviewer', items: [
   { title: '虚构甲.md', text: '虚构规则甲。'.repeat(500) }, { title: '虚构乙.docx', text: '虚构规则乙。'.repeat(333) + '乙乙' }] } });
 
-test('trims_originals_not_rules：原件 3 份各 5 页、规则合计正好 5,000 字、请求上限正好是九安组装出来的大小 → 按九安 fit() 从末尾逐页去原件，规则全文不动；单据已经占满上限时 AGENT_REQUEST_TOO_LARGE', async () => {
+test('trims_originals_not_rules：原件 3 份各 5 页、规则合计 5,000 字、请求上限正好是九安组装出来的大小 → 按九安 fit() 从末尾逐页去原件，规则全文不动；单据已经占满上限时 CUSTOM_RULES_TOO_LONG，不发', async () => {
   const fields = Array.from({ length: 30 }, (_, index) => ({ label: `虚构字段${index + 1}`, value: '虚'.repeat(500) }));
   const lines = Array.from({ length: 12 }, () => ({ fields: Array.from({ length: 8 }, (_, index) => ({ label: `虚构列${index + 1}`, value: '构'.repeat(200) })) }));
   const page = (file, number) => ({ page: number, text: `虚构原件 ${file} 第 ${number} 页\n`.padEnd(800, '文字\n') });
   const files = () => [1, 2, 3].map(file => ({ fileId: `file-${file}`, name: `虚构原件${file}.pdf`, pages: [1, 2, 3, 4, 5].map(number => page(file, number)) }));
   const assembler = fakeAssembler({ build: subject => requestFor(subject, { fields, lines, files: files() }) });
-  assert.equal(ruleChars(RULES_AT_CAP['poc-reviewer']), CUSTOM_RULES_LIMITS.chars);
+  assert.equal(ruleChars(LONG_RULES['poc-reviewer']), 5_000);
 
   const plain = await assembler.assemble(subjectOf(DOC));
   const cap = size(plain.request);
   assert.ok(valid(plain.request) && cap <= MAX, '九安组装出来的本来就在契约的上限内');
-  assert.ok(size({ ...plain.request, input: { ...plain.request.input, customRules: RULES_AT_CAP['poc-reviewer'] } }) > cap, '加上规则才超');
-  const h = harness({ rules: fakeRules(RULES_AT_CAP), assembler, task: capped(cap) });
+  assert.ok(size({ ...plain.request, input: { ...plain.request.input, customRules: LONG_RULES['poc-reviewer'] } }) > cap, '加上规则才超');
+  const h = harness({ rules: fakeRules(LONG_RULES), assembler, task: capped(cap) });
 
   await h.state.start({ actor: REVIEWER, document: DOC });
   const { request, inputFingerprint } = h.tasks.sent[0].assembled;
   assert.ok(size(request) <= cap);
   assert.ok(valid(request));
-  assert.deepEqual(request.input.customRules, RULES_AT_CAP['poc-reviewer']);
+  assert.deepEqual(request.input.customRules, LONG_RULES['poc-reviewer']);
   assert.equal(request.input.evidence.truncated, true);
   assert.deepEqual(request.input.document, plain.request.input.document);
   const counts = request.input.evidence.files.map(file => file.pages.length);
@@ -189,13 +200,17 @@ test('trims_originals_not_rules：原件 3 份各 5 页、规则合计正好 5,0
   assert.equal(inputFingerprint, fingerprintOf(request.input));
   assert.equal(plain.request.input.evidence.files.every(file => file.pages.length === 5), true, '九安给的那份不被改动');
 
-  // 单据字段与付款明细已经占满请求上限（原件只有一页）：原件全去掉也放不下 5,000 字的规则 → AGENT_REQUEST_TOO_LARGE，不发
+  // 单据字段与付款明细已经占满请求上限（原件只有一页）：原件全去掉也放不下 5,000 字的规则 → CUSTOM_RULES_TOO_LONG（上限照任务清单说），不发
   const crowded = fakeAssembler({ build: subject => requestFor(subject, { fields, lines, files: [{ fileId: 'file-1', name: '虚构原件1.pdf', pages: [page(1, 1)] }] }) });
   const full = size((await crowded.assemble(subjectOf(DOC))).request);
-  const huge = harness({ rules: fakeRules(RULES_AT_CAP), assembler: crowded, task: capped(full) });
-  await assert.rejects(huge.state.start({ actor: REVIEWER, document: DOC }), error => error.code === 'AGENT_REQUEST_TOO_LARGE');
+  const huge = harness({ rules: fakeRules(LONG_RULES), assembler: crowded, task: capped(full) });
+  await assert.rejects(huge.state.start({ actor: REVIEWER, document: DOC }), error => {
+    assert.equal(error.code, 'CUSTOM_RULES_TOO_LONG');
+    assert.equal(error.message, `我的规则合计 5,000 字，加上单据后超过了九安单次请求的上限（约 ${(full / 10_000).toFixed(1)} 万字），请删减我的规则后再发起。`);
+    return true;
+  });
   assert.deepEqual(huge.tasks.sent, []);
-  assert.deepEqual(huge.logs, []);
+  assert.deepEqual(huge.logs, [`POC_CUSTOM_RULES_TOO_LONG ${DOC.id} poc-reviewer 5000`]);
 });
 
 test('加上规则后过不了契约校验 → AGENT_ASSEMBLY_FAILED，不发', async () => {
@@ -216,32 +231,53 @@ test('读不出这个人的规则 → 这一轮不发（CUSTOM_RULES_UNAVAILABLE
   assert.deepEqual(h.logs, ['POC_CUSTOM_RULES_FAILED EACCES']);
 });
 
-// 上传时每人合计不超过 5,000 字（custom-rules.mjs），上限从 20,000 调低之前存下的规则却还在：附之前按同样的数法（Unicode 字符数）再核对，
-// 超了就不组装、不发（这么长的规则一轮跑不完九安合同的 120 秒，人看到的是 AI_UNAVAILABLE，Nexus 那次调用却已经付了钱）
-test('over_cap_fails_before_nexus：这个人的规则合计 5,001 字 → CUSTOM_RULES_CHAR_LIMIT，九安的组装器都不调、什么都不发，日志只有字数；正好 5,000 字照常附上', async () => {
-  assert.equal(CUSTOM_RULES_LIMITS.chars, 5_000);
-  // 两份合计；一半是 BMP 以外的字（UTF-16 里各占两个码元），数的是 Unicode 字符，不是 .length
+// 合计字数不设上限（custom-rules.mjs），只受九安单次请求大小（契约真实的 maxRequestChars）的限制：规则加上单据字段与付款明细、
+// 原件一页文字都不留（九安 fit() 最多去到这一步）仍放不下 → CUSTOM_RULES_TOO_LONG，什么都不发（Nexus 那次调用不付钱）；放得下就整份附上
+test('too_long_fails_before_nexus：规则加上单据、原件一页不留正好是 maxRequestChars → 整份附上（原件的页去光）；多一个字 → CUSTOM_RULES_TOO_LONG，什么都不发，日志只有字数；字数按 Unicode 字符', async () => {
+  // 两份合计；一份是 BMP 以外的字（UTF-16 里各占两个码元），数的是 Unicode 字符，不是 .length
   const rulesOf = extra => ({ 'poc-reviewer': { owner: 'poc-reviewer', items: [
-    { title: '虚构甲.md', text: '𠀀'.repeat(2_500) }, { title: '虚构乙.docx', text: '虚'.repeat(2_500 + extra) }] } });
+    { title: '虚构甲.md', text: '𠀀'.repeat(2_500) }, { title: '虚构乙.docx', text: '虚'.repeat(extra) }] } });
+  const plain = (await fakeAssembler().assemble(subjectOf(DOC))).request;
+  const floorWith = extra => floorSize({ ...plain, input: { ...plain.input, customRules: rulesOf(extra)['poc-reviewer'] } });
+  const fits = MAX - floorWith(0);   // 每多一个「虚」请求多一个字
+  assert.equal(floorWith(fits), MAX);
+  assert.ok(fits > 80_000, `正好放得下的规则有 ${fits + 2_500} 字`);
 
-  const over = harness({ rules: fakeRules(rulesOf(1)) });
+  const over = harness({ rules: fakeRules(rulesOf(fits + 1)) });
+  const expected = tooLong(2_500 + fits + 1);
   await assert.rejects(over.state.start({ actor: REVIEWER, document: DOC }), error => {
-    assert.equal(error.code, 'CUSTOM_RULES_CHAR_LIMIT');
-    assert.equal(error.message, '你的「我的规则」合计 5,001 字，超过 5,000 字的上限：先删掉一些再发起。');
+    assert.equal(error.code, expected.code);
+    assert.equal(error.message, expected.message);
     return true;
   });
-  assert.deepEqual(over.assembler.calls, [], '九安的组装器没调：请求都没组装');
-  assert.deepEqual(over.tasks.sent, []);
-  assert.deepEqual(over.logs, [`POC_CUSTOM_RULES_OVER_LIMIT ${DOC.id} poc-reviewer 5001`]);
+  assert.deepEqual(over.tasks.sent, [], '什么都不发');
+  assert.deepEqual(over.logs, [expected.log]);
+  assert.ok(!over.logs.some(line => line.includes('虚虚')), '日志不带规则正文');
 
-  const at = harness({ rules: fakeRules(rulesOf(0)) });
+  const at = harness({ rules: fakeRules(rulesOf(fits)) });
   await at.state.start({ actor: REVIEWER, document: DOC });
   const [{ assembled }] = at.tasks.sent;
-  assert.deepEqual(assembled.request.input.customRules, rulesOf(0)['poc-reviewer']);
+  assert.deepEqual(assembled.request.input.customRules, rulesOf(fits)['poc-reviewer'], '规则全文不裁');
+  assert.equal(size(assembled.request), MAX);
   assert.ok(valid(assembled.request));
+  assert.deepEqual(assembled.request.input.evidence.files.map(file => [file.fileId, file.name, file.pages.length]), [['file-1', '虚构合同.pdf', 0]], '原件的页去光，编号和文件名还在');
+  assert.equal(assembled.request.input.evidence.truncated, true);
   assert.equal(assembled.inputFingerprint, fingerprintOf(assembled.request.input));
-  assert.deepEqual(withoutRules(assembled.request.input), (await at.assembler.assemble(subjectOf(DOC))).request.input);
-  assert.deepEqual(at.logs, [`POC_CUSTOM_RULES ${DOC.id} poc-reviewer 5000`]);
+  assert.deepEqual(at.logs, [`POC_CUSTOM_RULES ${DOC.id} poc-reviewer ${2_500 + fits}`]);
+});
+
+test('long_rules_attached_in_full：两万字的规则放得下 → 整份附上，原件不动（不用去页），日志照常 POC_CUSTOM_RULES <单据> <账号> <字数>', async () => {
+  const LONG = { 'poc-reviewer': { owner: 'poc-reviewer', items: [
+    { title: '虚构长规则一.md', text: '虚构规则：本条只用来量请求大小。\n'.repeat(1_000) }, { title: '虚构长规则二.docx', text: '构'.repeat(3_000) }] } };
+  assert.equal(ruleChars(LONG['poc-reviewer']), 20_000);
+  const h = harness({ rules: fakeRules(LONG) });
+  await h.state.start({ actor: REVIEWER, document: DOC });
+  const [{ assembled }] = h.tasks.sent;
+  const plain = await h.assembler.assemble(subjectOf(DOC));
+  assert.deepEqual(assembled.request.input.customRules, LONG['poc-reviewer']);
+  assert.deepEqual(withoutRules(assembled.request.input), plain.request.input, '原件和单据都是九安给的那份');
+  assert.ok(size(assembled.request) <= MAX && valid(assembled.request));
+  assert.deepEqual(h.logs, [`POC_CUSTOM_RULES ${DOC.id} poc-reviewer 20000`]);
 });
 
 test('agent_tests_path_untouched：「Agent 接入」页的单据测试直接调 assemble，不附规则（人刚发起过一轮也一样）', async () => {
@@ -439,32 +475,35 @@ test('九安真实的链 agent_tests_path_untouched：「Agent 接入」页的�
   assert.equal(chain.logs.length, 1);
 });
 
-test('九安真实的链 over_cap：上限调低之前存下的规则（合计 19,900 字）→ 这一轮按 CUSTOM_RULES_CHAR_LIMIT 记为失败，什么都不发；删掉再发起照常附上', async t => {
+test('九安真实的链 too_long / long_rules：存了 9 万字的规则（上传不拦）→ 这一轮按 CUSTOM_RULES_TOO_LONG 记为失败，什么都不发；换成 2 万字的再发起，整份附上发出', async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'custom-rules-advice-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const rules = createCustomRules({ dir, docxToText: async () => { throw new Error('这里不转 .docx'); } });
-  // 现在的上传不收这么多，照存储的格式直接写一份（上限 20,000 字时传的）
-  await mkdir(path.join(dir, 'poc-reviewer'), { recursive: true, mode: 0o700 });
-  await writeFile(path.join(dir, 'poc-reviewer', 'legacy-1.json'), JSON.stringify({ id: 'legacy-1', title: '虚构旧规则.md', format: 'md', chars: 19_900,
-    sha256: '0'.repeat(64), uploadedAt: '2026-10-20T08:00:00.000Z', text: '虚构旧规则。'.repeat(3_316) + '旧旧旧旧' }), { mode: 0o600 });
-  assert.equal(ruleChars(await rules.forRequest('poc-reviewer')), 19_900);
+  // 合计字数不设上限：上传照收（单个文件 2 MB 以内）
+  const huge = await rules.add('poc-reviewer', { fileName: '虚构九万字.md', bytes: Buffer.from('虚构的填充规则。'.repeat(11_250)) });
+  assert.equal(huge.chars, 90_000);
   const chain = await jiuanChain({ rules });
   t.after(chain.close);
   const [doc] = DOCS;
 
   const started = await chain.state.start({ actor: REVIEWER, document: doc });
   assert.equal(started.receipt.status, 'failed');
-  assert.equal(started.receipt.errorCode, 'CUSTOM_RULES_CHAR_LIMIT');
-  assert.deepEqual(chain.sent, []);
-  assert.deepEqual(chain.logs, [`POC_CUSTOM_RULES_OVER_LIMIT ${doc.id} poc-reviewer 19900`]);
+  assert.equal(started.receipt.errorCode, 'CUSTOM_RULES_TOO_LONG');
+  assert.deepEqual(chain.sent, [], '什么都不发');
+  assert.deepEqual(chain.logs, [tooLong(90_000, doc.id).log]);
+  // 九安记下的这一轮：失败、错误码就是它（消息不进轮次记录，页面按错误码说明）
+  const failed = chain.round(doc);
+  assert.deepEqual([failed.status, failed.errorCode, failed.requestedBy], ['failed', 'CUSTOM_RULES_TOO_LONG', 'account:poc-reviewer']);
 
-  // 删掉旧的、传一份新的，再发起：照常附上发出
-  await rules.remove('poc-reviewer', 'legacy-1');
-  await rules.add('poc-reviewer', { fileName: '虚构新规则.md', bytes: Buffer.from('虚构规则：房租类对公付款须附出租方的房产证明。') });
+  // 删掉、传一份 2 万字的（虚构）再发起：整份附上发出，请求在契约的上限内
+  await rules.remove('poc-reviewer', huge.id);
+  const long = await rules.add('poc-reviewer', { fileName: '虚构两万字.md', bytes: Buffer.from('虚构规则：本条只用来量请求大小。\n'.repeat(1_176) + '虚'.repeat(8)) });
+  assert.equal(long.chars, 20_000);
   const again = await chain.state.start({ actor: REVIEWER, document: doc });
   assert.equal((await again.done).status, 'completed');
   assert.equal(chain.sent.length, 1);
   assert.deepEqual(chain.sent[0].request.input.customRules, await rules.forRequest('poc-reviewer'));
-  assert.ok(chain.sent[0].valid);
-  assert.deepEqual(chain.logs.at(-1), `POC_CUSTOM_RULES ${doc.id} poc-reviewer ${ruleChars(chain.sent[0].request.input.customRules)}`);
+  assert.equal(ruleChars(chain.sent[0].request.input.customRules), long.chars, '规则全文不裁');
+  assert.ok(chain.sent[0].valid && chain.sent[0].chars <= MAX);
+  assert.deepEqual(chain.logs.at(-1), `POC_CUSTOM_RULES ${doc.id} poc-reviewer ${long.chars}`);
 });

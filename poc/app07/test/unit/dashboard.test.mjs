@@ -105,7 +105,7 @@ async function harness({ documents = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/u.test(accountId)) throw Object.assign(new Error('账号编号不合格'), { code: 'CUSTOM_RULES_ACCOUNT_INVALID' });
       const mine = rules[accountId] ?? { files: 0, usedChars: 0 };
       return { items: Array.from({ length: mine.files }, (_, index) => ({ id: `r${index}`, title: `规则${index}.md`, format: 'md', chars: 1, uploadedAt: '' })),
-        usedChars: mine.usedChars, limitChars: 5000, limitFiles: 10 };
+        usedChars: mine.usedChars, limitChars: null, limitFiles: 10 };
     },
   };
   const fakeReviews = { async all(options = {}) { if (state.broken) throw state.broken; assert.deepEqual(options, {}, '待复核要全部复核：不带 since'); return [...state.reviews]; } };
@@ -167,7 +167,7 @@ test('Review Focus 4：没有任何数据时全为 0 / null，结构完整；每
       reviewers: [{ account: 'poc-checker', name: '复核人（虚构）', reviews: 0, overrides: 0, customRules: 0 },
         { account: 'poc-reviewer', name: '审核员（虚构）', reviews: 0, overrides: 0, customRules: 0 }],
       knowledge: { mode: 's3vectors', configured: false, ready: false, sources: 0, rules: 0, lastIngestAt: null },
-      topRules: [], myRules: { files: 0, usedChars: 0, limitChars: 5000 },
+      topRules: [], myRules: { files: 0, usedChars: 0, limitChars: null },
     }, window);
   }
   assert.deepEqual(h.agentCalls, [], '不调 Agent');
@@ -276,11 +276,11 @@ test('reviewers：每个人每张单每一轮只算自己的最后一次；行 =
   ]);
   const analyst = await h.read('month', ANALYST);
   assert.deepEqual(analyst.reviewers, [{ account: 'poc-checker', name: '复核人（虚构）', reviews: 2, overrides: 0, customRules: 1 }]);
-  assert.deepEqual(analyst.myRules, { files: 1, usedChars: 300, limitChars: 5000 });
+  assert.deepEqual(analyst.myRules, { files: 1, usedChars: 300, limitChars: null });
   assert.equal(analyst.advice.overrides, 2, '全局的数分析员也看得到');
   const policy = await h.read('month', POLICY);
   assert.deepEqual(policy.reviewers, []);
-  assert.deepEqual(policy.myRules, { files: 0, usedChars: 0, limitChars: 5000 }, '规则发布复核人没有「我的规则」');
+  assert.deepEqual(policy.myRules, { files: 0, usedChars: 0, limitChars: null }, '规则发布复核人没有「我的规则」');
   assert.deepEqual(policy.pendingReview, { count: 0, failCount: 0 }, '规则发布复核人没有公司（Ruling FR1）：一张单也数不到');
   // 设置里停用的账号（enabled: false）：窗口里没有复核就不给行；有复核的照样给，名字取设置里的
   const disabled = await harness({ accounts: [...ACCOUNTS, { id: 'poc-old', name: '停用的人（虚构）', role: 'analyst', enabled: false },
@@ -408,11 +408,11 @@ test('缓存：按（窗口、角色、账号）缓存 60 秒，时钟可注入�
   assert.equal(h.listCalls.length, 4);
   // 另一个管理员：同一窗口、同一角色，也自己算；之后两人各拿各的缓存，不串
   const admin2 = { id: 'poc-admin2', role: 'admin', companyIds: ['co-a'] };
-  assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: 5000 });
+  assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: null });
   assert.equal(h.listCalls.length, 5);
   h.state.clock += 30_000;
-  assert.deepEqual((await h.read('today')).myRules, { files: 2, usedChars: 1200, limitChars: 5000 });
-  assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: 5000 });
+  assert.deepEqual((await h.read('today')).myRules, { files: 2, usedChars: 1200, limitChars: null });
+  assert.deepEqual((await h.read('today', admin2)).myRules, { files: 3, usedChars: 900, limitChars: null });
   assert.equal(h.listCalls.length, 5, '两人都是缓存');
 });
 

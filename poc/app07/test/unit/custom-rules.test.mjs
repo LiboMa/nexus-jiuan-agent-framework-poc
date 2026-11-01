@@ -76,7 +76,7 @@ test('md_bom_crlf：.md 带 BOM 和 CRLF（也有单独的 CR）→ 去 BOM、�
   const listed = await h.ask('GET', '');
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.payload.data, { items: [{ id: 'rule-1', title: '虚构补充要求.md', format: 'md', chars: [...text].length, uploadedAt: '2026-10-29T08:00:01.000Z' }],
-    usedChars: [...text].length, limitChars: 5000, limitFiles: 10 });
+    usedChars: [...text].length, limitChars: null, limitFiles: 10 });
 });
 
 test('docx_table_only：只有表格的 .docx → 每行一句「a | b」；正文段落和表格按顺序，空段落去掉，一段里的几个 run 连起来', async t => {
@@ -126,23 +126,22 @@ test('unreadable：扩展名 .docx 但不是 zip、zip 里没有 word/document.x
   assert.deepEqual((await h.ask('GET', '')).payload.data.items, []);
 });
 
-test('char_limit：已有 4,990 字时再加 11 字 → CUSTOM_RULES_CHAR_LIMIT（说明合计上限 5,000 字、还剩 10 字），加 10 字通过（合计正好 5,000），再加 1 字也拒绝', async t => {
+test('no_char_cap：合计字数不设上限——已有 4,990 字再传 20,000 字、再传 90,000 字（单凭规则就放不进九安的一次请求，发起时才拦）都收下，全文原样存；列表的 limitChars 是 null', async t => {
   const h = await harness();
   t.after(h.done);
   assert.equal((await h.upload('虚构长规则.md', md('甲'.repeat(4_990)))).status, 201);
-  const over = await h.upload('多一字.md', md('乙'.repeat(11)));
-  assert.deepEqual([over.status, over.payload.error.code], [409, 'CUSTOM_RULES_CHAR_LIMIT']);
-  assert.match(over.payload.error.message, /每人的规则合计不超过 5,000 字/u);
-  assert.match(over.payload.error.message, /这份有 11 字/u);
-  assert.match(over.payload.error.message, /还剩 10 字/u);
-  const fits = await h.upload('正好.md', md('丙'.repeat(10)));
-  assert.equal(fits.status, 201);
+  const big = await h.upload('虚构两万字.md', md('乙'.repeat(20_000)));
+  assert.equal(big.status, 201, JSON.stringify(big.payload?.error));
+  assert.equal(big.payload.data.chars, 20_000);
+  // BMP 以外的字也按一个字数（和九安量请求大小的办法一样）
+  const huge = await h.upload('虚构九万字.md', md('𠀀'.repeat(45_000) + '丙'.repeat(45_000)));
+  assert.equal(huge.status, 201, JSON.stringify(huge.payload?.error));
+  assert.equal(huge.payload.data.chars, 90_000);
   const listed = (await h.ask('GET', '')).payload.data;
-  assert.equal(listed.usedChars, 5_000);
-  assert.deepEqual(listed.items.map(item => item.title), ['虚构长规则.md', '正好.md']);
-  const full = await h.upload('再一字.md', md('丁'));
-  assert.deepEqual([full.status, full.payload.error.code], [409, 'CUSTOM_RULES_CHAR_LIMIT']);
-  assert.match(full.payload.error.message, /还剩 0 字/u);
+  assert.deepEqual([listed.usedChars, listed.limitChars, listed.limitFiles], [114_990, null, 10]);
+  assert.deepEqual(listed.items.map(item => [item.title, item.chars]), [['虚构长规则.md', 4_990], ['虚构两万字.md', 20_000], ['虚构九万字.md', 90_000]]);
+  const all = await h.rules.forRequest('poc-reviewer');
+  assert.deepEqual(all.items.map(item => [...item.text].length), [4_990, 20_000, 90_000], '规则全文原样，不裁');
 });
 
 test('file_limit：第 11 份 → CUSTOM_RULES_FILE_LIMIT（409），列表仍是 10 份；删掉一份后又能传', async t => {
@@ -157,13 +156,16 @@ test('file_limit：第 11 份 → CUSTOM_RULES_FILE_LIMIT（409），列表仍�
   assert.equal((await h.upload('虚构11.md', md('虚构规则 11'))).status, 201);
 });
 
-test('concurrent_uploads：同一账号同时传两份，各自都在限额内、合起来超了 → 只进一份（限额按顺序核对）', async t => {
+test('concurrent_uploads：已有 9 份时同一账号同时传两份 → 只进一份，另一份 CUSTOM_RULES_FILE_LIMIT（份数按顺序核对）', async t => {
   const h = await harness();
   t.after(h.done);
-  assert.equal((await h.upload('底.md', md('甲'.repeat(2_500)))).status, 201);
+  for (let index = 1; index <= 9; index += 1) assert.equal((await h.upload(`底${index}.md`, md(`虚构规则 ${index}`))).status, 201);
   const answers = await Promise.all([h.upload('一.md', md('乙'.repeat(1_500))), h.upload('二.md', md('丙'.repeat(1_500)))]);
   assert.deepEqual(answers.map(answer => answer.status).sort(), [201, 409]);
-  assert.equal((await h.ask('GET', '')).payload.data.usedChars, 4_000);
+  assert.equal(answers.find(answer => answer.status === 409).payload.error.code, 'CUSTOM_RULES_FILE_LIMIT');
+  const listed = (await h.ask('GET', '')).payload.data;
+  assert.equal(listed.items.length, 10);
+  assert.equal(listed.usedChars, 9 * [...'虚构规则 1'].length + 1_500);
 });
 
 test('isolation：A 看不到、读不到、删不掉 B 的规则；forRequest 只给本人的', async t => {
@@ -265,8 +267,8 @@ test('type_and_size：不是 .md / .docx（或没给文件名）→ CUSTOM_RULES
   assert.deepEqual([routed.status, routed.payload.error.code], [413, 'CUSTOM_RULES_TOO_LARGE']);
   assert.match(routed.payload.error.message, /2 MB/u);
   await refused(h.rules.add('poc-reviewer', { fileName: '大.md', bytes: big }), 'CUSTOM_RULES_TOO_LARGE');
-  // 正好 2 MB 不算超（这份因为超过字数被拒，不是因为大小）
-  await refused(h.rules.add('poc-reviewer', { fileName: '正好.md', bytes: Buffer.alloc(2 * 1024 * 1024, 0x61) }), 'CUSTOM_RULES_CHAR_LIMIT');
+  // 正好 2 MB 不算超（合计字数不设上限：2,097,152 字也收下）
+  assert.equal((await h.rules.add('poc-reviewer', { fileName: '正好.md', bytes: Buffer.alloc(2 * 1024 * 1024, 0x61) })).chars, 2 * 1024 * 1024);
   const upper = await h.upload('虚构.MD', md('虚构大写扩展名。'));
   assert.deepEqual([upper.status, upper.payload.data.format, upper.payload.data.title], [201, 'md', '虚构.MD']);
   const docxUpper = await h.upload('虚构.DOCX', docx(p('虚构。')));

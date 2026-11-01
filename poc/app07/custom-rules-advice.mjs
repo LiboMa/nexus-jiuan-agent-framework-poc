@@ -5,17 +5,17 @@
  *     九安的 start → begin → assemble 中间只有 await（authorize、读这一轮的状态），没有定时器、事件或排队，上下文一路跟到组装器
  *     （test/unit/custom-rules-advice.test.mjs 用九安真实的任务服务证明）。
  *   - withCustomRules(assembler, …)：九安的组装器照常组装；当前上下文是人（不是 system:pipeline）发起的这张单、且是这一轮的第一次组装、
- *     这个账号有规则时，加 input.customRules = { owner, items: [{ title, text }] }。规则先读：合计超过每人的上限（CUSTOM_RULES_LIMITS.chars，
- *     和上传时一样按 Unicode 字符数；上限调低之前存下的会超）就 CUSTOM_RULES_CHAR_LIMIT，九安的组装器都不调、不发——这么长的规则
- *     一轮跑不完九安合同的 120 秒，人看到的会是 AI_UNAVAILABLE，Nexus 那次调用却已经付了钱。整份请求超 maxRequestChars 就照九安 fit() 的办法
- *     从原件末尾逐页去掉（不裁规则），去完仍超 AGENT_REQUEST_TOO_LARGE；重新跑契约的两项校验，按九安的算法重算 inputFingerprint
+ *     这个账号有规则时，加 input.customRules = { owner, items: [{ title, text }] }。规则的合计字数不设上限（2026-11-01 起），只受九安
+ *     单次请求大小的限制：规则加上单据字段与付款明细、原件一页文字都不留（九安 fit() 最多能去到这一步，原件的编号和文件名还在），
+ *     整份仍超 maxRequestChars（按 Unicode 字符数）→ CUSTOM_RULES_TOO_LONG，什么都不发（Nexus 不收钱）；规则从不裁短。
+ *     放得下就整份附上：整份请求超 maxRequestChars 时照九安 fit() 的办法从原件末尾逐页去掉（去完仍超是 AGENT_REQUEST_TOO_LARGE，
+ *     有了上面那一步不会走到）；重新跑契约的两项校验，按九安的算法重算 inputFingerprint
  *     （它决定 Nexus 的 contextId：不重算，两个人对同一张单会落在同一个会话里）。
- * 日志一行 POC_CUSTOM_RULES <单据> <账号> <规则字数>（超上限时 POC_CUSTOM_RULES_OVER_LIMIT，同样三项），不写规则正文；
- * 读不出规则时这一轮不发，日志只写错误码。
+ * 日志一行 POC_CUSTOM_RULES <单据> <账号> <规则字数>（放不下时 POC_CUSTOM_RULES_TOO_LONG，同样三项），不写规则正文；
+ * 读不出规则时这一轮不发，日志只写错误码。九安只记这一轮的错误码（消息不进轮次记录），页面按错误码说明（poc/web07 的 AdviceTab）。
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import { CUSTOM_RULES_LIMITS } from './custom-rules.mjs';
 
 const SYSTEM_PIPELINE = 'system:pipeline';   // 九安 src/platform/service-identity.mjs 的流水线身份
 const CODE = /^[A-Z][A-Z0-9_]{0,63}$/u;
@@ -25,7 +25,7 @@ const MESSAGES = Object.freeze({
   AGENT_REQUEST_TOO_LARGE: '自定义规则加上单据字段与付款明细超出一次调用的上限（原件页文字已经全部去掉），这次没有发出。',
   AGENT_ASSEMBLY_FAILED: '平台尚未完成：AI 独立建议的请求没能组装成合规的格式。',
   CUSTOM_RULES_UNAVAILABLE: '这次没能读出你的「我的规则」，没有发出；稍后再试。',
-  CUSTOM_RULES_CHAR_LIMIT: chars => `你的「我的规则」合计 ${thousands(chars)} 字，超过 ${thousands(CUSTOM_RULES_LIMITS.chars)} 字的上限：先删掉一些再发起。`,
+  CUSTOM_RULES_TOO_LONG: (chars, max) => `我的规则合计 ${thousands(chars)} 字，加上单据后超过了九安单次请求的上限（约 ${(max / 10_000).toFixed(1)} 万字），请删减我的规则后再发起。`,
 });
 const fail = (code, message = MESSAGES[code]) => { throw Object.assign(new Error(message), { code }); };
 
@@ -64,6 +64,17 @@ export function withCustomRules(assembler, { rules, contract, task, log = () => 
     return actor;
   }
 
+  /** 九安 fit() 最多能去到的那一步：原件的页文字一页不留（原件的编号、文件名还在）。 */
+  function floorOf(request) {
+    const probe = structuredClone(request);
+    const files = Array.isArray(probe.input?.evidence?.files) ? probe.input.evidence.files : [];
+    if (files.some(file => file.pages?.length)) {
+      for (const file of files) if (file.pages?.length) file.pages = [];
+      probe.input.evidence.truncated = true;
+    }
+    return probe;
+  }
+
   /** 九安 fit()：一轮从最后一份原件往前各去一页，直到放得下；原件去完仍放不下 AGENT_REQUEST_TOO_LARGE。 */
   function fit(request) {
     const files = Array.isArray(request.input?.evidence?.files) ? request.input.evidence.files : [];
@@ -85,13 +96,14 @@ export function withCustomRules(assembler, { rules, contract, task, log = () => 
     }
     if (!custom) return assembler.assemble(subject);
     const ruleChars = custom.items.reduce((sum, item) => sum + [...item.text].length, 0);
-    if (ruleChars > CUSTOM_RULES_LIMITS.chars) {
-      log(`POC_CUSTOM_RULES_OVER_LIMIT ${subject.documentId} ${custom.owner} ${ruleChars}`);
-      fail('CUSTOM_RULES_CHAR_LIMIT', MESSAGES.CUSTOM_RULES_CHAR_LIMIT(ruleChars));
-    }
     const assembled = await assembler.assemble(subject);
     const request = structuredClone(assembled.request);
     request.input.customRules = custom;
+    // 规则加上单据，原件一页不留也放不下：不发，请他删减规则（不裁规则）
+    if (size(floorOf(request)) > maxChars) {
+      log(`POC_CUSTOM_RULES_TOO_LONG ${subject.documentId} ${custom.owner} ${ruleChars}`);
+      fail('CUSTOM_RULES_TOO_LONG', MESSAGES.CUSTOM_RULES_TOO_LONG(ruleChars, maxChars));
+    }
     fit(request);
     if (!contract.envelope.validateRequest(request).ok || !task.validateInput(request.input).ok) fail('AGENT_ASSEMBLY_FAILED');
     log(`POC_CUSTOM_RULES ${subject.documentId} ${custom.owner} ${ruleChars}`);

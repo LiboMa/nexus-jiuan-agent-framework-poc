@@ -4,7 +4,7 @@
  *   daily[] { date, pass, fail, running } · overrideRate[] { date, reviews, overrides }（窗口里每个上海日期一项，从早到晚）
  *   topBasis[] { kind: rule|custom|field|evidence, label, count }（同一 kind + label 可能有两行）· topRules[] { ruleId, count }
  *   reviewers[] { account, name, reviews, overrides, customRules }（分析员只有自己一行，规则发布复核人没有行）
- *   knowledge { mode, configured, ready, sources, rules, lastIngestAt } · myRules { files, usedChars, limitChars }
+ *   knowledge { mode, configured, ready, sources, rules, lastIngestAt } · myRules { files, usedChars, limitChars（null：合计字数不设上限） }
  * 读进来先整理一遍：数不是有限的非负数就当 0，可空的不是数就当 null，数组不是数组就当空——页面上不会出现 NaN（Review Focus 4）。
  */
 import { api } from './client';
@@ -15,9 +15,8 @@ export const WINDOW_OPTIONS: Array<{ value: DashboardWindow; label: string }> = 
 ];
 export const DEFAULT_WINDOW: DashboardWindow = '14d';
 export const windowLabel = (window: DashboardWindow) => WINDOW_OPTIONS.find(option => option.value === window)?.label ?? '';
-/** 一轮 AI 建议的时限（秒）：九安合同 review_advice@1 的 limits.timeoutMs。 */
-export const ADVICE_LIMIT_S = 120;
-export const MY_RULES_LIMIT = 5000;
+/** 一轮 AI 建议的时限（秒）：九安合同 review_advice@1 的 limits.timeoutMs（测试台补丁 0006 起 180000）。 */
+export const ADVICE_LIMIT_S = 180;
 
 export type BasisKind = 'rule' | 'custom' | 'field' | 'evidence';
 export interface DailyAdvice { date: string; pass: number; fail: number; running: number }
@@ -33,7 +32,8 @@ export interface Dashboard {
   reviewers: ReviewerRow[];
   knowledge: { mode: string; configured: boolean; ready: boolean; sources: number; rules: number; lastIngestAt: string | null };
   topRules: Array<{ ruleId: string; count: number }>;
-  myRules: { files: number; usedChars: number; limitChars: number };
+  /** limitChars：外壳回 null——「我的规则」合计字数不设上限，只受九安单次请求大小的限制（poc/app07/custom-rules.mjs）。 */
+  myRules: { files: number; usedChars: number; limitChars: number | null };
 }
 
 type Loose = Record<string, unknown>;
@@ -68,8 +68,7 @@ export function readDashboard(raw: unknown): Dashboard {
       sources: count(knowledge.sources), rules: count(knowledge.rules), lastIngestAt: text(knowledge.lastIngestAt) || null,
     },
     topRules: list(data.topRules).filter(item => text(item.ruleId)).map(item => ({ ruleId: text(item.ruleId), count: count(item.count) })),
-    // 合计上限没给就按外壳的 5,000 字（custom-rules.mjs 的 CUSTOM_RULES_LIMITS.chars）
-    myRules: { files: count(mine.files), usedChars: count(mine.usedChars), limitChars: count(mine.limitChars) || MY_RULES_LIMIT },
+    myRules: { files: count(mine.files), usedChars: count(mine.usedChars), limitChars: maybe(mine.limitChars) },
   };
 }
 

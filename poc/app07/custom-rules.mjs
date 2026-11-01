@@ -1,14 +1,15 @@
 /**
  * 「我的规则」：审核员（管理员、分析员）自己上传的规则，Markdown（.md）或 Word（.docx），存在测试台本机，两种知识库方式都有。
- *   GET  /api/analysis/v1/poc/custom-rules            自己的规则 { items: [{ id, title, format, chars, uploadedAt }], usedChars, limitChars, limitFiles }
+ *   GET  /api/analysis/v1/poc/custom-rules            自己的规则 { items: [{ id, title, format, chars, uploadedAt }], usedChars, limitChars（null：合计字数不设上限）, limitFiles }
  *   POST …/custom-rules                               请求体是文件原文（X-File-Name 为 encodeURIComponent 后的文件名）：
- *                                                     转成纯文本 → 核对限额 → 存 → 201 { id, title, format, chars, uploadedAt, text }（页面给审核员核对转出来的文字）
+ *                                                     转成纯文本 → 核对份数 → 存 → 201 { id, title, format, chars, uploadedAt, text }（页面给审核员核对转出来的文字）
  *   GET  …/custom-rules/<id>                          一份规则，带全文
  *   POST …/custom-rules/<id>/delete                   删掉一份（和 /poc/kb、/poc/intake 一样走 POST）→ { id, deleted: true }
  * 只操作 session.user.id 自己的；会话、来源和 CSRF 由九安校验。这些路径不在 /platform 下，九安不替它们读请求体，这里自己读。
  * 存 <dir>/<账号>/<id>.json（文件 0600、目录 0700）：{ id, title（文件名）, format, chars, sha256, uploadedAt, text }。
- * 上限：每人 10 份、单个文件 2 MB、合计 5,000 字（按 Unicode 字符数，和九安量请求大小的办法一样）；超了在上传时就拒绝并说明。
- * 合计 5,000 字是为了一轮 AI 独立建议能在九安合同的 120 秒内跑完（review_advice@1 的 limits.timeoutMs；实测见设计文档第 9 节）。
+ * 上限：每人 10 份、单个文件 2 MB；超了在上传时就拒绝并说明。合计字数不设上限（2026-11-01 项目负责人定；字数按 Unicode 字符数，
+ * 和九安量请求大小的办法一样）：只受九安单次请求大小的限制——人发起一轮时，规则加上单据放不进 review_advice@1 的 maxRequestChars，
+ * 这一轮就不发（custom-rules-advice.mjs 的 CUSTOM_RULES_TOO_LONG）。规则越长，一轮 AI 独立建议越慢（时限 180 秒，测试台补丁 0006）。
  * .md 按 UTF-8 读（去 BOM、换行统一成 \n）；.docx 由 docx_text.py 在隔离的子进程里抽正文段落与表格行（python3 -I，只用标准库）。
  * forRequest(账号) 给人手动发起 AI 独立建议时附进请求的那一份。日志只写错误码，不写规则内容。
  */
@@ -25,7 +26,7 @@ const ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const ONE = /^\/([a-z0-9][a-z0-9-]{0,63})(\/delete)?$/u;
 const FORMATS = Object.freeze({ '.md': 'md', '.docx': 'docx' });
 const DOCX_TEXT = fileURLToPath(new URL('./docx_text.py', import.meta.url));
-export const CUSTOM_RULES_LIMITS = Object.freeze({ files: 10, chars: 5_000, bytes: 2 * 1024 * 1024 });
+export const CUSTOM_RULES_LIMITS = Object.freeze({ files: 10, bytes: 2 * 1024 * 1024 });
 export const CUSTOM_RULES_MESSAGES = Object.freeze({
   CUSTOM_RULES_FORBIDDEN: '只有管理员和分析员能用「我的规则」。',
   CUSTOM_RULES_ACCOUNT_INVALID: '这个账号的编号不能用来存「我的规则」（只认小写字母、数字和连字符）。',
@@ -34,19 +35,17 @@ export const CUSTOM_RULES_MESSAGES = Object.freeze({
   CUSTOM_RULES_EMPTY: '这个文件里没有抽出文字（空文件，或 Word 里只有图片）。',
   CUSTOM_RULES_UNREADABLE: '读不出这个文件：.docx 不是有效的 Word 文件，或 .md 不是 UTF-8 编码。',
   CUSTOM_RULES_FILE_LIMIT: '每人最多 10 份规则：先删掉一份再上传。',
-  CUSTOM_RULES_CHAR_LIMIT: '每人的规则合计不超过 5,000 字。',
   CUSTOM_RULES_NOT_FOUND: '找不到这份规则，刷新后再试。',
   CUSTOM_RULES_UNAVAILABLE: '「我的规则」暂时用不了，稍后再试。',
 });
 const UNREADABLE_DOCX = '这个 .docx 不是有效的 Word 文件，读不出文字。';
 const UNREADABLE_MD = '这个 .md 不是 UTF-8 编码的文本：请另存为 UTF-8 再上传。';
 const STATUS = Object.freeze({ CUSTOM_RULES_FORBIDDEN: 403, CUSTOM_RULES_ACCOUNT_INVALID: 403, CUSTOM_RULES_TYPE: 400, CUSTOM_RULES_TOO_LARGE: 413,
-  CUSTOM_RULES_EMPTY: 422, CUSTOM_RULES_UNREADABLE: 422, CUSTOM_RULES_FILE_LIMIT: 409, CUSTOM_RULES_CHAR_LIMIT: 409, CUSTOM_RULES_NOT_FOUND: 404,
+  CUSTOM_RULES_EMPTY: 422, CUSTOM_RULES_UNREADABLE: 422, CUSTOM_RULES_FILE_LIMIT: 409, CUSTOM_RULES_NOT_FOUND: 404,
   CUSTOM_RULES_UNAVAILABLE: 503 });
 const fail = (code, message = CUSTOM_RULES_MESSAGES[code]) => { throw Object.assign(new Error(message), { code }); };
 const send = (res, status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); };
 const chars = text => [...text].length;
-const thousands = number => number.toLocaleString('en-US');
 const normalize = text => text.replace(/^\uFEFF/u, '').replace(/\r\n?/gu, '\n').trim();
 
 /**
@@ -74,7 +73,7 @@ function ruleFile(fileName) {
 }
 
 export function createCustomRules({ dir, docxToText: toText = docxToText, now = Date.now, newId = randomUUID }) {
-  // 同一账号的增删排队（单进程）：两份同时上传时限额按顺序核对
+  // 同一账号的增删排队（单进程）：两份同时上传时份数按顺序核对
   const queues = new Map();
   function serial(accountId, work) {
     const run = (queues.get(accountId) ?? Promise.resolve()).then(work);
@@ -128,7 +127,7 @@ export function createCustomRules({ dir, docxToText: toText = docxToText, now = 
   return {
     async list(accountId) {
       const rules = await load(accountId);
-      return { items: rules.map(summary), usedChars: used(rules), limitChars: CUSTOM_RULES_LIMITS.chars, limitFiles: CUSTOM_RULES_LIMITS.files };
+      return { items: rules.map(summary), usedChars: used(rules), limitChars: null, limitFiles: CUSTOM_RULES_LIMITS.files };
     },
 
     async add(accountId, { fileName, bytes } = {}) {
@@ -144,10 +143,6 @@ export function createCustomRules({ dir, docxToText: toText = docxToText, now = 
       return serial(accountId, async () => {
         const rules = await load(accountId);
         if (rules.length >= CUSTOM_RULES_LIMITS.files) fail('CUSTOM_RULES_FILE_LIMIT');
-        const left = Math.max(CUSTOM_RULES_LIMITS.chars - used(rules), 0);
-        if (size > left) {
-          fail('CUSTOM_RULES_CHAR_LIMIT', `每人的规则合计不超过 ${thousands(CUSTOM_RULES_LIMITS.chars)} 字：这份有 ${thousands(size)} 字，现在还剩 ${thousands(left)} 字。`);
-        }
         const id = String(newId());
         if (!ID.test(id)) throw new Error('custom rule id is malformed');
         const rule = { id, title, format, chars: size, sha256: createHash('sha256').update(content).digest('hex'), uploadedAt: new Date(now()).toISOString(), text };

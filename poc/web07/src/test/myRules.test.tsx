@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { startApp } from './startApp';
 import { DOCX, OWN_RULES, RULE_TEXT, deferred, docxFile, fakeKb, mdFile, type KbOptions } from './knowledgeFake';
 
-// 我的规则（Spec 第 6 节；补丁 0005 的 ownRules）：列表、「已用 N / 5,000 字」、上传 .md / .docx（上传后弹框显示转出的文字）、查看全文、删除；
-// 限额由外壳核对，超了照它的中文提示显示；一次一个请求，进行中按钮不可点。
+// 我的规则（Spec 第 6 节；补丁 0005 的 ownRules）：列表、「已用 N 字」（合计字数不设上限，2026-11-01 起）、上传 .md / .docx（上传后弹框显示转出的文字）、
+// 查看全文、删除；限额（10 份、2 MB）由外壳核对，超了照它的中文提示显示；一次一个请求，进行中按钮不可点。
 async function openRules(options: KbOptions = {}) {
   const bench = fakeKb(options);
   const app = await startApp('#/my-rules');
@@ -18,22 +18,25 @@ const rowOf = async (title: string) => (await within(await rulesTable()).findAll
 const dropZone = () => screen.getByText('把规则文件拖到这里，或').closest('[data-drop]')!;
 
 describe('我的规则: list and usage', () => {
-  it('lists title, chars and time, with 「已用 N / 5,000 字」 and the file count', async () => {
+  it('lists title, chars and time, with 「已用 N 字」 (no cap, no usage bar) and the file count', async () => {
     await openRules();
     const table = await rulesTable();
     expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['标题', '字数', '上传时间', '操作']);
     const first = await rowOf('运维费规则（虚构）.md');
     expect(within(first).getByText('1,200')).toBeInTheDocument();
     expect(within(first).getByText('10-29 11:00')).toBeInTheDocument();
-    expect(screen.getByText('已用 1,234 / 5,000 字')).toBeInTheDocument();
+    expect(screen.getByText('已用 1,234 字')).toBeInTheDocument();
     expect(screen.getByText('2 / 10 份')).toBeInTheDocument();
-    expect(screen.getByRole('meter', { name: '已用字数' })).toHaveAttribute('aria-valuenow', '1234');
+    expect(screen.getByText('字数不设上限；规则越长，每一轮 AI 审核越慢')).toBeInTheDocument();
+    expect(screen.getByText('Markdown（.md）或 Word（.docx）；单个文件 2 MB 以内，每人最多 10 份')).toBeInTheDocument();
+    expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/5,000|合计|\/ [\d,—]+ 字/);
   });
 
   it('says what to do when there are none', async () => {
     await openRules({ rules: [] });
     expect(await screen.findByText('还没有上传规则')).toBeInTheDocument();
-    expect(screen.getByText('已用 0 / 5,000 字')).toBeInTheDocument();
+    expect(screen.getByText('已用 0 字')).toBeInTheDocument();
   });
 });
 
@@ -52,7 +55,7 @@ describe('我的规则: upload', () => {
     expect(post.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
     expect(post.headers.get('X-CSRF-Token')).toBe('csrf-1');
     expect(post.body).toBe(file);
-    expect(await screen.findByText('已用 1,263 / 5,000 字')).toBeInTheDocument();
+    expect(await screen.findByText('已用 1,263 字')).toBeInTheDocument();
     expect(screen.getByText('3 / 10 份')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: '核对无误' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -69,14 +72,15 @@ describe('我的规则: upload', () => {
     expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules')[0].headers.get('Content-Type')).toBe(DOCX);
   });
 
-  it('over the limit: the shell\'s Chinese message as it came, and no modal', async () => {
+  it('no character cap: a 20,000-character rule goes up whole and 已用 counts it', async () => {
     const { user, bench } = await openRules();
     await rulesTable();
-    await user.upload(input(), mdFile('长规则（虚构）.md', '字'.repeat(4000)));
-    expect(await screen.findByRole('alert')).toHaveTextContent('每人的规则合计不超过 5,000 字：这份有 4,000 字，现在还剩 3,766 字。');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await user.upload(input(), mdFile('长规则（虚构）.md', '字'.repeat(20_000)));
+    const dialog = await screen.findByRole('dialog', { name: '核对转出来的文字' });
+    expect(within(dialog).getByText(/已上传「长规则（虚构）.md」：20,000 字/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules')).toHaveLength(1);
-    expect(screen.getByText('已用 1,234 / 5,000 字')).toBeInTheDocument();
+    expect(await screen.findByText('已用 21,234 字')).toBeInTheDocument();
   });
 
   it('the eleventh file: the shell\'s refusal as it came', async () => {
@@ -147,7 +151,7 @@ describe('我的规则: full text and delete', () => {
     await user.click(within(dialog).getByRole('button', { name: '确认删除' }));
     expect(await screen.findByText('已删除「运维费规则（虚构）.md」。')).toBeInTheDocument();
     expect(bench.find('POST', '/api/analysis/v1/poc/custom-rules/r-1/delete')[0].headers.get('X-CSRF-Token')).toBe('csrf-1');
-    expect(await screen.findByText('已用 34 / 5,000 字')).toBeInTheDocument();
+    expect(await screen.findByText('已用 34 字')).toBeInTheDocument();
     await waitFor(() => expect(within(screen.getByRole('table', { name: '我的规则' })).queryByText(OWN_RULES[0].title)).not.toBeInTheDocument());
   });
 

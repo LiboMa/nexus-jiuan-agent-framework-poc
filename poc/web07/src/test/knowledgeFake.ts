@@ -43,7 +43,6 @@ export const OWN_RULES: FakeRule[] = [
 
 const ok = (data: unknown, status = 200): FakeReply => ({ status, body: { data } });
 const refuse = (status: number, code: string, message: string): FakeReply => ({ status, body: { error: { code, message } } });
-const thousands = (n: number) => n.toLocaleString('en-US');
 
 export interface KbOptions {
   role?: Role;
@@ -81,15 +80,14 @@ export function fakeKb({ role = 'admin', mode = { mode: 'pg', configured: true, 
       if (!q.trim()) return refuse(400, 'KB_QUESTION_INVALID', '请写一个问题（不超过 2000 字）；板块不超过 40 字，金额写以元为单位的数字，条数 1–20。');
       return ok({ success: true, filter: {}, results: HITS });
     },
-    [`GET ${RULES}`]: () => ok({ items: state.rules.map(({ text: _text, ...rest }) => rest), usedChars: state.rules.reduce((sum, r) => sum + r.chars, 0), limitChars: 5000, limitFiles: 10 }),
+    [`GET ${RULES}`]: () => ok({ items: state.rules.map(({ text: _text, ...rest }) => rest), usedChars: state.rules.reduce((sum, r) => sum + r.chars, 0), limitChars: null, limitFiles: 10 }),
     [`POST ${RULES}`]: async (call: FakeCall) => {
       const name = decodeURIComponent(call.headers.get('X-File-Name') ?? '');
       if (!/\.(md|docx)$/i.test(name)) return refuse(400, 'CUSTOM_RULES_TYPE', '只收 Markdown（.md）或 Word（.docx）文件。');
       if (state.rules.length >= 10) return refuse(409, 'CUSTOM_RULES_FILE_LIMIT', '每人最多 10 份规则：先删掉一份再上传。');
       const text = (await (call.body as File).text()).trim();
       const size = Array.from(text).length;
-      const left = Math.max(5000 - state.rules.reduce((sum, r) => sum + r.chars, 0), 0);
-      if (size > left) return refuse(409, 'CUSTOM_RULES_CHAR_LIMIT', `每人的规则合计不超过 5,000 字：这份有 ${thousands(size)} 字，现在还剩 ${thousands(left)} 字。`);
+      // 合计字数不设上限（外壳 custom-rules.mjs）：只核对份数
       const rule = { id: `r-${state.nextRule}`, title: name, format: name.endsWith('.md') ? 'md' : 'docx', chars: size, uploadedAt: '2026-10-30T05:00:00.000Z', text };
       state.nextRule += 1;
       state.rules.push(rule);

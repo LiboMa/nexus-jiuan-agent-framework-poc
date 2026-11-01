@@ -17,7 +17,7 @@ export interface FakeDashboard {
   reviewers: Array<{ account: string; name: string; reviews: number; overrides: number; customRules: number }>;
   knowledge: { mode: string; configured: boolean; ready: boolean; sources: number; rules: number; lastIngestAt: string | null };
   topRules: Array<{ ruleId: string; count: number }>;
-  myRules: { files: number; usedChars: number; limitChars: number };
+  myRules: { files: number; usedChars: number; limitChars: number | null };
 }
 
 /** 从 first 起 n 个上海日期（YYYY-MM-DD）。 */
@@ -64,7 +64,7 @@ export function fortnight(): FakeDashboard {
     topRules: [
       { ruleId: 'C05-2.3', count: 31 }, { ruleId: 'C05-3.4', count: 18 }, { ruleId: 'C07-7.11', count: 9 }, { ruleId: 'G-01', count: 4 }, { ruleId: 'C05-NOTE', count: 2 },
     ],
-    myRules: { files: 2, usedChars: 1320, limitChars: 5000 },
+    myRules: { files: 2, usedChars: 1320, limitChars: null },
   };
 }
 
@@ -103,20 +103,20 @@ export function empty(window: Window = '14d'): FakeDashboard {
     reviewers: [{ account: 'u-admin', name: '审核员', reviews: 0, overrides: 0, customRules: 0 }, { account: 'poc-checker', name: '复核人（虚构）', reviews: 0, overrides: 0, customRules: 0 }],
     knowledge: { mode: 's3vectors', configured: false, ready: false, sources: 0, rules: 0, lastIngestAt: null },
     topRules: [],
-    myRules: { files: 0, usedChars: 0, limitChars: 5000 },
+    myRules: { files: 0, usedChars: 0, limitChars: null },
   };
 }
 
 /** 分析员看到的：按审核员只有自己一行。 */
 export function asAnalyst(data: FakeDashboard): FakeDashboard {
-  return { ...data, reviewers: [{ account: 'u-analyst', name: '复核人', reviews: 12, overrides: 1, customRules: 1 }], myRules: { files: 1, usedChars: 300, limitChars: 5000 } };
+  return { ...data, reviewers: [{ account: 'u-analyst', name: '复核人', reviews: 12, overrides: 1, customRules: 1 }], myRules: { files: 1, usedChars: 300, limitChars: null } };
 }
 /**
  * 规则发布复核人：九安里没有公司（Ruling FR1），外壳一张单也数不到——单据上来的数全是 0、没有按审核员的行、没有「我的规则」；
  * 知识库不分公司，照常给。
  */
 export function asPolicyReviewer(data: FakeDashboard): FakeDashboard {
-  return { ...empty(data.window), from: data.from, to: data.to, knowledge: data.knowledge, reviewers: [], myRules: { files: 0, usedChars: 0, limitChars: 5000 } };
+  return { ...empty(data.window), from: data.from, to: data.to, knowledge: data.knowledge, reviewers: [], myRules: { files: 0, usedChars: 0, limitChars: null } };
 }
 
 export interface DashboardOptions extends KbOptions {

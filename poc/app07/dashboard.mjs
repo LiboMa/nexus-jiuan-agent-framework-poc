@@ -27,13 +27,13 @@
  *   knowledge      kb.status()（方式、有没有发布编号、「Agent 接入」页有没有钥匙）+ 上传历史：每个制度标识取最近一次成功（ingested / skipped，编号最大）
  *                  的入库——之后失败或还在入库的那次不影响，库里还是这一份——没被删除（removedAt）的算一份，rules 是这些的 rulesTotal 之和；
  *                  lastIngestAt 是 ingested / skipped 里最晚的 finishedAt。
- *   myRules        自己的「我的规则」{ files, usedChars, limitChars }；规则发布复核人没有「我的规则」，给 0 / 0 / 5000。
+ *   myRules        自己的「我的规则」{ files, usedChars, limitChars }；limitChars 是 null（合计字数不设上限，只受九安单次请求大小的限制，
+ *                  见 custom-rules.mjs）；规则发布复核人没有「我的规则」，给 0 / 0 / null。
  * 结果按（窗口、角色、账号、范围）缓存 60 秒（now 可注入）；invalidate() 清掉全部缓存（复核成功、人发起一轮和它结束时，外壳调它，F3）。
  * 算不出来（读轮次、复核、上传历史失败）→ 503 DASHBOARD_UNAVAILABLE，日志一行 POC_DASHBOARD_FAILED <错误码或错误名>，不记消息；失败不缓存。
  *   refreshOnRounds  包一层九安的 reviewAdviceState：单据页发起一轮成功、这一轮结束（不管成败）时清工作台的缓存。
  */
 import { ADVICE_TASK, adviceOf, basisOf, walkRounds } from './advice-rounds.mjs';
-import { CUSTOM_RULES_LIMITS } from './custom-rules.mjs';
 import { stateOf } from './reviews.mjs';
 
 const PATH = '/api/analysis/v1/poc/dashboard';
@@ -117,7 +117,7 @@ export function createDashboard({ tenantId, agentTaskKey, readState, scopeOf, li
       const mine = await customRules.list(accountId);
       return { files: mine.items.length, usedChars: mine.usedChars, limitChars: mine.limitChars };
     } catch (error) {
-      if (error?.code === 'CUSTOM_RULES_ACCOUNT_INVALID') return { files: 0, usedChars: 0, limitChars: CUSTOM_RULES_LIMITS.chars };
+      if (error?.code === 'CUSTOM_RULES_ACCOUNT_INVALID') return { files: 0, usedChars: 0, limitChars: null };
       throw error;
     }
   }
@@ -195,7 +195,7 @@ export function createDashboard({ tenantId, agentTaskKey, readState, scopeOf, li
       .map(({ kind, label, count }) => ({ kind, label, count }));
     const topRules = top(completed.map(item => item.groups.filter(group => group.ruleId).map(group => ({ key: group.ruleId, label: group.ruleId }))), TOP_RULES)
       .map(({ label, count }) => ({ ruleId: label, count }));
-    const myRules = REVIEWER_ROLES.has(user.role) ? await rulesOf(String(user.id)) : { files: 0, usedChars: 0, limitChars: CUSTOM_RULES_LIMITS.chars };
+    const myRules = REVIEWER_ROLES.has(user.role) ? await rulesOf(String(user.id)) : { files: 0, usedChars: 0, limitChars: null };
 
     return {
       window, from: new Date(from).toISOString(), to: new Date(to).toISOString(), pendingReview,

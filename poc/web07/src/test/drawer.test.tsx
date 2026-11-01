@@ -191,6 +191,28 @@ describe('drawer: AI 建议', () => {
     expect(within(drawer).getByRole('button', { name: '重新审核' })).toBeEnabled();
   });
 
+  it('failed with CUSTOM_RULES_TOO_LONG: says my rules are too long for one request, to shorten them, and links to 我的规则', async () => {
+    const states = defaultStates();
+    states.get('doc-1')!.advice = adviceOf(DOCS[0], { status: 'failed', result: null, basis: [], errorCode: 'CUSTOM_RULES_TOO_LONG' });
+    states.get('doc-1')!.latest = { state: 'no_advice', current: { round: 1, result: null, status: 'failed' }, review: null };
+    const { drawer } = await openDrawer('doc-1', { states });
+    expect(await within(drawer).findByText('我的规则太长，这一轮没有发出')).toBeInTheDocument();
+    expect(within(drawer).getByText('我的规则加上单据后超过了九安单次请求的上限（约 8.7 万字），请删减我的规则后再发起。')).toBeInTheDocument();
+    expect(within(drawer).getByText(/错误码 CUSTOM_RULES_TOO_LONG/)).toBeInTheDocument();
+    expect(within(drawer).getByRole('link', { name: '去「我的规则」' })).toHaveAttribute('href', '#/my-rules');
+    expect(within(drawer).queryByText('AI 建议没有完成')).not.toBeInTheDocument();
+    expect(within(drawer).getByRole('button', { name: '重新审核' })).toBeEnabled();
+  });
+
+  it('CUSTOM_RULES_TOO_LONG for a read-only reviewer: the same explanation, no link to 我的规则 and no 重新审核', async () => {
+    const states = defaultStates();
+    states.get('doc-1')!.advice = adviceOf(DOCS[0], { status: 'failed', result: null, basis: [], errorCode: 'CUSTOM_RULES_TOO_LONG' });
+    const { drawer } = await openDrawer('doc-1', { ...readOnlyReviewer, states });
+    expect(await within(drawer).findByText('我的规则太长，这一轮没有发出')).toBeInTheDocument();
+    expect(within(drawer).queryByRole('link', { name: '去「我的规则」' })).not.toBeInTheDocument();
+    expect(within(drawer).queryByRole('button', { name: '重新审核' })).not.toBeInTheDocument();
+  });
+
   it('declined: shows the reason Nexus gave', async () => {
     const states = defaultStates();
     states.get('doc-1')!.advice = adviceOf(DOCS[0], { status: 'declined', result: null, basis: [], declinedReason: '虚构原件缺页，无法判断' });
