@@ -22,7 +22,7 @@ export function adviceLabel(latest: LatestState): Label {
   if (latest.state === 'running' || current?.status === 'running') return { text: '审核中', tone: 'wait', icon: 'refresh' };
   if (['pending', 'reviewed', 'outdated'].includes(latest.state) && (current?.result === 'pass' || current?.result === 'fail')) return RESULT[current.result];
   if (current?.status === 'failed') return { text: '没有完成', tone: 'wait', icon: 'warning' };
-  if (current?.status === 'declined') return { text: '没有给出建议', tone: 'wait', icon: 'warning' };
+  if (current?.status === 'declined') return { text: '未给建议', tone: 'wait', icon: 'warning' };
   // 完成了、却不能复核：这一轮审的是单据更早的版本，平台会重新发起
   if (current?.status === 'completed') return { text: '建议待更新', tone: 'neutral', icon: 'refresh' };
   return { text: '还没有建议', tone: 'neutral', icon: null };
@@ -42,7 +42,7 @@ export function roundLabel(round: Pick<AdviceRound, 'status' | 'result'>): Label
   return ({
     running: { text: '审核中', tone: 'wait', icon: 'refresh' },
     failed: { text: '没有完成', tone: 'wait', icon: 'warning' },
-    declined: { text: '没有给出建议', tone: 'wait', icon: 'warning' },
+    declined: { text: '未给建议', tone: 'wait', icon: 'warning' },
     superseded: { text: '被新一轮取代', tone: 'neutral' },
     completed: { text: '已完成', tone: 'neutral' },
   } as Record<string, Label>)[round.status ?? ''] ?? { text: '没有跑', tone: 'neutral' };

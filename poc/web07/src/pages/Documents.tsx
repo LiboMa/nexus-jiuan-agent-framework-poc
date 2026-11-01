@@ -254,7 +254,7 @@ export function Documents() {
  * 抽屉开着时（compact，P1；和 xl:mr-[420px] 用同一个状态）：宽屏上表格只剩视口减去侧栏和抽屉的宽度（1280 px、侧栏展开时约 586 px），
  * 各栏都要放下、不横向滚动——板块和事项不单独成栏，在单号下面一行小字「板块 · 事项」，放不下的截掉（悬停看全文）；
  * 金额、AI 建议、复核、最近审核定宽（放得下百万级的金额、状态和「复核 · 审核员（虚构）」），单号拿剩下的；格子左右边距收到 6 px。
- * 1280 px 时各栏的内容（PingFang）：单号 97、金额 86、AI 建议 100（「没有给出建议」107，多出的落在旁边的边距里）、复核 111、最近审核 122。
+ * 1280 px 时各栏的内容（PingFang）：单号 97、金额 86、AI 建议 100（「未给建议」约 80）、复核 111、最近审核 122。
  */
 const COMPACT_WIDTHS = [null, 98, 112, 124, AUDIT_WIDTH_COMPACT] as const;
 const SORT_ICON = { none: 'sort', descending: 'chevronDown', ascending: 'chevronUp' } as const;

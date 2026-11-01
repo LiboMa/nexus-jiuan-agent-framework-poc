@@ -59,7 +59,7 @@ describe('单据池: tabs by review state', () => {
     await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
     expect(within(rowOf('DGZF-F07-002')).getByText('还没有建议')).toBeInTheDocument();
     expect(within(rowOf('DGZF-F07-003')).getByText('没有完成')).toBeInTheDocument();
-    expect(within(rowOf('DGZF-F07-004')).getByText('没有给出建议')).toBeInTheDocument();
+    expect(within(rowOf('DGZF-F07-004')).getByText('未给建议')).toBeInTheDocument();
     for (const number of ['DGZF-F07-002', 'DGZF-F07-003', 'DGZF-F07-004']) expect(within(rowOf(number)).getByText('等 AI 建议')).toBeInTheDocument();
   });
 
