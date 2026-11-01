@@ -81,6 +81,7 @@ describe('drawer: AI 建议', () => {
     expect(bench.find('POST', '/api/analysis/v1/documents/doc-1/advice')[0].headers.get('X-CSRF-Token')).toBe('csrf-1');
     expect(await within(drawer).findByText('AI 正在审核')).toBeInTheDocument();
     expect(within(drawer).getByText(/每 3 秒自动刷新/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/^一般要一到三分钟/)).toBeInTheDocument();   // 一轮最长 180 秒（补丁 0006）
 
     const reads = () => bench.find('GET', '/api/analysis/v1/documents/doc-1/advice').length;
     const before = reads();

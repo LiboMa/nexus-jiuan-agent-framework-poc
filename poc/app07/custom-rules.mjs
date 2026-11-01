@@ -7,9 +7,10 @@
  *   POST …/custom-rules/<id>/delete                   删掉一份（和 /poc/kb、/poc/intake 一样走 POST）→ { id, deleted: true }
  * 只操作 session.user.id 自己的；会话、来源和 CSRF 由九安校验。这些路径不在 /platform 下，九安不替它们读请求体，这里自己读。
  * 存 <dir>/<账号>/<id>.json（文件 0600、目录 0700）：{ id, title（文件名）, format, chars, sha256, uploadedAt, text }。
- * 上限：每人 10 份、单个文件 2 MB；超了在上传时就拒绝并说明。合计字数不设上限（2026-11-01 项目负责人定；字数按 Unicode 字符数，
- * 和九安量请求大小的办法一样）：只受九安单次请求大小的限制——人发起一轮时，规则加上单据放不进 review_advice@1 的 maxRequestChars，
- * 这一轮就不发（custom-rules-advice.mjs 的 CUSTOM_RULES_TOO_LONG）。规则越长，一轮 AI 独立建议越慢（时限 180 秒，测试台补丁 0006）。
+ * 上限：每人 10 份、单个文件 2 MB；单份转出的文字超过 maxChars（组合根给 review_advice@1 的 maxRequestChars）也拒绝——它单独都发不出去；
+ * 超了在上传时就拒绝并说明。合计字数不设上限（2026-11-01 项目负责人定；字数按 Unicode 字符数，和九安量请求大小的办法一样）：
+ * 只受九安单次请求大小的限制——人发起一轮时，规则加上单据放不进 maxRequestChars，这一轮就不发（custom-rules-advice.mjs 的
+ * CUSTOM_RULES_TOO_LONG）。规则越长，一轮 AI 独立建议越慢（时限 180 秒，测试台补丁 0006）。
  * .md 按 UTF-8 读（去 BOM、换行统一成 \n）；.docx 由 docx_text.py 在隔离的子进程里抽正文段落与表格行（python3 -I，只用标准库）。
  * forRequest(账号) 给人手动发起 AI 独立建议时附进请求的那一份。日志只写错误码，不写规则内容。
  */
@@ -35,12 +36,13 @@ export const CUSTOM_RULES_MESSAGES = Object.freeze({
   CUSTOM_RULES_EMPTY: '这个文件里没有抽出文字（空文件，或 Word 里只有图片）。',
   CUSTOM_RULES_UNREADABLE: '读不出这个文件：.docx 不是有效的 Word 文件，或 .md 不是 UTF-8 编码。',
   CUSTOM_RULES_FILE_LIMIT: '每人最多 10 份规则：先删掉一份再上传。',
+  CUSTOM_RULES_UNSENDABLE: '这份规则转出的文字超过九安单次请求的上限，发不出去，请拆小后再上传。',
   CUSTOM_RULES_NOT_FOUND: '找不到这份规则，刷新后再试。',
   CUSTOM_RULES_UNAVAILABLE: '「我的规则」暂时用不了，稍后再试。',
 });
 const UNREADABLE_DOCX = '这个 .docx 不是有效的 Word 文件，读不出文字。';
 const UNREADABLE_MD = '这个 .md 不是 UTF-8 编码的文本：请另存为 UTF-8 再上传。';
-const STATUS = Object.freeze({ CUSTOM_RULES_FORBIDDEN: 403, CUSTOM_RULES_ACCOUNT_INVALID: 403, CUSTOM_RULES_TYPE: 400, CUSTOM_RULES_TOO_LARGE: 413,
+const STATUS = Object.freeze({ CUSTOM_RULES_FORBIDDEN: 403, CUSTOM_RULES_ACCOUNT_INVALID: 403, CUSTOM_RULES_TYPE: 400, CUSTOM_RULES_TOO_LARGE: 413, CUSTOM_RULES_UNSENDABLE: 413,
   CUSTOM_RULES_EMPTY: 422, CUSTOM_RULES_UNREADABLE: 422, CUSTOM_RULES_FILE_LIMIT: 409, CUSTOM_RULES_NOT_FOUND: 404,
   CUSTOM_RULES_UNAVAILABLE: 503 });
 const fail = (code, message = CUSTOM_RULES_MESSAGES[code]) => { throw Object.assign(new Error(message), { code }); };
@@ -72,7 +74,9 @@ function ruleFile(fileName) {
   return { title: stem.length + ext.length > 200 ? `${stem.slice(0, 200 - ext.length).join('')}${ext}` : base, format };
 }
 
-export function createCustomRules({ dir, docxToText: toText = docxToText, now = Date.now, newId = randomUUID }) {
+/** maxChars：单份规则转出的文字最多多少字（Unicode 字符数）；不给就不核对（组合根给 review_advice@1 的 maxRequestChars）。 */
+export function createCustomRules({ dir, docxToText: toText = docxToText, now = Date.now, newId = randomUUID, maxChars = null }) {
+  if (maxChars !== null && (!Number.isSafeInteger(maxChars) || maxChars < 1)) throw new TypeError('maxChars must be a positive integer or null');
   // 同一账号的增删排队（单进程）：两份同时上传时份数按顺序核对
   const queues = new Map();
   function serial(accountId, work) {
@@ -140,6 +144,7 @@ export function createCustomRules({ dir, docxToText: toText = docxToText, now = 
       const text = normalize(await extract(folder, format, content));
       if (!text) fail('CUSTOM_RULES_EMPTY');
       const size = chars(text);
+      if (maxChars !== null && size > maxChars) fail('CUSTOM_RULES_UNSENDABLE');
       return serial(accountId, async () => {
         const rules = await load(accountId);
         if (rules.length >= CUSTOM_RULES_LIMITS.files) fail('CUSTOM_RULES_FILE_LIMIT');

@@ -74,7 +74,9 @@ const registry = J.connectors.createConnectorRegistry({ secretSource, huilianyiS
 const lockPool = database.lockPool();
 const gateway = J.callMiddleware.createCallGateway({ store: platformStore, registry, lockPool, processTag: 'analysis-server' });
 const agentAssemblers = { 'first_review@1': J.taskService.missingAssembler };
-const agentTasks = J.taskService.createAgentTaskService({ store, gateway, enablement, getConfig, assemblers: agentAssemblers,
+// 一轮的租约 420 秒（九安默认 300 秒）：一轮在连接器那里排队（同时只跑两轮，流水线、手动发起和测试共用）要等前一轮的 180 秒，
+// 再跑自己的 180 秒；租约到期时新的发起会被受理，这一轮按 AGENT_STEP_INTERRUPTED 作废（Nexus 照样收钱）。和流水线的单张时限一样长
+const agentTasks = J.taskService.createAgentTaskService({ store, gateway, enablement, getConfig, assemblers: agentAssemblers, leaseMs: 420_000,
   authorize: J.taskService.authorizePersonRun,
   listKeys: async () => {
     const [rows] = await pool.query('SELECT scope_key FROM analysis_sync_states WHERE connection_id=? AND scope_key LIKE ?', [config.connectionId, `${J.taskService.AGENT_TASK_KEY_PREFIX}%`]);
@@ -147,8 +149,9 @@ runtimeRegistry = J.runtimeRegistry.createAnalysisRuntimeRegistry({ anchorCompan
   createRuntime: companyId => (companyId === config.scope.companyId ? anchorRuntime : J.runtimeServices.createAnalysisRuntimeServices({ ...runtimeOptions, scopeCompanyId: companyId })) });
 const readEvidence = ({ companyId, documentId, version }) => runtimeRegistry.evidenceService.context({ actor: J.serviceIdentity.SYSTEM_PIPELINE, companyId, documentId, sourceVersion: version });
 // 「我的规则」：审核员（管理员、分析员）自己的 .md / .docx 规则，存在本机 <stateDir>/custom-rules/<账号>/，两种知识库方式都有
-const customRules = createCustomRules({ dir: settings.customRulesDir, docxToText });
+// 单份规则转出的文字本身就超过九安单次请求的上限（review_advice@1 的 maxRequestChars）时上传就拒绝：它永远发不出去
 const contract = J.contractChecks.loadContract();
+const customRules = createCustomRules({ dir: settings.customRulesDir, docxToText, maxChars: contract.tasks.get('review_advice@1').manifest.limits.maxRequestChars });
 // 人从单据页发起时附上这个人的「我的规则」（custom-rules-advice.mjs；页面的 reviewAdvice 也包一层）；流水线、「Agent 接入」页的测试不附
 if (nexusAdvice) agentAssemblers['review_advice@1'] = withCustomRules(J.reviewAdviceTask.createReviewAdviceAssembler({ analysisStore: store, readEvidence }),
   { rules: customRules, contract, task: contract.tasks.get('review_advice@1'), log });

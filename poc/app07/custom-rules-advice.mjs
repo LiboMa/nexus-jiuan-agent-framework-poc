@@ -11,7 +11,8 @@
  *     放得下就整份附上：整份请求超 maxRequestChars 时照九安 fit() 的办法从原件末尾逐页去掉（去完仍超是 AGENT_REQUEST_TOO_LARGE，
  *     有了上面那一步不会走到）；重新跑契约的两项校验，按九安的算法重算 inputFingerprint
  *     （它决定 Nexus 的 contextId：不重算，两个人对同一张单会落在同一个会话里）。
- * 日志一行 POC_CUSTOM_RULES <单据> <账号> <规则字数>（放不下时 POC_CUSTOM_RULES_TOO_LONG，同样三项），不写规则正文；
+ * 日志一行 POC_CUSTOM_RULES <单据> <账号> <规则字数>（放不下时 POC_CUSTOM_RULES_TOO_LONG，同样三项），不写规则正文；附上规则挤掉了原件的页时
+ * 再一行 POC_CUSTOM_RULES_TRIMMED <单据> <去掉的页数>（只数这一层 fit() 去的，九安组装时自己去的不算）；
  * 读不出规则时这一轮不发，日志只写错误码。九安只记这一轮的错误码（消息不进轮次记录），页面按错误码说明（poc/web07 的 AdviceTab）。
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -47,6 +48,8 @@ function sortKeys(value) {
   return value;
 }
 const fingerprintOf = input => createHash('sha256').update(JSON.stringify(sortKeys(input))).digest('hex');
+/** 请求里原件的页数（各份原件的页加起来）。 */
+const pagesOf = request => (Array.isArray(request.input?.evidence?.files) ? request.input.evidence.files : []).reduce((sum, file) => sum + (file.pages?.length ?? 0), 0);
 
 export function withCustomRules(assembler, { rules, contract, task, log = () => {} } = {}) {
   const maxChars = task?.manifest?.limits?.maxRequestChars;
@@ -104,9 +107,12 @@ export function withCustomRules(assembler, { rules, contract, task, log = () => 
       log(`POC_CUSTOM_RULES_TOO_LONG ${subject.documentId} ${custom.owner} ${ruleChars}`);
       fail('CUSTOM_RULES_TOO_LONG', MESSAGES.CUSTOM_RULES_TOO_LONG(ruleChars, maxChars));
     }
+    const before = pagesOf(request);
     fit(request);
     if (!contract.envelope.validateRequest(request).ok || !task.validateInput(request.input).ok) fail('AGENT_ASSEMBLY_FAILED');
     log(`POC_CUSTOM_RULES ${subject.documentId} ${custom.owner} ${ruleChars}`);
+    const dropped = before - pagesOf(request);
+    if (dropped > 0) log(`POC_CUSTOM_RULES_TRIMMED ${subject.documentId} ${dropped}`);
     return { ...assembled, request, inputFingerprint: fingerprintOf(request.input) };
   }
 

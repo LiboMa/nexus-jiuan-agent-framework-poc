@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { dashboardKeys } from '../api/dashboard';
+import { ADVICE_REQUEST_LIMIT_TEXT, dashboardKeys } from '../api/dashboard';
 import type { Role } from '../api/session';
 import { basisTag, customRulesOwner, keys, secondsBetween, startAdvice, stripCustomRulesNote, timeText, type Advice, type BasisItem } from '../api/documents';
 import { Button } from '../ui/Button';
@@ -67,11 +67,11 @@ export function AdviceTab({ id, version, role, advice, onOpenPage }: {
   } else if (value.status === 'not_run') {
     state = <State icon="file" title="还没有 AI 建议" text={`单据读取完成后平台会自动发起；${actor ? '也可以点「发起审核」现在跑一轮。' : '请稍后再来看。'}`} action={rerun('发起审核')} />;
   } else if (value.status === 'running') {
-    state = <State icon="refresh" tone="wait" title="AI 正在审核" text="一般要一到两分钟，这里每 3 秒自动刷新；可以先看原件和单据信息。" />;
+    state = <State icon="refresh" tone="wait" title="AI 正在审核" text="一般要一到三分钟，这里每 3 秒自动刷新；可以先看原件和单据信息。" />;
   } else if (value.status === 'failed' && value.errorCode === RULES_TOO_LONG) {
     // 外壳在发出之前拦下（poc/app07/custom-rules-advice.mjs）：九安只记错误码，这里照外壳的说法讲清楚；不删减规则再跑一轮也一样
     state = (
-      <State icon="warning" tone="wait" title="我的规则太长，这一轮没有发出" text="我的规则加上单据后超过了九安单次请求的上限（约 8.7 万字），请删减我的规则后再发起。" action={rerun('重新审核')}>
+      <State icon="warning" tone="wait" title="我的规则太长，这一轮没有发出" text={`我的规则加上单据后超过了九安单次请求的上限（${ADVICE_REQUEST_LIMIT_TEXT}），请删减我的规则后再发起。`} action={rerun('重新审核')}>
         <p className="m-0 mt-1 text-12 text-steel">
           错误码 {value.errorCode}
           {actor && <> · <a href="#/my-rules" className="font-semibold text-blue hover:underline">去「我的规则」</a></>}

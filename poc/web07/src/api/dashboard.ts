@@ -17,6 +17,10 @@ export const DEFAULT_WINDOW: DashboardWindow = '14d';
 export const windowLabel = (window: DashboardWindow) => WINDOW_OPTIONS.find(option => option.value === window)?.label ?? '';
 /** 一轮 AI 建议的时限（秒）：九安合同 review_advice@1 的 limits.timeoutMs（测试台补丁 0006 起 180000）。 */
 export const ADVICE_LIMIT_S = 180;
+/** 九安单次请求的大小上限（review_advice@1 的 limits.maxRequestChars，字数）：「我的规则」加上单据放不进去，那一轮就不发（外壳的 CUSTOM_RULES_TOO_LONG）。 */
+export const ADVICE_MAX_REQUEST_CHARS = 87_442;
+/** 页面上的说法：约 8.7 万字。 */
+export const ADVICE_REQUEST_LIMIT_TEXT = `约 ${(ADVICE_MAX_REQUEST_CHARS / 10_000).toFixed(1)} 万字`;
 
 export type BasisKind = 'rule' | 'custom' | 'field' | 'evidence';
 export interface DailyAdvice { date: string; pass: number; fail: number; running: number }
