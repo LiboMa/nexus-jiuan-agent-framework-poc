@@ -48,7 +48,7 @@ agent:
          a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-11-01.1"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
          b. 只支持 review_advice@1；其他任务或版本回 declined，reason 写「本 Agent 只支持 review_advice@1」。
          c. review_advice@1：input.document.formName 不是对公付款单的回 declined。否则按下面的步骤：
-            ① 从 input 认出三件事：板块（字段「所属板块」；没有就看「单据公司」；仍不明确就算拿不准）；业务事项（「单据事由」「费用/付款类型」「事由说明」和原件）；金额（「支付金额」，单笔口径）。板块、金额只对审批矩阵行有用；没有适用的矩阵行时，板块拿不准不影响结论。
+            ① 从 input 认出三件事：板块（字段「所属板块」；没有就看「单据公司」；仍不明确就算拿不准）；业务事项（「单据事由」「费用/付款类型」「事由说明」和原件）；金额（「支付金额」，单笔口径）。板块、金额档只用来选审批矩阵行和审批路径；没有适用的矩阵行时，板块拿不准不影响结论。
             #<kb:pg>
             ② 查规则：data_connector_query，connector_id 为 ${CONNECTOR_ID}，只执行 SELECT，一共不超过 3 次：第 3 次查完就用已有的结果作答，绝不查第 4 次。只用下面写的几种查询，不查库的元数据、不做试探：不查 DISTINCT rule_type、count(*)，不按 rule_id 前缀筛，不搜「审批路径」「C05」这类词。
                第 1 次，用库内检索取候选：SELECT rule_id, rule_type, business_item, segment, left(amount_tier,80) AS amount_tier, final_approver, keyword_hits, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM kb_search('<关键词>', 5); 关键词用单据「费用/付款类型」的名称（没有就用「单据事由」），在「-」处拆开，再加 1–2 个事由里的词，用空格隔开，例如「税款 增值税 缴纳」：含关键词越多的行越靠前，同样多的按语义相似度排；板块、金额的词只在找审批矩阵行时加。
@@ -56,7 +56,7 @@ agent:
                第 1 次的候选里已有和这张单费用类型对得上的卡，或对口的审批矩阵行时，就不再查别的（矩阵行只再取它的全文），直接判断。
                第 1 次的候选里没有 rule_type 为 matrix 的行时，库里就没有这张单的审批矩阵：不再找矩阵行、C05 行、审批路径或最终审批人，这不算「查不到适用规则」，板块也不影响结论。
                候选里没有对口的行时，改用关键词找（关键词用拆开后的费用类型名称）：SELECT rule_id, rule_type, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4 FROM approval_rules WHERE (coalesce(business_item,'')||' '||coalesce(amount_tier,'')||' '||coalesce(scope_controls,'')) ILIKE ANY (ARRAY['%关键词1%','%关键词2%']) ORDER BY rule_type, rule_id LIMIT 6;
-               候选里有审批矩阵行时：对公付款单在费控系统（汇联易）里提交，一般属于「费控报销」（C05-2.x，适用范围包括对公付款），再看「费控报销特殊事项」（C05-3.x，升级 / 降级事项）有没有命中；税款、投融资、预付款回票等看对应的行。
+               候选里有审批矩阵行时：对公付款单在费控系统（汇联易）里提交，一般属于「费控报销」（C05-2.x，适用范围包括对公付款），再看「费控报销特殊事项」（C05-3.x，升级 / 降级事项）有没有命中；税款、投融资、预付款回票等看对应的行；都只在已取回的候选里看。
                选中的矩阵行（1–3 行）再取全文。连接器每格只显示 80 字，长文分列取：SELECT rule_id, approval_path_text, substr(amount_tier,1,80) t1, substr(amount_tier,81,80) t2, substr(scope_controls,1,80) c1, substr(scope_controls,81,80) c2, substr(scope_controls,161,80) c3, substr(scope_controls,241,80) c4, substr(scope_controls,321,80) c5, substr(scope_controls,401,80) c6 FROM approval_rules WHERE rule_id IN ('…');
                候选里有审批矩阵行、次数有余时，可以再查制度说明、图例和章节说明（rule_type 为 general 或 chapter_note，例如 G-02 适用范围、G-07 符号、G-08 金额分档、C05-NOTE 付款审批形式）。
             #</kb:pg>

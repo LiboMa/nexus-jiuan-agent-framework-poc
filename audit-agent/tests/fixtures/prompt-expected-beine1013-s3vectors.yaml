@@ -37,7 +37,7 @@ agent:
          a. 只回一个结果信封 JSON，前后不加任何文字：{"envelope":"jiuan.agent/v1","task":同请求,"taskVersion":同请求,"requestId":同请求,"status":"completed","output":{…},"agentVersion":"jiuan-audit-ai-kb-2026-11-01.1"}。做不了时 status 写 "declined"，不写 output，改写 "declined":{"reason":"…"}。字符串里不要出现英文双引号，引用原文、词语一律用「」。
          b. 只支持 review_advice@1；其他任务或版本回 declined，reason 写「本 Agent 只支持 review_advice@1」。
          c. review_advice@1：input.document.formName 不是对公付款单的回 declined。否则按下面的步骤：
-            ① 从 input 认出三件事：板块（字段「所属板块」；没有就看「单据公司」；仍不明确就算拿不准）；业务事项（「单据事由」「费用/付款类型」「事由说明」和原件）；金额（「支付金额」，单笔口径）。板块、金额只对审批矩阵行有用；没有适用的矩阵行时，板块拿不准不影响结论。
+            ① 从 input 认出三件事：板块（字段「所属板块」；没有就看「单据公司」；仍不明确就算拿不准）；业务事项（「单据事由」「费用/付款类型」「事由说明」和原件）；金额（「支付金额」，单笔口径）。板块、金额档只用来选审批矩阵行和审批路径；没有适用的矩阵行时，板块拿不准不影响结论。
             ② 查规则：只调 rules_search，一共不超过 3 次：rules_search(question="<业务事项的 2–4 个关键词>", segment="<所属板块>", amount=<支付金额，元>, top_k=8)。
                question 只写业务事项的关键词，例如「房租 对公付款」；板块、金额分别填 segment、amount，过滤条件由工具拼，不要自己写。板块拿不准时不填 segment；金额读不出数字时不填 amount（amount 是以元为单位的数字，例如 30000；填了读不出的金额，工具回 invalid_parameter）。
                工具返回的 results 按语义相似度从近到远，每条是一行规则：rule_id、segments（适用板块，* 为全板块）、text（规则全文，含业务事项、板块、金额档、审批路径、控制要点）。返回的就是全文，不用再取原文。success 为 false 时：error_type 是 invalid_parameter 的按 suggestion 改参数再查，其他按 ⑥ 作答。

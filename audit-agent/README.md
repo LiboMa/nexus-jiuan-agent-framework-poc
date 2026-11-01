@@ -36,6 +36,7 @@
   - 2026-10-31 起有效的只有审批风险判断卡（`risk-cards`，449 行，全是 clause）：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 每行一张卡，卡片全文在 `scope_controls`（约 210–280 字，「卡片编号：…；费用类型：…；…；一期可行性：…」），segment、amount_tier、final_approver、approval_path_text 是空的。原来的 V4.0 审批矩阵（`finance-approval-v4`）已下线。
 - 库内语义检索：`SELECT … FROM kb_search('<板块> <业务事项关键词> <金额>', 8)`，PG 里用实例角色调 Bedrock 把问题向量化，先按关键词命中数、再按语义排序；每次记进检索日志（九安「规则库 › 制度知识库」页能看）。说明见 [`../kb/GUIDE.md`](../kb/GUIDE.md) 6.3。第 8 条由知识库工具管（`kb/agent/prompt-rules.txt` + `poc/infra/kb.sh agent`），本目录 `prompt.yaml` 的 `pg` 块里第 7、8 条要和它逐字一致（`tests/test_apply.py` 钉住；改完 `kb.sh agent --dry-run` 应全是 `=`）。`s3vectors` 方式不要跑 `kb.sh agent`，它会把 PG 的第 7、8 条写回去。
 - 连接器交给模型的结果每格截到 80 字、最多 30 行，超过 4000 字就只留前 10 行，所以提示词让 Agent 用 `substr` 分列取长文：卡片在第 1 次查询里取 c1–c4（320 字）就是整张，按关键词补查至多 6 行。
+- 提示词第 9 条 c ② 把「第 1 次的 5 行候选里没有 matrix 行」当作这张单没有审批矩阵（2026-11-01 起，审批矩阵制度下线时才成立）。审批矩阵制度重新上线时要回头改这一句：`kb_search` 先按关键词命中数排，卡片多的时候能把矩阵行挤出前 5 行。
 - 连接器的库账号有读写权限。提示词只让初审做 SELECT，但更稳妥的是给它换一个只读账号。
 
 ## 怎么改

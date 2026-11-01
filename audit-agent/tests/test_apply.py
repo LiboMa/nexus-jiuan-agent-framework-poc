@@ -125,7 +125,7 @@ class PromptTest(unittest.TestCase):
         板块不影响结论；①（板块、金额）、③（金额分档、更高层级）、⑤（审批路径和最终审批人）只在适用矩阵行时用；④ 的「查不到适用规则」
         是费用类型既没有卡也没有矩阵行。①③④⑤ 两种方式共用；硬上限和不许试探写在 pg 的 ②。"""
         for rendered in (EXPECTED, EXPECTED_S3V):
-            self.assertIn("板块、金额只对审批矩阵行有用；没有适用的矩阵行时，板块拿不准不影响结论。", line_of(rendered, "① "))
+            self.assertIn("板块、金额档只用来选审批矩阵行和审批路径；没有适用的矩阵行时，板块拿不准不影响结论。", line_of(rendered, "① "))
             step3 = line_of(rendered, "③ 判断")
             self.assertTrue(step3.startswith("③ 判断：同一事项同时触发多项规则时，按更严格的要求执行；适用审批矩阵行时，再按金额分档逐级上行、"
                                              "取更高层级，升级 / 降级的特殊事项按该行执行。"), step3)
@@ -142,6 +142,8 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(lines[stop + 1], "第 1 次的候选里没有 rule_type 为 matrix 的行时，库里就没有这张单的审批矩阵：不再找矩阵行、C05 行、审批路径或最终审批人，"
                                           "这不算「查不到适用规则」，板块也不影响结论。")
         self.assertTrue(lines[-1].startswith("候选里有审批矩阵行、次数有余时，可以再查制度说明、图例和章节说明"), lines[-1])
+        c05 = next(line for line in lines if "C05-3.x" in line)
+        self.assertTrue(c05.endswith("税款、投融资、预付款回票等看对应的行；都只在已取回的候选里看。"), "C05 的提示不引出新的查询")
         s3v = "".join(step2(EXPECTED_S3V))
         for pg_only in ("绝不查第 4 次", "DISTINCT", "库里就没有这张单的审批矩阵"):
             self.assertNotIn(pg_only, s3v, "s3vectors 的 ② 不改")
@@ -464,7 +466,7 @@ class ApplyTest(unittest.TestCase):
         step2_old, step2_new = [line.rstrip("\n") for line in step2(BEFORE)], [line.rstrip("\n") for line in step2(EXPECTED)]
         for line in removed + added:
             self.assertTrue(line.lstrip().startswith(CHANGED_STARTS) or line in step2_old + step2_new, line)
-        self.assertEqual((len(removed), len(added)), (7, 8))
+        self.assertEqual((len(removed), len(added)), (8, 9))
         self.assertFalse([line for line in removed + added if "自定义规则" in line or "8. 规则查询模式" in line or "7. 例外" in line])
         put = next(call for call in self.calls if call[0] == "PUT")
         self.assertEqual(put[6]["content"], EXPECTED)
