@@ -5,6 +5,8 @@
  * 开着时自己刷新（F2）：表格这一页有审核中的行、或「待复核」是空的，每 12 秒问一次复核状态；单据池是空的，每 12 秒读一次列表；
  * 页面藏起来（切到别的标签页）或离开单据池就停。「刷新」、再搜一次同样的字都重新读列表和状态。
  * 账号在九安里没有公司（规则发布复核人，Ruling FR1）：单据池是空的，照直说，不轮询。
+ * 最后一栏「最近审核」（2026-11-01，documents/lastAudit.ts）：表头是按钮，最近的在前 → 最早的在前 → 原来的顺序；在当前页签里先排再分页，
+ * 「待复核」的下一张也按排过的顺序走（看到的顺序）。
  */
 import { useMemo, useRef, useState, type FormEvent, type Ref } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,11 +14,12 @@ import { useSearchParams } from 'react-router';
 import { ApiError } from '../api/client';
 import { hasNoCompanies, useSession } from '../api/session';
 import {
-  POOL_MAX, POOL_POLL_MS, SCAN_MAX, amountText, isDocumentId, itemText, keys, loadPool, loadStates, type DocumentItem, type LatestState,
+  POOL_MAX, POOL_POLL_MS, SCAN_MAX, amountText, fullTimeText, isDocumentId, itemText, keys, loadPool, loadStates, timeText, type DocumentItem, type LatestState,
 } from '../api/documents';
 import { PageHeader } from '../shell/PageHeader';
 import { DocumentDrawer } from '../documents/DocumentDrawer';
 import { adviceLabel, reviewLabel } from '../documents/labels';
+import { NEXT_SORT, lastAudit, sortByLastAudit, type AuditSort, type LastAudit } from '../documents/lastAudit';
 import { Button } from '../ui/Button';
 import { Empty } from '../ui/Empty';
 import { Icon } from '../ui/icons';
@@ -27,6 +30,12 @@ import { cx } from '../ui/cx';
 import { usePageVisible } from '../ui/usePageVisible';
 
 type PoolTab = 'pending' | 'reviewed' | 'all';
+/**
+ * 「最近审核」一栏的宽度（含左右边距）：放得下「MM-DD HH:mm」，第二行的名字长了截掉（悬停看全的）。抽屉开着时 colgroup 定宽；
+ * 宽的时候格子自己定宽（width + max-width），表格有富余也不分给它。
+ */
+const AUDIT_WIDTH = 116;
+const AUDIT_CELL = 'w-[116px] max-w-[116px]';
 const PAGE_ROWS = 20;
 const IN_TAB: Record<Exclude<PoolTab, 'all'>, ReadonlySet<string>> = { pending: new Set(['pending', 'outdated']), reviewed: new Set(['reviewed']) };
 const POOL_STATES = ['reviews', 'latest', 'pool'] as const;
@@ -40,6 +49,7 @@ export function Documents() {
   const [draft, setDraft] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<AuditSort>('none');
   const [notice, setNotice] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
@@ -58,14 +68,21 @@ export function Documents() {
     refetchInterval: () => (pollStates.current ? POOL_POLL_MS : false) });
   const stateOf = (id: string): LatestState | undefined => states.data?.[id];
 
+  const audits = useMemo(() => {
+    const known = states.data ?? {};
+    return new Map(items.map(item => [item.id, lastAudit(known[item.id])]));
+  }, [items, states.data]);
+  const auditOf = (id: string): LastAudit | null => audits.get(id) ?? null;
+  // 每个页签按当前的排序排好（先排再分页）；「待复核」的下一张也照这个顺序
   const lists = useMemo(() => {
     const known = states.data ?? {};
+    const sorted = (list: DocumentItem[]) => sortByLastAudit(list, id => audits.get(id) ?? null, sort);
     return {
-      pending: items.filter(item => IN_TAB.pending.has(known[item.id]?.state)),
-      reviewed: items.filter(item => IN_TAB.reviewed.has(known[item.id]?.state)),
-      all: items,
+      pending: sorted(items.filter(item => IN_TAB.pending.has(known[item.id]?.state))),
+      reviewed: sorted(items.filter(item => IN_TAB.reviewed.has(known[item.id]?.state))),
+      all: sorted(items),
     };
-  }, [items, states.data]);
+  }, [items, states.data, audits, sort]);
   const shown = lists[tab];
   const pages = Math.max(1, Math.ceil(shown.length / PAGE_ROWS));
   const current = Math.min(page, pages);
@@ -73,7 +90,7 @@ export function Documents() {
   const counted = states.isSuccess || ids.length === 0;
   // 单据池里有审核中的单（等它出结果；默认的「待复核」页签里看不到它们），或「待复核」是空的（等新的单）：每 12 秒问一次
   pollStates.current = polling && states.isSuccess && (items.some(item => states.data?.[item.id]?.state === 'running') || lists.pending.length === 0);
-  // 复核的回调可能来自更早的一次渲染（提交还在路上时人换了单）：现在开着哪张、待复核的顺序都从这两个 ref 读
+  // 复核的回调可能来自更早的一次渲染（提交还在路上时人换了单）：现在开着哪张、待复核的顺序（排过的，和看到的一样）都从这两个 ref 读
   const currentDoc = useRef(docParam);
   currentDoc.current = docParam;
   const pendingOrder = useRef<string[]>([]);
@@ -128,6 +145,7 @@ export function Documents() {
   }
   function clearSearch() { setDraft(''); setQ(''); setPage(1); }
   function changeTab(next: PoolTab) { setTab(next); setPage(1); setNotice(null); }
+  function changeSort() { setSort(NEXT_SORT[sort]); setPage(1); }
 
   const options = (['pending', 'reviewed', 'all'] as const).map(value => ({
     value, label: { pending: '待复核', reviewed: '已复核', all: '全部' }[value], count: counted && pool.isSuccess ? lists[value].length : undefined,
@@ -198,7 +216,8 @@ export function Documents() {
                     ? <Empty icon="check" title="没有待复核的单据" description="AI 给出新建议后，单据会出现在这里；复核过的在「已复核」里。" />
                     : <Empty title="还没有复核过的单据" description="在「待复核」里打开一张单，采纳或改判 AI 建议后，它会出现在这里。" />
                 ) : (
-                  <PoolTable tableRef={tableRef} rows={rows} selected={docParam} stateOf={stateOf} statesReady={states.isSuccess} onOpen={open} compact={drawerOpen} />
+                  <PoolTable tableRef={tableRef} rows={rows} selected={docParam} stateOf={stateOf} auditOf={auditOf} statesReady={states.isSuccess} onOpen={open}
+                    compact={drawerOpen} sort={sort} onSort={changeSort} />
                 )}
       </Panel>
 
@@ -232,19 +251,27 @@ export function Documents() {
 }
 
 /**
- * 抽屉开着时（compact，P1）：宽屏上表格只剩视口减去侧栏和抽屉的宽度（1280 px、侧栏展开时约 586 px），六栏都要放下、不横向滚动——
- * 单号、金额、AI 建议、复核定宽（放得下单号、百万级的金额和最长的状态），板块和事项平分剩下的，最多两行，放不下的截掉（悬停看全文）；格子左右边距收窄。
+ * 抽屉开着时（compact，P1）：宽屏上表格只剩视口减去侧栏和抽屉的宽度（1280 px、侧栏展开时约 586 px），各栏都要放下、不横向滚动——
+ * 单号、金额、AI 建议、复核、最近审核定宽（放得下单号、百万级的金额、最长的状态和「MM-DD HH:mm」），板块和事项平分剩下的，最多两行，
+ * 放不下的截掉（悬停看全文）；格子左右边距收窄。
  */
-const COMPACT_WIDTHS = [116, null, null, 104, 112, 128] as const;
+const COMPACT_WIDTHS = [116, null, null, 104, 112, 128, AUDIT_WIDTH] as const;
+const SORT_ICON = { none: 'sort', descending: 'chevronDown', ascending: 'chevronUp' } as const;
+const SORT_HINT: Record<AuditSort, string> = {
+  none: '按最近审核排序：点一下最近的在前', descending: '最近的在前：再点一下最早的在前', ascending: '最早的在前：再点一下回到原来的顺序',
+};
 
-function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen, compact }: {
-  tableRef: Ref<HTMLTableElement>; rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined; statesReady: boolean; onOpen: (id: string) => void;
-  compact: boolean;
+function PoolTable({ tableRef, rows, selected, stateOf, auditOf, statesReady, onOpen, compact, sort, onSort }: {
+  tableRef: Ref<HTMLTableElement>; rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined;
+  auditOf: (id: string) => LastAudit | null; statesReady: boolean; onOpen: (id: string) => void; compact: boolean; sort: AuditSort; onSort: () => void;
 }) {
   const pad = compact ? 'px-2' : 'px-3';
-  const head = cx('whitespace-nowrap border-b border-line py-[9px] text-left text-12 font-medium text-steel', pad);
-  const cell = cx('whitespace-nowrap border-b border-line py-[11px]', pad);
-  // 板块、事项：宽的时候一行、截到最宽；挤的时候最多两行
+  // 挤的时候表头放不下就截掉，不压到旁边一栏上
+  const headOf = (padY: string) => cx('whitespace-nowrap border-b border-line text-left text-12 font-medium text-steel', padY, pad, compact && 'overflow-hidden text-ellipsis');
+  const head = headOf('py-[9px]');
+  const cellOf = (padY: string) => cx('whitespace-nowrap border-b border-line', padY, pad);
+  const cell = cellOf('py-[11px]');
+  // 板块、事项：宽的时候一行、截到最宽（1280 px、侧栏展开、抽屉关着时七栏也放得下）；挤的时候最多两行
   const wraps = (wide: string) => (compact ? cx('border-b border-line py-[11px]', pad) : cx(cell, wide));
   const clamp = 'line-clamp-2 whitespace-normal [overflow-wrap:anywhere]';
   return (
@@ -259,6 +286,14 @@ function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen, com
           <th scope="col" className={cx(head, 'text-right')}>金额</th>
           <th scope="col" className={head}>AI 建议</th>
           <th scope="col" className={head}>复核</th>
+          <th scope="col" aria-sort={sort} className={headOf('py-0')}>
+            <button
+              type="button" onClick={onSort} title={SORT_HINT[sort]}
+              className={cx('inline-flex items-center gap-1 py-[9px] font-medium hover:text-ink', sort !== 'none' && 'text-ink')}
+            >
+              最近审核<Icon name={SORT_ICON[sort]} size={12} className={sort === 'none' ? 'text-faint' : undefined} />
+            </button>
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -266,6 +301,7 @@ function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen, com
           const state = stateOf(item.id);
           const advice = statesReady && state ? adviceLabel(state) : null;
           const review = statesReady && state ? reviewLabel(state) : null;
+          const audit = statesReady ? auditOf(item.id) : null;
           const on = item.id === selected;
           return (
             <tr
@@ -275,10 +311,10 @@ function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen, com
               <td className={cell}>
                 <button type="button" data-open-doc={item.id} className="font-semibold text-ink hover:text-blue">{item.number || item.id}</button>
               </td>
-              <td className={wraps('max-w-[180px] truncate')}>
+              <td className={wraps('max-w-[150px] truncate')}>
                 {compact ? <span className={clamp} title={item.companyName || undefined}>{item.companyName || '—'}</span> : item.companyName || '—'}
               </td>
-              <td className={cx(wraps('max-w-[260px] truncate'), 'text-steel')}>
+              <td className={cx(wraps('max-w-[220px] truncate'), 'text-steel')}>
                 {compact ? <span className={clamp} title={itemText(item)}>{itemText(item)}</span> : itemText(item)}
               </td>
               <td className={cx(cell, 'text-right')}>{amountText(item.amount, item.currency)}</td>
@@ -287,6 +323,15 @@ function PoolTable({ tableRef, rows, selected, stateOf, statesReady, onOpen, com
                 {!review ? <span className="text-faint">—</span>
                   : review.pill ? <Pill tone={review.tone} icon={review.icon}>{review.text}</Pill>
                     : <span className="text-steel">{review.text}</span>}
+              </td>
+              <td className={cx(cellOf('py-[7px]'), !compact && AUDIT_CELL)}>
+                {!audit ? <span className="text-faint">—</span> : (
+                  // 悬停时间看到秒；第二行截掉时悬停看全的
+                  <>
+                    <div title={fullTimeText(audit.at)} className="tabular-nums leading-[18px] text-ink">{timeText(audit.at)}</div>
+                    <div title={audit.by} className="truncate text-12 leading-[16px] text-steel">{audit.by}</div>
+                  </>
+                )}
               </td>
             </tr>
           );

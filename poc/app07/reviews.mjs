@@ -4,6 +4,8 @@
  *   POST /api/analysis/v1/poc/reviews {documentId, sourceVersion, round, decision, reason?, note?}  → 201 { review }（管理员、分析员）
  *   GET  …/reviews?documentId=                 这张单的复核历史，新的在前 → { items }
  *   GET  …/reviews/latest?ids=a,b,…             单据池一页（1–50 张）的复核状态 → { items: { [documentId]: { state, current, review } } }
+ *   current 是当前一轮 { round, result, status, startedAt, finishedAt }（时间是 ISO 或 null；单据池的「最近审核」用）；每条复核（提交的回答、历史、latest）
+ *   带 actorName：测试台账号的名字（config.accounts），没有这个账号或名字是空的就用账号（actor）。
  * 两个 GET 给管理员、分析员和规则发布复核人（policy_reviewer 的单据池只读，也要看复核状态）；别的角色一律 403。
  * 会话、来源和 CSRF 由九安校验；这些路径不在 /platform 下，九安不替它们读请求体，这里自己读。
  * 单据按登录的人的范围读（他在九安里的公司 ∩ 测试台的公司，Ruling FR1）：范围外的单据和不存在的一样——复核、历史 404，latest 里是 no_advice（别人的复核也不给）。
@@ -138,13 +140,22 @@ export function stateOf(advice, review) {
 }
 
 /**
- * readCurrentAdvice(documentId, user) → null（单据不在这个人的范围里）或 { documentVersion（单据现在的版本）, round, status, result, adviceVersion（这一轮审的版本） }
- * （advice-rounds.mjs 的 currentAdviceReader）。user 是登录的人（会话里的 user）。now() 给毫秒。
+ * readCurrentAdvice(documentId, user) → null（单据不在这个人的范围里）或 { documentVersion（单据现在的版本）, round, status, result, adviceVersion（这一轮审的版本）,
+ * startedAt, finishedAt }（advice-rounds.mjs 的 currentAdviceReader）。user 是登录的人（会话里的 user）。
+ * accounts() → 测试台的账号 [{ id, name, role }]（config.accounts，每次读当时的设置），给复核人的名字。now() 给毫秒。
  */
-export function createReviews({ pool, readCurrentAdvice, now = Date.now }) {
+export function createReviews({ pool, readCurrentAdvice, accounts = () => [], now = Date.now }) {
   async function select(where, params, order = 'created_at, id') {
     const [rows] = await pool.query(`SELECT ${COLUMNS} FROM poc_review_decisions WHERE ${where} ORDER BY ${order}`, params);
     return rows.map(reviewOf);
+  }
+  /** 复核加上 actorName（放在 actor 后面）：账号的名字，没有就用账号。 */
+  function named(reviews) {
+    const names = new Map((accounts() ?? []).map(account => [String(account?.id), account?.name]));
+    return reviews.map(({ createdAt, ...review }) => {
+      const name = names.get(review.actor);
+      return { ...review, actorName: typeof name === 'string' && name.trim() ? name : review.actor, createdAt };
+    });
   }
   async function adviceOf(documentId, user) {
     const advice = await readCurrentAdvice(documentId, user);
@@ -168,27 +179,28 @@ export function createReviews({ pool, readCurrentAdvice, now = Date.now }) {
       const createdAt = new Date(now()).toISOString();
       const [result] = await pool.query('INSERT INTO poc_review_decisions (document_id, document_version, advice_round, ai_result, decision, final_result, reason, note, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [review.documentId, review.sourceVersion, review.round, aiResult, review.decision, finalResult, review.reason, review.note, String(actor), sqlTime(createdAt)]);
-      return { id: Number(result.insertId), documentId: review.documentId, documentVersion: review.sourceVersion, adviceRound: review.round, aiResult,
-        decision: review.decision, finalResult, reason: review.reason, note: review.note, actor: String(actor), createdAt };
+      return named([{ id: Number(result.insertId), documentId: review.documentId, documentVersion: review.sourceVersion, adviceRound: review.round, aiResult,
+        decision: review.decision, finalResult, reason: review.reason, note: review.note, actor: String(actor), createdAt }])[0];
     },
 
     /** 这张单的全部复核，新的在前。 */
     async history(documentId, user) {
       if (!isText(documentId)) fail('REVIEW_INVALID', INVALID.documentId);
       await adviceOf(documentId, user);
-      return select('document_id = ?', [documentId], 'created_at DESC, id DESC');
+      return named(await select('document_id = ?', [documentId], 'created_at DESC, id DESC'));
     },
 
-    /** 每张单：state、当前一轮 { round, result, status }（没有轮次时 null）、最后一次复核（不在这个人范围里的单据什么都不给）。 */
+    /** 每张单：state、当前一轮 { round, result, status, startedAt, finishedAt }（没有轮次时 null）、最后一次复核（不在这个人范围里的单据什么都不给）。 */
     async latest(documentIds, user) {
       if (!Array.isArray(documentIds) || !documentIds.length || documentIds.length > LATEST_MAX || !documentIds.every(isText)) fail('REVIEW_INVALID', INVALID.ids);
       const ids = [...new Set(documentIds)];
       const advice = await Promise.all(ids.map(id => readCurrentAdvice(id, user)));
       const last = new Map();
-      for (const review of await select(`document_id IN (${ids.map(() => '?').join(', ')})`, ids)) last.set(review.documentId, review);
+      for (const review of named(await select(`document_id IN (${ids.map(() => '?').join(', ')})`, ids))) last.set(review.documentId, review);
       return Object.fromEntries(ids.map((id, index) => {
         const current = advice[index], review = current ? last.get(id) ?? null : null;
-        return [id, { state: stateOf(current, review), current: current?.round == null ? null : { round: current.round, result: current.result, status: current.status }, review }];
+        return [id, { state: stateOf(current, review), current: current?.round == null ? null
+          : { round: current.round, result: current.result, status: current.status, startedAt: current.startedAt ?? null, finishedAt: current.finishedAt ?? null }, review }];
       }));
     },
 

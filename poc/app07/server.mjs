@@ -208,7 +208,7 @@ const headInScope = scopedDocument(userScope, ({ id, companyIds: scope }) => sto
 const documentInScope = scopedDocument(userScope, ({ id, companyIds: scope }) => store.getDocument({ id, companyIds: scope }));
 // 复核记录（采纳 / 改判 AI 独立建议，绑定那一轮）：表 poc_review_decisions 在 jiuan07 库里，端到端测试的重置删库时随之清空；
 // 复核时只读这一张单的单据头和当前一轮
-const reviews = createReviews({ pool, readCurrentAdvice: currentAdviceReader({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
+const reviews = createReviews({ pool, accounts: () => config.accounts, readCurrentAdvice: currentAdviceReader({ tenantId: config.scope.tenantId, agentTaskKey: J.taskService.agentTaskKey,
   readState: key => store.readState(key), readDocument: headInScope }) });
 await reviews.start();
 // 工作台统计：对公付款单的 AI 建议轮次、复核记录、知识库的上传历史和「我的规则」；不为看板调 Agent，结果按（窗口、角色、账号、范围）缓存 60 秒，

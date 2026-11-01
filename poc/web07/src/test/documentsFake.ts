@@ -3,7 +3,7 @@
 // latest 里是 no_advice；latest 对不认识的单据也给 no_advice（外壳 reviews.mjs 就这样）。
 // 单据、公司、规则全部虚构（规则编号 R-xx、名字带「虚构」），没有真实制度原文。
 import type { Role } from '../api/session';
-import { fakeApi, sessionBody, type FakeCall, type FakeReply, type FakeRoute } from './fakeApi';
+import { NAMES, fakeApi, sessionBody, type FakeCall, type FakeReply, type FakeRoute } from './fakeApi';
 
 const API = '/api/analysis/v1';
 export const version = (n: number) => String(n % 10).repeat(64);
@@ -12,7 +12,15 @@ export interface FakeDoc {
   id: string; number: string; companyId: string; companyName: string; title: string; formName: string; type: string;
   amount: number | string; currency: string; version: string; submittedAt: string; supplier?: string;
 }
-export type FakeLatest = { state: string; current: { round: number; result: string | null; status: string } | null; review: Record<string, unknown> | null };
+/**
+ * 外壳 GET /poc/reviews/latest 的一项：current 带这一轮的 startedAt / finishedAt（ISO 或 null），review 带 actorName（测试台账号的名字，没有就是账号）。
+ * 测试里手写的 current 可以不写时间（当没有）。
+ */
+export type FakeLatest = {
+  state: string;
+  current: { round: number; result: string | null; status: string; startedAt?: string | null; finishedAt?: string | null } | null;
+  review: Record<string, unknown> | null;
+};
 export interface FakeDocState {
   doc: FakeDoc;
   advice: Record<string, unknown>;
@@ -57,8 +65,11 @@ export const roundOf = (d: FakeDoc, n: number, over: Record<string, unknown> = {
 });
 export const reviewOf = (d: FakeDoc, round: number, over: Record<string, unknown> = {}) => ({
   id: round * 10, documentId: d.id, documentVersion: d.version, adviceRound: round, aiResult: 'fail', decision: 'adopt', finalResult: 'fail', reason: null, note: null,
-  actor: 'u-admin', createdAt: '2026-10-30T01:20:00.000Z', ...over,
+  actor: 'u-admin', actorName: NAMES.admin, createdAt: '2026-10-30T01:20:00.000Z', ...over,
 });
+/** latest 里的 current：照这一轮（roundOf）的轮次、结论、状态和时间。 */
+export const currentOf = (round: Record<string, unknown>) => ({ round: round.round as number, result: round.result as string | null, status: round.status as string,
+  startedAt: round.startedAt as string | null, finishedAt: round.finishedAt as string | null });
 
 function evidenceOf(d: FakeDoc, over: Record<string, unknown> = {}) {
   return {
@@ -105,7 +116,10 @@ function pageOf(d: FakeDoc) {
   };
 }
 
-/** 默认的四种复核状态：1 待复核（AI 不建议通过、带四种依据）、2 已更新（复核过第 1 轮，现在第 2 轮）、3 已复核、4 审核中；5 是差旅报销（不进单据池）。 */
+/**
+ * 默认的四种复核状态：1 待复核（AI 不建议通过、带四种依据）、2 已更新（复核过第 1 轮，现在第 2 轮）、3 已复核、4 审核中；5 是差旅报销（不进单据池）。
+ * 最近审核（北京时间）：1 是 10-30 09:01 AI 建议，2 是 10:01 AI 建议（第 2 轮），3 是 09:20 复核，4 是 09:00 AI 开始。
+ */
 export function defaultStates(docs = DOCS): Map<string, FakeDocState> {
   const states = new Map<string, FakeDocState>();
   for (const d of docs) {
@@ -114,22 +128,22 @@ export function defaultStates(docs = DOCS): Map<string, FakeDocState> {
   const [d1, d2, d3, d4] = docs;
   const s1 = states.get(d1.id)!;
   s1.advice = adviceOf(d1, { result: 'fail', note: '（含 审核员 的自定义规则）付款金额超过虚构合同约定，收款方也不一致。', basis: FULL_BASIS });
-  s1.latest = { state: 'pending', current: { round: 1, result: 'fail', status: 'completed' }, review: null };
   s1.rounds = [roundOf(d1, 1, { current: true })];
+  s1.latest = { state: 'pending', current: currentOf(s1.rounds[0]), review: null };
   const s2 = states.get(d2.id)!;
   s2.advice = adviceOf(d2, { result: 'pass', note: '虚构合同已涵盖本次付款。', basis: [FULL_BASIS[1]] });
-  s2.latest = { state: 'outdated', current: { round: 2, result: 'pass', status: 'completed' }, review: reviewOf(d2, 1) };
   s2.rounds = [roundOf(d2, 2, { result: 'pass', current: true, trigger: 'manual', requestedBy: 'u-admin' }), roundOf(d2, 1)];
+  s2.latest = { state: 'outdated', current: currentOf(s2.rounds[0]), review: reviewOf(d2, 1) };
   s2.reviews = [reviewOf(d2, 1)];
   const s3 = states.get(d3.id)!;
   s3.advice = adviceOf(d3, { result: 'pass', note: '虚构缴款通知齐全。', basis: [FULL_BASIS[2]] });
-  s3.latest = { state: 'reviewed', current: { round: 1, result: 'pass', status: 'completed' }, review: reviewOf(d3, 1, { aiResult: 'pass', finalResult: 'pass' }) };
   s3.rounds = [roundOf(d3, 1, { result: 'pass', current: true })];
+  s3.latest = { state: 'reviewed', current: currentOf(s3.rounds[0]), review: reviewOf(d3, 1, { aiResult: 'pass', finalResult: 'pass' }) };
   s3.reviews = [reviewOf(d3, 1, { aiResult: 'pass', finalResult: 'pass' })];
   const s4 = states.get(d4.id)!;
   s4.advice = adviceOf(d4, { status: 'running', result: null, finishedAt: null, canRun: false });
-  s4.latest = { state: 'running', current: { round: 1, result: null, status: 'running' }, review: null };
   s4.rounds = [roundOf(d4, 1, { status: 'running', result: null, finishedAt: null, current: true })];
+  s4.latest = { state: 'running', current: currentOf(s4.rounds[0]), review: null };
   return states;
 }
 
@@ -137,6 +151,8 @@ const ok = (data: unknown, status = 200): FakeReply => ({ status, body: { data }
 const refuse = (status: number, code: string, message: string): FakeReply => ({ status, body: { error: { code, message } } });
 
 const NO_ADVICE: FakeLatest = { state: 'no_advice', current: null, review: null };
+/** 假测试台的「现在」：提交的复核、手动发起的一轮都记这个时间（比默认状态里的都晚）。 */
+export const FAKE_NOW = '2026-10-30T04:00:00.000Z';
 const NOT_FOUND: FakeReply = { status: 404, body: { error: { code: 'NOT_FOUND', message: '未找到可访问的记录。' } } };
 
 /**
@@ -174,7 +190,7 @@ export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaul
     const aiResult = s.latest.current!.result!;
     const finalResult = body.decision === 'adopt' ? aiResult : aiResult === 'pass' ? 'fail' : 'pass';
     const review = { id: 100 + s.reviews.length, documentId: s.doc.id, documentVersion: s.doc.version, adviceRound: body.round, aiResult, decision: body.decision, finalResult,
-      reason: body.reason ?? null, note: body.note ?? null, actor: `u-${role}`, createdAt: '2026-10-30T02:00:00.000Z' };
+      reason: body.reason ?? null, note: body.note ?? null, actor: `u-${role}`, actorName: NAMES[role], createdAt: FAKE_NOW };
     s.reviews = [review, ...s.reviews];
     s.latest = { ...s.latest, state: 'reviewed', review };
     return ok({ review }, 201);
@@ -210,7 +226,7 @@ export function fakeBench({ role = 'admin' as Role, docs = DOCS, states = defaul
     routes[`POST ${base}/advice`] = call => {
       if ((call.body as { sourceVersion?: string })?.sourceVersion !== s.doc.version) return refuse(409, 'ANALYSIS_SOURCE_CHANGED', '单据已更新，请刷新后再发起。');
       s.advice = { ...s.advice, status: 'running', result: null, basis: [], note: '', finishedAt: null, canRun: false };
-      s.latest = { ...s.latest, state: 'running', current: { round: (s.latest.current?.round ?? 0) + 1, result: null, status: 'running' } };
+      s.latest = { ...s.latest, state: 'running', current: { round: (s.latest.current?.round ?? 0) + 1, result: null, status: 'running', startedAt: FAKE_NOW, finishedAt: null } };
       return ok(s.advice, 202);
     };
     routes[`GET ${base}/evidence`] = () => ok(s.evidence);

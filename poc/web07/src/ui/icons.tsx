@@ -19,6 +19,10 @@ const SHAPES = {
   file: <><path d="M6 3h9l3 3v15H6z" /><path d="M15 3v3h3" /></>,
   chevronLeft: <path d="M14 6l-6 6 6 6" />,
   chevronRight: <path d="M10 6l6 6-6 6" />,
+  chevronDown: <path d="M6 10l6 6 6-6" />,
+  chevronUp: <path d="M6 14l6-6 6 6" />,
+  // 上下两个箭头：可以排序、现在没排（单据池「最近审核」的表头）。
+  sort: <path d="M8 9l4-4 4 4M8 15l4 4 4-4" />,
   // 两段直角箭头围成一圈：重新审核、刷新。
   refresh: <><path d="M5 11V5h12" /><path d="M14 2l3 3-3 3" /><path d="M19 13v6H7" /><path d="M10 22l-3-3 3-3" /></>,
   warning: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 17v2" /></>,

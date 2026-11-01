@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { startApp } from './startApp';
-import { DOCS, adviceOf, defaultStates, fakeBench, type FakeDoc } from './documentsFake';
+import { DOCS, adviceOf, defaultStates, fakeBench, reviewOf, type FakeDoc } from './documentsFake';
 
 // 单据池（Spec 第 6 节、Ruling T5d）：九安的对公付款单（最多 500 张，每页 50 张读），复核状态按 50 张一批问外壳；页签、翻页都在页面里做。
 async function openPool(options: Parameters<typeof fakeBench>[0] = {}, hash = '#/documents') {
@@ -15,13 +15,15 @@ const table = () => screen.getByRole('table', { name: '单据' });
 const numbers = () => within(table()).queryAllByRole('row').slice(1).map(row => row.getAttribute('data-number'));
 const rowOf = (number: string) => within(table()).getAllByRole('row').find(row => row.getAttribute('data-number') === number)!;
 const tabs = () => screen.getByRole('radiogroup', { name: '复核状态' });
+/** 抽屉开着时各栏的宽度（单号、板块、事项、金额、AI 建议、复核、最近审核）；空的是平分剩下的。 */
+const COMPACT_COLS = ['116px', '', '', '104px', '112px', '128px', '116px'];
 
 describe('单据池: tabs by review state', () => {
   it('待复核 = pending + outdated, 已复核 = reviewed, 全部 = every corporate payment; the 差旅报销 never shows', async () => {
     const { user, bench } = await openPool();
     expect(await within(tabs()).findByRole('radio', { name: '待复核 2' })).toHaveAttribute('aria-checked', 'true');
     expect(numbers()).toEqual(['DGZF-F07-001', 'DGZF-F07-002']);
-    expect(within(table()).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['单号', '板块', '事项', '金额', 'AI 建议', '复核']);
+    expect(within(table()).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['单号', '板块', '事项', '金额', 'AI 建议', '复核', '最近审核']);
     const second = rowOf('DGZF-F07-002');
     expect(within(second).getByText('柯顿')).toBeInTheDocument();
     expect(within(second).getByText('运维服务费')).toBeInTheDocument();
@@ -69,6 +71,119 @@ describe('单据池: tabs by review state', () => {
     expect(screen.getByText(/AI 给出新建议后/)).toBeInTheDocument();
     await user.click(within(tabs()).getByRole('radio', { name: '已复核 3' }));
     expect(within(rowOf('DGZF-F07-001')).getByText('已改判')).toBeInTheDocument();
+  });
+});
+
+// 最近审核（2026-11-01）：这一轮的复核和 AI 的时间取晚的；第二行说是谁；北京时间「MM-DD HH:mm」，悬停看到秒；表头是按钮，最近的在前 → 最早的在前 → 原来的顺序。
+describe('单据池: 最近审核 (when each document was last audited)', () => {
+  const auditCell = (number: string) => within(rowOf(number)).getAllByRole('cell').at(-1)!;
+  const header = () => within(table()).getByRole('columnheader', { name: '最近审核' });
+  const sortButton = () => within(header()).getByRole('button', { name: '最近审核' });
+
+  it('is the last column: the later time on top (tabular numbers, full time on hover), who on a small steel second line', async () => {
+    const { user } = await openPool();
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
+    const expected: Array<[string, string, string, string]> = [
+      ['DGZF-F07-001', '10-30 09:01', 'AI 建议', '2026-10-30 09:01:41'],
+      ['DGZF-F07-002', '10-30 10:01', 'AI 建议', '2026-10-30 10:01:41'],   // 复核的是第 1 轮，现在是第 2 轮：只看第 2 轮
+      ['DGZF-F07-003', '10-30 09:20', '复核 · 审核员', '2026-10-30 09:20:00'], // 复核比这一轮结束晚
+      ['DGZF-F07-004', '10-30 09:00', 'AI 开始', '2026-10-30 09:00:00'],     // 在跑：开始的时间
+    ];
+    for (const [number, time, by, full] of expected) {
+      const cell = auditCell(number);
+      const top = within(cell).getByText(time);
+      expect(top.className).toMatch(/\btabular-nums\b/);
+      const second = within(cell).getByText(by);
+      expect(second.className).toMatch(/\btext-12\b/);
+      expect(second.className).toMatch(/\btext-steel\b/);
+      expect(second.className).toMatch(/\btruncate\b/);
+      expect(second).toHaveAttribute('title', by);   // 名字长了截掉：悬停看全的
+      expect(top).toHaveAttribute('title', full);
+    }
+  });
+
+  it('labels a failed round 「AI 失败」 and a declined one 「AI 拒绝」; 「—」 when nothing is known', async () => {
+    const states = defaultStates();
+    states.get('doc-2')!.latest = { state: 'no_advice', current: { round: 1, result: null, status: 'failed', startedAt: '2026-10-31T15:59:00.000Z', finishedAt: '2026-10-31T16:00:05.000Z' }, review: null };
+    states.get('doc-3')!.latest = { state: 'no_advice', current: { round: 2, result: null, status: 'declined', startedAt: '2026-10-30T05:00:00.000Z', finishedAt: '2026-10-30T05:00:30.000Z' }, review: null };
+    states.get('doc-4')!.latest = { state: 'no_advice', current: null, review: null };
+    const { user } = await openPool({ states });
+    await within(tabs()).findByRole('radio', { name: '待复核 1' });
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
+    // 过了北京时间的半夜：算 11-01
+    expect(within(auditCell('DGZF-F07-002')).getByText('11-01 00:00')).toHaveAttribute('title', '2026-11-01 00:00:05');
+    expect(within(auditCell('DGZF-F07-002')).getByText('AI 失败')).toBeInTheDocument();
+    expect(within(auditCell('DGZF-F07-003')).getByText('10-30 13:00')).toBeInTheDocument();
+    expect(within(auditCell('DGZF-F07-003')).getByText('AI 拒绝')).toBeInTheDocument();
+    expect(auditCell('DGZF-F07-004')).toHaveTextContent(/^—$/);
+  });
+
+  it('the header is a button with aria-sort: latest first → earliest first → the original order (Jiuan\'s), which is the default', async () => {
+    const { user } = await openPool();
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
+    expect(header()).toHaveAttribute('aria-sort', 'none');
+    expect(numbers()).toEqual(['DGZF-F07-001', 'DGZF-F07-002', 'DGZF-F07-003', 'DGZF-F07-004']);
+    // 别的表头不是按钮、不带 aria-sort
+    for (const name of ['单号', '板块', '事项', '金额', 'AI 建议', '复核']) {
+      const other = within(table()).getByRole('columnheader', { name });
+      expect(other).not.toHaveAttribute('aria-sort');
+      expect(within(other).queryByRole('button')).toBeNull();
+    }
+    await user.click(sortButton());
+    expect(header()).toHaveAttribute('aria-sort', 'descending');
+    expect(numbers()).toEqual(['DGZF-F07-002', 'DGZF-F07-003', 'DGZF-F07-001', 'DGZF-F07-004']);
+    await user.click(sortButton());
+    expect(header()).toHaveAttribute('aria-sort', 'ascending');
+    expect(numbers()).toEqual(['DGZF-F07-004', 'DGZF-F07-001', 'DGZF-F07-003', 'DGZF-F07-002']);
+    sortButton().focus();
+    await user.keyboard('{Enter}');
+    expect(header()).toHaveAttribute('aria-sort', 'none');
+    expect(numbers()).toEqual(['DGZF-F07-001', 'DGZF-F07-002', 'DGZF-F07-003', 'DGZF-F07-004']);
+  });
+
+  it('rows with no time go last in both directions', async () => {
+    const states = defaultStates();
+    states.get('doc-1')!.latest = { state: 'no_advice', current: null, review: null };
+    states.get('doc-3')!.latest = { state: 'no_advice', current: { round: 1, result: null, status: 'failed', startedAt: null, finishedAt: null }, review: null };
+    const { user } = await openPool({ states });
+    await within(tabs()).findByRole('radio', { name: '待复核 1' });
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 4' }));
+    await user.click(sortButton());
+    expect(numbers()).toEqual(['DGZF-F07-002', 'DGZF-F07-004', 'DGZF-F07-001', 'DGZF-F07-003']);
+    await user.click(sortButton());
+    expect(numbers()).toEqual(['DGZF-F07-004', 'DGZF-F07-002', 'DGZF-F07-001', 'DGZF-F07-003']);
+  });
+
+  it('sorts the whole current tab before paging, back to page 1; the order stays when the tab changes; the tab counts do not change', async () => {
+    const many: FakeDoc[] = [];
+    for (let n = 1; n <= 45; n += 1) many.push({ ...DOCS[0], id: `t-${n}`, number: `DGZF-T-${String(n).padStart(3, '0')}` });
+    const states = defaultStates(many);
+    for (const [index, s] of [...states.values()].entries()) {
+      // 九安的顺序是 001…045；AI 的时间一张比一张晚（045 最晚），每 3 张有一张已复核（复核得更晚）
+      const finishedAt = new Date(Date.parse('2026-10-31T00:00:00.000Z') + index * 60_000).toISOString();
+      const current = { round: 1, result: 'pass', status: 'completed', startedAt: finishedAt, finishedAt };
+      s.latest = index % 3 === 2
+        ? { state: 'reviewed', current, review: reviewOf(s.doc, 1, { createdAt: new Date(Date.parse(finishedAt) + 3_600_000).toISOString() }) }
+        : { state: 'pending', current, review: null };
+    }
+    const { user } = await openPool({ docs: many, states });
+    await within(tabs()).findByRole('radio', { name: '待复核 30' });
+    await user.click(screen.getByRole('button', { name: '下一页' }));
+    expect(screen.getByText('第 2 / 2 页')).toBeInTheDocument();
+    await user.click(sortButton());
+    expect(screen.getByText('第 1 / 2 页')).toBeInTheDocument();
+    // 待复核里最晚的是 044（045 已复核），在第一页的第一行
+    expect(numbers().slice(0, 3)).toEqual(['DGZF-T-044', 'DGZF-T-043', 'DGZF-T-041']);
+    expect(numbers()).toHaveLength(20);
+    expect(within(tabs()).getAllByRole('radio').map(radio => radio.textContent)).toEqual(['待复核 30', '已复核 15', '全部 45']);
+    // 全部：已复核的那几张按复核的时间（晚一小时）排在前面
+    await user.click(within(tabs()).getByRole('radio', { name: '全部 45' }));
+    expect(header()).toHaveAttribute('aria-sort', 'descending');
+    expect(numbers().slice(0, 4)).toEqual(['DGZF-T-045', 'DGZF-T-042', 'DGZF-T-039', 'DGZF-T-036']);
+    await user.click(sortButton());
+    expect(numbers().slice(0, 3)).toEqual(['DGZF-T-001', 'DGZF-T-002', 'DGZF-T-004']);
   });
 });
 
@@ -200,7 +315,7 @@ describe('单据池: the drawer', () => {
     await waitFor(() => expect(content).toHaveAttribute('data-drawer-open', 'false'));
   });
 
-  it('P1: with the drawer open the six columns pack in from 1280 px up — fixed widths for 单号 / 金额 / AI 建议 / 复核, 板块 and 事项 share the rest on up to two lines', async () => {
+  it('P1: with the drawer open the columns pack in from 1280 px up — fixed widths for 单号 / 金额 / AI 建议 / 复核 / 最近审核, 板块 and 事项 share the rest on up to two lines', async () => {
     const { user } = await openPool();
     await within(tabs()).findByRole('radio', { name: '待复核 2' });
     expect(table().className).not.toMatch(/table-fixed/);
@@ -208,7 +323,7 @@ describe('单据池: the drawer', () => {
     await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
     await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
     expect(table().className).toMatch(/(^| )table-fixed( |$)/);
-    expect([...table().querySelectorAll('col')].map(col => (col as HTMLElement).style.width)).toEqual(['116px', '', '', '104px', '112px', '128px']);
+    expect([...table().querySelectorAll('col')].map(col => (col as HTMLElement).style.width)).toEqual(COMPACT_COLS);
     const row = rowOf('DGZF-F07-001');
     for (const text of ['九安', '房租 · 年度框架合同']) {
       const cell = within(row).getByText(text);

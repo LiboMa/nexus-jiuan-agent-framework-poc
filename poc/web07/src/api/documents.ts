@@ -53,13 +53,15 @@ export const fetchDocument = (id: string) => api<DocumentItem>(`/documents/${enc
 
 export type ReviewState = 'no_advice' | 'running' | 'pending' | 'reviewed' | 'outdated';
 export type AiResult = 'pass' | 'fail';
+/** 一次复核。actorName：测试台账号的名字（外壳从 config.accounts 取，没有就是账号 actor）。 */
 export interface Review {
   id: number; documentId: string; documentVersion: string; adviceRound: number; aiResult: AiResult; decision: 'adopt' | 'override';
-  finalResult: AiResult; reason: string | null; note: string | null; actor: string; createdAt: string;
+  finalResult: AiResult; reason: string | null; note: string | null; actor: string; actorName: string; createdAt: string;
 }
+/** 单据池一张单的复核状态。current 是当前一轮，startedAt / finishedAt 是它开始、结束的 ISO 时间（在跑时 finishedAt 是 null）。 */
 export interface LatestState {
   state: ReviewState;
-  current: { round: number; result: AiResult | null; status: string } | null;
+  current: { round: number; result: AiResult | null; status: string; startedAt: string | null; finishedAt: string | null } | null;
   review: Review | null;
 }
 const LATEST_CHUNK = 50;
@@ -199,10 +201,11 @@ export function amountText(amount: unknown, currency?: string | null): string {
 }
 
 const SHANGHAI = 'Asia/Shanghai';
-const parts = (at: string, withTime: boolean) => {
+const parts = (at: string, withTime: boolean, full = false) => {
   const date = new Date(at);
   if (Number.isNaN(date.getTime())) return null;
-  const pick = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI, month: '2-digit', day: '2-digit', ...(withTime ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' } : {}) })
+  const pick = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI, month: '2-digit', day: '2-digit',
+    ...(withTime ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' } : {}), ...(full ? { year: 'numeric', second: '2-digit' } : {}) })
     .formatToParts(date).map(part => [part.type, part.value]));
   return pick as Record<string, string>;
 };
@@ -215,6 +218,11 @@ export function dayText(at: string | null | undefined): string {
 export function timeText(at: string | null | undefined): string {
   const p = at ? parts(at, true) : null;
   return p ? `${p.month}-${p.day} ${p.hour}:${p.minute}` : '—';
+}
+/** 北京时间「2026-10-30 09:12:05」（悬停看的完整时间）。 */
+export function fullTimeText(at: string | null | undefined): string {
+  const p = at ? parts(at, true, true) : null;
+  return p ? `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}` : '—';
 }
 /** 用时（秒）；读不出回 null。 */
 export function secondsBetween(from: string | null | undefined, to: string | null | undefined): number | null {

@@ -99,6 +99,32 @@ describe('review: adopt', () => {
     expect(window.location.hash).toBe('#/documents?doc=doc-3');
   });
 
+  it('with the pool sorted by 最近审核, 「提交复核后自动开下一张」 and 「下一张」 follow the order on screen, not Jiuan\'s', async () => {
+    // 三张待复核：九安的顺序 1、2、3；AI 的时间 3 最晚、1 最早，所以「最近的在前」是 3、2、1（和原来的顺序反着转）
+    const states = defaultStates();
+    const at = (hour: number) => ({ startedAt: `2026-10-30T0${hour}:00:00.000Z`, finishedAt: `2026-10-30T0${hour}:01:00.000Z` });
+    states.get('doc-1')!.latest = { state: 'pending', current: { round: 1, result: 'fail', status: 'completed', ...at(1) }, review: null };
+    states.get('doc-2')!.latest = { state: 'pending', current: { round: 2, result: 'pass', status: 'completed', ...at(2) }, review: null };
+    states.get('doc-3')!.latest = { state: 'pending', current: { round: 1, result: 'pass', status: 'completed', ...at(3) }, review: null };
+    const { drawer, user } = await openDrawer('doc-3', { states });
+    await screen.findByRole('radio', { name: '待复核 3' });
+    await user.click(within(screen.getByRole('table', { name: '单据' })).getByRole('button', { name: '最近审核' }));
+    const order = () => within(screen.getByRole('table', { name: '单据' })).getAllByRole('row').slice(1).map(row => row.getAttribute('data-number'));
+    expect(order()).toEqual(['DGZF-F07-003', 'DGZF-F07-002', 'DGZF-F07-001']);
+    // 原来的顺序里 3 的下一张是 1；排过之后是 2
+    await user.click(within(drawer).getByRole('button', { name: '提交复核' }));
+    expect(await screen.findByRole('dialog', { name: 'DGZF-F07-002' })).toBeInTheDocument();
+    expect(await screen.findByRole('radio', { name: '待复核 2' })).toBeInTheDocument();
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '下一张' }));
+    expect(await screen.findByRole('dialog', { name: 'DGZF-F07-001' })).toBeInTheDocument();
+    // 再点一次表头：最早的在前（1、2），从 1 往下是 2
+    await user.click(within(screen.getByRole('table', { name: '单据' })).getByRole('button', { name: '最近审核' }));
+    expect(order()).toEqual(['DGZF-F07-001', 'DGZF-F07-002']);
+    await within(screen.getByRole('dialog')).findByRole('radio', { name: /采纳 AI 建议/ });
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '提交复核' }));
+    expect(await screen.findByRole('dialog', { name: 'DGZF-F07-002' })).toBeInTheDocument();
+  });
+
   it('「下一张」 opens the next one to review without saving anything', async () => {
     const { drawer, user, bench } = await openDrawer('doc-1');
     await user.click(within(drawer).getByRole('button', { name: '下一张' }));

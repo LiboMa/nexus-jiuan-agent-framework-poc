@@ -8,7 +8,7 @@
  *   currentAdviceReader  一张单的当前一轮（复核用，reviews.mjs）：只读这一张单的状态，不扫单据池
  *   documentRoundsReader 一张单的各轮（单据抽屉的「历史」页签）：只读这一张单，整理得和 readAdviceRounds 一样，新的在前
  *   adviceRoundsRoutes   GET /api/analysis/v1/poc/advice-rounds?documentId= → { documentId, documentVersion, items }
- *   adviceOf             单据 + 一轮 → 复核状态要的样子（currentAdviceReader 和工作台 dashboard.mjs 共用）
+ *   adviceOf             单据 + 一轮 → 复核状态要的样子，带这一轮的开始、结束时间（currentAdviceReader 和工作台 dashboard.mjs 共用）
  * 轮次字段照九安 agent-task-service.mjs：round、subjectVersion（这一轮审的是单据的哪个版本）、status（running | completed | declined | failed |
  * superseded；从没跑过就没有轮次）、output.result（pass | fail）、output.basis（Agent 返回的逐条依据；record.basis 是组装请求时的输入，不是这个）。
  */
@@ -54,13 +54,18 @@ export async function readAdviceRounds({ tenantId, agentTaskKey, readState, list
   });
 }
 
-/** 单据和它的当前一轮 → { documentVersion（单据现在的版本）, round, status, result, adviceVersion（这一轮审的版本） }；record 为 null 时轮次各项为 null。 */
+/** 九安存的时间（stamp() 写的 ISO 字符串）→ ISO 时间；不是读得出的时间字符串就 null。 */
+const isoOrNull = value => (typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null);
+/**
+ * 单据和它的当前一轮 → { documentVersion（单据现在的版本）, round, status, result, adviceVersion（这一轮审的版本）, startedAt, finishedAt }；
+ * startedAt / finishedAt 是这一轮开始、结束的 ISO 时间（在跑时 finishedAt 是 null；单据池的「最近审核」用）。record 为 null 时轮次各项为 null。
+ */
 export const adviceOf = (document, record) => ({ documentVersion: document.version, round: record?.round ?? null, status: record?.status ?? null,
-  result: outputOf(record).result ?? null, adviceVersion: record?.subjectVersion ?? null });
+  result: outputOf(record).result ?? null, adviceVersion: record?.subjectVersion ?? null, startedAt: isoOrNull(record?.startedAt), finishedAt: isoOrNull(record?.finishedAt) });
 
 /**
  * readDocument(id, user) → 登录的人范围里的单据（要 id、companyId、version；user-scope.mjs 的 scopedDocument），不在范围里或不存在时 null。
- * 返回的函数：(documentId, user) → null（单据不在这个人的范围里）或 adviceOf 的样子；没跑过 AI 建议时 round、status、result、adviceVersion 都是 null。
+ * 返回的函数：(documentId, user) → null（单据不在这个人的范围里）或 adviceOf 的样子；没跑过 AI 建议时 round、status、result、adviceVersion、startedAt、finishedAt 都是 null。
  */
 export function currentAdviceReader({ tenantId, agentTaskKey, readState, readDocument, task = ADVICE_TASK }) {
   return async (documentId, user) => {

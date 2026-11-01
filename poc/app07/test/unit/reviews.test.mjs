@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -77,12 +78,14 @@ function fakePool() {
   };
 }
 
-async function harness({ clock = Date.parse('2026-10-30T08:00:00.000Z'), step = 1000, pool = fakePool() } = {}) {
+// 测试台的账号（settings.mjs 的 config.accounts 的样子）：poc-narrow 不在里面，复核人的名字就用账号
+const ACCOUNTS = [{ id: 'poc-reviewer', name: '审核员（虚构）', role: 'admin' }, { id: 'poc-checker', name: '复核人（虚构）', role: 'analyst' }, { id: 'poc-policy', name: '', role: 'policy_reviewer' }];
+async function harness({ clock = Date.parse('2026-10-30T08:00:00.000Z'), step = 1000, pool = fakePool(), accounts = () => ACCOUNTS } = {}) {
   const docs = docsOf(), states = new Map(), reads = [];
   let at = clock;
   const readCurrentAdvice = currentAdviceReader({ tenantId: 't1', agentTaskKey, readState: async key => { reads.push(key); return states.get(key) ?? null; },
     readDocument: scopedDocument(benchScope(SCOPE), async ({ id, companyIds }) => { const document = docs.get(id); return document && companyIds.includes(document.companyId) ? { ...document } : null; }) });
-  const reviews = createReviews({ pool, readCurrentAdvice, now: () => (at += step) });
+  const reviews = createReviews({ pool, readCurrentAdvice, ...(accounts ? { accounts } : {}), now: () => (at += step) });
   await reviews.start();
   const logs = [], reviewed = [];
   const routes = reviewsRoutes({ reviews, log: line => logs.push(line), onReviewed: review => reviewed.push(review.id) });
@@ -133,9 +136,10 @@ test('readAdviceRounds：每张单的当前一轮和历史；documentVersion 取
 test('readCurrentAdvice：只读这一张单的状态（不扫单据池）；单据不在范围里是 null，没跑过 AI 建议时轮次各项为 null', async () => {
   const h = await harness();
   h.setRounds('d1', done(3, 'pass'), [done(2, 'fail'), done(1, 'fail')]);
-  assert.deepEqual(await h.readCurrentAdvice('d1', ADMIN), { documentVersion: 'v1', round: 3, status: 'completed', result: 'pass', adviceVersion: 'v1' });
+  assert.deepEqual(await h.readCurrentAdvice('d1', ADMIN), { documentVersion: 'v1', round: 3, status: 'completed', result: 'pass', adviceVersion: 'v1',
+    startedAt: '2026-10-30T03:00:00.000Z', finishedAt: '2026-10-30T03:01:00.000Z' });
   assert.deepEqual(h.reads, [keyOf(h.docs.get('d1'))]);
-  assert.deepEqual(await h.readCurrentAdvice('d2', ADMIN), { documentVersion: 'v1', round: null, status: null, result: null, adviceVersion: null });
+  assert.deepEqual(await h.readCurrentAdvice('d2', ADMIN), { documentVersion: 'v1', round: null, status: null, result: null, adviceVersion: null, startedAt: null, finishedAt: null });
   assert.equal(await h.readCurrentAdvice('dx', ADMIN), null, '这个人有 co-z，可 co-z 不是测试台的公司');
   assert.equal(await h.readCurrentAdvice('nope', ADMIN), null);
   assert.equal(await h.readCurrentAdvice('d1', NARROW), null, '这个人只有 co-b');
@@ -150,7 +154,7 @@ test('采纳：201 { review }，finalResult 等于 AI 的结论；备注去掉�
   const first = await h.post(adopt({ note: '  核对过原件  ' }));
   assert.equal(first.status, 201, JSON.stringify(first.payload));
   assert.deepEqual(first.payload.data.review, { id: 1, documentId: 'd1', documentVersion: 'v1', adviceRound: 1, aiResult: 'fail', decision: 'adopt', finalResult: 'fail',
-    reason: null, note: '核对过原件', actor: 'poc-reviewer', createdAt: '2026-10-30T08:00:01.000Z' });
+    reason: null, note: '核对过原件', actor: 'poc-reviewer', actorName: '审核员（虚构）', createdAt: '2026-10-30T08:00:01.000Z' });
   const second = await h.post(adopt({ note: '   ' }), ANALYST);
   assert.equal(second.status, 201);
   assert.equal(second.payload.data.review.note, null);
@@ -310,19 +314,20 @@ test('latest 的 state：no_advice / running / pending / reviewed / outdated；c
   const { items } = answer.payload.data;
   assert.deepEqual(Object.keys(items), ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'dx', 'nope']);
   const brief = id => [items[id].state, items[id].current, items[id].review?.adviceRound ?? null];
-  assert.deepEqual(brief('d1'), ['pending', { round: 1, result: 'pass', status: 'completed' }, null]);
-  assert.deepEqual(brief('d2'), ['running', { round: 3, result: null, status: 'running' }, null]);
-  assert.deepEqual(brief('d3'), ['no_advice', { round: 1, result: null, status: 'failed' }, null]);
-  assert.deepEqual(brief('d4'), ['no_advice', { round: 1, result: null, status: 'declined' }, null]);
-  assert.deepEqual(brief('d5'), ['reviewed', { round: 1, result: 'fail', status: 'completed' }, 1]);
-  assert.deepEqual(brief('d6'), ['outdated', { round: 2, result: 'pass', status: 'completed' }, 1]);
+  const at = (n, finished = true) => ({ startedAt: `2026-10-30T0${n}:00:00.000Z`, finishedAt: finished ? `2026-10-30T0${n}:01:00.000Z` : null });
+  assert.deepEqual(brief('d1'), ['pending', { round: 1, result: 'pass', status: 'completed', ...at(1) }, null]);
+  assert.deepEqual(brief('d2'), ['running', { round: 3, result: null, status: 'running', ...at(3, false) }, null]);
+  assert.deepEqual(brief('d3'), ['no_advice', { round: 1, result: null, status: 'failed', startedAt: '2026-10-30T01:00:00.000Z', finishedAt: null }, null]);
+  assert.deepEqual(brief('d4'), ['no_advice', { round: 1, result: null, status: 'declined', startedAt: '2026-10-30T01:00:00.000Z', finishedAt: null }, null]);
+  assert.deepEqual(brief('d5'), ['reviewed', { round: 1, result: 'fail', status: 'completed', ...at(1) }, 1]);
+  assert.deepEqual(brief('d6'), ['outdated', { round: 2, result: 'pass', status: 'completed', ...at(2) }, 1]);
   assert.deepEqual(items.dx, { state: 'no_advice', current: null, review: null }, '不在范围里的单据：什么都不给');
   assert.deepEqual(items.nope, { state: 'no_advice', current: null, review: null });
   // 单据出了新版本：旧版本的那一轮不算数（复核过的也一样），回到 no_advice
   h.docs.get('d1').version = 'v2';
   h.docs.get('d5').version = 'v2';
   const after = (await h.latest(['d1', 'd5'])).payload.data.items;
-  assert.deepEqual([after.d1.state, after.d5.state, after.d5.current], ['no_advice', 'no_advice', { round: 1, result: 'fail', status: 'completed' }]);
+  assert.deepEqual([after.d1.state, after.d5.state, after.d5.current], ['no_advice', 'no_advice', { round: 1, result: 'fail', status: 'completed', ...at(1) }]);
   // 新版本跑完一轮：之前的复核是旧版本的 → outdated
   h.setRounds('d5', done(2, 'pass', { subjectVersion: 'v2' }), [done(1, 'fail')]);
   assert.equal((await h.latest(['d5'])).payload.data.items.d5.state, 'outdated');
@@ -464,6 +469,64 @@ test('all({ since })：给工作台用，按时间先后；建表可以重复跑
   t.setRounds('d1', done(1, 'pass'));
   assert.equal((await t.post(adopt())).status, 503);
   assert.deepEqual(t.logs, ['POC_REVIEWS_FAILED TypeError']);
+});
+
+// ---- 单据池「最近审核」一栏要的时间和复核人的名字（2026-11-01）----
+
+test('latest 的 current 带这一轮的 startedAt / finishedAt（ISO 时间或 null，取当前一轮）；别的字段、state 照旧', async () => {
+  const h = await harness();
+  h.setRounds('d1', done(2, 'pass'), [done(1, 'fail')]);                                                // 完成：两个都有，取当前一轮的
+  h.setRounds('d2', round(3, { status: 'running' }), [done(2, 'fail')]);                                 // 在跑：只有开始
+  h.setRounds('d3', round(1, { status: 'failed', errorCode: 'AI_UNAVAILABLE', finishedAt: '2026-10-30T01:00:07.250Z' }));
+  h.setRounds('d4', round(1, { status: 'declined', declined: { reason: 'out_of_scope' }, finishedAt: '2026-10-30T01:00:30.000Z' }));
+  h.setRounds('d5', round(1, { status: 'completed', startedAt: 'not a time', finishedAt: 17, output: { result: 'pass' } })); // 读不出的时间 → null
+  const { items } = (await h.latest(['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'dx'])).payload.data;
+  assert.deepEqual(items.d1.current, { round: 2, result: 'pass', status: 'completed', startedAt: '2026-10-30T02:00:00.000Z', finishedAt: '2026-10-30T02:01:00.000Z' });
+  assert.deepEqual(items.d2.current, { round: 3, result: null, status: 'running', startedAt: '2026-10-30T03:00:00.000Z', finishedAt: null });
+  assert.deepEqual(items.d3.current, { round: 1, result: null, status: 'failed', startedAt: '2026-10-30T01:00:00.000Z', finishedAt: '2026-10-30T01:00:07.250Z' });
+  assert.deepEqual(items.d4.current, { round: 1, result: null, status: 'declined', startedAt: '2026-10-30T01:00:00.000Z', finishedAt: '2026-10-30T01:00:30.000Z' });
+  assert.deepEqual(items.d5.current, { round: 1, result: 'pass', status: 'completed', startedAt: null, finishedAt: null });
+  assert.deepEqual([items.d1.state, items.d2.state, items.d3.state, items.d4.state, items.d5.state], ['pending', 'running', 'no_advice', 'no_advice', 'pending']);
+  assert.deepEqual(items.d6, { state: 'no_advice', current: null, review: null }, '没跑过：current 还是 null');
+  assert.deepEqual(items.dx, { state: 'no_advice', current: null, review: null }, '范围外：什么都不给');
+});
+
+test('复核带 actorName：取测试台账号的名字（config.accounts），没有这个账号或名字是空的就用账号；latest、历史、提交的回答都一样', async () => {
+  const h = await harness();
+  h.setRounds('d1', done(1, 'fail'));
+  h.setRounds('d3', done(1, 'pass'));
+  const posted = (await h.post(adopt(), ADMIN)).payload.data.review;
+  assert.equal(posted.actorName, '审核员（虚构）');
+  await h.post(override('amount_ok'), ANALYST);
+  assert.equal((await h.post(adopt({ documentId: 'd3' }), NARROW)).payload.data.review.actorName, 'poc-narrow', '设置里没有这个账号：用账号');
+  const items = (await h.latest(['d1', 'd3'])).payload.data.items;
+  assert.deepEqual([items.d1.review.actor, items.d1.review.actorName], ['poc-checker', '复核人（虚构）']);
+  assert.deepEqual([items.d3.review.actor, items.d3.review.actorName], ['poc-narrow', 'poc-narrow']);
+  // 字段一个不少：原有的都在，只多 actorName
+  assert.deepEqual(Object.keys(items.d1.review), ['id', 'documentId', 'documentVersion', 'adviceRound', 'aiResult', 'decision', 'finalResult', 'reason', 'note', 'actor', 'actorName', 'createdAt']);
+  const history = (await h.ask('GET', '?documentId=d1')).payload.data.items;
+  assert.deepEqual(history.map(item => [item.actor, item.actorName]), [['poc-checker', '复核人（虚构）'], ['poc-reviewer', '审核员（虚构）']]);
+  assert.equal(history[1].createdAt, posted.createdAt);
+  // 名字是空的（规则发布复核人在这里的名字留空）也用账号；账号读的是当时的设置
+  const reader = { ...POLICY, role: 'admin', companyIds: ['co-a'] };
+  await h.post(override('contract_covers'), reader);
+  assert.equal((await h.latest(['d1'])).payload.data.items.d1.review.actorName, 'poc-policy');
+  ACCOUNTS.push({ id: 'poc-policy-later', name: '后来加的（虚构）', role: 'analyst' });
+  try {
+    await h.post(adopt(), { ...reader, id: 'poc-policy-later' });
+    assert.equal((await h.latest(['d1'])).payload.data.items.d1.review.actorName, '后来加的（虚构）');
+  } finally { ACCOUNTS.pop(); }
+  // 不给 accounts（单独用 createReviews 时）：一律用账号
+  const bare = await harness({ accounts: null });
+  bare.setRounds('d1', done(1, 'pass'));
+  assert.equal((await bare.post(adopt())).payload.data.review.actorName, 'poc-reviewer');
+  // all()（工作台用）不变：没有 actorName
+  assert.ok((await h.reviews.all()).every(review => !Object.hasOwn(review, 'actorName')));
+});
+
+test('server_wiring：外壳把测试台的账号交给复核记录（actorName 从这里来）', async () => {
+  const server = await readFile(fileURLToPath(new URL('../../server.mjs', import.meta.url)), 'utf8');
+  assert.match(server, /createReviews\(\{ pool, accounts: \(\) => config\.accounts, readCurrentAdvice: currentAdviceReader\(/);
 });
 
 // ---- 真 MySQL 8（要 MYSQL_TEST_URL，库名以 _test 结尾；mysql2 取九安 v0.7.10 副本里的）----
