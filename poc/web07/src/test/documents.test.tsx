@@ -15,8 +15,8 @@ const table = () => screen.getByRole('table', { name: '单据' });
 const numbers = () => within(table()).queryAllByRole('row').slice(1).map(row => row.getAttribute('data-number'));
 const rowOf = (number: string) => within(table()).getAllByRole('row').find(row => row.getAttribute('data-number') === number)!;
 const tabs = () => screen.getByRole('radiogroup', { name: '复核状态' });
-/** 抽屉开着时各栏的宽度（单号、板块、事项、金额、AI 建议、复核、最近审核）；空的是平分剩下的。 */
-const COMPACT_COLS = ['116px', '', '', '104px', '112px', '128px', '116px'];
+/** 抽屉开着时各栏的宽度（单号、金额、AI 建议、复核、最近审核；板块和事项收到单号下面）；空的是剩下的都给它。 */
+const COMPACT_COLS = ['', '98px', '112px', '124px', '138px'];
 
 describe('单据池: tabs by review state', () => {
   it('待复核 = pending + outdated, 已复核 = reviewed, 全部 = every corporate payment; the 差旅报销 never shows', async () => {
@@ -315,25 +315,50 @@ describe('单据池: the drawer', () => {
     await waitFor(() => expect(content).toHaveAttribute('data-drawer-open', 'false'));
   });
 
-  it('P1: with the drawer open the columns pack in from 1280 px up — fixed widths for 单号 / 金额 / AI 建议 / 复核 / 最近审核, 板块 and 事项 share the rest on up to two lines', async () => {
+  it('P1: with the drawer open, 板块 and 事项 move under 单号 as one small line (full text on hover); the other columns keep fixed widths', async () => {
     const { user } = await openPool();
     await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    const headers = () => within(table()).getAllByRole('columnheader').map(cell => cell.textContent);
+    const row = () => rowOf('DGZF-F07-001');
+    // 抽屉关着：七栏，板块、事项各自一栏，单号下面没有第二行
     expect(table().className).not.toMatch(/table-fixed/);
     expect(table().querySelector('colgroup')).toBeNull();
+    expect(headers()).toEqual(['单号', '板块', '事项', '金额', 'AI 建议', '复核', '最近审核']);
+    expect(within(row()).getAllByRole('cell')).toHaveLength(7);
+    expect(within(row()).queryByText('九安 · 房租 · 年度框架合同')).toBeNull();
+    expect(within(row()).getByText('九安').closest('td')!.className).toMatch(/max-w-\[150px\]/);
+    expect(within(row()).getByText('房租 · 年度框架合同').closest('td')!.className).toMatch(/max-w-\[220px\]/);
+
     await user.click(screen.getByRole('button', { name: 'DGZF-F07-001' }));
     await screen.findByRole('dialog', { name: 'DGZF-F07-001' });
+    // 抽屉开着：板块、事项两栏不在了（不只是藏起来），单号下面一行「板块 · 事项」，截掉的悬停看全的
     expect(table().className).toMatch(/(^| )table-fixed( |$)/);
+    expect(headers()).toEqual(['单号', '金额', 'AI 建议', '复核', '最近审核']);
     expect([...table().querySelectorAll('col')].map(col => (col as HTMLElement).style.width)).toEqual(COMPACT_COLS);
-    const row = rowOf('DGZF-F07-001');
-    for (const text of ['九安', '房租 · 年度框架合同']) {
-      const cell = within(row).getByText(text);
-      expect(cell.className).toMatch(/line-clamp-2/);
-      expect(cell).toHaveAttribute('title', text);
-    }
+    expect(within(row()).getAllByRole('cell')).toHaveLength(5);
+    const first = within(row()).getAllByRole('cell')[0];
+    expect(within(first).getByRole('button', { name: 'DGZF-F07-001' })).toBeInTheDocument();
+    const line = within(first).getByText('九安 · 房租 · 年度框架合同');
+    expect(line).toHaveAttribute('title', '九安 · 房租 · 年度框架合同');
+    for (const name of ['truncate', 'text-12', 'text-steel']) expect(line.className.split(' ')).toContain(name);
+    expect(within(row()).queryByText('九安')).toBeNull();
+    // 没有板块、事项时写「—」
+    expect(within(rowOf('DGZF-F07-002')).getByText('柯顿 · 运维服务费')).toBeInTheDocument();
     // 单号、金额、两个状态不折行
-    expect(within(row).getByText('¥36,000.00').closest('td')!.className).toMatch(/whitespace-nowrap/);
+    expect(within(row()).getByText('¥36,000.00').closest('td')!.className).toMatch(/whitespace-nowrap/);
     await user.keyboard('{Escape}');
     await waitFor(() => expect(table().className).not.toMatch(/table-fixed/));
+    expect(headers()).toEqual(['单号', '板块', '事项', '金额', 'AI 建议', '复核', '最近审核']);
+    expect(within(row()).queryByText('九安 · 房租 · 年度框架合同')).toBeNull();
+  });
+
+  it('P1: the 板块 · 事项 line says 「—」 for a missing part', async () => {
+    const docs = [{ ...DOCS[0], companyName: '', title: '', formName: '' }, ...DOCS.slice(1, 4)];
+    const states = defaultStates(docs);
+    await openPool({ docs, states }, '#/documents?doc=doc-2');
+    await screen.findByRole('dialog', { name: 'DGZF-F07-002' });
+    await within(tabs()).findByRole('radio', { name: '待复核 2' });
+    expect(await within(rowOf('DGZF-F07-001')).findByText('— · —')).toHaveAttribute('title', '— · —');
   });
 
   it('opens straight from the address, and rows open with the keyboard too', async () => {

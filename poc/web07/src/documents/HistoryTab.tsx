@@ -52,7 +52,7 @@ export function HistoryTab({ id }: { id: string }) {
                 {review.reason && <span className="text-13 text-steel">{reasonText(review.reason)}</span>}
                 <span className="ml-auto text-12 text-faint">{timeText(review.createdAt)}</span>
               </div>
-              <div className="mt-[2px] text-12 text-steel">第 {review.adviceRound} 轮 · {review.actor}</div>
+              <div className="mt-[2px] text-12 text-steel">第 {review.adviceRound} 轮 · {review.actorName?.trim() ? review.actorName : review.actor}</div>
               {review.note && <p className="m-0 mt-1 whitespace-pre-wrap text-13 text-ink">{review.note}</p>}
             </li>
           ))}

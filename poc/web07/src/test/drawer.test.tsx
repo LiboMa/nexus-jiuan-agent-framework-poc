@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { startApp } from './startApp';
-import { DOCS, FULL_BASIS, adviceOf, defaultStates, deferred, fakeBench, roundOf, version } from './documentsFake';
+import { DOCS, FULL_BASIS, adviceOf, defaultStates, deferred, fakeBench, reviewOf, roundOf, version } from './documentsFake';
 import { queryClient } from '../api/queryClient';
 import type { Role } from '../api/session';
 
@@ -433,6 +433,18 @@ describe('drawer: 原件, 单据信息, 历史', () => {
     expect(within(flow).getByText(/同意（虚构）/)).toBeInTheDocument();
   });
 
+  it('历史 names the reviewer by actorName, and falls back to the account when the name is missing', async () => {
+    const states = defaultStates();
+    const s2 = states.get('doc-2')!;
+    s2.reviews = [reviewOf(DOCS[1], 2, { id: 21, actor: 'poc-checker', actorName: '复核人（虚构）' }), reviewOf(DOCS[1], 1, { id: 11, actor: 'poc-gone', actorName: '' }),
+      reviewOf(DOCS[1], 1, { id: 10, actor: 'poc-old', actorName: undefined })];
+    const { drawer, user } = await openDrawer('doc-2', { states });
+    await user.click(within(drawer).getByRole('tab', { name: '历史' }));
+    const reviews = await within(drawer).findByRole('list', { name: '复核记录' });
+    expect(within(reviews).getAllByRole('listitem').map(item => item.querySelector('.text-steel')!.textContent))
+      .toEqual(['第 2 轮 · 复核人（虚构）', '第 1 轮 · poc-gone', '第 1 轮 · poc-old']);
+  });
+
   it('历史 lists the AI rounds newest first, and the reviews', async () => {
     const states = defaultStates();
     states.get('doc-2')!.rounds.push(roundOf(DOCS[1], 0, { round: 0, status: 'failed', result: null, errorCode: 'AGENT_TASK_UNROUTED', documentVersion: 'old' }));
@@ -448,7 +460,9 @@ describe('drawer: 原件, 单据信息, 历史', () => {
     expect(within(items[2]).getByText('针对旧版本')).toBeInTheDocument();
     const reviews = within(drawer).getByRole('list', { name: '复核记录' });
     expect(within(reviews).getByText('采纳 AI 建议')).toBeInTheDocument();
-    expect(within(reviews).getByText(/第 1 轮/)).toBeInTheDocument();
+    // 复核人写名字（外壳的 actorName），不写账号
+    expect(within(reviews).getByText('第 1 轮 · 审核员')).toBeInTheDocument();
+    expect(within(reviews).queryByText(/u-admin/)).toBeNull();
     expect(new URLSearchParams(bench.find('GET', '/api/analysis/v1/poc/advice-rounds')[0].search).get('documentId')).toBe('doc-2');
   });
 });

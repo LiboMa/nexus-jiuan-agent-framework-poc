@@ -31,10 +31,10 @@ import { usePageVisible } from '../ui/usePageVisible';
 
 type PoolTab = 'pending' | 'reviewed' | 'all';
 /**
- * 「最近审核」一栏的宽度（含左右边距）：放得下「MM-DD HH:mm」，第二行的名字长了截掉（悬停看全的）。抽屉开着时 colgroup 定宽；
- * 宽的时候格子自己定宽（width + max-width），表格有富余也不分给它。
+ * 「最近审核」一栏的宽度（含左右边距）：放得下「MM-DD HH:mm」，第二行的名字长了截掉（悬停看全的）。
+ * 抽屉开着时 colgroup 定宽 138 px，「复核 · 审核员（虚构）」放得下；宽的时候格子自己定宽 116 px（width + max-width），表格有富余也不分给它。
  */
-const AUDIT_WIDTH = 116;
+const AUDIT_WIDTH_COMPACT = 138;
 const AUDIT_CELL = 'w-[116px] max-w-[116px]';
 const PAGE_ROWS = 20;
 const IN_TAB: Record<Exclude<PoolTab, 'all'>, ReadonlySet<string>> = { pending: new Set(['pending', 'outdated']), reviewed: new Set(['reviewed']) };
@@ -251,11 +251,12 @@ export function Documents() {
 }
 
 /**
- * 抽屉开着时（compact，P1）：宽屏上表格只剩视口减去侧栏和抽屉的宽度（1280 px、侧栏展开时约 586 px），各栏都要放下、不横向滚动——
- * 单号、金额、AI 建议、复核、最近审核定宽（放得下单号、百万级的金额、最长的状态和「MM-DD HH:mm」），板块和事项平分剩下的，最多两行，
- * 放不下的截掉（悬停看全文）；格子左右边距收窄。
+ * 抽屉开着时（compact，P1；和 xl:mr-[420px] 用同一个状态）：宽屏上表格只剩视口减去侧栏和抽屉的宽度（1280 px、侧栏展开时约 586 px），
+ * 各栏都要放下、不横向滚动——板块和事项不单独成栏，在单号下面一行小字「板块 · 事项」，放不下的截掉（悬停看全文）；
+ * 金额、AI 建议、复核、最近审核定宽（放得下百万级的金额、状态和「复核 · 审核员（虚构）」），单号拿剩下的；格子左右边距收到 6 px。
+ * 1280 px 时各栏的内容（PingFang）：单号 97、金额 86、AI 建议 100（「没有给出建议」107，多出的落在旁边的边距里）、复核 111、最近审核 122。
  */
-const COMPACT_WIDTHS = [116, null, null, 104, 112, 128, AUDIT_WIDTH] as const;
+const COMPACT_WIDTHS = [null, 98, 112, 124, AUDIT_WIDTH_COMPACT] as const;
 const SORT_ICON = { none: 'sort', descending: 'chevronDown', ascending: 'chevronUp' } as const;
 const SORT_HINT: Record<AuditSort, string> = {
   none: '按最近审核排序：点一下最近的在前', descending: '最近的在前：再点一下最早的在前', ascending: '最早的在前：再点一下回到原来的顺序',
@@ -265,15 +266,13 @@ function PoolTable({ tableRef, rows, selected, stateOf, auditOf, statesReady, on
   tableRef: Ref<HTMLTableElement>; rows: DocumentItem[]; selected: string | null; stateOf: (id: string) => LatestState | undefined;
   auditOf: (id: string) => LastAudit | null; statesReady: boolean; onOpen: (id: string) => void; compact: boolean; sort: AuditSort; onSort: () => void;
 }) {
-  const pad = compact ? 'px-2' : 'px-3';
+  const pad = compact ? 'px-[6px]' : 'px-3';
   // 挤的时候表头放不下就截掉，不压到旁边一栏上
   const headOf = (padY: string) => cx('whitespace-nowrap border-b border-line text-left text-12 font-medium text-steel', padY, pad, compact && 'overflow-hidden text-ellipsis');
   const head = headOf('py-[9px]');
   const cellOf = (padY: string) => cx('whitespace-nowrap border-b border-line', padY, pad);
   const cell = cellOf('py-[11px]');
-  // 板块、事项：宽的时候一行、截到最宽（1280 px、侧栏展开、抽屉关着时七栏也放得下）；挤的时候最多两行
-  const wraps = (wide: string) => (compact ? cx('border-b border-line py-[11px]', pad) : cx(cell, wide));
-  const clamp = 'line-clamp-2 whitespace-normal [overflow-wrap:anywhere]';
+  // 板块、事项（抽屉关着时才单独成栏）：一行、截到最宽（1280 px、侧栏展开时七栏也放得下）
   return (
     // tabIndex -1：关抽屉后那一行不在屏上时，焦点落在表格上（不进 Tab 顺序）
     <table ref={tableRef} tabIndex={-1} aria-label="单据" className={cx('w-full border-collapse', compact && 'table-fixed')}>
@@ -281,8 +280,8 @@ function PoolTable({ tableRef, rows, selected, stateOf, auditOf, statesReady, on
       <thead>
         <tr>
           <th scope="col" className={head}>单号</th>
-          <th scope="col" className={head}>板块</th>
-          <th scope="col" className={head}>事项</th>
+          {!compact && <th scope="col" className={head}>板块</th>}
+          {!compact && <th scope="col" className={head}>事项</th>}
           <th scope="col" className={cx(head, 'text-right')}>金额</th>
           <th scope="col" className={head}>AI 建议</th>
           <th scope="col" className={head}>复核</th>
@@ -303,20 +302,18 @@ function PoolTable({ tableRef, rows, selected, stateOf, auditOf, statesReady, on
           const review = statesReady && state ? reviewLabel(state) : null;
           const audit = statesReady ? auditOf(item.id) : null;
           const on = item.id === selected;
+          const where = `${item.companyName || '—'} · ${itemText(item)}`;
           return (
             <tr
               key={item.id} data-number={item.number ?? item.id} aria-current={on ? 'true' : undefined} onClick={() => onOpen(item.id)}
               className={cx('cursor-pointer', on ? 'bg-blue-50' : 'hover:bg-canvas')}
             >
-              <td className={cell}>
+              <td className={compact ? cellOf('py-[7px]') : cell}>
                 <button type="button" data-open-doc={item.id} className="font-semibold text-ink hover:text-blue">{item.number || item.id}</button>
+                {compact && <div title={where} className="truncate text-12 leading-[16px] text-steel">{where}</div>}
               </td>
-              <td className={wraps('max-w-[150px] truncate')}>
-                {compact ? <span className={clamp} title={item.companyName || undefined}>{item.companyName || '—'}</span> : item.companyName || '—'}
-              </td>
-              <td className={cx(wraps('max-w-[220px] truncate'), 'text-steel')}>
-                {compact ? <span className={clamp} title={itemText(item)}>{itemText(item)}</span> : itemText(item)}
-              </td>
+              {!compact && <td className={cx(cell, 'max-w-[150px] truncate')}>{item.companyName || '—'}</td>}
+              {!compact && <td className={cx(cell, 'max-w-[220px] truncate text-steel')}>{itemText(item)}</td>}
               <td className={cx(cell, 'text-right')}>{amountText(item.amount, item.currency)}</td>
               <td className={cell}>{advice ? <Pill tone={advice.tone} icon={advice.icon}>{advice.text}</Pill> : <span className="text-faint">—</span>}</td>
               <td className={cell}>
