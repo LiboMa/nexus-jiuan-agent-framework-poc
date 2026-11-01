@@ -133,6 +133,21 @@ test('reply_invalid：回复不是 JSON、是另一种操作的形状 → 历史
   t.after(fenced.done);
   await fenced.upload();
   assert.deepEqual([(await fenced.settled(1)).status, (await fenced.item(1)).rulesTotal], ['ingested', 18]);
+  // 调工具前先说一句（A2A 把各段文字拼在一起）：短引导语 + 完整 JSON 照样收下，记一行不带内容的警告；引导语太长、带 { }、JSON 后还有字的仍不合格
+  for (const [answer, chars] of [[`首先确认附件路径。${reply(INGESTED)}`, 9], [`我先确认附件路径，再调用入库工具。\n\`\`\`json\n${reply(INGESTED)}\n\`\`\``, 17]]) {
+    const led = await harness({ answer: () => answer });
+    t.after(led.done);
+    await led.upload();
+    assert.deepEqual([(await led.settled(1)).status, (await led.item(1)).rulesTotal], ['ingested', 18]);
+    assert.ok(led.logs.includes(`POC_KB_AGENT_REPLY_LEADIN ingest ${chars}`), led.logs.join('\n'));
+    assert.ok(!led.logs.some(line => line.includes('附件路径')), '日志里不写引导语的内容');
+  }
+  for (const bad of [`${'说'.repeat(201)}${reply(INGESTED)}`, `参数 {source_id} 如下：${reply(INGESTED)}`, `先说一句。${reply(INGESTED)}\n已入库。`]) {
+    const h = await harness({ answer: () => bad });
+    t.after(h.done);
+    await h.upload();
+    assert.deepEqual([(await h.settled(1)).status, (await h.settled(1)).error.code], ['failed', 'KB_AGENT_REPLY_INVALID'], bad.slice(0, 20));
+  }
   // 同步的操作：回复不合格 → 502，页面说「…的回复不合格」
   const sync = await harness({ answer: () => reply(INGESTED) });
   t.after(sync.done);
