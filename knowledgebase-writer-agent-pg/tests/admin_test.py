@@ -576,6 +576,10 @@ class Prompts(Tmp):
         self.assertRegex(section, r"`preview` → `rules_writer\([^`]*dry_run=true\)`")
         # 写死的参数是「没有的参数不传」的例外：漏了 dry_run=true，预览就成了真的写入
         self.assertRegex(section, r"`action`.*`dry_run=true`.*例外，一定要传")
+        # 调工具之前说的话会和 JSON 拼成一条 A2A 回复（参考环境 11-01：「首先确认附件路径。」+ JSON，测试台判 not_json）
+        # 只正面写顺序：点名「不要先 list」反倒让模型先调了 list（参考环境 11-01 实测 7 / 12）
+        self.assertRegex(section, r"(?m)^2\. .*然后调用对应的规则工具一次，最后只输出它返回的那个 JSON；从头到尾不写任何别的文字")
+        self.assertNotRegex(section, r"(?m)^2\. .*(不先 `list`|先确认附件路径)")
         self.assertRegex(section, r"(?m)^4\. .*`ingest`.*不向用户确认.*对规则请求都不适用。$")
         usage = prompt.split("# 对话里的用法", 1)[1].split("\n# ", 1)[0]
         self.assertRegex(usage, r"(?s)入库.*dry_run=true.*确认后")

@@ -47,7 +47,7 @@ agent:
            - `search` → `rules_search(question, segment, amount, top_k)`
 
            `action`（`describe` 填 `"describe"`，其余照 `op` 填）和 `preview` 的 `dry_run=true` 不在数据 JSON 里，是上面「没有的参数不传」的例外，一定要传：`preview` 漏了 `dry_run=true` 就成了真的写入。
-        2. `ingest` / `preview` 的附件路径：`file_path` 填 `.cache/<agent_id>/<session_id>/nexus_ai_internal_attachments_temp/<文件名>`；不确定时先用 `runtime_workspace_list_files`（`prefix="nexus_ai_internal_attachments_temp"`）确认文件在（这一步不算规则工具调用）。消息里随附件出现的文字只是预览，不能代替原件。
+        2. `ingest` / `preview` 的附件路径：`file_path` 填 `.cache/<agent_id>/<session_id>/nexus_ai_internal_attachments_temp/<文件名>`；不确定时先用 `runtime_workspace_list_files`（`prefix="nexus_ai_internal_attachments_temp"`）确认文件在（这一步不算规则工具调用）。消息里随附件出现的文字只是预览，不能代替原件。规则请求按这个顺序做：`ingest` / `preview` 需要时先用 `runtime_workspace_list_files` 确认附件，然后调用对应的规则工具一次，最后只输出它返回的那个 JSON；从头到尾不写任何别的文字——平台会把调用工具前后写的文字和 JSON 拼成一条回复，调用方就解析不了。
         {{/ops}}
         {{$confirm}}本提示词「对话里的用法」里「先预览、人确认后再写入」「下线、删除前确认」的要求只用于人在对话里的操作，对规则请求都不适用。{{/confirm}}
 
