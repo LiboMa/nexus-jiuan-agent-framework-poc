@@ -1,0 +1,24 @@
+--- a/src/platform/call-middleware.mjs	2026-10-23 12:32:26
++++ b/src/platform/call-middleware.mjs	2026-11-01 09:52:41
+@@ -23,8 +23,10 @@
+   }),
+   // Nexus allows 10 calls per key per 10 s (tasks/get included); retries belong to the task service,
+   // since Nexus does not deduplicate and a resend is billed again.
++  // Bench patch 0007: 200 s, above review_advice@1's 180 s (patch 0006): the task's own limit ends a round (the A2A
++  // adapter reports AI_UNAVAILABLE), and this timer only catches a call that hangs past it.
+   'nexus-a2a': Object.freeze({
+-    timeoutMs: 180000, maxRetries: 0, minIntervalMs: 1000,
++    timeoutMs: 200000, maxRetries: 0, minIntervalMs: 1000,
+     connectorLimit: 2, agentLimit: 2, dailyLimit: 150,
+   }),
+   dingtalk: Object.freeze({
+@@ -38,7 +40,8 @@
+   'hly-prod': Object.freeze({ timeoutMs: [1000, 180000], maxRetries: [0, 2], minIntervalMs: [1500, 60000] }),
+   'sap-mcp': Object.freeze({ timeoutMs: [1000, 180000], maxRetries: [0, 2], minIntervalMs: [1500, 60000] }),
+   'ai-relay': Object.freeze({ timeoutMs: [1000, 180000], maxRetries: [0, 0], minIntervalMs: [0, 60000] }),
+-  'nexus-a2a': Object.freeze({ timeoutMs: [1000, 180000], maxRetries: [0, 0], minIntervalMs: [1000, 60000] }),
++  // Bench patch 0007: up to 200 s (see DEFAULT_POLICIES above).
++  'nexus-a2a': Object.freeze({ timeoutMs: [1000, 200000], maxRetries: [0, 0], minIntervalMs: [1000, 60000] }),
+   dingtalk: Object.freeze({ timeoutMs: [1000, 60000], maxRetries: [0, 1], minIntervalMs: [0, 60000] }),
+ });
+ 

@@ -6,7 +6,7 @@
  
 +### 测试台补丁 0006：`review_advice@1` 的时限 180 秒（2026-11-01）
 +
-+只在测试台的副本里（`poc/bench/build-jiuan07.sh` 打 `patches/jiuan-v0.7.10/0006-review-advice-timeout-180s.patch`；开发包 `source/` 不动）：`tasks/review_advice/v1/task.json` 的 `limits.timeoutMs` 由 120000 改为 180000。项目负责人 2026-11-01 定：一轮审核在 3 分钟内完成算正常。180000 是 `tasks/task.schema.json` 允许的上限，也是调用中间件给 `nexus-a2a` 的时限（`src/platform/call-middleware.mjs`）。所以副本里这个文件的 sha256 和下表不同；`first_review@1` 不变。
++只在测试台的副本里（`poc/bench/build-jiuan07.sh` 打 `patches/jiuan-v0.7.10/0006-review-advice-timeout-180s.patch`；开发包 `source/` 不动）：`tasks/review_advice/v1/task.json` 的 `limits.timeoutMs` 由 120000 改为 180000。项目负责人 2026-11-01 定：一轮审核在 3 分钟内完成算正常。180000 是 `tasks/task.schema.json` 允许的上限；调用中间件给 `nexus-a2a` 的时限更长（补丁 0007：200 秒，`src/platform/call-middleware.mjs`），一轮由这一项掐表。所以副本里这个文件的 sha256 和下表不同；`first_review@1` 不变。
 +
  ## 文件与 sha256
  

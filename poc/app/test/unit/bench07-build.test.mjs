@@ -901,8 +901,26 @@ test('补丁 0006：构件里 review_advice@1 的时限是 180 秒（limits.time
   assert.equal(contract.tasks.get('review_advice@1').manifest.limits.timeoutMs, 180000);
   assert.equal(contract.tasks.get('first_review@1').manifest.limits.timeoutMs, 180000, 'first_review@1 本来就是 180 秒');
   assert.match(await readFile(path.join(out, 'providers/nexus-a2a.mjs'), 'utf8'), /const limit = timeoutMs \?\? entry\.manifest\.limits\.timeoutMs;/);
-  // 调用中间件给 nexus-a2a 的时限本来就是 180 秒（不比这一轮短）
-  assert.match(await readFile(path.join(out, 'src/platform/call-middleware.mjs'), 'utf8'), /'nexus-a2a': Object\.freeze\(\{\n {4}timeoutMs: 180000,/);
   // 契约来源说明里记下这一处改动（副本里这个文件的 sha256 因此和表里的不同）
   assert.match(await readFile(path.join(out, 'src/agent-contract/SOURCE.md'), 'utf8'), /### 测试台补丁 0006：`review_advice@1` 的时限 180 秒（2026-11-01）/);
+});
+
+test('补丁 0007：调用中间件给 nexus-a2a 的时限 200 秒，长过 review_advice@1 的 180 秒（一轮由合同时限掐表，适配层报 AI_UNAVAILABLE）；上下限放到 200 秒，其他连接器和开发包不变', async t => {
+  const out = await builtPage(t);
+  const [built, original] = await Promise.all([out, SOURCE].map(root => import(pathToFileURL(path.join(root, 'src/platform/call-middleware.mjs')).href)));
+  const { loadContract } = await import(pathToFileURL(path.join(out, 'src/agent-contract/checks.mjs')).href);
+  const review = loadContract().tasks.get('review_advice@1').manifest.limits.timeoutMs;
+  assert.equal(built.DEFAULT_POLICIES['nexus-a2a'].timeoutMs, 200000);
+  assert.ok(built.DEFAULT_POLICIES['nexus-a2a'].timeoutMs > review, `中间件要长过 review_advice@1 的 ${review} 毫秒`);
+  assert.deepEqual(built.POLICY_BOUNDS['nexus-a2a'].timeoutMs, [1000, 200000]);
+  assert.equal(built.validatePolicy('nexus-a2a', {}).timeoutMs, 200000);
+  assert.equal(original.DEFAULT_POLICIES['nexus-a2a'].timeoutMs, 180000, '开发包里还是 180 秒（只改副本）');
+  // 只改 nexus-a2a 的时限：它的其余各项、其他连接器的策略和上下限都和开发包一样
+  assert.deepEqual({ ...built.DEFAULT_POLICIES['nexus-a2a'], timeoutMs: null }, { ...original.DEFAULT_POLICIES['nexus-a2a'], timeoutMs: null });
+  assert.deepEqual({ ...built.POLICY_BOUNDS['nexus-a2a'], timeoutMs: null }, { ...original.POLICY_BOUNDS['nexus-a2a'], timeoutMs: null });
+  for (const id of Object.keys(original.DEFAULT_POLICIES).filter(id => id !== 'nexus-a2a')) {
+    assert.deepEqual(built.DEFAULT_POLICIES[id], original.DEFAULT_POLICIES[id], id);
+    assert.deepEqual(built.POLICY_BOUNDS[id], original.POLICY_BOUNDS[id], id);
+  }
+  assert.match(await readFile(path.join(out, 'src/agent-contract/SOURCE.md'), 'utf8'), /调用中间件给 `nexus-a2a` 的时限更长（补丁 0007：200 秒/);
 });

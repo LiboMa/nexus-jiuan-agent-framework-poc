@@ -24,7 +24,7 @@
 | `poc/app/` | PoC 服务端、测试台组合根、前端扩展、单元测试与端到端测试 |
 | `poc/app07/` | 九安 v0.7.10 测试台的外壳：口令登录、假汇联易、出网守卫、「Agent 接入」页的后端（Nexus 发布列表、测试、调用记录）、「制度知识库」页的后端（上传、入库、历史、检索）、单元测试 |
 | `poc/bench/` | 构建九安副本（开发包 + 补丁 + `mysql2`）：`build-jiuan.sh`（v0.5.3）、`build-jiuan07.sh`（v0.7.10） |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0006（「Agent 接入」页、就绪与审批 Agent、「规则库 › 制度知识库」页、两种知识库方式与「我的规则」、`review_advice@1` 的时限 180 秒） |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0007（「Agent 接入」页、就绪与审批 Agent、「规则库 › 制度知识库」页、两种知识库方式与「我的规则」、`review_advice@1` 的时限 180 秒、`nexus-a2a` 连接器的时限 200 秒） |
 | `audit-agent/` | 审核 Agent（「九安审核AI」）的提示词与下发脚本：信封模式、`review_advice@1`、只读查知识库（先 `kb_search`） |
 | `kb/` | 知识库部署工具：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对；测试台上用 `poc/infra/kb.sh` 驱动 |
 | `poc/infra/` | CloudFormation 模板、部署、备份、换型、测试台脚本、`kb.sh`（从栈里取配置驱动 `kb/`） |
