@@ -440,24 +440,34 @@ test('九安 v0.7.10 的端到端测试按知识库方式走：run07.sh 从 DEPL
   assert.match(runner, /E2E07_KB_MODE="\$\{KB_MODE:-pg\}"/);
   assert.match(runner, /if \[\[ "\$E2E07_KB_MODE" == s3vectors \]\]; then\n  E2E07_KB_PUBLICATION_ID="\$\{KB_S3V_PUBLICATION_ID:-\}"\n  E2E07_KB_S3V_BUCKET="\$\{KB_S3V_BUCKET:-\}"\n  E2E07_KB_S3V_RULES_INDEX="\$\{KB_S3V_RULES_INDEX:-\}"\n  export E2E07_KB_S3V_BUCKET E2E07_KB_S3V_RULES_INDEX\nelse\n  E2E07_KB_PUBLICATION_ID="\$\{KB_PG_PUBLICATION_ID:-\}"\nfi\nexport E2E07_KB_MODE E2E07_KB_PUBLICATION_ID\n/);
   assert.ok(runner.indexOf('export E2E07_KB_MODE') < runner.lastIndexOf('node --test --test-concurrency=1'), '先导出再跑测试');
+  // 先跑新前端的 web07.e2e.mjs，再跑 jiuan07.e2e.mjs（检索日志认的是 web07 在知识库页上的那次检索），共用一个开始时间
+  assert.match(runner, /FILES="\$\{E2E07_FILES:-web07\.e2e\.mjs jiuan07\.e2e\.mjs\}"/);
+  assert.ok(runner.indexOf('export E2E07_STARTED_AT') > 0 && runner.indexOf('export E2E07_STARTED_AT') < runner.lastIndexOf('node --test --test-concurrency=1'), '先给开始时间再跑测试');
   const spec = await readFile(e2e07('jiuan07.e2e.mjs'), 'utf8');
-  for (const name of ['E2E07_KB_MODE', 'E2E07_KB_PUBLICATION_ID', 'E2E07_KB_S3V_BUCKET', 'E2E07_KB_S3V_RULES_INDEX']) assert.match(spec, new RegExp(`process\\.env\\.${name}\\b`), name);
-  assert.doesNotMatch(spec, /\/poc\/kb\/(documents|search-log)/, '0005 之后没有这两个接口');
+  const web = await readFile(e2e07('web07.e2e.mjs'), 'utf8');
+  // 方式和 s3vectors 的桶、索引：jiuan07 核对引用的规则编号；知识库 Agent 的发布：web07 的「Agent 接入 · 知识库 Agent」和知识库页
+  for (const name of ['E2E07_KB_MODE', 'E2E07_KB_S3V_BUCKET', 'E2E07_KB_S3V_RULES_INDEX']) assert.match(spec, new RegExp(`process\\.env\\.${name}\\b`), name);
+  for (const name of ['E2E07_KB_MODE', 'E2E07_KB_PUBLICATION_ID']) assert.match(web, new RegExp(`process\\.env\\.${name}\\b`), name);
+  for (const file of [spec, web]) assert.doesNotMatch(file, /\/poc\/kb\/(documents|search-log)/, '0005 之后没有这两个接口');
   assert.match(spec, /journalLines\('POC_CUSTOM_RULES '\)/, '带空格：POC_CUSTOM_RULES_FAILED 不算');
   assert.match(spec, /'s3vectors', 'get-vectors'[\s\S]{0,300}'--return-metadata'/);
   assert.match(spec, /FROM kb_search_log/);
-  // 页面那次检索要认得出（md5 取去掉首尾空白的问题），审核 Agent 的另数
+  // 页面那次检索要认得出（md5 取去掉首尾空白的问题，两个文件同一个问题），审核 Agent 的另数
   assert.match(spec, /createHash\('md5'\)\.update\(KB_QUESTION\.trim\(\), 'utf8'\)/);
   assert.match(spec, /count\(\*\) FILTER \(WHERE md5\(question\) = /);
+  const question = file => /const KB_QUESTION = process\.env\.KB_E2E_QUESTION \|\| '([^']+)'/.exec(file)?.[1];
+  assert.ok(question(spec) && question(spec) === question(web), '检索日志认的问题和 web07 在页面上检索的是同一个');
   // 日志里「没有这一行」要有凭据：只有 grep 的退出码 1 算没找到，journalctl 读不出就失败
   const journal = spec.slice(spec.indexOf('async function journalLines'), spec.indexOf('async function knownRuleIds'));
   assert.doesNotMatch(journal, /\|\| true/);
   assert.match(journal, /if \[ "\$rc" -eq 1 \]; then exit 0; fi; exit "\$rc"/);
   assert.match(journal, /\|\| \{ echo "journalctl failed: \$\?" >&2; exit 3; \}/);
-  // 截图只拍单据、Agent 接入、模拟来单：「规则库 › 制度知识库」页上有真实制度，不截图
-  const kbCase = spec.slice(spec.indexOf('test(`制度知识库'), spec.indexOf("test('清场"));
-  assert.ok(kbCase.length > 100);
-  assert.doesNotMatch(kbCase, /shot\(/);
+  // 知识库页上有真实制度：上传、检索两条不截图；就绪那条只截「上传制度」弹框（选文件之前），不截整页
+  const kbCases = web.slice(web.indexOf('test(`知识库（'), web.indexOf("test('分析员"));
+  assert.ok(kbCases.length > 100);
+  assert.doesNotMatch(kbCases, /page\.screenshot\(/);
+  assert.equal((kbCases.match(/\.screenshot\(/g) ?? []).length, 1);
+  assert.match(kbCases, /dialog\.screenshot\(/);
   assert.doesNotMatch(spec.slice(spec.indexOf('async function uploadOwnRule'), spec.indexOf("test('登录")), /shot\(/);
 });
 

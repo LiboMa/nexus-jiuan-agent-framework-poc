@@ -1,6 +1,6 @@
 # Finance-Audit-Nexus-PoC v0.7.10
 
-九安审核平台 × Nexus AI 的 PoC：九安原服务端和原前端跑在测试台上（九安真实运行时 + 本机 MySQL），AI 能力在 Nexus 上，经 A2A 调用；数据全部虚构。两套并排：v0.5.3（andon-finance.tinyboat.blog，2026-10-19 封板）和 v0.7.10（jiuan-v0710.tinyboat.blog，2026-10-26：单据池自动出 AI 独立建议，审核 Agent 用库内语义检索查知识库；「Agent 接入」页启用 Agent、指定审批 Agent、测试、看调用记录；「规则库 › 制度知识库」页上传制度、检索、看检索日志）。
+九安审核平台 × Nexus AI 的 PoC：九安原服务端和原前端跑在测试台上（九安真实运行时 + 本机 MySQL），AI 能力在 Nexus 上，经 A2A 调用；数据全部虚构。两套并排：v0.5.3（andon-finance.tinyboat.blog，2026-10-19 封板）和 v0.7.10（jiuan-v0710.tinyboat.blog，2026-10-26：单据池自动出 AI 独立建议，审核 Agent 用库内语义检索查知识库；「Agent 接入」页启用 Agent、指定审批 Agent、测试、看调用记录；「规则库 › 制度知识库」页上传制度、检索、看检索日志；2026-11-01 起首页 `/` 是新前端 `poc/web07`（React）：工作台、单据池（抽屉里看 AI 建议、原件、单据信息、历史，采纳或改判）、知识库、我的规则、Agent 接入、设置，九安原来的页面在 `/analysis.html`）。
 
 **从这里开始**：用浏览器打开 `docs/delivery/README.html`（交付文档索引），第一份读[交付包指南](docs/delivery/package-guide.md)。
 
@@ -14,7 +14,7 @@
 | 九安怎么从 v0.1.0 走到上线 | [客户部署路线](docs/delivery/customer-rollout.md) |
 | 九安怎么经 A2A 接各类 Agent | [Agent 接入框架总览（HTML）](docs/delivery/agent-framework-overview.html) |
 | 部署、回滚、日常运维 | [部署与迭代规范](docs/delivery/deploy-iteration.md)、[运维与后续迭代](docs/delivery/operations.md) |
-| 九安 v0.7.10 测试台：「Agent 接入」页、审批 Agent、测试、制度知识库、模拟来单 | [PoC 说明](poc/README.md)「九安 v0.7.10」一节 |
+| 九安 v0.7.10 测试台：新前端（工作台、单据池、知识库、我的规则、Agent 接入）、审批 Agent、测试、模拟来单、端到端测试 | [PoC 说明](poc/README.md)「九安 v0.7.10」一节 |
 | 部署、核对知识库（PG + pgvector → Nexus 连接器 → 审核 Agent）、库内语义检索 | [kb/README.md](kb/README.md)、[kb/GUIDE.md](kb/GUIDE.md) |
 | 这个版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
 
@@ -23,6 +23,7 @@
 | `docs/` | 交接文档（Markdown 是源，HTML 由 `docs/build-html.sh` 生成）、图、截图 |
 | `poc/app/` | PoC 服务端、测试台组合根、前端扩展、单元测试与端到端测试 |
 | `poc/app07/` | 九安 v0.7.10 测试台的外壳：口令登录、假汇联易、出网守卫、「Agent 接入」页的后端（Nexus 发布列表、测试、调用记录）、「制度知识库」页的后端（上传、入库、历史、检索）、单元测试 |
+| `poc/web07/` | 九安 v0.7.10 测试台的新前端（React + Vite + Tailwind，哈希路由）：外壳在 `/` 给它的构建产物，九安原来的页面在 `/analysis.html`；`npm test`、`npm run build`，`poc/infra/deploy.sh` 构建后随构件发出 |
 | `poc/bench/` | 构建九安副本（开发包 + 补丁 + `mysql2`）：`build-jiuan.sh`（v0.5.3）、`build-jiuan07.sh`（v0.7.10） |
 | `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0007（「Agent 接入」页、就绪与审批 Agent、「规则库 › 制度知识库」页、两种知识库方式与「我的规则」、`review_advice@1` 的时限 180 秒、`nexus-a2a` 连接器的时限 200 秒） |
 | `audit-agent/` | 审核 Agent（「九安审核AI」）的提示词与下发脚本：信封模式、`review_advice@1`、只读查知识库（先 `kb_search`） |

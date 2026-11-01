@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 # 对测试台上的九安 v0.7.10（https://jiuan-v0710.tinyboat.blog）跑端到端测试。先重置：bench07-reset.sh 删掉并重建库 jiuan07 再起服务，
 # 单据从模拟汇联易重新同步；「Agent 接入」的启用记录保留（重置脚本导出后写回）。PoC 的库和服务不动。
-# 两个账号的口令从 infra/secrets.env 读进本进程的环境变量。调用密钥不经过这里：管理员在九安「后台配置 › Agent 接入」页上粘贴一次。
+# 一次重置跑两个文件，先后不能换：web07.e2e.mjs（新前端 poc/web07 的页面：登录页、工作台、单据池和抽屉、复核、我的规则、Agent 接入、知识库、分析员；
+# 它发起四张对公付款单的 AI 独立建议，在知识库页检索一次）→ jiuan07.e2e.mjs（只测接口的那些，加上新抽屉里的模型说明和自定义规则；四张单的建议已完成就不再发起，
+# 检索日志那条认的是 web07 在页面上的那次检索）。两个文件共用重置完的时刻 E2E07_STARTED_AT（外壳日志、检索日志从这一刻数起）。
+# 两个账号的口令从 infra/secrets.env 读进本进程的环境变量。调用密钥不经过这里：管理员在新前端的「Agent 接入」页（#/agents）上粘贴一次。
 # 知识库方式（DEPLOY_ENV 的 KB_MODE，不写是 pg）和这种方式的知识库 Agent 的发布编号（KB_PG_PUBLICATION_ID / KB_S3V_PUBLICATION_ID）交给测试；
-# s3vectors 方式另给向量桶和规则索引（测试用本机凭证只读查规则编号）。KB_E2E_DOCX=<本机的制度 .docx> 时「制度知识库」用例在页面上传它。
-# 真实调用 Nexus：一轮约 8 次 AI 独立建议（每次约 0.1–0.3 美元），另有几次知识库 Agent 的调用。
-# 用法：[DEPLOY_ENV=…] [KB_E2E_DOCX=…] run07.sh [node --test 的参数，例如 --test-name-pattern 登录]
+# s3vectors 方式另给向量桶和规则索引（测试用本机凭证只读查规则编号）。KB_E2E_DOCX=<本机的制度 .docx> 时 web07 的「知识库 · 上传制度」在页面上传它
+# （预期没有变化），没给就跳过那一条。
+# 真实调用 Nexus：一轮约 9 次 AI 独立建议（四张单、「Agent 接入」页的单据测试、模拟来单、自定义规则三轮；每次约 0.1–0.3 美元），另有文本、请求信封两次测试
+# 和几次知识库 Agent 的调用。
+# 用法：[DEPLOY_ENV=…] [KB_E2E_DOCX=…] [E2E07_FILES='web07.e2e.mjs'] run07.sh [node --test 的参数，例如 --test-name-pattern 登录]
+#   E2E07_FILES 只跑其中的文件（默认两个都跑，按上面的先后）；每次运行都会先重置测试台。
 set -euo pipefail
+FILES="${E2E07_FILES:-web07.e2e.mjs jiuan07.e2e.mjs}"
+for file in $FILES; do
+  [[ "$file" == web07.e2e.mjs || "$file" == jiuan07.e2e.mjs ]] || { echo "E2E07_FILES 只认 web07.e2e.mjs、jiuan07.e2e.mjs：$file" >&2; exit 2; }
+done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/../../../infra/lib/deploy-env.sh"
 load_deploy_env
@@ -45,4 +55,13 @@ export E2E07_KB_MODE E2E07_KB_PUBLICATION_ID
 E2E_REVIEWER_PASSWORD="$(secret REVIEWER_PASSWORD)"
 E2E_CHECKER_PASSWORD="$(secret CHECKER_PASSWORD)"
 export E2E_REVIEWER_PASSWORD E2E_CHECKER_PASSWORD
-node --test --test-concurrency=1 "$@" jiuan07.e2e.mjs
+# 重置完的时刻：两个文件从这一刻数外壳日志和检索日志
+E2E07_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export E2E07_STARTED_AT
+# 一个文件一次 node --test，保证先后；前一个失败也接着跑后一个，最后按有没有失败的退出
+status=0
+for file in $FILES; do
+  echo "== $file"
+  node --test --test-concurrency=1 "$@" "$file" || status=$?
+done
+exit "$status"
