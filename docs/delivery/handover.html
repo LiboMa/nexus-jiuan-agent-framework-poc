@@ -299,12 +299,13 @@ opus-5-5），那只是元数据，两者对不上。一轮 7–20 秒，查库 
 <td>知识库</td>
 <td>PG 方式。测试台经 A2A 调 PG 知识库 Agent「知识库文档管家（PG
 版）」<code>pub_<wbr>6ea5f0855dff6c1b</code>（<code>kb.<wbr>rules/<wbr>v1</code>），它的调用密钥由项目负责人在「Agent
-接入」页启用；这个 Agent 的代码在另一个会话的分支
-<code>feat/<wbr>pg-<wbr>kb-<wbr>steward</code>，<strong>还没合进来</strong>。有效的规则是审批风险判断卡
-<code>risk-<wbr>cards</code>（449 条）；V4.0 审批矩阵
-<code>finance-<wbr>approval-<wbr>v4</code> 已下线（可恢复，没删）。向量
-2026-10-31 起由另一个会话换成 Cohere Embed v4。见第 2.2 节和 <a
-href="../../kb/GUIDE.md">kb/GUIDE.md</a> 7.6</td>
+接入」页启用；这个 Agent 的代码在
+<code>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（2026-11-02
+已从分支 <code>feat/<wbr>pg-<wbr>kb-<wbr>steward</code> 合进
+main）。有效的规则是审批风险判断卡 <code>risk-<wbr>cards</code>（449
+条）；V4.0 审批矩阵 <code>finance-<wbr>approval-<wbr>v4</code>
+已下线（可恢复，没删）。向量 2026-10-31 起由另一个会话换成 Cohere Embed
+v4。见第 2.2 节和 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 7.6</td>
 </tr>
 <tr>
 <td>账号</td>
@@ -642,15 +643,12 @@ v4），另有上传历史 <code>kb_<wbr>documents</code>、检索日志
 端口的入站规则归测试台的栈（<code>KbAllowedCidr</code>）。部署与核对：<code>bash poc/<wbr>infra/<wbr>kb.<wbr>sh &lt;阶段&gt;</code>，说明见
 <code>kb/<wbr>GUIDE.<wbr>md</code>。上传、检索在新前端的「知识库」页（九安原来的「规则库
 › 制度知识库」页也行），2026-10-30 起都经 PG 知识库 Agent
-<code>pub_<wbr>6ea5f0855dff6c1b</code>。<strong><code>feat/<wbr>pg-<wbr>kb-<wbr>steward</code>
-合进来之前</strong>：本仓库的
-<code>kb/<wbr>sql/<wbr>kb_<wbr>search.<wbr>sql</code> 和栈模板还是
-Titan，所以不从本仓库跑知识库的 db
-阶段（<code>poc/<wbr>infra/<wbr>kb.<wbr>sh db</code> / <code>all</code>
-/
-<code>ingest</code>、<code>kb/<wbr>deploy.<wbr>sh db</code>），测试台只用
-<code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>
-部署（整栈部署会把 Bedrock 权限改回去）</td>
+<code>pub_<wbr>6ea5f0855dff6c1b</code>。向量是 Cohere Embed v4（1024
+维）；<code>kb/<wbr></code> 与栈模板 2026-11-02 起从分支
+<code>feat/<wbr>pg-<wbr>kb-<wbr>steward</code> 合进 main，从本仓库跑 db
+阶段要 <code>kb/<wbr>deploy.<wbr>env</code> 的
+<code>EMBED_<wbr>MODEL_<wbr>ID</code> 是 Cohere
+v4（防混用检查，<code>kb/<wbr>GUIDE.<wbr>md</code> 7.6）</td>
 </tr>
 <tr>
 <td>公网 IP</td>
@@ -716,8 +714,9 @@ Agent」里对它的启用：先用发起人本人的，再用别的账号的，
 <td>发布 <code>pub_<wbr>6ea5f0855dff6c1b</code></td>
 <td>九安 v0.7.10
 测试台读写知识库都经它（A2A，<code>kb.<wbr>rules/<wbr>v1</code>：<code>describe</code>、<code>ingest</code>、<code>list</code>、<code>detail</code>、<code>deactivate</code>、<code>restore</code>、<code>delete</code>、<code>check</code>、<code>search</code>）；调用密钥在「Agent
-接入」页启用，它就绪、不进审批流。代码在分支
-<code>feat/<wbr>pg-<wbr>kb-<wbr>steward</code>（没合进来）</td>
+接入」页启用，它就绪、不进审批流。代码在
+<code>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（2026-11-02
+合进 main）</td>
 </tr>
 </tbody>
 </table>
@@ -1136,15 +1135,14 @@ Agent 的每条请求都带一段输出规则（<code>nexus/a2a-client.mjs</code
 </ol>
 <p>九安 v0.7.10 测试台的（2026-11-02 记）：</p>
 <ol start="13" type="1">
-<li><strong><code>feat/pg-kb-steward</code> 合进来之前，只用
-<code>deploy.sh --code-only</code>，不跑知识库的 db
-阶段</strong>：另一个会话 2026-10-31 把 PG 知识库的向量换成了 Cohere
-Embed v4，连同栈里的 <code>KbBedrockPolicy</code>；本仓库的
-<code>kb/sql/kb_search.sql</code> 和模板还是 Titan。从这里跑
-<code>poc/infra/kb.sh db</code> / <code>all</code> /
-<code>ingest</code>、<code>kb/deploy.sh db</code> 会把 Titan
-装回去；不带 <code>--code-only</code> 的整栈部署会把 Bedrock
-权限改回去。PG 知识库 Agent 的代码也在那个分支上。</li>
+<li><strong>（已解决，2026-11-02）分支 <code>feat/pg-kb-steward</code>
+已合进 main</strong>：PG 知识库
+Agent（<code>knowledgebase-writer-agent-pg/</code>）、整库 Cohere Embed
+v4 的 <code>kb/</code>（防混用、迁移、回退，<code>kb/GUIDE.md</code>
+7.6）和栈模板里的 <code>KbBedrockPolicy</code> 都在本仓库了。之前「只用
+<code>--code-only</code>、不跑知识库 db 阶段」的限制取消；跑 db
+阶段前确认 <code>kb/deploy.env</code> 的 <code>EMBED_MODEL_ID</code> 是
+Cohere v4（缺省就是）。</li>
 <li><strong>九安上游的 <code>review_advice@1</code> 时限还是 120
 秒</strong>：带知识库查询的真实审核一轮要 15–120 秒，测试台用补丁
 0006、0007 放到 180 / 200 秒。建议九安在自己的契约里调高（<a

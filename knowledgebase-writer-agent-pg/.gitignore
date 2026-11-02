@@ -1,0 +1,5 @@
+# 部署人的设置（复制 deploy.env.example 再填）、拼装出的工具与压缩包、导入状态：都不进仓库
+deploy.env
+.build/
+.state/
+__pycache__/

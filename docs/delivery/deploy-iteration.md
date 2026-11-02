@@ -17,7 +17,7 @@ audience: 应用开发、Agent 开发、运维
 5. **接口只增不改**：`agent-access-v1` 的接口、错误码、命令行退出码，只能加，不能改含义；要改就出 v2，v1 并存一个版本周期。
 6. **Markdown 是文档的唯一来源**：HTML 由 `docs/build-html.sh` 生成；推送前跑 `docs/build-html.sh --check`。
 
-**现在多一条（2026-11-02 起，到分支 `feat/pg-kb-steward` 合进来为止）**：测试台**只用 `deploy.sh --code-only`** 部署，**不从本仓库跑知识库的 db 阶段**（`poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db`）。另一个会话 2026-10-31 把 PG 知识库的向量换成了 Cohere Embed v4，连同栈里的 `KbBedrockPolicy`；本仓库的 `kb/sql/kb_search.sql` 会把 Titan 装回去，不带 `--code-only` 的整栈部署会把 Bedrock 权限改回去（[交接文档](handover.md)第 6 节第 13 条）。
+**2026-11-02 起（分支 `feat/pg-kb-steward` 已合进 main）**：本仓库的 `kb/` 和栈模板都是 Cohere Embed v4（连同 `KbBedrockPolicy`），从本仓库跑知识库的 db 阶段、整栈部署都不会再把 Titan 装回去。跑 db 阶段前确认 `kb/deploy.env` 的 `EMBED_MODEL_ID` 是 Cohere v4（缺省就是），否则防混用检查（`kb/GUIDE.md` 7.6）会停下。测试台的日常发布照旧用 `deploy.sh --code-only`。
 
 ## 2. 代码托管与版本
 

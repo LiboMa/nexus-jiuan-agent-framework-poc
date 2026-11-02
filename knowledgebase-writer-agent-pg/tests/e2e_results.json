@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-30",
+  "env": "<env>（Nexus v0.3.28 enterprise，us-east-1）",
+  "agent": {"name_en": "knowledgebase_writer_agent_pg", "name_cn": "知识库文档管家（PG 版）", "model": "global.anthropic.claude-sonnet-4-6", "runtime": "ec2（Firecracker VM）"},
+  "tools": {"dir": "kb_pg_steward_<hash>", "version": 1, "files": 6, "server_equals_manifest": true, "key": "pg_kb / database_credentials（configured=true ×3）"},
+  "probe": {"relative_import": "ok", "python": "3.13.15", "psycopg": "3.3.4", "pdfplumber": "0.11.9", "boto3": "1.43.85"},
+  "embedding_switch": {
+    "from": "amazon.titan-embed-text-v2:0（titan-inferred）", "to": "cohere.embed-v4:0 / 1024",
+    "iam_change_set": "只改 KbBedrockPolicy（Modify，不替换）",
+    "migrate": {"rows_reembedded": 102, "backup_rows": 102, "one_transaction": true},
+    "note": "策略更新后约 9 分钟内 Bedrock 间歇 403（IAM 生效延迟），之后稳定",
+    "regression": {
+      "titan_baseline": {"main": {"n": 58, "hit1": 31, "hit5": 46}, "robust": {"n": 26, "hit1": 10, "hit5": 20}},
+      "cohere_after": {"main": {"n": 58, "hit1": 33, "hit5": 49}, "robust": {"n": 26, "hit1": 10, "hit5": 22}, "per_question": {"better": 22, "worse": 14}},
+      "known": [{"expect": ["C03-1.2"], "within": 3, "titan": 3, "cohere": 2},
+                {"expect": ["C05-3.3", "C05-3.4"], "within": 2, "cohere": {"C05-3.3": 1, "C05-3.4": 2}}]
+    },
+    "audit_agent_verify_e2e": {"rules_qa_hit": "C03-1.2", "seconds": 48, "a2a_three_stage": "纯 JSON，未写库"}
+  },
+  "publication": {"channels": ["a2a", "mcp"], "follow_updates": true, "card_public": true, "input_modes_include": ["docx", "xlsx", "pdf", "markdown"]},
+  "steps": [
+    {"path": "chat", "op": "describe", "result": "protocol kb.rules/v1, backend pg, 10 ops"},
+    {"path": "chat", "op": "list", "result": "1 份制度，102 条（matrix 89 / general 9 / chapter_note 4）"},
+    {"path": "a2a", "op": "describe", "result": "合格（测试台客户端校验通过）"},
+    {"path": "a2a", "op": "preview", "doc": "真实制度（原标识、原 source_doc）", "result": "previewed，unchanged 102，将新增 / 更新 / 删除 0", "seconds": 17},
+    {"path": "a2a", "op": "ingest", "doc": "真实制度", "result": "skipped，unchanged 102，written 0"},
+    {"path": "chat", "op": "入库（先预览）", "doc": "虚构矩阵 e2e-matrix", "result": "previewed：将新增 7 条，等人确认"},
+    {"path": "chat", "op": "确认写入", "doc": "虚构矩阵", "result": "ingested，inserted 7"},
+    {"path": "a2a", "op": "search", "result": "第 1 名 C11-1.2（关键词命中 3）"},
+    {"path": "a2a", "op": "deactivate", "result": "affected 7；再检索查不到 C11 / C12"},
+    {"path": "a2a", "op": "restore", "result": "affected 7；检索结果与距离和下线前完全相同"},
+    {"path": "a2a", "op": "delete", "doc": "虚构矩阵", "result": "affected 7"},
+    {"path": "a2a", "op": "ingest", "doc": "虚构冲突矩阵", "result": "rule_conflict，conflicts [C03-1.2, C03-NOTE]，一条不写"},
+    {"path": "a2a", "op": "ingest", "doc": "正文 md / pdf / xlsx", "result": "ingested：7 条 clause / 7 条 clause / 3 条 table_row"},
+    {"path": "local", "op": "regress 对比（正文入库前 → 后）", "result": "main hit5 49 → 49，robust hit5 22 → 22，逐题变好 0、变差 0，已知问题都过"},
+    {"path": "a2a", "op": "delete", "doc": "正文三份", "result": "affected 7 / 7 / 3"},
+    {"path": "a2a", "op": "check", "result": "ok true，problems []"},
+    {"path": "a2a", "op": "list", "result": "只剩真实制度，102 条"}
+  ],
+  "final_state": {"approval_rules": 102, "vectors": 102, "archive": 0, "kb_meta": "cohere.embed-v4:0 / 1024", "regression_log_rows_purged": 356}
+}

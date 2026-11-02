@@ -29,7 +29,7 @@
 | `poc/bench/` | 构建九安副本（开发包 + 补丁 + `mysql2`）：`build-jiuan.sh`（v0.5.3）、`build-jiuan07.sh`（v0.7.10） |
 | `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0007（「Agent 接入」页、就绪与审批 Agent、「规则库 › 制度知识库」页、两种知识库方式与「我的规则」、`review_advice@1` 的时限 180 秒、`nexus-a2a` 连接器的时限 200 秒） |
 | `audit-agent/` | 审核 Agent（「九安审核AI」）的提示词与下发脚本：信封模式、`review_advice@1`、只读查知识库（先 `kb_search`）；`prompt-history/`：每次改线上提示词的改前、改后、比对、下发记录 |
-| `kb/` | 知识库部署工具：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对；测试台上用 `poc/infra/kb.sh` 驱动（`feat/pg-kb-steward` 合进来之前不跑 db 阶段，见 kb/README.md「现状」） |
+| `kb/` | 知识库部署工具：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对；测试台上用 `poc/infra/kb.sh` 驱动（整库 Cohere Embed v4，跑 db 阶段前看 kb/README.md「现状」） |
 | `kb/convert/risk-cards/` | 审批风险判断卡 HTML → 可入库的 .docx、整理表的脚本（只有代码，原页面和转出来的文件不进仓库） |
 | `poc/infra/` | CloudFormation 模板、部署、备份、换型、测试台脚本、`kb.sh`（从栈里取配置驱动 `kb/`） |
 | `contract/` | Agent 接入框架的契约（信封、任务目录、审批流接口） |

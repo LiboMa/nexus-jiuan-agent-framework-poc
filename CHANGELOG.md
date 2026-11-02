@@ -1,5 +1,40 @@
 # 变更记录
 
+## 2026-10-30：知识库文档管家（PG 版）；整个 PG 知识库换成 Cohere Embed v4
+
+PG 方式也走「文档管家」那条路：制度文档经 A2A 的规则请求（`kb.rules/v1`）交给 Nexus 上新建的「知识库文档管家（PG 版）」（`knowledgebase_writer_agent_pg`），由它解析、写进审核 Agent 共用的 `approval_rules`，向量只在库里生成。同时整个 PG 知识库从 Titan v2 换成 Cohere Embed v4：审核 Agent 的 `kb_search`、`deploy.sh` 的入库和这个 Agent 都经库里同一个函数，用同一个模型。根目录的 `VERSION` 没有改。
+
+**知识库文档管家（PG 版）**（`knowledgebase-writer-agent-pg/`，新增；说明见它的 [README.md](knowledgebase-writer-agent-pg/README.md)）
+- 三个工具 `rules_writer` / `rules_search` / `rules_manager`，与 S3 Vectors 版的规则工具同名、同参数；一个工具一次做完，模型不读附件、不搬运规则、不算向量。
+- 收 Word、Excel、PDF、Markdown：审批矩阵一行一条（与 `deploy.sh` 入库逐条相同），其余正文一条一块（`clause`，编号带制度标识前缀）；封面和修改记录不入库，解析报告里计数。
+- `kb.rules/v1` 约定的操作全部支持，另加下线 / 恢复，以及 PG 版独有的 `preview`（只对比，不写库、不算向量）；回复过测试台客户端的形态校验。对话里入库先预览、人确认再写，下线、删除前先确认。
+- 数据库凭证由 Nexus 密钥注入（`pg_kb`，`database_credentials`），拿不到就报 `credentials_missing`，不回落；错误里不带密码、主机、端口；等入库锁超过 30 秒或一句超过 240 秒就整份回滚，分别回「知识库正忙」「这次操作超时」。`check` 给了库里没有的制度标识回 `not_found`（同 `detail`）。
+- `scripts/build_tools.py` 把 `kb/lib` 的 5 个核心模块逐个文件原样放进工具目录（头一行记提交号），与入口一起打成可重复的 .zip 和 `MANIFEST.json`；平台上整个目录导入、逐文件核对。另有探针模块（同目录相对 import、VM 里的包版本）、端到端用的虚构文档生成器、A2A 命令行 `scripts/a2a_rules.mjs`。
+
+**共享核心**（`kb/lib/`）
+- 新增 `doc_blocks`（四种格式 → 按原文顺序的标题 / 段落 / 表格块）、`clauses`（正文 → 一条一块的条款）、`kb_parse`（整份文档 → 记录与解析报告，带 `parser_version`）、`kb_store`（对比、冲突、一个事务里写入与清理、上传记录、下线 / 恢复 / 删除、清单、校验）。解析和入库规则各只实现一次。
+- `parse_rules` 改成在块上解析，对 .docx 的输出与改动之前逐条相同（真实制度 102 条在本机比对）。`ingest_rules.py`、`kb_admin.py` 改成调 `kb_store` 的薄命令行：`ingest_rules.py` 的命令行参数和最后打印的 JSON 汇总（键名、口径）不变，入库时不再往 stderr 打逐条进度（`upserted i/N`）；`kb_admin.py` 的参数和输出不变；`deploy.sh` 的入库与 Agent 的入库拿同一把锁。
+
+**库内向量与检索**（`kb/sql/kb_search.sql`）
+- 唯一调 Bedrock 的是 `kb_embed_impl`：支持 Cohere v4（`search_document` / `search_query`，每次 96 条）和 Titan v2。应用用户经 `kb_embed(text, purpose)`（单条）、`kb_embed_batch(text[], purpose)`（批量，入库都经它）调到它；缓存键带模型、维度和用途；每分钟新向量上限分开数（单条 300、批量 2,000），只数缓存没命中的；批量在只读事务里遇到缓存没命中就拒绝（上限靠数缓存的行，只读事务里数不了）。
+- 新增 `kb_meta` 登记向量模型（超级用户写、应用用户只读）。`kb_search` 的问句用 `search_query`；关键词命中数相同时，矩阵 / 制度说明 / 章节说明排在正文条款前面（库里没有条款时排序与原来相同）。
+- 超级用户执行的部分加固：入库锁是第一句；内置函数和自有对象一律写全限定名；只接手超级用户建的表和函数；应用用户的表（规则表、归档表）先锁住再查，挂着会执行代码的附加物（触发器、规则、行级安全、CHECK / 外键约束、表达式 / 部分索引、生成列、域等类型的列、引用非内置函数的默认值，或它是分区）就拒绝、不碰它，没有才以表的属主身份读写（只换成属主挡不住这些代码：它们能换回超级用户身份）；回退只读超级用户建的、没有附加物的备份表。
+
+**换模型与检索回归**（`kb/sql/migrate_embeddings.sql`、`restore_embeddings.sql`、`kb/deploy.sh`、`kb/lib/kb_regression.py`）
+- `db` 阶段先读库里登记的模型，与配置不同就停（防混用）。`--migrate-embeddings` 在一个事务里装新函数、把旧向量备份进 `<表>_titan_backup`、重算规则表和归档表、登记 `kb_meta`；`--restore-embeddings` 反过来。
+- 新阶段 `regress`：经 `kb_search` 逐题跑研究题库（自己限速），结果只有题号、规则编号和计数，写到仓库外；`--compare` 判前 5 命中不降、已知问题都过。`ingest` 改用 `--embed sql`；缺省模型改成 `us.cohere.embed-v4:0`（`deploy.env.example`、`cfn/pgvector-host.yaml` 的实例角色权限、preflight 探测）。
+
+**两个文档管家共用的管理员脚本与提示词**（`knowbase-s3vectors-agent/scripts/`、`kb/prompt/`）
+- `nexus_admin.py`、`render.py`、`admin_run.sh` 改成读各包的包描述 `nexus-package.json`（`--package`）：支持多文件（.zip）导入、整目录发布和逐文件核对，新增 `bind`（管理员就是属主时按人绑定密钥）。
+- 「规则请求（`kb.rules/v1`）」的通用规则抽成共用片段 `kb/prompt/kb_rules_v1.zh.md`，两个提示词模板都引用；S3 Vectors 版渲染出的提示词和工具声明与改动之前逐字相同（测试钉住）。
+
+**测试台栈**（`poc/infra/andon-finance-poc.yaml`）
+- `KbBedrockPolicy` 加上 Cohere Embed v4（`us.` 推理配置文件和它路由到的三个区域的基础模型）；Titan v2 先留着供回退，切换稳定后去掉。
+
+**线上实测**（2026-10-30，参考环境）
+- 换模型：一个事务重算 102 条；研究题库前 5 命中 主题 46 → 49 / 58、改写 20 → 22 / 26，两道已知问题都过，审核 Agent `verify --e2e` 通过（策略更新后约 9 分钟内 Bedrock 间歇 403，IAM 生效延迟）。
+- 文档管家：导入的 6 个文件与本地构建逐字节一致；对话和 A2A 两条路的预览、入库、检索、下线、恢复、删除、冲突拒绝、三种正文都按预期，正文入库前后检索回归逐题不变，结束时库里回到真实制度的 102 条。测试台 PG 方式的四张单据端到端待跑。
+
 ## Finance-Audit-Nexus-PoC v0.7.10（2026-10-26）
 
 在测试台上加了第二套：九安自助审核平台测试环境开发包 **v0.7.10**，和 v0.5.3 的 PoC 并排（<https://jiuan-v0710.tinyboat.blog>，同一台实例）。v0.5.3 那一套的运行代码没有改，只在 A2A 客户端里加了可选的 DataPart。
@@ -48,7 +83,7 @@
 - 2026-10-30 起测试台的知识库页（新前端的「知识库」、九安原来的「规则库 › 制度知识库」，补丁 0004、0005）不再直连 PG，经 A2A 调 Nexus 上的 PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b`（`kb.rules/v1`：describe、ingest、list、detail、deactivate、restore、delete、check、search；ingest 限时 5 分钟，其余 2 分钟），调用密钥在「Agent 接入」页启用。这个 Agent 的代码在另一个会话的分支 `feat/pg-kb-steward`，还没合进来。
 - 2026-10-31（项目负责人定）有效的规则换成审批风险判断卡 `risk-cards`，449 条：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 一条一张卡，全是 `clause`。V4.0 审批矩阵 `finance-approval-v4` 下线（可恢复，什么都没删）；下线期间 `kb/deploy.sh verify --e2e`（要命中 C03-1.2）会失败。
 - 新增 `kb/convert/risk-cards/`：把原页面（HTML，265 个费用类型 × 两条线 = 530 张卡，其中 82 张业务线的卡不适用）转成入库用的 .docx（适用的 448 张卡）和给人看的 .xlsx。只有代码，原页面和转出来的文件不进仓库。转出来的 .docx 能过测试台的上传校验；PG 知识库 Agent 的离线解析器解析出 449 条（表格行 448 + 条款 1），没有拆错、没有重复。
-- 2026-10-31 另一个会话把 PG 知识库的向量换成 Cohere Embed v4（1024 维），连同栈里的 `KbBedrockPolicy`。本仓库的 `kb/sql/kb_search.sql` 还是 Titan：`feat/pg-kb-steward` 合进来之前，不从本仓库跑知识库的 db 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db`），测试台只用 `deploy.sh --code-only` 部署。
+- 2026-10-31 另一个会话把 PG 知识库的向量换成 Cohere Embed v4（1024 维），连同栈里的 `KbBedrockPolicy`。本仓库的 `kb/sql/kb_search.sql` 还是 Titan：`feat/pg-kb-steward` 合进来之前，不从本仓库跑知识库的 db 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db`），测试台只用 `deploy.sh --code-only` 部署。（2026-11-02：分支合进 main，这条限制取消，见本文件开头一节）
 - 2026-11-01 知识库客户端（`poc/app07/kb-steward-client.mjs`，两种知识库方式都用）收下 JSON 前面一句短的引导语（不超过 200 字、不含 `{ }`，后面是一个完整的 JSON 对象），记一行 `POC_KB_AGENT_REPLY_LEADIN <操作> <字数>`，不记内容。原因：知识库 Agent 有时在调工具前先写一句话，A2A 把各段文字拼在一起回来；上面 11-01 完整运行里失败的「知识库 · 上传制度」就是这样。
 
 **审核 Agent：一轮从超时降到 7–20 秒**（2026-10-31 – 11-01，发布 `pub_5c53e70d8dc7ddea`）

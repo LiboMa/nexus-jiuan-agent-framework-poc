@@ -152,17 +152,14 @@ href="integration.html">并入九安</a>）。</li>
 <code>docs/build-html.sh</code> 生成；推送前跑
 <code>docs/build-html.sh --check</code>。</li>
 </ol>
-<p><strong>现在多一条（2026-11-02 起，到分支
-<code>feat/pg-kb-steward</code>
-合进来为止）</strong>：测试台<strong>只用
-<code>deploy.sh --code-only</code></strong>
-部署，<strong>不从本仓库跑知识库的 db
-阶段</strong>（<code>poc/infra/kb.sh db</code> / <code>all</code> /
-<code>ingest</code>、<code>kb/deploy.sh db</code>）。另一个会话
-2026-10-31 把 PG 知识库的向量换成了 Cohere Embed v4，连同栈里的
-<code>KbBedrockPolicy</code>；本仓库的 <code>kb/sql/kb_search.sql</code>
-会把 Titan 装回去，不带 <code>--code-only</code> 的整栈部署会把 Bedrock
-权限改回去（<a href="handover.html">交接文档</a>第 6 节第 13 条）。</p>
+<p><strong>2026-11-02 起（分支 <code>feat/pg-kb-steward</code> 已合进
+main）</strong>：本仓库的 <code>kb/</code> 和栈模板都是 Cohere Embed
+v4（连同 <code>KbBedrockPolicy</code>），从本仓库跑知识库的 db
+阶段、整栈部署都不会再把 Titan 装回去。跑 db 阶段前确认
+<code>kb/deploy.env</code> 的 <code>EMBED_MODEL_ID</code> 是 Cohere
+v4（缺省就是），否则防混用检查（<code>kb/GUIDE.md</code>
+7.6）会停下。测试台的日常发布照旧用
+<code>deploy.sh --code-only</code>。</p>
 <h1 id="2-代码托管与版本">2. 代码托管与版本</h1>
 <p>2026-10-19 起有两个私有仓库。交接仓库的封板标签是
 <code>v0.1</code>（2026-10-19）和

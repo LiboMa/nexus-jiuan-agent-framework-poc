@@ -155,13 +155,20 @@ test('deploy.sh 建栈 / 更新栈时可以带上 KB_ALLOWED_CIDR；导出交接
   await run('bash', ['-n', KB_SH]);
 });
 
-test('模板：知识库在库里生成向量（PG 容器经实例角色调 Bedrock）——KbEnabled 时实例角色多一条策略，只许调 Titan v2 这一个嵌入模型', async () => {
+test('模板：知识库在库里生成向量（PG 容器经实例角色调 Bedrock）——KbEnabled 时实例角色多一条策略，只许调这几个嵌入模型：Titan v2（回退用）与 Cohere Embed v4（us. 推理配置文件 + 它路由到的三个区域）', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   const policy = block(template, 'KbBedrockPolicy');
-  for (const line of [/Type: AWS::IAM::Policy/, /Condition: KbEnabled/, /Roles: \[!Ref InstanceRole\]/, /Action: bedrock:InvokeModel/,
-    /Resource: !Sub 'arn:\$\{AWS::Partition\}:bedrock:\$\{AWS::Region\}::foundation-model\/amazon\.titan-embed-text-v2:0'/]) assert.match(policy, line);
+  for (const line of [/Type: AWS::IAM::Policy/, /Condition: KbEnabled/, /Roles: \[!Ref InstanceRole\]/, /Action: bedrock:InvokeModel/]) assert.match(policy, line);
+  const resources = [...policy.matchAll(/^\s*- !Sub '(arn:[^']+)'$/gm)].map(m => m[1]);
+  assert.deepEqual(resources, [
+    'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0',
+    'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.cohere.embed-v4:0',
+    'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/cohere.embed-v4:0',
+    'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/cohere.embed-v4:0',
+    'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/cohere.embed-v4:0',
+  ]);
   assert.equal((policy.match(/Effect:/g) || []).length, 1, '只有一条声明');
-  assert.doesNotMatch(policy, /bedrock:\*|Resource: '\*'/);
+  assert.doesNotMatch(policy, /bedrock:\*|Resource: '\*'|foundation-model\/\*/);
 });
 
 test('测试台配置：「制度知识库」页经知识库 Agent，不直连 PG——jiuan07-kb 段不读 PG 主机的 .env、不写连库密码、不建 venv、不取私网 IP；先算出知识库的设置再写 env', async () => {
@@ -189,9 +196,20 @@ test('kb/deploy.sh ingest --dry-run：规则编号已属于库里另一份文档
 
 test('kb 的 create 模式：新建的 PG 主机也能做库内语义检索——实例角色只许调配置的嵌入模型，IMDS 跳数 2（PG 容器经 Docker 网桥取实例角色凭证）', async () => {
   const host = await readFile(path.join(ROOT, 'kb/cfn/pgvector-host.yaml'), 'utf8');
-  assert.match(block(host, 'EmbedModelId'), /Type: String\n\s+Default: amazon\.titan-embed-text-v2:0/);
+  // 缺省 Cohere v4 的美国区推理配置文件（kb 换模型，设计 3.6）
+  assert.match(block(host, 'EmbedModelId'), /Type: String\n\s+Default: us\.cohere\.embed-v4:0/);
+  assert.match(host, /EmbedViaUsProfile: !Equals \[!Select \[0, !Split \['\.', !Ref EmbedModelId\]\], 'us'\]/, 'us. 开头才是推理配置文件');
   const role = block(host, 'HostRole');
-  for (const line of [/Action: bedrock:InvokeModel/, /Resource: !Sub 'arn:\$\{AWS::Partition\}:bedrock:\$\{AWS::Region\}::foundation-model\/\$\{EmbedModelId\}'/]) assert.match(role, line);
+  assert.match(role, /Action: bedrock:InvokeModel/);
+  assert.match(role, /Resource: !If\n\s+- EmbedViaUsProfile/);
+  // us.：推理配置文件本身 + 它路由到的三个区域的基础模型；否则只有本区域的基础模型
+  assert.match(role, /- - !Sub 'arn:\$\{AWS::Partition\}:bedrock:\$\{AWS::Region\}:\$\{AWS::AccountId\}:inference-profile\/\$\{EmbedModelId\}'/);
+  for (const region of ['us-east-1', 'us-east-2', 'us-west-2']) {
+    assert.match(role, new RegExp(`'arn:\\$\\{AWS::Partition\\}:bedrock:${region}::foundation-model/\\$\\{Base\\}'`), region);
+  }
+  assert.equal((role.match(/Base: !Join \['\.', \[!Select \[1, !Split \['\.', !Sub '\$\{EmbedModelId\}\.\.'\]\], !Select \[2, !Split \['\.', !Sub '\$\{EmbedModelId\}\.\.'\]\]\]\]/g) || []).length, 3,
+    '基础模型 id = 去掉 us. 前缀（补两个点再拆：不走这一支的 Titan id 也不越界）');
+  assert.match(role, /- - !Sub 'arn:\$\{AWS::Partition\}:bedrock:\$\{AWS::Region\}::foundation-model\/\$\{EmbedModelId\}'/);
   assert.equal((role.match(/Effect: Allow/g) || []).length, 2, '信任策略一条 + 调模型一条');
   assert.match(block(host, 'Host'), /HttpPutResponseHopLimit: 2/);
   const deploy = await readFile(path.join(ROOT, 'kb/deploy.sh'), 'utf8');

@@ -5,6 +5,7 @@
 --   rule_type = matrix        审批矩阵的一行 = 一条审批路径（业务事项 × 板块 × 金额档 / 触发情形），rule_id 形如 C05-3.2
 --   rule_type = general       制度说明与图例（rule_id 形如 G-01）
 --   rule_type = chapter_note  章节标题下的说明段落（rule_id 形如 C03-NOTE）
+--   rule_type = clause        正文条款：矩阵之外的条、编号项、段落、非矩阵表格的行（rule_id 形如 travel-A12 =「标签-条号」）
 -- content 是拼好的可检索全文（Agent 用 ILIKE 查）；embedding 是 content 的向量（语义检索用）。
 
 CREATE TABLE IF NOT EXISTS {table} (
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS {table} (
 ALTER TABLE {table} ADD COLUMN IF NOT EXISTS source_tag text;
 ALTER TABLE {table} ADD COLUMN IF NOT EXISTS record_sha256 text;
 
-COMMENT ON TABLE {table} IS '审批规则库：rule_type=matrix 每行一条审批路径（业务事项×板块×金额档），general=制度说明/图例，chapter_note=章节说明；content 为可检索全文，embedding 为 content 的向量';
+COMMENT ON TABLE {table} IS '审批规则库：rule_type=matrix 每行一条审批路径（业务事项×板块×金额档），general=制度说明/图例，chapter_note=章节说明，clause=正文条款；content 为可检索全文，embedding 为 content 的向量';
 
 CREATE INDEX IF NOT EXISTS {table}_embedding_hnsw ON {table} USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS {table}_chapter_idx ON {table} (chapter_no, seq_no);

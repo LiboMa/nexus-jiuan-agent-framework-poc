@@ -1,0 +1,66 @@
+{
+  "name": "knowbase-s3vectors-agent",
+  "title": "知识库文档管家（S3 Vectors 版）",
+  "modules": {
+    "kb": {
+      "module": "s3vectors_kb_tools",
+      "build": ".build/s3vectors_kb_tools.py",
+      "label": "kb_s3vectors",
+      "state": ".state/import.json",
+      "render": "scripts/render.py tools",
+      "key": {
+        "name": "s3vectors_kb",
+        "type": "aws_credentials",
+        "description": "knowbase-s3vectors-agent：IAM 用户 {iam_user} 的访问密钥，只授权本知识库的向量桶",
+        "fields": [
+          {"field": "access_key_id", "required": true, "description": "专用 IAM 用户的 Access Key ID（只授权本知识库的向量桶）"},
+          {"field": "secret_access_key", "required": true, "description": "对应的 Secret Access Key"},
+          {"field": "session_token", "required": false, "description": "临时凭证的会话令牌（长期密钥不填）"}
+        ]
+      },
+      "guards": [
+        {"pattern": "_VECTOR_BUCKET = \"knowbase-s3v-demo\"", "message": "工具文件还是示例桶名", "unless": "--allow-demo-bucket"}
+      ],
+      "tools": [
+        ["s3vectors_writer", true, "把文档向量化（Cohere Embed v4，1536 维）并写入 S3 Vectors 知识库；给附件路径即可一步入库，按内容去重"],
+        ["s3vectors_search", true, "在 S3 Vectors 知识库中语义检索、按文档查看文本块或找最相关的文档；过滤条件由工具拼"],
+        ["s3vectors_manager", true, "S3 Vectors 知识库管理：按文档硬删除 / 软删除、恢复、一致性校验"],
+        ["s3vectors_statistics", true, "S3 Vectors 知识库统计：Dashboard、文档清单、文档详情、内容抽样"],
+        ["document_parser", false, "解析 Word / Excel / PDF 文档，抽取结构化文本与元数据，计算内容 SHA256"],
+        ["text_chunker", false, "把长文本按段落聚合、固定长度加重叠切成文本块"]
+      ]
+    },
+    "rules": {
+      "module": "s3vectors_rules_tools",
+      "title": "规则模块",
+      "build": ".build/s3vectors_rules_tools.py",
+      "label": "kb_s3v_rules",
+      "state": ".state/import-rules.json",
+      "render": "scripts/render.py rules-tools",
+      "key": {
+        "name": "s3vectors_kb",
+        "type": "aws_credentials",
+        "description": "knowbase-s3vectors-agent：IAM 用户 {iam_user} 的访问密钥，只授权本知识库的向量桶",
+        "fields": [
+          {"field": "access_key_id", "required": true, "description": "专用 IAM 用户的 Access Key ID（只授权本知识库的向量桶）"},
+          {"field": "secret_access_key", "required": true, "description": "对应的 Secret Access Key"},
+          {"field": "session_token", "required": false, "description": "临时凭证的会话令牌（长期密钥不填）"}
+        ]
+      },
+      "guards": [
+        {"pattern": "^_(VECTOR_BUCKET|RULES_INDEX) = \"\"$", "message": "工具文件还没渲染（桶名或规则索引名为空）"},
+        {"pattern": "_VECTOR_BUCKET = \"knowbase-s3v-demo\"", "message": "工具文件还是示例桶名", "unless": "--allow-demo-bucket"}
+      ],
+      "tools": [
+        ["rules_writer", true, "把审批矩阵格式的制度（.docx）一行一条规则写入 S3 Vectors 规则库（Cohere Embed v4，1536 维）；同一 source_id 再上传 = 新版本，按内容去重"],
+        ["rules_search", true, "按问题检索 S3 Vectors 规则库；板块、金额的过滤条件由工具代码拼"],
+        ["rules_manager", true, "S3 Vectors 规则库管理：制度清单、详情、下线、恢复、删除、一致性校验"]
+      ]
+    }
+  },
+  "prompt": {
+    "template": "prompt/knowbase_s3vectors_agent.yaml.tmpl",
+    "placeholders": {"TOOL_DIR": "kb", "RULES_TOOL_DIR": "rules"},
+    "sections": {"RULES": "RULES_TOOL_DIR"}
+  }
+}

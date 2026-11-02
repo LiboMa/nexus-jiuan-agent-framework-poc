@@ -1,6 +1,7 @@
-"""「规则库 › 制度知识库」页的管理命令：上传历史、现有标签、语义检索、检索日志（表和函数由 sql/kb_search.sql 建）。
+"""规则库的管理命令：上传历史、现有标签、语义检索、检索日志（表和函数由 sql/kb_search.sql 建）。运维排查用；前端经文档管家（A2A）。
+SQL 都在 kb_store（与 Nexus 工具同一份），这里只是命令行。
 
-用法（外壳 poc/app07 在测试台上以子进程调用；每个命令只打印一行 JSON）:
+用法（每个命令只打印一行 JSON）:
     python3 -I kb_admin.py --host H --port P --db D --user U --password-file F [--table approval_rules] <命令> ...
 
     record --name N --sha256 S --size B --by U --report FILE      记一次上传（已解析）→ {"id": int}
@@ -16,20 +17,24 @@
 """
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-DOCUMENT_COLUMNS = ("id, file_name, sha256, size_bytes, uploaded_by, uploaded_at, status, source_tag, doc_title, source_version, "
-                    "report, result, error, started_at, finished_at")
+if __package__:
+    from . import kb_store
+else:  # python -I kb/lib/kb_admin.py：-I 不把脚本所在目录放进 sys.path
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import kb_store
 
 
 def connect(a):
-    import psycopg
     password = Path(a.password_file).read_text(encoding="utf-8").strip()
-    return psycopg.connect(host=a.host, port=a.port, dbname=a.db, user=a.user, password=password, connect_timeout=15)
+    return kb_store.connect({"host": a.host, "port": a.port, "database": a.db, "username": a.user, "password": password},
+                            application_name="kb-admin", timeout=15)
 
 
 def plain(value):
@@ -40,73 +45,43 @@ def plain(value):
     raise TypeError(type(value).__name__)
 
 
-def rows(cur):
-    names = [d[0] for d in cur.description or []]
-    return [dict(zip(names, row)) for row in cur.fetchall()]
-
-
 def read_json(path):
-    return json.dumps(json.loads(Path(path).read_text(encoding="utf-8")), ensure_ascii=False) if path else None
+    return json.loads(Path(path).read_text(encoding="utf-8")) if path else None
 
 
 def cmd_record(cur, a):
-    cur.execute("INSERT INTO kb_documents (file_name, sha256, size_bytes, uploaded_by, status, report) "
-                "VALUES (%s, %s, %s, %s, 'parsed', %s::jsonb) RETURNING id",
-                (a.name, a.sha256, a.size, a.by, read_json(a.report)))
-    return {"id": cur.fetchone()[0]}
+    return {"id": kb_store.record_document(cur, file_name=a.name, sha256=a.sha256, size_bytes=a.size, uploaded_by=a.by, source_tag=None,
+                                           doc_title=None, source_version=None, report=read_json(a.report))}
 
 
 def cmd_status(cur, a):
-    if a.status == "ingesting":
-        cur.execute("UPDATE kb_documents SET status = 'ingesting', started_at = now(), error = NULL, "
-                    "source_tag = coalesce(%s, source_tag), doc_title = coalesce(%s, doc_title), source_version = coalesce(%s, source_version) WHERE id = %s",
-                    (a.source_tag, a.doc_title, a.source_version, a.id))
-    elif a.status == "ingested":
-        if a.source_tag:
-            cur.execute("UPDATE kb_documents SET status = 'superseded' WHERE source_tag = %s AND status = 'ingested' AND id <> %s", (a.source_tag, a.id))
-        cur.execute("UPDATE kb_documents SET status = 'ingested', result = %s::jsonb, error = NULL, finished_at = now(), "
-                    "source_tag = coalesce(%s, source_tag), doc_title = coalesce(%s, doc_title), source_version = coalesce(%s, source_version) WHERE id = %s",
-                    (read_json(a.result), a.source_tag, a.doc_title, a.source_version, a.id))
-    else:
-        cur.execute("UPDATE kb_documents SET status = %s, error = %s, result = coalesce(%s::jsonb, result), finished_at = now() WHERE id = %s",
-                    (a.status, (a.error or "")[:2000] or None, read_json(a.result), a.id))
+    kb_store.set_document_status(cur, a.id, a.status, result=read_json(a.result), error=a.error, source_tag=a.source_tag,
+                                 doc_title=a.doc_title, source_version=a.source_version)
     return {"ok": True}
 
 
 def cmd_recover(cur, a):
-    cur.execute("UPDATE kb_documents SET status = 'failed', error = %s, finished_at = now() WHERE status = 'ingesting' RETURNING id",
-                ("服务重启，入库中断",))
-    return {"recovered": len(cur.fetchall())}
+    return {"recovered": kb_store.recover(cur, 0)}   # 服务重启时：入库中的全部记成失败
 
 
 def cmd_history(cur, a):
-    cur.execute(f"SELECT {DOCUMENT_COLUMNS} FROM kb_documents ORDER BY id DESC LIMIT %s", (a.limit,))
-    return {"items": rows(cur)}
+    return {"items": kb_store.history(cur, a.limit)}
 
 
 def cmd_show(cur, a):
-    cur.execute(f"SELECT {DOCUMENT_COLUMNS} FROM kb_documents WHERE id = %s", (a.id,))
-    found = rows(cur)
-    return {"item": found[0] if found else None}
+    return {"item": kb_store.show(cur, a.id)}
 
 
 def cmd_tags(cur, a):
-    # 接管的旧表还没有 source_tag 列（第一次经本工具入库时由 approval_rules.sql 补上）：没有标签可选
-    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = %s AND column_name = 'source_tag'", (a.table,))
-    if cur.fetchone() is None:
-        return {"items": []}
-    cur.execute(f"SELECT source_tag, source_doc, source_version, count(*) AS rows FROM {a.table} WHERE source_tag IS NOT NULL GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
-    return {"items": rows(cur)}
+    return {"items": kb_store.tags(cur, a.table)}
 
 
 def cmd_search(cur, a):
-    cur.execute("SELECT * FROM kb_search(%s, %s, %s, 'page')", (a.question, a.k, a.segment))
-    return {"items": rows(cur)}
+    return {"items": kb_store.search(cur, a.question, a.k, a.segment, "page")}
 
 
 def cmd_search_log(cur, a):
-    cur.execute("SELECT id, at, caller, db_user, question, k, segment, hits, took_ms FROM kb_search_log ORDER BY id DESC LIMIT %s", (a.limit,))
-    return {"items": rows(cur)}
+    return {"items": kb_store.search_log(cur, a.limit)}
 
 
 WRITES = {"record", "status", "recover"}

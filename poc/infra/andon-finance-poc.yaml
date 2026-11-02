@@ -154,7 +154,7 @@ Resources:
       Description: 'nexus-pgvector: Nexus server + sandbox VMs (private only)'
 
   KbBedrockPolicy:
-    # In-database embeddings: the knowledge base's PG container (kb_embed, PL/Python via IMDSv2) calls this one model only.
+    # In-database embeddings: the knowledge base's PG container (kb_embed, PL/Python via IMDSv2) calls these embedding models only.
     Type: AWS::IAM::Policy
     Condition: KbEnabled
     Properties:
@@ -165,7 +165,14 @@ Resources:
         Statement:
           - Effect: Allow
             Action: bedrock:InvokeModel
-            Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+            Resource:
+              # Titan v2：换模型之前的向量（回退要用，切换稳定后去掉）
+              - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+              # Cohere Embed v4：us. 推理配置文件，以及它路由到的三个区域的基础模型
+              - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.cohere.embed-v4:0'
+              - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/cohere.embed-v4:0'
+              - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/cohere.embed-v4:0'
+              - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/cohere.embed-v4:0'
 
   Instance:
     Type: AWS::EC2::Instance
