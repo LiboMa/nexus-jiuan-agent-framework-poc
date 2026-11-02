@@ -1,6 +1,6 @@
 # pgvector-rules-kb 部署与调试指南
 
-把一份制度文档（审批矩阵格式的 .docx）做成「规则库」，存进 PostgreSQL + pgvector，经 Nexus 数据连接器接到审核 Agent，让用户在 Nexus 对话里按制度查询审批规则、对单据做初审。库里另有库内语义检索 `kb_search(问题)`（PL/Python 调 Bedrock 把问题向量化），审核 Agent 经同一个连接器一条 SQL 就能检索（6.3）；九安 v0.7.10 测试台上，管理员可以在「规则库 › 制度知识库」页上传制度、看上传历史、按问题检索、看检索日志（7.5）。
+把一份制度文档（审批矩阵格式的 .docx）做成「规则库」，存进 PostgreSQL + pgvector，经 Nexus 数据连接器接到审核 Agent，让用户在 Nexus 对话里按制度查询审批规则、对单据做初审。库里另有库内语义检索 `kb_search(问题)`（PL/Python 调 Bedrock 把问题向量化），审核 Agent 经同一个连接器一条 SQL 就能检索（6.3）；九安 v0.7.10 测试台上，管理员在知识库页上传制度、看制度清单、按问题检索：2026-10-30 起这些都经 Nexus 上的 PG 知识库 Agent（7.6），在那之前页面直接调本工具（7.5，留作记录）。2026-11-02 的现状（审批风险判断卡、Cohere 向量、暂时不能从本仓库跑 `db` 阶段）见 7.6 和 [README](README.md)「现状」。
 
 本指南写给两类读者：
 
@@ -384,7 +384,7 @@ SELECT rule_id, business_item, segment, left(amount_tier,80) AS amount_tier, fin
 | 列 | 说明 |
 |---|---|
 | `rule_id` (PK) | `C<章>-<序号>`（审批路径）、`G-<nn>`（制度说明 / 图例）、`C<章>-NOTE`（章节说明） |
-| `rule_type` | `matrix` / `general` / `chapter_note` |
+| `rule_type` | `matrix` / `general` / `chapter_note`；PG 知识库 Agent 写的还有 `clause`（正文条款、非矩阵表格的行；审批风险判断卡一行一张卡，7.6） |
 | `chapter_no`、`chapter`、`seq_no` | 章号、章标题、表内序号 |
 | `business_item`、`segment`、`amount_tier` | 业务事项、板块、金额档 / 触发情形 |
 | `approval_path` (jsonb) | `[{step, role, mark, final}]`，按审批顺序 |
@@ -446,6 +446,8 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 
 ### 7.5 页面上传（九安 v0.7.10 测试台「规则库 › 制度知识库」）
 
+> 这一节是 2026-10-26 至 10-30 的做法（测试台直接调 `lib/kb_admin.py`、`lib/ingest_rules.py`），留作记录。2026-10-30 起页面经 PG 知识库 Agent，见 7.6。
+
 九安测试台（上一级仓库的 `poc/`；PG 就在测试台实例上，即 existing 模式）给管理员加了这一页，不用本机命令就能维护规则库：
 
 1. **上传**：拖入或选择 .docx（≤ 20 MB）。只读 zip 目录、不解压就拒收：不是 .docx、条目超过 2000 个、解压后超过 100 MB、没有 `word/document.xml`。原文件存在测试台 `/var/lib/jiuan07/kb-uploads/<sha256>.docx`（600），用 `lib/parse_rules.py` 解析，解析结果 `<id>.rules.json` 同样 600。页面显示逐章规则数、制度说明 / 章节说明条数、没有审批路径的行；解析不出规则的记成「失败」。
@@ -456,6 +458,18 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 6. **检索日志**：最近 50 次 `kb_search`：审核 Agent 审单时查了什么、命中了哪些规则；页面检索、部署核对、入库冒烟也在这里。
 
 接口在测试台外壳的 `/api/analysis/v1/poc/kb/*`（只给管理员；会话、来源、CSRF 由九安校验），读写库经 `lib/kb_admin.py`（历史、标签、检索、日志）和 `lib/ingest_rules.py`，连库密码只以 `--password-file` 传。测试台部署（`poc/infra/deploy.sh`）把 `kb/lib`、`kb/sql` 带进构件；`bench07-configure.sh` 在 `/opt/nexus-pgvector/.env` 存在时写好密码文件、上传目录、Python venv（钉 `psycopg[binary]==3.2.9`）和 `POC07_KB_*` 设置。没有这些设置时外壳不挂这组接口，页面上的操作都会失败（接口回 404）。所以顺序是先 `poc/infra/kb.sh db`（建容器、`.env`、上传历史表），再 `poc/infra/deploy.sh`（写设置、重启服务）。
+
+### 7.6 经 PG 知识库 Agent（九安 v0.7.10 测试台，2026-10-30 起）
+
+2026-10-30 起 PG 的连接全在 Agent 那一侧：页面 → 测试台外壳（`poc/app07/kb-steward-routes.mjs`、`kb-steward-client.mjs`）→ A2A → PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b` → 它的工具 → PG。测试台自己不连库、不解析文档。
+
+- **约定 `kb.rules/v1`**：一行文字 `kb.rules/v1 · <op>：只调用对应的工具一次，原样返回工具的 JSON。` + 数据 Part `{op, …}`，`ingest` 再带 .docx 文件 Part。操作：`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`；`ingest` 限时 5 分钟，其余 2 分钟。Agent 只回工具的 JSON；它偶尔在 JSON 前多写一句话（模型调工具前先说一句，A2A 把各段文字拼在一起），外壳收下不超过 200 字、不含 `{ }` 的一句，记 `POC_KB_AGENT_REPLY_LEADIN <op> <字数>`（不记内容），别的不合格式判 `KB_AGENT_REPLY_INVALID`、不重试。接口的完整约定在开发仓库的 `docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md`。
+- **写进同一套表**：Agent 照旧写 `approval_rules`、`kb_documents`，向量在库里由 `kb_embed()` 生成，所以审核 Agent 经连接器的查法（`kb_search`、按 `rule_id` 取全文）不用改。
+- **启用**：这个发布的调用密钥由项目负责人在测试台「Agent 接入」页启用（就绪、不进审批流）；部署配置的 `KB_PG_PUBLICATION_ID` 指向它。
+- **代码**：PG 知识库 Agent 的工具和解析器（`kb/lib/kb_parse.py`）在另一个会话的分支 `feat/pg-kb-steward`，**还没合进本仓库**。
+- **现在有效的规则**（项目负责人 2026-10-31 定）：审批风险判断卡 `risk-cards`，449 行，全是 `clause`：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 一行一张卡，卡片全文（卡片编号、费用类型、一级分类、费用编码、审核线、风险等级、结论、判断依据、缺什么、坚持通过时审批人认可的是、定级理由、一期可行性）在 `scope_controls` / `content`。V4.0 审批矩阵 `finance-approval-v4`（102 行）已下线，可恢复，什么都没删；下线期间 `./deploy.sh verify --e2e`（要命中 `C03-1.2`）会失败。
+- **风险判断卡怎么入库**：原页面是 HTML，用 [`convert/risk-cards/`](convert/risk-cards/README.md) 的脚本转成 .docx（横向、一张表、适用的 448 张卡），在知识库页「上传制度」上传：制度标识 `risk-cards`、版本 `2026-10-29`、标题就是文件名。转出来的 .docx 核对过：能过测试台的上传校验；PG 知识库 Agent 的离线解析器（那个分支的 `kb/lib/kb_parse.py`）解析出 449 条（表格行 448 + 条款 1），没有拆错、没有重复。
+- **向量**：另一个会话 2026-10-31 把 PG 知识库换成了 Cohere Embed v4（1024 维），连同测试台栈里的 `KbBedrockPolicy`。本仓库的 `sql/kb_search.sql` 还是 Titan v2。**`feat/pg-kb-steward` 合进来之前**：不从本仓库跑 `db` 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`./deploy.sh db`），测试台只用 `poc/infra/deploy.sh --code-only` 部署（整栈部署会把 Bedrock 权限改回 Titan）。
 
 ---
 
@@ -668,6 +682,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 6. **不把环境信息写进仓库。** `deploy.env`、`.state/`、`.build/`、`*.docx` 已被忽略；文档里只用占位符（账号 ID、实例 ID、IP、域名都不写）。
 7. **本机是 zsh。** 在 zsh 里直接拼命令时：变量后紧跟 `:` 要写成 `${var}:`；不要用 `path` 做变量名；`--include=*.py` 这类通配要加引号。`deploy.sh` 本身由 bash 执行，不受影响。
 8. **提交前**：先完成 E2E 并经用户确认，再提交 / 推送。
+9. **暂时（2026-11-02 起，到 `feat/pg-kb-steward` 合进来为止）**：不从本仓库跑 `db` 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`./deploy.sh db`）：库里的向量已换成 Cohere Embed v4，本仓库的 `sql/kb_search.sql` 会改回 Titan（7.6）。
 
 ---
 
@@ -698,6 +713,9 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 | 2026-10-26 | 九安测试台「规则库 › 制度知识库」页上传 | 仿真文档：预览出 10 条规则编号与库里制度相同 → 加冲突保护后红字列出、不能入库；真实制度：只更新说明 102、删除 0，1 秒入库；「房租 年度框架合同 九安」第 1 名 C05-3.4 |
 | 2026-10-26 | 审核 Agent 第 8、9 条改为先 `kb_search` | `verify --e2e`：规则问答命中 C03-1.2（45 秒，工具 5 次，Agent 的检索记进日志，caller=agent）；A2A 三段式纯 JSON、未写库。九安 v0.7.10 端到端 9/9：四张对公付款单结论不变、引用的规则编号都在库里 |
 | 2026-10-26 | 独立代码评审（3 高 / 10 中 / 14 低）后修复，再回归 | 修复：destroy 只删本工具建的（label / 标记文件 / 状态）；create 模式钉 AMI、栈只建不更新；`.env` 作为密码唯一来源、密码经 stdin；SSM 读密码改为一次性公钥加密（SSM 历史里核对过只有 344 字符密文）；API 错误脱敏；egress 只撤销自己加的项；dry-run 不再写（含 e2e、连接测试）等。回归：`all --dry-run`、`destroy --dry-run`（接管来的资源全部「不动」）、`verify --e2e` 全部通过 |
+| 2026-10-30 | 九安 v0.7.10 测试台的知识库页改经 PG 知识库 Agent（`kb.rules/v1`，7.6） | 测试台不再直连 PG |
+| 2026-10-31 | 有效规则换成审批风险判断卡 `risk-cards`（经 PG 知识库 Agent 入库）；`finance-approval-v4` 下线；另一个会话把向量换成 Cohere Embed v4（连同 `KbBedrockPolicy`） | 449 行，全是 `clause`；`finance-approval-v4` 可恢复，什么都没删 |
+| 2026-11-01 | 九安 v0.7.10 端到端测试里知识库的 4 条 | 全部通过：同一份 .docx 再传是「没有变化」（449 条）；检索按卡片编号核对，要的卡在前 3 名里 |
 
 ---
 
@@ -725,6 +743,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 | `lib/kb_admin.py` | 九安测试台页面用的管理命令：上传历史、标签、检索、检索日志（每条命令输出一行 JSON） |
 | `tests/` | 解析器、管理命令、`--embed sql` 入库的单元测试（`python3 -B -m unittest discover -s tests`）；只用仿真文档 `fixtures/sample-matrix.docx` |
 | `agent/prompt-rules.txt` | Agent 提示词受管规则模板 |
+| `convert/risk-cards/` | 审批风险判断卡 HTML → JSON → 一张卡一行 → 可入库的 .docx / 整理表 .xlsx（只有代码，见它的 `README.md`） |
 | `CLAUDE.md` | Claude Code 在本目录工作的要点（指向本指南第 12 节） |
 
 ## 附录 B 用到的 Nexus API
