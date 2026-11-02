@@ -50,7 +50,7 @@
    python3 audit-agent/apply.py --env poc/infra/env/<环境名>.env --base <底稿>
    ```
 4. 验证：在测试台的九安 v0.7.10 上发起「AI 独立建议」，或跑 `bash poc/app/test/e2e/run07.sh`。
-   - 调用密钥由管理员在九安「后台配置 › Agent 接入」页上粘贴一次（https://jiuan-v0710.tinyboat.blog/#adminConfig?tab=agentAccess），之后的调用都用这条启用记录。
+   - 调用密钥由管理员在测试台新前端的「Agent 接入」页上粘贴一次（https://jiuan-v0710.tinyboat.blog/#/agents；九安原来的页面仍在 https://jiuan-v0710.tinyboat.blog/analysis.html#adminConfig?tab=agentAccess），之后的调用都用这条启用记录。
    - 端到端测试不读、不粘贴密钥；它会核对 Agent 引用的规则编号在库里都存在。
 
 只改提示词不重存动态配置，A2A 调用用的还是旧快照（Nexus `publication_gateway/executor.py:554-578`）。`apply.py` 每次都会重存。快照是按整份提示词 YAML 重算的（`dynamic_config_service.build_resolved_definition`），所以 `metadata` 里的 `additional_request_fields.output_config.effort` 也跟着下发。

@@ -71,6 +71,7 @@ copy CHANGELOG.md
 copy docs "${NOT_HANDOVER[@]}"
 copy poc/app --exclude /app/public
 copy poc/app07
+copy poc/web07 --exclude /web07/dist
 copy poc/bench
 copy patches
 copy audit-agent

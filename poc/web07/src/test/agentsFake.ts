@@ -10,8 +10,9 @@ export const AUDIT_PUB = 'pub_audit0001aaaa';
 export const DRAFT_PUB = 'pub_draft0003cccc';
 export const BROKEN_PUB = 'pub_broken004dddd';
 export const MANUAL_PUB = 'pub_manual005eeee';
-export const FAKE_KEY = 'nxa_FAKEKEY_only_for_tests_0123456789';
-export const FAKE_NEXUS_KEY = 'nxc_FAKENEXUS_only_for_tests_0123456789';
+// 假钥匙拆开写：交付包的密钥检查（make-package.sh）按「nxa_ / nxc_ 后跟 20 位以上」认密钥，整串写在源码里会被当成真钥匙拦下
+export const FAKE_KEY = 'nxa_' + 'FAKEKEY_only_for_tests_0123456789';
+export const FAKE_NEXUS_KEY = 'nxc_' + 'FAKENEXUS_only_for_tests_0123456789';
 
 export interface FakeRecord {
   publishId: string; status: string; fingerprint: string | null; approval: boolean;

@@ -10,6 +10,7 @@
 - Agent 提示词只经 `agent/prompt-rules.txt` + `./deploy.sh agent` 修改；受管范围是第 4 条括注、第 7、8 条。提示词里别的内容（参考环境有第 9 条「信封模式」等）原样保留，不要整份覆盖。改完必须跑 `verify --e2e`。
 - 仓库里不写环境信息：`deploy.env`、`.state/`、`.build/`、`*.docx` 已被忽略；文档只用占位符。
 - 提交前先完成 E2E 并经用户确认。
+- 2026-10-31 起参考环境的 PG 知识库已由分支 `feat/pg-kb-steward` 换成 Cohere Embed v4（1024 维），Bedrock 权限（`KbBedrockPolicy`）也跟着改了。这个分支合并之前：不从本目录跑 `db` / `all` / `ingest` 阶段（这里的 `sql/kb_search.sql` 会把 Titan 的 `kb_embed` 装回去），测试台只用 `poc/infra/deploy.sh --code-only` 部署（整栈部署会把 Bedrock 权限改回去）。现在在线的规则是「审批风险判断卡」（`risk-cards`），旧的 `finance-approval-v4` 已下线（可恢复）。
 
 ## 排错捷径
 
