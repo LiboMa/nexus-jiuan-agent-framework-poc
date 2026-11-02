@@ -17,7 +17,8 @@
  *   reviewers[]    每个人每张单每一轮只算自己的最后一次；行 = 设置里的管理员、分析员账号（停用的 enabled: false 不算）+ 窗口里复核过的人
  *                  （停用的账号有复核也给行），按复核数从多到少、再按账号；name 取设置里的名字，没有就用账号；customRules 是这个账号「我的规则」的份数。
  *                  分析员只有自己一行，规则发布复核人没有行。
- *   topBasis[]     窗口里完成、结论 fail 的轮次的依据，前 6；topRules[]：窗口里完成的全部轮次引用的公司制度规则编号，前 5（不含我的规则、认不出编号的）。
+ *   topBasis[]     窗口里完成、结论 fail 的轮次的依据，前 6；topRules[]：窗口里完成的全部轮次引用的公司制度规则编号，前 5（不含我的规则、认不出编号的）；
+ *                  按条入库的编号（CLAUSE_ID，例如风险判断卡）另带 detail：编号后面的文字（卡片编号、费用类型、审核线），最多 60 字。
  *                  一轮里同一项只算一次；同数按标签（码位）从小到大，标签也一样时按完整的归并文字。归并（basisGroup → { kind, key, label }，
  *                  按 kind + key 归并，label 是给页面显示的、最多 60 字，截完一样的两组各算各的）：
  *                  kind rule、ref 以「自定义：」开头 → custom，按前缀后面的标题（去首尾空白；写法见 audit-agent/prompt.yaml 的自定义规则一段）；
@@ -48,6 +49,9 @@ const TTL_MS = 60_000, DAY_MS = 86_400_000, SHANGHAI_MS = 8 * 3_600_000;
 const TOP_BASIS = 6, TOP_RULES = 5, LABEL_MAX = 60;
 const CUSTOM = '自定义：';
 export const RULE_ID = /^(?:C\d{2,3}-(?:\d+(?:\.\d+)*|NOTE)|G-\d{2,3})(?![A-Za-z0-9_-]|\.\d)/u;
+/** 知识库 Agent 按条入库的编号（PG 知识库 Agent 的 kb/lib/clauses.py：<制度标识>-<条号>，例如审批风险判断卡的 risk-cards-T1.266、
+ *  制度条款的 travel-policy-A12、S3.2、N1.2.3、CH3、H2.3、P001，拆开的长条带 -a、-b，重号带 ~2）；编号后面是空白或结尾。 */
+export const CLAUSE_ID = /^[a-z0-9][a-z0-9-]{1,62}-(?:T\d+\.\d+|H\d+(?:\.\d+)*|A\d+|S\d+(?:\.\d+)*|N\d+(?:\.\d+)*|CH\d+(?:\.\d+)*|P\d{3,})(?:-[a-z])?(?:~\d+)?(?=\s|$)/u;
 export const DASHBOARD_MESSAGES = Object.freeze({
   DASHBOARD_FORBIDDEN: '只有管理员、分析员和规则发布复核人能看工作台：请换这几种账号登录。',
   DASHBOARD_INVALID: '统计窗口只能是今天（today）、近 14 天（14d）或本月（month）：请刷新页面后重试。',
@@ -80,6 +84,12 @@ export function basisGroup({ kind, ref }) {
     if (text.startsWith(CUSTOM)) { const title = text.slice(CUSTOM.length).trim(); return title ? { kind: 'custom', key: title, label: capped(title) } : null; }
     const id = RULE_ID.exec(text)?.[0];
     if (id) return { kind: 'rule', key: id, label: id, ruleId: id };
+    // 按条入库的编号：后面的文字（风险判断卡是「卡片编号 费用类型 · 审核线」）一并显示，按编号归并
+    const clause = CLAUSE_ID.exec(text)?.[0];
+    if (clause) {
+      const detail = capped(text.slice(clause.length).trim());
+      return { kind: 'rule', key: clause, label: detail ? capped(`${clause} ${detail}`) : clause, ruleId: clause, ...(detail ? { detail } : {}) };
+    }
     return text ? { kind: 'rule', key: text, label: capped(text) } : null;
   }
   return (kind === 'field' || kind === 'evidence') && text ? { kind, key: text, label: text } : null;
@@ -193,8 +203,8 @@ export function createDashboard({ tenantId, agentTaskKey, readState, scopeOf, li
 
     const topBasis = top(completed.filter(item => item.result === 'fail').map(item => item.groups.map(group => ({ ...group, key: JSON.stringify([group.kind, group.key]) }))), TOP_BASIS)
       .map(({ kind, label, count }) => ({ kind, label, count }));
-    const topRules = top(completed.map(item => item.groups.filter(group => group.ruleId).map(group => ({ key: group.ruleId, label: group.ruleId }))), TOP_RULES)
-      .map(({ label, count }) => ({ ruleId: label, count }));
+    const topRules = top(completed.map(item => item.groups.filter(group => group.ruleId).map(group => ({ key: group.ruleId, label: group.ruleId, detail: group.detail }))), TOP_RULES)
+      .map(({ label, count, detail }) => (detail ? { ruleId: label, detail, count } : { ruleId: label, count }));
     const myRules = REVIEWER_ROLES.has(user.role) ? await rulesOf(String(user.id)) : { files: 0, usedChars: 0, limitChars: null };
 
     return {

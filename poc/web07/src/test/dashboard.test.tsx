@@ -386,6 +386,17 @@ describe('按审核员', () => {
 });
 
 describe('知识库 · 最常引用的规则 · 我的规则', () => {
+  it('最常引用的规则: a risk card shows its card id, expense type and line next to the rule id; matrix ids show the id only', async () => {
+    const data = { ...fortnight(), topRules: [{ ruleId: 'risk-cards-T1.266', detail: 'EXP783199-财务 增值税 · 财务线', count: 3 }, { ruleId: 'C05-2.3', count: 1 }] };
+    await openDashboard({ data: { '14d': data } });
+    const panel = region('最常引用的规则');
+    const rows = within(panel).getAllByRole('listitem');
+    expect(within(rows[0]).getByText('risk-cards-T1.266')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('EXP783199-财务 增值税 · 财务线')).toHaveAttribute('title', 'EXP783199-财务 增值税 · 财务线');
+    expect(within(rows[0]).getByText('3 次')).toBeInTheDocument();
+    expect(rows[1].querySelector('[data-detail]')).toBeNull();
+  });
+
   it('知识库: Agent status, 制度 N 份, 规则 N 条, 最近入库', async () => {
     await openDashboard();
     const panel = region('知识库');

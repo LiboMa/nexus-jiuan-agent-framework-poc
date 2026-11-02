@@ -2,7 +2,7 @@
  * 工作台要的数：测试台外壳 GET /poc/dashboard?window=today|14d|month（poc/app07/dashboard.mjs，结果缓存 60 秒）。
  *   pendingReview { count, failCount }（不按窗口）· advice { completed, pass, fail, overrides, passRate（0–1 或 null）, avgDurationMs, maxDurationMs（null = 没有） }
  *   daily[] { date, pass, fail, running } · overrideRate[] { date, reviews, overrides }（窗口里每个上海日期一项，从早到晚）
- *   topBasis[] { kind: rule|custom|field|evidence, label, count }（同一 kind + label 可能有两行）· topRules[] { ruleId, count }
+ *   topBasis[] { kind: rule|custom|field|evidence, label, count }（同一 kind + label 可能有两行）· topRules[] { ruleId, count, detail? }
  *   reviewers[] { account, name, reviews, overrides, customRules }（分析员只有自己一行，规则发布复核人没有行）
  *   knowledge { mode, configured, ready, sources, rules, lastIngestAt } · myRules { files, usedChars, limitChars（null：合计字数不设上限） }
  * 读进来先整理一遍：数不是有限的非负数就当 0，可空的不是数就当 null，数组不是数组就当空——页面上不会出现 NaN（Review Focus 4）。
@@ -35,7 +35,8 @@ export interface Dashboard {
   overrideRate: DailyRate[];
   reviewers: ReviewerRow[];
   knowledge: { mode: string; configured: boolean; ready: boolean; sources: number; rules: number; lastIngestAt: string | null };
-  topRules: Array<{ ruleId: string; count: number }>;
+  /** detail：按条入库的规则（如风险判断卡）编号后面的文字——卡片编号、费用类型、审核线。 */
+  topRules: Array<{ ruleId: string; count: number; detail?: string }>;
   /** limitChars：外壳回 null——「我的规则」合计字数不设上限，只受九安单次请求大小的限制（poc/app07/custom-rules.mjs）。 */
   myRules: { files: number; usedChars: number; limitChars: number | null };
 }
@@ -71,7 +72,7 @@ export function readDashboard(raw: unknown): Dashboard {
       mode: text(knowledge.mode), configured: knowledge.configured === true, ready: knowledge.ready === true,
       sources: count(knowledge.sources), rules: count(knowledge.rules), lastIngestAt: text(knowledge.lastIngestAt) || null,
     },
-    topRules: list(data.topRules).filter(item => text(item.ruleId)).map(item => ({ ruleId: text(item.ruleId), count: count(item.count) })),
+    topRules: list(data.topRules).filter(item => text(item.ruleId)).map(item => ({ ruleId: text(item.ruleId), count: count(item.count), ...(text(item.detail) ? { detail: text(item.detail) } : {}) })),
     myRules: { files: count(mine.files), usedChars: count(mine.usedChars), limitChars: maybe(mine.limitChars) },
   };
 }

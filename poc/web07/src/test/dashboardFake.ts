@@ -16,7 +16,7 @@ export interface FakeDashboard {
   overrideRate: Array<{ date: string; reviews: number; overrides: number }>;
   reviewers: Array<{ account: string; name: string; reviews: number; overrides: number; customRules: number }>;
   knowledge: { mode: string; configured: boolean; ready: boolean; sources: number; rules: number; lastIngestAt: string | null };
-  topRules: Array<{ ruleId: string; count: number }>;
+  topRules: Array<{ ruleId: string; count: number; detail?: string }>;
   myRules: { files: number; usedChars: number; limitChars: number | null };
 }
 

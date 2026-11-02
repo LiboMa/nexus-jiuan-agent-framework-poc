@@ -324,6 +324,34 @@ test('长的依据：按完整的 ref / 标题归并，只截显示的标签（6
   assert.equal([...cap(LONG_TITLE)].length, 60);
 });
 
+test('basisGroup：按条入库的编号（风险判断卡 risk-cards-T1.266、条款 travel-policy-A12 等）也是规则编号，后面的文字进 detail', () => {
+  const ruleOf = ref => basisGroup({ kind: 'rule', ref });
+  assert.deepEqual(ruleOf('risk-cards-T1.266 EXP783199-财务 增值税 · 财务线'),
+    { kind: 'rule', key: 'risk-cards-T1.266', label: 'risk-cards-T1.266 EXP783199-财务 增值税 · 财务线', ruleId: 'risk-cards-T1.266', detail: 'EXP783199-财务 增值税 · 财务线' });
+  assert.deepEqual(ruleOf('risk-cards-T1.73'), { kind: 'rule', key: 'risk-cards-T1.73', label: 'risk-cards-T1.73', ruleId: 'risk-cards-T1.73' }, '只有编号');
+  for (const id of ['travel-policy-A12', 'fin-approval-S3.2', 'x9-N1.2.3', 'abc-CH3', 'abc-H2.3', 'abc-P001', 'abc-A12-b', 'abc-A12~2', 'risk-cards-H1']) {
+    assert.equal(ruleOf(`${id} 虚构`).ruleId, id, id);
+  }
+  for (const ref of ['risk-cards-T1 少了行号', 'Risk-cards-T1.4 大写', 'risk-cards-T1.4x 粘着字母', 'risk-cards-X1.4 不认识的条号']) {
+    assert.equal(ruleOf(ref).ruleId, undefined, ref);
+  }
+});
+
+test('topRules：引用风险判断卡的轮次按卡的编号计数，带 detail（卡片编号、费用类型、审核线）；公司制度的矩阵编号不带 detail', async t => {
+  const card = 'risk-cards-T1.266 EXP783199-财务 增值税 · 财务线';
+  const h = await harness({ documents: ['d1', 'd2', 'd3'], reviews: [], rounds: {
+    d1: { current: done(1, 'pass', '2026-10-30T01:00:00.000Z', '2026-10-30T01:00:20.000Z', [rule(card), rule('risk-cards-T1.73 EXP783174-业务 房租 · 业务线')]) },
+    d2: { current: done(1, 'fail', '2026-10-30T02:00:00.000Z', '2026-10-30T02:00:20.000Z', [rule(card), rule('C05-2.3 费控报销')]) },
+    d3: { current: done(1, 'pass', '2026-10-30T03:00:00.000Z', '2026-10-30T03:00:20.000Z', [rule(card)]) },
+  } });
+  t.after(h.done);
+  assert.deepEqual((await h.read('today')).topRules, [
+    { ruleId: 'risk-cards-T1.266', detail: 'EXP783199-财务 增值税 · 财务线', count: 3 },
+    { ruleId: 'C05-2.3', count: 1 },
+    { ruleId: 'risk-cards-T1.73', detail: 'EXP783174-业务 房租 · 业务线', count: 1 },
+  ]);
+});
+
 test('topRules：窗口里完成的全部轮次引用的规则编号（不含我的规则、认不出编号的），一轮里同一编号只算一次，前 5；同数按编号', async t => {
   const h = await harness();
   t.after(h.done);
