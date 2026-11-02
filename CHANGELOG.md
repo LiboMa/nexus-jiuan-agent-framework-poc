@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-11-02：交付包带上知识库文档管家（PG 版）的客户部署交付件
+
+- 新增 `customer-deploy/knowledgebase-writer-agent-pg/`：原样从交付仓库 `nexus-customer-deploy` 收进来的客户部署交付件（交付版本 1.0.1，工具包来源提交 `ec280c1`），有部署指南、编码工具部署说明、交付说明、部署手册和发布 zip。`docs/delivery/make-package.sh` 把它放进白名单，出包前用它的 `release/SHA256SUMS` 核对两个 zip，对不上就不出包。说明见 [customer-deploy/README.md](customer-deploy/README.md)。根目录的 `VERSION` 没有改。
+
 ## 2026-10-30：知识库文档管家（PG 版）；整个 PG 知识库换成 Cohere Embed v4
 
 PG 方式也走「文档管家」那条路：制度文档经 A2A 的规则请求（`kb.rules/v1`）交给 Nexus 上新建的「知识库文档管家（PG 版）」（`knowledgebase_writer_agent_pg`），由它解析、写进审核 Agent 共用的 `approval_rules`，向量只在库里生成。同时整个 PG 知识库从 Titan v2 换成 Cohere Embed v4：审核 Agent 的 `kb_search`、`deploy.sh` 的入库和这个 Agent 都经库里同一个函数，用同一个模型。根目录的 `VERSION` 没有改。

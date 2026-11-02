@@ -317,8 +317,7 @@ href="operations.html">运维</a>第 2.1 节</td>
 <td>九安 v0.7.10 测试台的新前端（React 19 + TypeScript + Vite + Tailwind
 4，哈希路由）：工作台、单据池、知识库、我的规则、Agent
 接入、设置；<code>npm test</code>、<code>npm run build</code>（不带
-<code>node_<wbr>modules/<wbr></code>、<code>dist/<wbr></code>）。<strong><code>make-<wbr>package.<wbr>sh</code>
-的白名单里还没有这一行</strong>，出包、导出前要先补上</td>
+<code>node_<wbr>modules/<wbr></code>、<code>dist/<wbr></code>）</td>
 <td><a href="../../poc/README.md">PoC 说明</a>「九安 v0.7.10」</td>
 </tr>
 <tr>
@@ -354,6 +353,20 @@ HTML 转成可入库的 .docx 和整理表的脚本（只有代码，见它的
 HTML 原页面和转出来的文件都不带）</td>
 <td><a href="../../kb/README.md">kb/README.md</a>、<a
 href="../../kb/GUIDE.md">kb/GUIDE.md</a></td>
+</tr>
+<tr>
+<td><code>customer-<wbr>deploy/<wbr>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code></td>
+<td>「知识库文档管家（PG 版）」给客户环境部署用的成品（交付版本
+1.0.1）：部署指南、编码工具部署说明、交付说明、部署手册
+<code>skill/<wbr>SKILL.<wbr>md</code>、发布 zip
+<code>release/<wbr>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg-<wbr>1.<wbr>0.<wbr>1.<wbr>zip</code>
+与工具包
+<code>release/<wbr>pg_<wbr>kb_<wbr>tools.<wbr>zip</code>、打包脚本。原样从交付仓库
+<code>nexus-<wbr>customer-<wbr>deploy</code> 收进来；出包前用
+<code>release/<wbr>SHA256SUMS</code> 核对两个 zip</td>
+<td><a
+href="../../customer-deploy/README.md">customer-deploy/README.md</a>、它自己的
+<code>README.<wbr>md</code></td>
 </tr>
 <tr>
 <td><code>poc/<wbr>infra/<wbr></code></td>

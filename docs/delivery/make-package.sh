@@ -87,6 +87,11 @@ copy knowbase-s3vectors-agent --exclude /knowbase-s3vectors-agent/.state --exclu
 # 制度原文（.docx）不出包（本包没有仿真 .docx）
 copy knowledgebase-writer-agent-pg --exclude /knowledgebase-writer-agent-pg/.state --exclude /knowledgebase-writer-agent-pg/.build \
   --exclude /knowledgebase-writer-agent-pg/deploy.env --exclude '*.docx' --exclude '*.doc'
+# 文档管家（PG 版）的客户部署交付件（从交付仓库 nexus-customer-deploy 收进来，交付版本 1.0.1）：文档、部署手册、发布 zip。
+# zip 和 SHA256SUMS 对不上就不出包（zip 由它自己的 make_release.sh 打，打包时已按它的去敏词表查过）
+(cd "$ROOT/customer-deploy/knowledgebase-writer-agent-pg/release" && shasum -a 256 -c SHA256SUMS --quiet) \
+  || { echo "customer-deploy/knowledgebase-writer-agent-pg/release 里的 zip 和 SHA256SUMS 对不上" >&2; exit 1; }
+copy customer-deploy
 # 两个文档管家的提示词共用片段在 kb/prompt（render.py 从包旁边的 ../kb/prompt 读），随上面的 kb 出包；少了就渲染不出提示词
 [[ -f "$stage/kb/prompt/kb_rules_v1.zh.md" ]] || { echo "暂存目录里没有 kb/prompt/kb_rules_v1.zh.md（文档管家的提示词共用片段）" >&2; exit 1; }
 copy poc/infra --exclude secrets.env --exclude kb.env --include /infra/env/example.env --exclude '/infra/env/*.env' --exclude design-jiuan-nexus-integrate.md

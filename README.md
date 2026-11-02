@@ -31,6 +31,7 @@
 | `audit-agent/` | 审核 Agent（「九安审核AI」）的提示词与下发脚本：信封模式、`review_advice@1`、只读查知识库（先 `kb_search`）；`prompt-history/`：每次改线上提示词的改前、改后、比对、下发记录 |
 | `kb/` | 知识库部署工具：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对；测试台上用 `poc/infra/kb.sh` 驱动（整库 Cohere Embed v4，跑 db 阶段前看 kb/README.md「现状」） |
 | `kb/convert/risk-cards/` | 审批风险判断卡 HTML → 可入库的 .docx、整理表的脚本（只有代码，原页面和转出来的文件不进仓库） |
+| `customer-deploy/knowledgebase-writer-agent-pg/` | 「知识库文档管家（PG 版）」的客户部署交付件（1.0.1）：部署指南、部署手册、发布 zip；源码在根目录的 `knowledgebase-writer-agent-pg/` |
 | `poc/infra/` | CloudFormation 模板、部署、备份、换型、测试台脚本、`kb.sh`（从栈里取配置驱动 `kb/`） |
 | `contract/` | Agent 接入框架的契约（信封、任务目录、审批流接口） |
 | `skills/nexus-ai-operator/` | Nexus 一侧的 Skill（1.1.0）：编码工具用它在 Nexus 上建 Agent、发布 |
