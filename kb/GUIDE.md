@@ -493,7 +493,7 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 - **代码**：PG 知识库 Agent 在 [`../knowledgebase-writer-agent-pg/`](../knowledgebase-writer-agent-pg/README.md)（2026-11-02 从分支 `feat/pg-kb-steward` 合进来），它的解析器是本目录的 `lib/kb_parse.py`、`lib/clauses.py`、`lib/doc_blocks.py`；做法见 7.5。
 - **现在有效的规则**（项目负责人 2026-10-31 定）：审批风险判断卡 `risk-cards`，449 行，全是 `clause`：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 一行一张卡，卡片全文（卡片编号、费用类型、一级分类、费用编码、审核线、风险等级、结论、判断依据、缺什么、坚持通过时审批人认可的是、定级理由、一期可行性）在 `scope_controls` / `content`。V4.0 审批矩阵 `finance-approval-v4`（102 行）已下线，可恢复，什么都没删；下线期间 `./deploy.sh verify --e2e`（要命中 `C03-1.2`）会失败。
 - **风险判断卡怎么入库**：原页面是 HTML，用 [`convert/risk-cards/`](convert/risk-cards/README.md) 的脚本转成 .docx（横向、一张表、适用的 448 张卡），在知识库页「上传制度」上传：制度标识 `risk-cards`、版本 `2026-10-29`、标题就是文件名。转出来的 .docx 核对过：能过测试台的上传校验；PG 知识库 Agent 的离线解析器（`lib/kb_parse.py`）解析出 449 条（表格行 448 + 条款 1），没有拆错、没有重复。
-- **向量**：2026-10-31 起整个 PG 知识库是 Cohere Embed v4（1024 维），连同测试台栈里的 `KbBedrockPolicy`；换模型、回退、防混用见 7.6。从本仓库跑 `db` 阶段时 `deploy.env` 的 `EMBED_MODEL_ID` 要是 Cohere v4（缺省就是），否则防混用检查会停下。
+- **向量**：2026-10-30 晚起整个 PG 知识库是 Cohere Embed v4（1024 维），连同测试台栈里的 `KbBedrockPolicy`；换模型、回退、防混用见 7.6。从本仓库跑 `db` 阶段时 `deploy.env` 的 `EMBED_MODEL_ID` 要是 Cohere v4（缺省就是），否则防混用检查会停下。
 
 ---
 
@@ -743,7 +743,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 | 2026-10-26 | 独立代码评审（3 高 / 10 中 / 14 低）后修复，再回归 | 修复：destroy 只删本工具建的（label / 标记文件 / 状态）；create 模式钉 AMI、栈只建不更新；`.env` 作为密码唯一来源、密码经 stdin；SSM 读密码改为一次性公钥加密（SSM 历史里核对过只有 344 字符密文）；API 错误脱敏；egress 只撤销自己加的项；dry-run 不再写（含 e2e、连接测试）等。回归：`all --dry-run`、`destroy --dry-run`（接管来的资源全部「不动」）、`verify --e2e` 全部通过 |
 | 2026-10-30 | 换向量模型 Titan v2 → Cohere v4（7.6）：先更新实例角色的 `KbBedrockPolicy`（按线上模板建的变更集只改这一项），再 `db --migrate-embeddings` | 一个事务重算 102 行，`kb_meta` 登记 `cohere.embed-v4:0` / `1024`；旧向量的备份表 `<表>_titan_backup` 留着（102 行，验收后另行确认再删）。策略改完约 9 分钟内 Bedrock 间歇 403（IAM 生效延迟），第一次回归中途失败、没写结果；生效后回归：前 5 命中 主题 46 → 49 / 58、改写 20 → 22 / 26，两道已知问题都过（第二题改成两条都在前 2，7.6 第 1 步）；`verify --e2e` 通过 |
 | 2026-10-30 | 九安 v0.7.10 测试台的知识库页改经 PG 知识库 Agent（`kb.rules/v1`，7.5） | 测试台不再直连 PG |
-| 2026-10-31 | 有效规则换成审批风险判断卡 `risk-cards`（经 PG 知识库 Agent 入库）；`finance-approval-v4` 下线；另一个会话把向量换成 Cohere Embed v4（连同 `KbBedrockPolicy`） | 449 行，全是 `clause`；`finance-approval-v4` 可恢复，什么都没删 |
+| 2026-10-31 | 有效规则换成审批风险判断卡 `risk-cards`（经 PG 知识库 Agent 入库）；`finance-approval-v4` 下线 | 449 行，全是 `clause`；`finance-approval-v4` 可恢复，什么都没删 |
 | 2026-11-01 | 九安 v0.7.10 端到端测试里知识库的 4 条 | 全部通过：同一份 .docx 再传是「没有变化」（449 条）；检索按卡片编号核对，要的卡在前 3 名里 |
 
 ---

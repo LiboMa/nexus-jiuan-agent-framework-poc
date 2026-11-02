@@ -83,7 +83,7 @@ PG 方式也走「文档管家」那条路：制度文档经 A2A 的规则请求
 - 2026-10-30 起测试台的知识库页（新前端的「知识库」、九安原来的「规则库 › 制度知识库」，补丁 0004、0005）不再直连 PG，经 A2A 调 Nexus 上的 PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b`（`kb.rules/v1`：describe、ingest、list、detail、deactivate、restore、delete、check、search；ingest 限时 5 分钟，其余 2 分钟），调用密钥在「Agent 接入」页启用。这个 Agent 的代码在另一个会话的分支 `feat/pg-kb-steward`，还没合进来。
 - 2026-10-31（项目负责人定）有效的规则换成审批风险判断卡 `risk-cards`，449 条：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 一条一张卡，全是 `clause`。V4.0 审批矩阵 `finance-approval-v4` 下线（可恢复，什么都没删）；下线期间 `kb/deploy.sh verify --e2e`（要命中 C03-1.2）会失败。
 - 新增 `kb/convert/risk-cards/`：把原页面（HTML，265 个费用类型 × 两条线 = 530 张卡，其中 82 张业务线的卡不适用）转成入库用的 .docx（适用的 448 张卡）和给人看的 .xlsx。只有代码，原页面和转出来的文件不进仓库。转出来的 .docx 能过测试台的上传校验；PG 知识库 Agent 的离线解析器解析出 449 条（表格行 448 + 条款 1），没有拆错、没有重复。
-- 2026-10-31 另一个会话把 PG 知识库的向量换成 Cohere Embed v4（1024 维），连同栈里的 `KbBedrockPolicy`。本仓库的 `kb/sql/kb_search.sql` 还是 Titan：`feat/pg-kb-steward` 合进来之前，不从本仓库跑知识库的 db 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db`），测试台只用 `deploy.sh --code-only` 部署。（2026-11-02：分支合进 main，这条限制取消，见本文件开头一节）
+- 2026-10-30 晚（约 22:12，UTC+8）另一个会话把 PG 知识库的向量换成 Cohere Embed v4（1024 维），连同栈里的 `KbBedrockPolicy`。本仓库的 `kb/sql/kb_search.sql` 还是 Titan：`feat/pg-kb-steward` 合进来之前，不从本仓库跑知识库的 db 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db`），测试台只用 `deploy.sh --code-only` 部署。（2026-11-02：分支合进 main，这条限制取消，见本文件开头一节）
 - 2026-11-01 知识库客户端（`poc/app07/kb-steward-client.mjs`，两种知识库方式都用）收下 JSON 前面一句短的引导语（不超过 200 字、不含 `{ }`，后面是一个完整的 JSON 对象），记一行 `POC_KB_AGENT_REPLY_LEADIN <操作> <字数>`，不记内容。原因：知识库 Agent 有时在调工具前先写一句话，A2A 把各段文字拼在一起回来；上面 11-01 完整运行里失败的「知识库 · 上传制度」就是这样。
 
 **审核 Agent：一轮从超时降到 7–20 秒**（2026-10-31 – 11-01，发布 `pub_5c53e70d8dc7ddea`）

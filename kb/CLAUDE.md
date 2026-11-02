@@ -10,7 +10,7 @@
 - Agent 提示词只经 `agent/prompt-rules.txt` + `./deploy.sh agent` 修改；受管范围是第 4 条括注、第 7、8 条。提示词里别的内容（参考环境有第 9 条「信封模式」等）原样保留，不要整份覆盖。改完必须跑 `verify --e2e`。
 - 仓库里不写环境信息：`deploy.env`、`.state/`、`.build/`、`*.docx` 已被忽略；文档只用占位符。
 - 提交前先完成 E2E 并经用户确认。
-- 2026-10-31 起整个 PG 知识库是 Cohere Embed v4（1024 维），2026-11-02 起本仓库（分支 `feat/pg-kb-steward` 合进 main）也是：跑 `db` 阶段前确认 `deploy.env` 的 `EMBED_MODEL_ID` 是 Cohere v4（缺省就是），否则防混用检查会停下；换模型、回退见 `GUIDE.md` 7.6。现在在线的规则是「审批风险判断卡」（`risk-cards`），旧的 `finance-approval-v4` 已下线（可恢复），下线期间 `verify --e2e`（要命中 `C03-1.2`）会失败。
+- 2026-10-30 晚起整个 PG 知识库是 Cohere Embed v4（1024 维），2026-11-02 起本仓库（分支 `feat/pg-kb-steward` 合进 main）也是：跑 `db` 阶段前确认 `deploy.env` 的 `EMBED_MODEL_ID` 是 Cohere v4（缺省就是），否则防混用检查会停下；换模型、回退见 `GUIDE.md` 7.6。现在在线的规则是「审批风险判断卡」（`risk-cards`），旧的 `finance-approval-v4` 已下线（可恢复），下线期间 `verify --e2e`（要命中 `C03-1.2`）会失败。
 
 ## 排错捷径
 

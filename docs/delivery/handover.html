@@ -304,8 +304,9 @@ opus-5-5），那只是元数据，两者对不上。一轮 7–20 秒，查库 
 已从分支 <code>feat/<wbr>pg-<wbr>kb-<wbr>steward</code> 合进
 main）。有效的规则是审批风险判断卡 <code>risk-<wbr>cards</code>（449
 条）；V4.0 审批矩阵 <code>finance-<wbr>approval-<wbr>v4</code>
-已下线（可恢复，没删）。向量 2026-10-31 起由另一个会话换成 Cohere Embed
-v4。见第 2.2 节和 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 7.6</td>
+已下线（可恢复，没删）。向量 2026-10-30 晚起由另一个会话换成 Cohere
+Embed v4。见第 2.2 节和 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a>
+7.6</td>
 </tr>
 <tr>
 <td>账号</td>
@@ -635,8 +636,8 @@ IP 的 5432），库 <code>nexus</code>、表
 102 条 <code>finance-<wbr>approval-<wbr>v4</code>
 已下线，可恢复）；容器里装了 PL/Python，库内语义检索
 <code>kb_<wbr>search</code> 用实例角色调 Bedrock 生成向量（原来是 Titan
-v2，栈里的 <code>KbBedrockPolicy</code> 只许这一个模型；2026-10-31
-另一个会话把它和 <code>KbBedrockPolicy</code> 一起换成了 Cohere Embed
+v2，栈里的 <code>KbBedrockPolicy</code> 只许这一个模型；2026-10-30
+晚另一个会话把它和 <code>KbBedrockPolicy</code> 一起换成了 Cohere Embed
 v4），另有上传历史 <code>kb_<wbr>documents</code>、检索日志
 <code>kb_<wbr>search_<wbr>log</code>。经 Nexus 的 PostgreSQL
 数据连接器接到「九安审核AI」，Agent 只读查询；PG
