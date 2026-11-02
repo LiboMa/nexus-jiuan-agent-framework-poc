@@ -21,5 +21,7 @@ export default defineConfig({
     include: ['src/test/**/*.test.tsx'],
     css: false,
     restoreMocks: true,
+    // 等待元素的上限放到 3 秒（setup.ts），一项测试里有几次等待也不会撞上 vitest 默认的 5 秒
+    testTimeout: 15000,
   },
 });
