@@ -1,6 +1,20 @@
 # 变更记录
 
-## 2026-11-02：交付包带上知识库文档管家（PG 版）的客户部署交付件
+## 2026-11-02：经 SSH 管理、Graviton（m7g）的测试环境；搬数据；交付包带上知识库文档管家（PG 版）的客户部署交付件
+
+部署分成三块：PG 与知识库后端（`kb/`）、前端（`poc/infra/deploy.sh`）、Nexus 上的 Agent 与发布（`audit-agent/`、`knowledgebase-writer-agent-pg/`）。以后客户先用自己的 SSH 密钥部署 PG，再分批部署前端；测试阶段三样在一台机器上。
+
+**经 SSH 管理**（`poc/infra/lib/remote.sh`，新增）
+- 栈模板加了四个参数，默认值等于原来的样子（现有的栈更新时实例、角色、安全组都不变，`infra.test.mjs` 把它们按默认值还原后和原模板逐字比）：`KeyName`（EC2 密钥对）、`SshAllowedCidr`（22 端口单独一条规则 `SshIngress`，只在有密钥对时建）、`SsmManaged`（`false` 时实例角色不带 `AmazonSSMManagedInstanceCore`）、`RootVolumeSize`；实例类型可以是 `m7g.large` / `m7g.xlarge`，建栈时按类型的架构（x86_64 / arm64）取 AMI，栈建好后不让在两种架构之间换。实例的 Name 标签改成栈名。
+- 环境配置的新键：`SSH_KEY_NAME`、`SSH_KEY_FILE`、`SSH_ALLOWED_CIDR`、`SSM_MANAGED`、`ROOT_VOLUME_SIZE`（`poc/infra/env/example.env`；`audit-agent/deploy_env.py` 同一套）。写了 `SSH_KEY_FILE`，`deploy.sh` 等实例上线、装构件、重启都经 SSH（`ec2-user` + `sudo`，脚本先写进远端临时文件再执行，任何一步失败都不做健康检查），`kb.sh` 让 kb 也经 SSH，`run07.sh` 的重置和测试里的只读命令也经 SSH。主机公钥第一次从实例的控制台输出里取来钉住（`poc/infra/.state/`，不进仓库、不进交付包），之后严格核对。
+- 本机的网络连不到实例的地址段时（m7g 环境的弹性 IP 在 `184.192.0.0/12`，公司网络到不了；到 3 / 44 / 52 / 54 段的 EC2 都通），环境配置写 `SSH_VIA=eice`：栈另建一个 EC2 Instance Connect 端点（参数 `SshVia`，条件 `UseEice`；端点的安全组只许出 22 到实例，实例的 22 端口对它开），ssh 的 ProxyCommand 是 `aws ec2-instance-connect open-tunnel`，还是 SSH + 自己的密钥，不用 SSM。
+- `kb/`：PG 主机可以经 SSH（`PG_HOST_TRANSPORT=ssh`、`PG_SSH_HOST`、`PG_SSH_KEY`、`PG_SSH_USER`、`PG_SSH_PORT`、`PG_SSH_KNOWN_HOSTS`、`PG_SSH_PROXY_COMMAND`（跳板机或 Instance Connect 端点），只用于 existing 模式），远端执行、读机密（只回密文）、端口转发都有 SSH 的走法；不写就和原来一样经 SSM。新测试 `kb/tests/test_host_transport.sh`（23 项）。kb/GUIDE.md 第 4 节写了客户用自己的密钥先部署 PG 的做法。
+
+**换机器时搬数据**（`poc/infra/migrate-data.sh`，新增）：MySQL 三个库、PG 库 `nexus`、两个状态目录。旧环境经 SSM 只读导出，整包加密后经 15 分钟的预签名 URL 放进新环境的构件桶、搬完就删；新环境经 SSH 换数据，先核对两边的 `secrets.env` 相同，换完逐表核对行数和规则表的 md5。`--dry-run` 只看不改；`--skip-pg` 在 Nexus 已经切到新 PG 之后只同步 MySQL 和状态目录。
+
+**m7g 测试环境上线**（栈 `andon-finance-m7g`，2026-11-02）：一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点；临时站点 `andon-finance-m7g.tinyboat.blog`、`jiuan-v0710-m7g.tinyboat.blog`。数据从线上 PoC 搬来，199 项逐表一致；16:59（UTC+8）起 Nexus 的数据库凭证密钥和 PG 连接器指向它（审核 Agent、PG 知识库 Agent 都跟着走，原来那台的 PG 没删）。端到端 26 条全部通过。域名迁移还没定。
+
+**新前端的测试**：等待元素的上限从 1 秒放到 3 秒（`poc/web07/src/test/setup.ts`）。`deploy.sh` 里 `npm ci` 之后缓存是冷的，每个文件第一次懒加载页面常常超过 1 秒，2026-11-02 部署时有五个文件的第一项因此失败；单独跑全过。
 
 - 新增 `customer-deploy/knowledgebase-writer-agent-pg/`：原样从交付仓库 `nexus-customer-deploy` 收进来的客户部署交付件（交付版本 1.0.1，工具包来源提交 `ec280c1`），有部署指南、编码工具部署说明、交付说明、部署手册和发布 zip。`docs/delivery/make-package.sh` 把它放进白名单，出包前用它的 `release/SHA256SUMS` 核对两个 zip，对不上就不出包。说明见 [customer-deploy/README.md](customer-deploy/README.md)。根目录的 `VERSION` 没有改。
 

@@ -316,8 +316,9 @@ Embed v4。见第 2.2 节和 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a>
 <td>测试</td>
 <td><code>run07.<wbr>sh</code> 端到端：2026-11-01 完整运行 26 条，25
 通过，那 1 条（知识库 Agent 回复前多一句话）已修；之后知识库的 4
-条、单据池的 6 条单独重跑全部通过。完整跑一次约 1–3 美元的 Nexus
-调用</td>
+条、单据池的 6 条单独重跑全部通过。2026-11-02 对 m7g 测试环境（经
+SSH、Nexus 已指向它的 PG）完整运行 26 条全部通过（web07 15、jiuan07
+11，带风险判断卡 .docx 的上传）。完整跑一次约 1–3 美元的 Nexus 调用</td>
 </tr>
 <tr>
 <td>未完成</td>
@@ -671,6 +672,16 @@ CloudFront 回源前缀列表 <code>pl-<wbr>3b927c52</code> 访问 4180，不开
 <td>运维通道</td>
 <td>只走 SSM（Run Command、Session Manager）；实例角色禁止读 SSM
 参数</td>
+</tr>
+<tr>
+<td>m7g 测试环境（2026-11-02 起）</td>
+<td>栈 <code>andon-<wbr>finance-<wbr>m7g</code>：一台
+m7g.xlarge（arm64），前端、MySQL、知识库的 PG 都在上面；不用 SSM，经
+SSH（密钥对 <code>key-<wbr>malibo-<wbr>sa</code>）+ 栈里的 EC2 Instance
+Connect 端点；临时站点
+<code>andon-<wbr>finance-<wbr>m7g.<wbr>tinyboat.<wbr>blog</code>、<code>jiuan-<wbr>v0710-<wbr>m7g.<wbr>tinyboat.<wbr>blog</code>；2026-11-02
+起 Nexus 的 PG 连接器和数据库凭证密钥指向它的私网地址（第 6 节第 22、23
+条）</td>
 </tr>
 <tr>
 <td>实例上的目录</td>
@@ -1167,18 +1178,36 @@ Nexus 网页上重新加。注意 <code>audit-agent/apply.py</code> 在 pg
 Agent 提示词第 9 条 c ② 也要改（<a
 href="../../audit-agent/README.md">审核 Agent 说明</a>「知识库（pg
 方式）」）。</li>
-<li><strong>工作台「最常引用的规则」只认 <code>C…</code> /
-<code>G-…</code> 编号</strong>：风险判断卡的 <code>risk-cards-T…</code>
-还不算进去。</li>
-<li><strong>出包的白名单里没有
-<code>poc/web07/</code></strong>：<code>docs/delivery/make-package.sh</code>
-还没有
-<code>copy poc/web07</code>（也没跑它的测试），出包、导出交接仓库前要补上。</li>
+<li><del>工作台「最常引用的规则」只认 <code>C…</code> / <code>G-…</code>
+编号</del>：2026-11-02 已解决，风险判断卡的 <code>risk-cards-T…</code>
+等条款编号也算，旁边显示依据里跟着的说明。</li>
+<li><del>出包的白名单里没有 <code>poc/web07/</code></del>：2026-11-02
+已补上（<code>copy poc/web07</code>，不带 <code>dist/</code>）。</li>
 <li><strong>项目负责人要在自己的浏览器上确认</strong>：「Agent
 接入」页的密钥框上，Chrome 还会不会弹「保存密码」。</li>
 <li><strong>S3 Vectors
 方式的知识库只有代码，没上线</strong>：它的文档管家用的规则请求说明和 PG
 版是同一段，回复前多一句话的问题它也会有；测试台的客户端两种方式都放过这种回复（<code>POC_KB_AGENT_REPLY_LEADIN</code>）。</li>
+<li><strong>m7g 测试环境还没接正式域名</strong>（2026-11-02 起）：栈
+<code>andon-finance-m7g</code>，一台
+m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经
+SSH（<code>key-malibo-sa</code>）+ EC2 Instance Connect
+端点管理（公司网络连不到它的弹性 IP 所在的
+<code>184.192.0.0/12</code>），临时站点
+<code>andon-finance-m7g.tinyboat.blog</code>、<code>jiuan-v0710-m7g.tinyboat.blog</code>。数据
+2026-11-02 从线上 PoC 搬过来（<code>migrate-data.sh</code>，199
+项逐表一致）。域名迁移还没定：迁之前用
+<code>migrate-data.sh --skip-pg</code> 从旧机器再同步一次 MySQL
+和状态目录（新机器上跑过的端到端测试会重置它的 <code>jiuan07</code>
+库）。</li>
+<li><strong>Nexus 已经指到新机器的 PG</strong>（2026-11-02
+16:59，UTC+8）：数据库凭证密钥 <code>key-a015b93ad361</code>（名字还叫
+<code>pgvector-10.0.1.38</code>）和连接器
+<code>pgvector-andon</code>（<code>conn-f0c7233959d9</code>）的主机改成
+<code>10.0.1.46</code>，审核 Agent 和 PG 知识库 Agent
+都跟着走，旧测试台也在用新 PG。旧实例上的 PG
+没删、不再有新写入；要切回去：<code>DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/kb.sh connector</code>（先
+<code>--dry-run</code>）。</li>
 </ol>
 <p>已经解决的（2026-10-20）：</p>
 <ul>

@@ -47,10 +47,19 @@ audience: 应用开发、Agent 开发、运维
 | 环境 | 用途 | 现状 |
 |---|---|---|
 | 本机 | 开发、单元测试（假 A2A 网关，不连 Nexus）、命令行测试 | 可用 |
-| 线上 PoC（栈 `andon-finance-poc`） | 演示、端到端测试；2026-10-19 起是测试台（t3.large，本机 MySQL 8.0，九安的真实运行时） | 可用；只有这一套 |
+| 线上 PoC（栈 `andon-finance-poc`） | 演示、端到端测试；2026-10-19 起是测试台（t3.large，本机 MySQL 8.0，九安的真实运行时） | 可用；正式域名还在这里 |
+| m7g 测试环境（栈 `andon-finance-m7g`，2026-11-02 起） | 一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经 SSH 管理（`poc/infra/README.md`「经 SSH 管理」）；数据从线上 PoC 搬来（`migrate-data.sh`） | 临时域名 `andon-finance-m7g` / `jiuan-v0710-m7g`（.tinyboat.blog）；域名迁移还没定 |
 | 预发（建议） | 并入九安之前，用同一模板另建一个栈（不同栈名和域名）先验证 | 未建 |
 
-线上只有一套环境，所以：端到端测试会**重置测试台**（`bench-reset.sh` 删掉并重建九安的库，单据回到 8 张种子；审批记录、登录状态、运行记录清空；各账号的连接与启用在磁盘上，不受影响），跑之前通知正在用的人。
+**部署分三块**，各有各的工具，以后各有各的人：
+
+| 块 | 内容 | 工具 | 次序 |
+|---|---|---|---|
+| PG 与知识库后端 | PG + pgvector 容器、库内检索 `kb_search`、规则入库；PG 的地址和密码登记进 Nexus（数据连接器、数据库凭证密钥） | `kb/deploy.sh`（测试台上由 `poc/infra/kb.sh` 驱动）；PG 主机经 SSM 或部署人自己的 SSH 密钥（kb/GUIDE.md 第 4 节） | 先部署 |
+| 前端 | 测试台外壳、两套九安站点、新前端 `poc/web07`、九安的 MySQL | `poc/infra/deploy.sh`；测试阶段和 PG 放在同一台机器上，以后由专人部署、可以分批 | PG 之后 |
+| Nexus 上的 Agent 与发布 | 审核 Agent、PG 知识库 Agent 的工具、提示词、发布 | `audit-agent/`、`knowledgebase-writer-agent-pg/`（客户部署件在 `customer-deploy/`）、`skills/nexus-ai-operator` | 和 PG 一起或之后；换 PG 主机不用动它们 |
+
+线上的测试台是一套共用的环境，所以：端到端测试会**重置测试台**（`bench-reset.sh` 删掉并重建九安的库，单据回到 8 张种子；审批记录、登录状态、运行记录清空；各账号的连接与启用在磁盘上，不受影响），跑之前通知正在用的人。
 
 ## 4. 每类变更怎么做
 
@@ -69,6 +78,7 @@ audience: 应用开发、Agent 开发、运维
 | Nexus 平台升级 | Nexus 那边 | 全部端到端测试；必要时更新 `verify.mjs` 里记录的实测行为 | — | — | 应用开发 |
 | 九安 v0.7.10 测试台（外壳、新前端、补丁） | `poc/app07/`、`poc/web07/`、`patches/jiuan-v0.7.10/`（`poc/bench/build-jiuan07.sh` 打进副本） | 新前端 `npm test`、外壳的单元测试（`deploy.sh` 都会先跑）；`run07.sh` 里相关的几条（第 7 节） | `deploy.sh --code-only`：动 AWS 之前先在 `poc/web07` 里 `npm ci`、测试、构建，`dist/` 随构件发出；外壳启动时读一次 `dist/` | 第 6.1 节（构件里带着那一版的 `dist/`） | 应用开发 + 项目负责人 |
 | 审核 Agent 提示词（「九安审核AI」） | `audit-agent/prompt.yaml`，`audit-agent/apply.py` 写到 Nexus 并重存发布的动态配置 | `audit-agent/tests` 的单元测试；`apply.py --dry-run`；`run07.sh`（自动出建议的几条） | 第 6.3 节 | 第 6.3 节 | Agent 开发 + 项目负责人 |
+| 换机器（另建一个栈，搬数据） | 新环境的配置 `poc/infra/env/<环境名>.env`；`poc/infra/migrate-data.sh` | `infra.test.mjs`；新栈 `deploy.sh` 的健康检查；`migrate-data.sh --dry-run`，实搬后它自己逐表核对；`kb.sh verify`；`run07.sh` | `deploy.sh`（新栈）→ `kb.sh db` → `migrate-data.sh` → `kb.sh connector`（把 Nexus 指到新 PG，先 `--dry-run`）→ 端到端 → 域名迁移前 `migrate-data.sh --skip-pg` 再同步一次 | 旧栈一直不动：`kb.sh connector` 用旧环境的配置再跑一次，Nexus 就指回旧 PG；域名没迁就不影响用户 | 运维 + 项目负责人 |
 | 文档 | `docs/**/*.md` | `docs/build-html.sh --check` | 随代码推送 | 随代码回退 | 改的人 |
 
 ## 5. 发布清单

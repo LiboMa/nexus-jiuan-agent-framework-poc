@@ -40,7 +40,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | 时限 | 一轮 AI 独立建议 180 秒（补丁 0006，只改测试台副本的 `review_advice@1`；九安上游的契约还是 120 秒）；调用中间件给 `nexus-a2a` 200 秒（补丁 0007），超时报 `AI_UNAVAILABLE`；外壳给一轮的租约 420 秒 |
 | 知识库 | PG 方式。测试台经 A2A 调 PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b`（`kb.rules/v1`），它的调用密钥由项目负责人在「Agent 接入」页启用；这个 Agent 的代码在 `knowledgebase-writer-agent-pg/`（2026-11-02 已从分支 `feat/pg-kb-steward` 合进 main）。有效的规则是审批风险判断卡 `risk-cards`（449 条）；V4.0 审批矩阵 `finance-approval-v4` 已下线（可恢复，没删）。向量 2026-10-30 晚起由另一个会话换成 Cohere Embed v4。见第 2.2 节和 [kb/GUIDE.md](../../kb/GUIDE.md) 7.6 |
 | 账号 | 见第 2.4 节 |
-| 测试 | `run07.sh` 端到端：2026-11-01 完整运行 26 条，25 通过，那 1 条（知识库 Agent 回复前多一句话）已修；之后知识库的 4 条、单据池的 6 条单独重跑全部通过。完整跑一次约 1–3 美元的 Nexus 调用 |
+| 测试 | `run07.sh` 端到端：2026-11-01 完整运行 26 条，25 通过，那 1 条（知识库 Agent 回复前多一句话）已修；之后知识库的 4 条、单据池的 6 条单独重跑全部通过。2026-11-02 对 m7g 测试环境（经 SSH、Nexus 已指向它的 PG）完整运行 26 条全部通过（web07 15、jiuan07 11，带风险判断卡 .docx 的上传）。完整跑一次约 1–3 美元的 Nexus 调用 |
 | 未完成 | 第 6 节第 13 条起 |
 
 **页面长这样**（2026-10-17 截自线上，数据都是虚构的）：
@@ -106,6 +106,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 | 构件桶 | `andon-finance-poc-artifactbucket-786tdeg4dqkb`：`releases/current.tgz`、`releases/archive/<时间>.tgz`、`secrets/secrets.env`（SSE） |
 | CloudFront | `E92MPQ217VIPX`，站点 `andon-finance.tinyboat.blog`，回源 `andon-finance-origin.tinyboat.blog` |
 | 运维通道 | 只走 SSM（Run Command、Session Manager）；实例角色禁止读 SSM 参数 |
+| m7g 测试环境（2026-11-02 起） | 栈 `andon-finance-m7g`：一台 m7g.xlarge（arm64），前端、MySQL、知识库的 PG 都在上面；不用 SSM，经 SSH（密钥对 `key-malibo-sa`）+ 栈里的 EC2 Instance Connect 端点；临时站点 `andon-finance-m7g.tinyboat.blog`、`jiuan-v0710-m7g.tinyboat.blog`；2026-11-02 起 Nexus 的 PG 连接器和数据库凭证密钥指向它的私网地址（第 6 节第 22、23 条） |
 | 实例上的目录 | `/opt/andon-finance/current`（当前版本）、`/opt/andon-finance/previous`（上一次启动前的版本；服务崩溃循环时会被覆盖，**回滚要用构件桶里的归档包**）、`/etc/andon-finance/{env,secrets.env,bench.env}`、`/etc/andon-finance/bench/`（测试台的三个密钥文件，root:andon 0640）、`/var/lib/andon-finance/users/<账号>/`（各账号数据） |
 
 ### 2.3 Nexus
@@ -268,10 +269,12 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 15. **审核 Agent 的模型对不上**：发布实际跑 `global.anthropic.claude-sonnet-5`，提示词元数据里是 `${AGENT_MODEL}`（环境配置里是 opus-5-5），只是元数据。以哪个为准，等项目负责人定。
 16. **发布上手工加的 15 个工具已清掉**（`s3vectors_*`、`http_request_tool` 等，在名为 `demo` 的配置里）：本仓库没有它们，要恢复只能在 Nexus 网页上重新加。注意 `audit-agent/apply.py` 在 pg 方式下每次下发都按 `CONFIG_TOOLS`（现在是空的）重写工具清单：加回去以后，下次下发前先改 `CONFIG_TOOLS`，否则又会被清掉。
 17. **`kb/deploy.sh verify --e2e` 现在会失败**（另一个会话在用它）：它要规则问答命中 `C03-1.2`，而那份审批矩阵 `finance-approval-v4` 已下线。矩阵重新上线或改掉期望值之前，别把它当成故障。审批矩阵重新上线时，审核 Agent 提示词第 9 条 c ② 也要改（[审核 Agent 说明](../../audit-agent/README.md)「知识库（pg 方式）」）。
-18. **工作台「最常引用的规则」只认 `C…` / `G-…` 编号**：风险判断卡的 `risk-cards-T…` 还不算进去。
-19. **出包的白名单里没有 `poc/web07/`**：`docs/delivery/make-package.sh` 还没有 `copy poc/web07`（也没跑它的测试），出包、导出交接仓库前要补上。
+18. ~~工作台「最常引用的规则」只认 `C…` / `G-…` 编号~~：2026-11-02 已解决，风险判断卡的 `risk-cards-T…` 等条款编号也算，旁边显示依据里跟着的说明。
+19. ~~出包的白名单里没有 `poc/web07/`~~：2026-11-02 已补上（`copy poc/web07`，不带 `dist/`）。
 20. **项目负责人要在自己的浏览器上确认**：「Agent 接入」页的密钥框上，Chrome 还会不会弹「保存密码」。
 21. **S3 Vectors 方式的知识库只有代码，没上线**：它的文档管家用的规则请求说明和 PG 版是同一段，回复前多一句话的问题它也会有；测试台的客户端两种方式都放过这种回复（`POC_KB_AGENT_REPLY_LEADIN`）。
+22. **m7g 测试环境还没接正式域名**（2026-11-02 起）：栈 `andon-finance-m7g`，一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点管理（公司网络连不到它的弹性 IP 所在的 `184.192.0.0/12`），临时站点 `andon-finance-m7g.tinyboat.blog`、`jiuan-v0710-m7g.tinyboat.blog`。数据 2026-11-02 从线上 PoC 搬过来（`migrate-data.sh`，199 项逐表一致）。域名迁移还没定：迁之前用 `migrate-data.sh --skip-pg` 从旧机器再同步一次 MySQL 和状态目录（新机器上跑过的端到端测试会重置它的 `jiuan07` 库）。
+23. **Nexus 已经指到新机器的 PG**（2026-11-02 16:59，UTC+8）：数据库凭证密钥 `key-a015b93ad361`（名字还叫 `pgvector-10.0.1.38`）和连接器 `pgvector-andon`（`conn-f0c7233959d9`）的主机改成 `10.0.1.46`，审核 Agent 和 PG 知识库 Agent 都跟着走，旧测试台也在用新 PG。旧实例上的 PG 没删、不再有新写入；要切回去：`DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/kb.sh connector`（先 `--dry-run`）。
 
 已经解决的（2026-10-20）：
 - **工作流文档按应用现状更新**：Agent 的调用密钥在前端加载，`secrets.env` 只放应用的启动配置；端到端测试只用审核员本人在前端的连接和启用；`deploy.sh` 新建 `secrets.env` 时不再写调用密钥那一行。

@@ -24,13 +24,24 @@ audience: 运维、值班、应用开发、Agent 开发
 
 ### 1.2 看日志
 
-实例不开 22 端口，只走 SSM：
+线上 PoC（栈 `andon-finance-poc`）不开 22 端口，只走 SSM：
 
 ```bash
 aws ssm start-session --region us-east-1 --target i-01d753d48056fd423
 sudo journalctl -u andon-finance-poc -n 200 --no-pager      # 服务日志
 sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志
 ```
+
+经 SSH 管理的栈（如 m7g 测试环境 `andon-finance-m7g`）不用 SSM：22 端口只对环境配置里的 `SSH_ALLOWED_CIDR` 开，用 `SSH_KEY_FILE` 以 `ec2-user` 登录，主机公钥用部署时钉住的那份（`poc/infra/README.md`「经 SSH 管理」）：
+
+```bash
+ssh -i <SSH_KEY_FILE> -o UserKnownHostsFile=poc/infra/.state/<栈>-<实例>.known_hosts ec2-user@<栈输出 ElasticIp>
+# SSH_VIA=eice（m7g 测试环境是这样）：经 EC2 Instance Connect 端点，再加
+#   -o ProxyCommand='aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id <实例>'
+sudo journalctl -u andon-jiuan07 -n 200 --no-pager          # 九安 v0.7.10 测试台外壳的日志
+```
+
+直连时本机的公网地址变了就连不上：改环境配置里的 `SSH_ALLOWED_CIDR`，再跑一次 `deploy.sh`（更新栈）；经端点（`SSH_VIA=eice`）不看本机地址，要的是 AWS 凭证有 `ec2-instance-connect:OpenTunnel`。
 
 日志里只有错误码，没有口令、密钥和单据内容。主要几种：
 

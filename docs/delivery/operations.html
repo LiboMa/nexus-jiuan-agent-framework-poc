@@ -222,10 +222,24 @@ GB gp3 根卷约 1.3 美元 / 月，公网 IPv4 约 3.6 美元 /
 </table>
 </div>
 <h2 id="12-看日志">1.2 看日志</h2>
-<p>实例不开 22 端口，只走 SSM：</p>
+<p>线上 PoC（栈 <code>andon-finance-poc</code>）不开 22 端口，只走
+SSM：</p>
 <pre class="bash"><code>aws ssm start-session --region us-east-1 --target i-01d753d48056fd423
 sudo journalctl -u andon-finance-poc -n 200 --no-pager      # 服务日志
 sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志</code></pre>
+<p>经 SSH 管理的栈（如 m7g 测试环境 <code>andon-finance-m7g</code>）不用
+SSM：22 端口只对环境配置里的 <code>SSH_ALLOWED_CIDR</code> 开，用
+<code>SSH_KEY_FILE</code> 以 <code>ec2-user</code>
+登录，主机公钥用部署时钉住的那份（<code>poc/infra/README.md</code>「经
+SSH 管理」）：</p>
+<pre class="bash"><code>ssh -i &lt;SSH_KEY_FILE&gt; -o UserKnownHostsFile=poc/infra/.state/&lt;栈&gt;-&lt;实例&gt;.known_hosts ec2-user@&lt;栈输出 ElasticIp&gt;
+# SSH_VIA=eice（m7g 测试环境是这样）：经 EC2 Instance Connect 端点，再加
+#   -o ProxyCommand=&#39;aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id &lt;实例&gt;&#39;
+sudo journalctl -u andon-jiuan07 -n 200 --no-pager          # 九安 v0.7.10 测试台外壳的日志</code></pre>
+<p>直连时本机的公网地址变了就连不上：改环境配置里的
+<code>SSH_ALLOWED_CIDR</code>，再跑一次
+<code>deploy.sh</code>（更新栈）；经端点（<code>SSH_VIA=eice</code>）不看本机地址，要的是
+AWS 凭证有 <code>ec2-instance-connect:OpenTunnel</code>。</p>
 <p>日志里只有错误码，没有口令、密钥和单据内容。主要几种：</p>
 <div class="table-wrap">
 <table>

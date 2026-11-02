@@ -247,7 +247,17 @@ C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 <td>线上 PoC（栈 <code>andon-<wbr>finance-<wbr>poc</code>）</td>
 <td>演示、端到端测试；2026-10-19 起是测试台（t3.large，本机 MySQL
 8.0，九安的真实运行时）</td>
-<td>可用；只有这一套</td>
+<td>可用；正式域名还在这里</td>
+</tr>
+<tr>
+<td>m7g 测试环境（栈
+<code>andon-<wbr>finance-<wbr>m7g</code>，2026-11-02 起）</td>
+<td>一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经 SSH
+管理（<code>poc/<wbr>infra/<wbr>README.<wbr>md</code>「经 SSH
+管理」）；数据从线上 PoC
+搬来（<code>migrate-<wbr>data.<wbr>sh</code>）</td>
+<td>临时域名 <code>andon-<wbr>finance-<wbr>m7g</code> /
+<code>jiuan-<wbr>v0710-<wbr>m7g</code>（.tinyboat.blog）；域名迁移还没定</td>
 </tr>
 <tr>
 <td>预发（建议）</td>
@@ -257,7 +267,47 @@ C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 </tbody>
 </table>
 </div>
-<p>线上只有一套环境，所以：端到端测试会<strong>重置测试台</strong>（<code>bench-reset.sh</code>
+<p><strong>部署分三块</strong>，各有各的工具，以后各有各的人：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>块</th>
+<th>内容</th>
+<th>工具</th>
+<th>次序</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PG 与知识库后端</td>
+<td>PG + pgvector 容器、库内检索
+<code>kb_<wbr>search</code>、规则入库；PG 的地址和密码登记进
+Nexus（数据连接器、数据库凭证密钥）</td>
+<td><code>kb/<wbr>deploy.<wbr>sh</code>（测试台上由
+<code>poc/<wbr>infra/<wbr>kb.<wbr>sh</code> 驱动）；PG 主机经 SSM
+或部署人自己的 SSH 密钥（kb/GUIDE.md 第 4 节）</td>
+<td>先部署</td>
+</tr>
+<tr>
+<td>前端</td>
+<td>测试台外壳、两套九安站点、新前端 <code>poc/<wbr>web07</code>、九安的
+MySQL</td>
+<td><code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>；测试阶段和 PG
+放在同一台机器上，以后由专人部署、可以分批</td>
+<td>PG 之后</td>
+</tr>
+<tr>
+<td>Nexus 上的 Agent 与发布</td>
+<td>审核 Agent、PG 知识库 Agent 的工具、提示词、发布</td>
+<td><code>audit-<wbr>agent/<wbr></code>、<code>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（客户部署件在
+<code>customer-<wbr>deploy/<wbr></code>）、<code>skills/<wbr>nexus-<wbr>ai-<wbr>operator</code></td>
+<td>和 PG 一起或之后；换 PG 主机不用动它们</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>线上的测试台是一套共用的环境，所以：端到端测试会<strong>重置测试台</strong>（<code>bench-reset.sh</code>
 删掉并重建九安的库，单据回到 8
 张种子；审批记录、登录状态、运行记录清空；各账号的连接与启用在磁盘上，不受影响），跑之前通知正在用的人。</p>
 <h1 id="4-每类变更怎么做">4. 每类变更怎么做</h1>
@@ -403,6 +453,23 @@ node_modules）；三项测试台密钥只补不换，实例上已有的只认�
 <td>第 6.3 节</td>
 <td>第 6.3 节</td>
 <td>Agent 开发 + 项目负责人</td>
+</tr>
+<tr>
+<td>换机器（另建一个栈，搬数据）</td>
+<td>新环境的配置
+<code>poc/<wbr>infra/<wbr>env/<wbr>&lt;环境名&gt;.<wbr>env</code>；<code>poc/<wbr>infra/<wbr>migrate-<wbr>data.<wbr>sh</code></td>
+<td><code>infra.<wbr>test.<wbr>mjs</code>；新栈
+<code>deploy.<wbr>sh</code>
+的健康检查；<code>migrate-<wbr>data.<wbr>sh -<wbr>-<wbr>dry-<wbr>run</code>，实搬后它自己逐表核对；<code>kb.<wbr>sh verify</code>；<code>run07.<wbr>sh</code></td>
+<td><code>deploy.<wbr>sh</code>（新栈）→ <code>kb.<wbr>sh db</code> →
+<code>migrate-<wbr>data.<wbr>sh</code> →
+<code>kb.<wbr>sh connector</code>（把 Nexus 指到新 PG，先
+<code>-<wbr>-<wbr>dry-<wbr>run</code>）→ 端到端 → 域名迁移前
+<code>migrate-<wbr>data.<wbr>sh -<wbr>-<wbr>skip-<wbr>pg</code>
+再同步一次</td>
+<td>旧栈一直不动：<code>kb.<wbr>sh connector</code>
+用旧环境的配置再跑一次，Nexus 就指回旧 PG；域名没迁就不影响用户</td>
+<td>运维 + 项目负责人</td>
 </tr>
 <tr>
 <td>文档</td>

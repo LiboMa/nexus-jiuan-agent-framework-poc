@@ -94,7 +94,8 @@
 |---|---|---|
 | bash 4 及以上（macOS 自带的 3.2 会把紧跟中文的变量名读错：`brew install bash`，让它排在 PATH 前面） | 运行 `deploy.sh` | `bash --version` |
 | AWS CLI v2 | EC2 / SSM / CloudFormation / Bedrock | `aws --version` |
-| session-manager-plugin | `ingest` 阶段经 SSM 端口转发连数据库 | `session-manager-plugin --version` |
+| session-manager-plugin | `ingest` 阶段经 SSM 端口转发连数据库（经 SSH 管理 PG 主机时不用，换成 `ssh`） | `session-manager-plugin --version` |
+| ssh（OpenSSH 客户端） | `PG_HOST_TRANSPORT=ssh` 时登 PG 主机、端口转发 | `ssh -V` |
 | uv | 临时 Python 环境（boto3、psycopg、pyyaml），不污染系统 | `uv --version` |
 | python3 | 小段 JSON 处理、解析 docx（只用标准库） | `python3 --version` |
 | gzip、base64 | SSM 远程脚本打包 | 系统自带 |
@@ -116,7 +117,7 @@
 
 ### 2.4 PG 主机
 
-- **existing 模式**：SSM 在线（`PingStatus=Online`、Linux）；与 Nexus API Server、Sandbox 节点私网互通（同 VPC 最简单）；能出网拉镜像（或预先 `docker pull`）；有 Docker，或允许用 dnf/yum 安装（`PG_INSTALL_DOCKER=true`）。在 Amazon Linux 2023 上验证。主机上若还跑着别的业务，留意内存：容器默认限 `2g`。
+- **existing 模式**：SSM 在线（`PingStatus=Online`、Linux），或者经 SSH（`PG_HOST_TRANSPORT=ssh`，见 3.3：本机能 SSH 到、登录用户能免密 sudo）；与 Nexus API Server、Sandbox 节点私网互通（同 VPC 最简单）；能出网拉镜像（或预先 `docker pull`）；有 Docker，或允许用 dnf/yum 安装（`PG_INSTALL_DOCKER=true`）。在 Amazon Linux 2023 上验证。主机上若还跑着别的业务，留意内存：容器默认限 `2g`。
 - **create 模式**：Nexus VPC 里的一个**私有子网**，路由表有 `0.0.0.0/0 → NAT`（拉镜像、SSM）。新主机无公网 IP、无 SSH，只经 SSM 管理。
 - **库内语义检索**（两种模式都要）：PG 主机的实例角色有 `bedrock:InvokeModel`（只需 `EMBED_MODEL_ID` 这一个模型；`us.` 开头的推理配置文件另要它路由到的三个美国区域的基础模型，同 2.2）；IMDSv2 跳数 ≥ 2（`HttpPutResponseHopLimit`：PG 容器经 Docker 网桥多一跳取凭证；AL2023 AMI 默认是 2）；容器能连上 Debian 软件源（`db` 阶段在容器里 `apt-get install postgresql-plpython3-17 python3-boto3`）。create 模式的模板（`cfn/pgvector-host.yaml`）已包含前两项；existing 模式请自行确认，`verify` 的 `[search]` 行会显示 PG 报的错误（9.10）。
 
@@ -148,7 +149,14 @@
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PG_HOST_MODE` | `existing` | `existing` 装到已有 EC2；`create` 用 `cfn/pgvector-host.yaml` 新建。 |
-| `PG_HOST_INSTANCE_ID` | — | existing 必填，目标实例 ID。 |
+| `PG_HOST_INSTANCE_ID` | — | existing 必填，目标实例 ID（取私网 IP、VPC、安全组用；经 SSH 时也要）。 |
+| `PG_HOST_TRANSPORT` | `ssm` | 怎么登上 PG 主机：`ssm`（SSM Run Command、SSM 端口转发）或 `ssh`（只用于 existing 模式）。 |
+| `PG_SSH_HOST` | — | `ssh` 必填：本机能 SSH 到的主机地址（只能含字母、数字和 `. _ -`）。 |
+| `PG_SSH_KEY` | — | `ssh` 必填：本机私钥的绝对路径（权限 600）。用部署人自己的密钥，不经过本工具的任何文件。 |
+| `PG_SSH_USER` | `ec2-user` | 登录用户，要能免密 `sudo`（远端脚本以 root 跑）。 |
+| `PG_SSH_PORT` | `22` | SSH 端口。 |
+| `PG_SSH_PROXY_COMMAND` | 空 | 本机连不到 `PG_SSH_HOST` 时 ssh 的 `ProxyCommand`（一行）：跳板机，或 EC2 Instance Connect 端点 `aws ec2-instance-connect open-tunnel --region <区域> --instance-id <实例>`（还是 SSH + 自己的密钥，不用 SSM）。空 = 直连。 |
+| `PG_SSH_KNOWN_HOSTS` | 空 | 核对过的 known_hosts 文件：给了就严格核对主机公钥；空 = 第一次连时信任、记进 `.state/<DEPLOY_NAME>.known_hosts`，之后照它核对（换了主机要删掉这个文件）。 |
 | `PG_CREATE_SUBNET_ID` | — | create 必填，Nexus VPC 私有子网（需 NAT）。 |
 | `PG_CREATE_INSTANCE_TYPE` | `t3.medium` | create 模式实例规格。 |
 | `PG_CREATE_VOLUME_GB` | `30` | create 模式根卷大小（gp3，加密）。 |
@@ -229,6 +237,8 @@ vi deploy.env                     # 至少填：NEXUS_URL、管理员密码来�
 刚改完 `egress` 时，Sandbox 节点要约 5 分钟才刷新 nftables；`verify` 在这期间可能报「还缺 …」，等几分钟重跑即可。
 
 只跑部分阶段：`./deploy.sh db,network`；查看状态：`./deploy.sh status`；轮换数据库密码：`./deploy.sh rotate-db-password`（10.3）。
+
+**用自己的 SSH 密钥部署（PG 先于前端）。** 部署分三块：PG 与知识库后端（本工具）、前端（测试台或九安自己的前端，另有人部署）、Nexus 上的 Agent 与发布。客户一般先部署 PG：自己起一台 EC2（带自己的密钥对，安全组对部署人的地址开 22、对 Nexus 的私网段开 `PG_PORT`），然后在 `deploy.env` 里写 `PG_HOST_MODE=existing`、`PG_HOST_INSTANCE_ID`、`PG_HOST_TRANSPORT=ssh`、`PG_SSH_HOST`、`PG_SSH_KEY`（最好再给核对过的 `PG_SSH_KNOWN_HOSTS`），照上面的顺序跑（本机连不到主机地址时再给 `PG_SSH_PROXY_COMMAND`：跳板机，或 EC2 Instance Connect 端点）。`db` 阶段在主机上装 Docker、起容器；`connector` 阶段把这台主机的私网地址和密码登记进 Nexus（数据连接器和数据库凭证密钥），审核 Agent 和 PG 知识库 Agent 都经它连库。前端以后再分批接上来，不用动这里。create 模式建的专用主机没有公网地址，只经 SSM。
 
 ---
 
@@ -745,6 +755,7 @@ uv run --no-project --with pyyaml python -I lib/nexus_api.py agent-restore --age
 | 2026-10-30 | 九安 v0.7.10 测试台的知识库页改经 PG 知识库 Agent（`kb.rules/v1`，7.5） | 测试台不再直连 PG |
 | 2026-10-31 | 有效规则换成审批风险判断卡 `risk-cards`（经 PG 知识库 Agent 入库）；`finance-approval-v4` 下线 | 449 行，全是 `clause`；`finance-approval-v4` 可恢复，什么都没删 |
 | 2026-11-01 | 九安 v0.7.10 端到端测试里知识库的 4 条 | 全部通过：同一份 .docx 再传是「没有变化」（449 条）；检索按卡片编号核对，要的卡在前 3 名里 |
+| 2026-11-02 | PG 换到 m7g 测试环境那台（栈 `andon-finance-m7g`，m7g.xlarge / arm64，经 SSH + EC2 Instance Connect 端点）：`kb.sh db` 起容器（PG 17.11、vector 0.8.7、PL/Python），`poc/infra/migrate-data.sh` 整库搬来，`kb.sh connector` 把密钥和连接器改指 `10.0.1.46` | 搬完 199 项逐表一致（规则表整表 md5 也对上）；连接测试（API Server → 10.0.1.46:5432）通过；`verify` 只有已知的 `C03-1.2` 一条不过（审批矩阵下线期间） |
 
 ---
 

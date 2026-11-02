@@ -25,6 +25,33 @@ audit-nexus/poc/infra/deploy.sh --code-only # 只改了代码：跑单元测试�
 - 三项测试台密钥 `BENCH_MYSQL_ROOT_PASSWORD`、`BENCH_MYSQL_APP_PASSWORD`、`BENCH_DATA_KEY` 缺了才补，已有的不改；`BENCH_DATA_KEY` 换了库就打不开。
 - `backup.sh`：升级前备份；`upgrade-instance.sh <类型>`：换实例类型，只允许停机再开；`bench-test.sh`：在实例上跑要 MySQL 的单元测试。
 
+## 经 SSH 管理、Graviton（m7g）：另建一个栈
+
+环境配置（`DEPLOY_ENV=poc/infra/env/<环境名>.env`）写了下面几项，这个栈的实例就经 SSH 管理，不再用 SSM：
+
+| 键 | 作用 |
+|---|---|
+| `SSH_KEY_NAME` | 实例带上的 EC2 密钥对（栈参数 `KeyName`）。用部署人自己的；栈建好后改它会替换实例 |
+| `SSH_KEY_FILE` | 本机私钥的绝对路径（权限 600 或 400），只给本机脚本用 |
+| `SSH_ALLOWED_CIDR` | 允许 SSH 的来源（一般是自己的公网地址 /32）；安全组上单独一条 22 端口的规则（`SshIngress`）。地址变了改这里再跑 `deploy.sh` |
+| `SSH_VIA=eice` | 不直连弹性 IP，经栈在 `SUBNET_ID` 里建的 EC2 Instance Connect 端点（栈参数 `SshVia`；一个 VPC 只能有一个）：ssh 的 ProxyCommand 是 `aws ec2-instance-connect open-tunnel --instance-id <实例>`，通道走 AWS API 的 HTTPS，还是 SSH + 自己的密钥，不用 SSM；实例的 22 端口对端点的安全组开。本机的网络连不到实例的地址段时用（2026-11-02 m7g 环境的弹性 IP 在 `184.192.0.0/12`，公司网络到不了） |
+| `SSM_MANAGED=false` | 实例角色不带 `AmazonSSMManagedInstanceCore` |
+| `INSTANCE_TYPE`、`ROOT_VOLUME_SIZE` | 可以是 `m7g.large` / `m7g.xlarge`（arm64）；建栈时按类型的架构取 Amazon Linux 2023 的 AMI。栈建好后不能在 x86 和 arm64 之间换，要换就另建一个栈 |
+
+- `deploy.sh`、`kb.sh`、端到端的 `run07.sh` 都改经 SSH（`ec2-user` + `sudo`），公共部分在 `lib/remote.sh`。主机公钥第一次从实例的控制台输出里取（cloud-init 启动时打印的），钉进 `poc/infra/.state/<栈>-<实例>.known_hosts`（不进仓库），之后严格核对；控制台输出里一直没有，就停下，要首次信任再连时运行时加 `SSH_TRUST_FIRST_USE=1`。
+- 这几项都不写，就和原来一样经 SSM；模板里新加的参数默认值等于原来的样子，现有的栈更新时实例、角色、安全组都不变（`infra.test.mjs` 核对）。
+- 2026-11-02 起的测试环境 `andon-finance-m7g`：一台 m7g.xlarge 装前端、MySQL、知识库的 PG，临时站点 `andon-finance-m7g.tinyboat.blog`、`jiuan-v0710-m7g.tinyboat.blog`。
+
+### 换机器时搬数据：`migrate-data.sh`
+
+```bash
+FROM_ENV=poc/infra/env/<旧环境>.env DEPLOY_ENV=poc/infra/env/<新环境>.env bash poc/infra/migrate-data.sh --dry-run   # 先看两边、要换掉什么
+FROM_ENV=… DEPLOY_ENV=… bash poc/infra/migrate-data.sh             # 实搬：MySQL 三个库、PG 库 nexus、两个状态目录
+FROM_ENV=… DEPLOY_ENV=… bash poc/infra/migrate-data.sh --skip-pg   # Nexus 已经切到新 PG 之后再同步：只搬 MySQL 和状态目录
+```
+
+旧环境经 SSM 只读导出（服务不停）；整包在旧实例上用一次性的 AES-256 密钥加密，密钥再用本机这次运行的一次性 RSA 公钥加密后回给本机，SSM 的命令历史里只有密文；整包经 15 分钟有效的预签名 URL 放进新环境的构件桶 `migration/`，搬完就删。新环境要先 `deploy.sh`（MySQL 容器在），搬 PG 时还要先 `kb.sh db`（PG 容器在、装了 PL/Python）；两边的 `secrets.env` 要是同一份，否则停下。搬完逐表数行数、比规则表整表的 md5，对不上就报错。
+
 改配置，比如换审批建议所用的发布 `AdvisoryPublicationId`，或者改 `NexusOrigin`、`AppPort`：
 1. 用 `aws cloudformation deploy --parameter-overrides <参数>=<新值> …` 更新栈参数（模板路径与其余参数同 `deploy.sh`）；
 2. 再运行一次 `deploy.sh --code-only`。
@@ -87,8 +114,8 @@ Nexus 本身允许单个 20 MB、合计 40 MB。但 nxs-beine1013（线上 Nexus
 
 - 健康检查：`curl -fsS https://andon-finance.tinyboat.blog/api/health`。
 - 实例日志：
-  1. `aws ssm start-session --region us-east-1 --target <InstanceId>`；
-  2. 在会话里执行 `sudo journalctl -u andon-finance-poc -n 200`。
+  1. 经 SSM 的栈：`aws ssm start-session --region us-east-1 --target <InstanceId>`；经 SSH 的栈：`ssh -i <SSH_KEY_FILE> -o UserKnownHostsFile=poc/infra/.state/<栈>-<实例>.known_hosts ec2-user@<ElasticIp>`（`SSH_VIA=eice` 时再加 `-o ProxyCommand='aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id <实例>'`）；
+  2. 在会话里执行 `sudo journalctl -u andon-finance-poc -n 200`（九安 v0.7.10 是 `-u andon-jiuan07`）。
 - 初始化日志：在上面的会话里执行 `sudo tail -n 200 /var/log/cloud-init-output.log`。
 
 ## 清理
