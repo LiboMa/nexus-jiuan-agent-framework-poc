@@ -1,6 +1,6 @@
 /**
  * 经 A2A 调用「知识库文档管家（S3 Vectors 版）」的最小客户端（Node 18+，无依赖）。
- * 协议与 audit-nexus 的 poc/app07/lib/a2a-client.mjs 相同（A2A 0.3 JSON-RPC message/stream + SSE，已在 Nexus 实测）：
+ * 协议与 audit-nexus 的 poc/app/lib/a2a-client.mjs 相同（A2A 0.3 JSON-RPC message/stream + SSE，已在 Nexus 实测）：
  * 一行说明文字 + 可选的文件 Part（base64）。回答取名为 answer 的产出物的全文。
  *
  * 环境变量：NEXUS_A2A_URL = https://<env>.<domain>/a2a/<publish_id>

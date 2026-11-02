@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,15 +14,15 @@ const execFileAsync = promisify(execFile);
 const run = (file, args, options = {}) => execFileAsync(file, args, { env: childEnv(), ...options });
 const infra = name => fileURLToPath(new URL(`../${name}`, import.meta.url));
 const repo = name => fileURLToPath(new URL(`../../../${name}`, import.meta.url));
-const e2e07 = name => fileURLToPath(new URL(`../../app07/test/e2e/${name}`, import.meta.url));
+const e2eFile = name => fileURLToPath(new URL(`../../app/test/e2e/${name}`, import.meta.url));
 const bench = name => infra(`bench/${name}`);
 const installBlock = deploy => deploy.slice(deploy.indexOf('# >>> install'), deploy.indexOf('# <<< install'));
 
 test('模板里的 Fn::Sub 只引用模板自己的参数、资源与伪参数（用户数据里没有 Fn::Sub）', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   const tokens = [...new Set([...template.matchAll(/\$\{([^}]+)\}/g)].map(match => match[1]))].sort();
-  // AWS::AccountId：KbBedrockPolicy 里 Cohere v4 推理配置文件的 ARN 带账号；Jiuan07DomainName：输出 Jiuan07Url
-  assert.deepEqual(tokens, ['AWS::AccountId', 'AWS::Partition', 'AWS::Region', 'ArtifactBucket.Arn', 'Jiuan07DomainName']);
+  // AWS::AccountId：KbBedrockPolicy 里 Cohere v4 推理配置文件的 ARN 带账号；DomainName：输出 SiteUrl
+  assert.deepEqual(tokens, ['AWS::AccountId', 'AWS::Partition', 'AWS::Region', 'ArtifactBucket.Arn', 'DomainName']);
 });
 
 test('模板的关键约束：只放 CloudFront 回源、22 端口只在经 SSH 管理时开、默认 m7g.xlarge、TLS 1.2、私有构件桶、关缓存并转发观众请求头', async () => {
@@ -47,16 +47,16 @@ test('模板的关键约束：只放 CloudFront 回源、22 端口只在经 SSH 
   assert.match(template, /OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3/);
 });
 
-test('模板里只有九安 v0.7.10 测试台：一个 CloudFront 分发（站点 Jiuan07DomainName，回源实例的 AppPort）；v0.5.3 PoC 的站点、参数、服务和 andon 用户都没了', async () => {
+test('模板里只有九安 v0.7.10 测试台：一个 CloudFront 分发（站点 DomainName，回源实例的 AppPort）；v0.5.3 PoC 的站点、参数、服务和 andon 用户都没了', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   assert.equal(template.match(/Type: AWS::CloudFront::Distribution/g)?.length, 1);
-  const distribution = template.slice(template.indexOf('\n  Jiuan07Distribution:\n'), template.indexOf('\n  Jiuan07RecordA:\n'));
-  assert.match(distribution, /Aliases: \[!Ref Jiuan07DomainName\]/);
+  const distribution = template.slice(template.indexOf('\n  Distribution:\n'), template.indexOf('\n  SiteRecordA:\n'));
+  assert.match(distribution, /Aliases: \[!Ref DomainName\]/);
   assert.match(distribution, /DomainName: !Ref OriginDomainName/);
   assert.match(distribution, /HTTPPort: !Ref AppPort/);
-  for (const name of ['Jiuan07RecordA', 'Jiuan07RecordAAAA']) assert.match(template, new RegExp(`\\n  ${name}:\\n[\\s\\S]*?Name: !Ref Jiuan07DomainName[\\s\\S]*?Jiuan07Distribution\\.DomainName`));
-  assert.match(template, /\n  Jiuan07Url:\n    Value: !Sub 'https:\/\/\$\{Jiuan07DomainName\}'/);
-  for (const gone of [/\n  DomainName:\n/, /\n  AdvisoryPublicationId:\n/, /\n  Distribution:\n/, /\n  SiteRecordA/, /\n  SiteUrl:\n/, /andon-finance-poc\.service/, /useradd/, /POC_ORIGIN|POC_BUCKET/]) {
+  for (const name of ['SiteRecordA', 'SiteRecordAAAA']) assert.match(template, new RegExp(`\\n  ${name}:\\n[\\s\\S]*?Name: !Ref DomainName[\\s\\S]*?Distribution\\.DomainName`));
+  assert.match(template, /\n  SiteUrl:\n    Value: !Sub 'https:\/\/\$\{DomainName\}'/);
+  for (const gone of [/\n  AdvisoryPublicationId:\n/, /andon-finance-poc\.service/, /useradd/, /POC_BUCKET|POC_PUBLIC_DIR|NEXUS_ADVISORY_PUBLICATION/, /Jiuan07|jiuan07/]) {
     assert.doesNotMatch(template, gone);
   }
   // 用户数据只装 Node 24、Python、tar，建两个目录；构件由 deploy.sh 装（不在开机时取）
@@ -85,10 +85,10 @@ test('密钥只来自 infra/secrets.env：部署时上传，实例上先装成�
   const at = text => install.indexOf(text);
   assert.ok(at('aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new') > 0);
   assert.ok(at('chown root:root /etc/andon-finance/secrets.env.new; chmod 0600 /etc/andon-finance/secrets.env.new') > at('aws s3 cp s3://$BUCKET/secrets/secrets.env'));
-  const configure = at('bash "\\$work/release/bench/bench07-configure.sh"');
+  const configure = at('bash "\\$work/release/bench/bench-configure.sh"');
   assert.ok(configure > 0 && at('mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env') < configure, '先装密钥再配置');
-  assert.ok(configure < at('systemctl restart andon-jiuan07.service'), '先配置再重启');
-  const e2e = await readFile(e2e07('run07.sh'), 'utf8');
+  assert.ok(configure < at('systemctl restart andon-jiuan.service'), '先配置再重启');
+  const e2e = await readFile(e2eFile('run.sh'), 'utf8');
   for (const text of [deploy, e2e]) assert.doesNotMatch(text, /put-parameter|--with-decryption|\/andon-finance\/poc\/(accounts|nexus)/);
   assert.match(e2e, /secrets\.env/);
 });
@@ -100,8 +100,8 @@ test('在 macOS 上打包时不带 AppleDouble 与扩展属性（否则实例上
 
 test('shell 脚本里变量名后面不能紧跟中文等非 ASCII 字符（bash 会把它们算进变量名，set -u 下直接报错）；要写成 ${VAR}', async () => {
   for (const file of [infra('deploy.sh'), infra('destroy.sh'), infra('backup.sh'), infra('upgrade-instance.sh'), infra('kb.sh'), infra('migrate-data.sh'),
-    infra('lib/remote.sh'), infra('lib/deploy-env.sh'), bench('mysql-install.sh'), bench('bench07-configure.sh'), bench('bench07-reset.sh'),
-    fileURLToPath(new URL('../../bench/build-jiuan07.sh', import.meta.url)), e2e07('run07.sh'),
+    infra('lib/remote.sh'), infra('lib/deploy-env.sh'), bench('mysql-install.sh'), bench('bench-configure.sh'), bench('bench-reset.sh'),
+    fileURLToPath(new URL('../../bench/build-jiuan.sh', import.meta.url)), e2eFile('run.sh'),
     repo('docs/delivery/make-package.sh'), repo('docs/build-html.sh')]) {
     const offenders = (await readFile(file, 'utf8')).split('\n').map((line, index) => [index + 1, line])
       .filter(([, line]) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]/.test(line));
@@ -140,7 +140,7 @@ test('deploy.sh 跑测试只经 node_tests：DEPLOY_ENV 和 load_deploy_env expo
   assert.ok(fn, 'deploy.sh 里应有一行 node_tests() { … }');
   assert.deepEqual(deploy.split('\n').filter(line => !/^\s*#/.test(line) && line.includes('node --test')), [fn], 'node --test 只在 node_tests 里跑');
   assert.match(deploy, /^node_tests "\$HERE" "test\/\*\*\/\*\.test\.mjs"$/m);
-  assert.match(deploy, /^node_tests "\$POC_DIR\/app07" "test\/unit\/\*\*\/\*\.test\.mjs"$/m);
+  assert.match(deploy, /^node_tests "\$POC_DIR\/app" "test\/unit\/\*\*\/\*\.test\.mjs"$/m);
   const dir = await mkdtemp(path.join(tmpdir(), 'deploy-unit-tests-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const script = ['set -euo pipefail', `source ${JSON.stringify(infra('lib/deploy-env.sh'))}`, 'load_deploy_env 2>/dev/null', fn,
@@ -164,7 +164,7 @@ test('Agent 的密钥不经过 secrets.env：deploy.sh 新建的 secrets.env 里
   assert.doesNotMatch(deploy, /调用密钥留空|填好后再运行/);
 });
 
-test('测试台的三项密钥只补不换：已有的 JIUAN07_DATA_KEY 保持原样，缺的补上且格式正确；不再生成 v0.5.3 的几项', async t => {
+test('测试台的三项密钥只补不换：已有的 JIUAN_DATA_KEY 保持原样，缺的补上且格式正确；不再生成 v0.5.3 的几项', async t => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   const block = deploy.slice(deploy.indexOf('# >>> bench-secrets'), deploy.indexOf('# <<< bench-secrets'));
   assert.ok(block.length > 40, 'deploy.sh 里要有 bench-secrets 段');
@@ -173,42 +173,51 @@ test('测试台的三项密钥只补不换：已有的 JIUAN07_DATA_KEY 保持�
   t.after(() => rm(dir, { recursive: true, force: true }));
   const secrets = path.join(dir, 'secrets.env');
   const existing = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-  await writeFile(secrets, `REVIEWER_PASSWORD=x\nJIUAN07_DATA_KEY=${existing}\n`);
+  await writeFile(secrets, `REVIEWER_PASSWORD=x\nJIUAN_DATA_KEY=${existing}\n`);
   for (let round = 0; round < 2; round += 1) await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
   const text = await readFile(secrets, 'utf8');
   const value = name => [...text.matchAll(new RegExp(`^${name}=(.*)$`, 'gm'))].map(match => match[1]);
-  assert.deepEqual(value('JIUAN07_DATA_KEY'), [existing]);
-  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN07_MYSQL_APP_PASSWORD']) {
+  assert.deepEqual(value('JIUAN_DATA_KEY'), [existing]);
+  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD']) {
     assert.equal(value(name).length, 1, name);
     assert.match(value(name)[0], /^[0-9a-f]{32}$/, name);
   }
   await writeFile(secrets, 'REVIEWER_PASSWORD=x\n');
   await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
-  assert.match((await readFile(secrets, 'utf8')).match(/^JIUAN07_DATA_KEY=(.*)$/m)[1], /^[A-Za-z0-9+/]{43}=$/);
+  assert.match((await readFile(secrets, 'utf8')).match(/^JIUAN_DATA_KEY=(.*)$/m)[1], /^[A-Za-z0-9+/]{43}=$/);
+  // 2026-11-02 之前的文件里叫 JIUAN07_…：原地改名、值不变，不另生成（换了数据密钥九安的库就打不开）
+  await writeFile(secrets, `REVIEWER_PASSWORD=x\nJIUAN07_MYSQL_APP_PASSWORD=0123456789abcdef0123456789abcdef\nJIUAN07_DATA_KEY=${existing}\n`);
+  const { stdout } = await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
+  const migrated = await readFile(secrets, 'utf8');
+  assert.deepEqual([...migrated.matchAll(/^JIUAN_DATA_KEY=(.*)$/gm)].map(match => match[1]), [existing]);
+  assert.deepEqual([...migrated.matchAll(/^JIUAN_MYSQL_APP_PASSWORD=(.*)$/gm)].map(match => match[1]), ['0123456789abcdef0123456789abcdef']);
+  assert.doesNotMatch(migrated, /^JIUAN07_/m);
+  assert.ok(!stdout.includes(existing), '不打印密钥的值');
+  assert.equal((await stat(secrets)).mode & 0o777, 0o600);
 });
 
 test('构件只有九安 v0.7.10 测试台：外壳（不带测试）、构建出来的九安副本（带 node_modules）、新前端的 dist、测试台脚本、nexus-ai-operator', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
-  assert.match(deploy, /^"\$POC_DIR\/bench\/build-jiuan07\.sh"$/m);
+  assert.match(deploy, /^"\$POC_DIR\/bench\/build-jiuan\.sh"$/m);
   const copyLine = target => deploy.split('\n').find(line => line.includes(`"$STAGE/release/${target}"`));
-  assert.match(copyLine('jiuan07/'), /\.build\/jiuan07\//);
-  assert.doesNotMatch(copyLine('jiuan07/'), /--exclude node_modules/);
-  assert.match(copyLine('app07/'), /--exclude test --exclude scripts --exclude node_modules/);
-  assert.match(copyLine('web07/dist/'), /"\$POC_DIR\/web07\/dist\/"/);
+  assert.match(copyLine('jiuan/'), /\.build\/jiuan\//);
+  assert.doesNotMatch(copyLine('jiuan/'), /--exclude node_modules/);
+  assert.match(copyLine('app/'), /--exclude test --exclude scripts --exclude node_modules/);
+  assert.match(copyLine('web/dist/'), /"\$POC_DIR\/web\/dist\/"/);
   assert.match(deploy, /"\$HERE\/bench\/" "\$STAGE\/release\/bench\/"/);
   assert.match(deploy, /cp "\$OPERATOR_SCRIPT" "\$STAGE\/release\/operator\/scripts\/nexus\.py"/);
-  for (const gone of [/release\/app\//, /release\/jiuan\//, /build-jiuan\.sh/, /build-public/, /APP_DIR/, /JIUAN_CODE_DIR/, /POC_STORE/, /bench-configure\.sh/, /api\/health/]) {
+  for (const gone of [/build-public/, /APP_DIR/, /JIUAN_CODE_DIR/, /POC_STORE/, /api\/health/, /app07|web07|jiuan07/]) {
     assert.doesNotMatch(deploy, gone);
   }
 });
 
-test('实例上：解开新构件 → 新构件里的 bench07-configure.sh → 换上新构件（上一版留在 previous）→ 重启 andon-jiuan07；失败就停、不做健康检查', async () => {
+test('实例上：解开新构件 → 新构件里的 bench-configure.sh → 换上新构件（上一版留在 previous）→ 重启 andon-jiuan；失败就停、不做健康检查', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   const install = installBlock(deploy);
   const order = ['set -euo pipefail', 'aws s3 cp s3://$BUCKET/releases/current.tgz', 'tar -xzf "\\$work/release.tgz" -C "\\$work/release" --no-same-owner',
-    'bash "\\$work/release/bench/bench07-configure.sh" $J07_DOMAIN $(param NexusOrigin)', 'rm -rf /opt/andon-finance/previous',
+    'bash "\\$work/release/bench/bench-configure.sh" $SITE_DOMAIN $(param NexusOrigin)', 'rm -rf /opt/andon-finance/previous',
     'mv /opt/andon-finance/current /opt/andon-finance/previous', 'mv "\\$work/release" /opt/andon-finance/current',
-    'systemctl restart andon-jiuan07.service', 'systemctl is-active andon-jiuan07.service'];
+    'systemctl restart andon-jiuan.service', 'systemctl is-active andon-jiuan.service'];
   let last = -1;
   for (const step of order) {
     const at = install.indexOf(step);
@@ -218,13 +227,13 @@ test('实例上：解开新构件 → 新构件里的 bench07-configure.sh → �
   assert.doesNotMatch(install, /andon-finance-poc/);
   assert.match(deploy, /^run_root "\$INSTANCE" "\$INSTALL" 900 \|\| \{ echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; \}$/m);
   // 只查一个站点：九安 v0.7.10（新前端）的 /poc/healthz
-  assert.match(deploy, /^SITE="\$\(output Jiuan07Url\)"$/m);
+  assert.match(deploy, /^SITE="\$\(output SiteUrl\)"$/m);
   assert.match(deploy, /healthy "\$SITE\/poc\/healthz"/);
 });
 
 // ---------- 测试台脚本（poc/infra/bench）
 test('测试台脚本语法正确，里面没有写死的密码', async () => {
-  for (const name of ['mysql-install.sh', 'bench07-configure.sh', 'bench07-reset.sh']) {
+  for (const name of ['mysql-install.sh', 'bench-configure.sh', 'bench-reset.sh']) {
     await run('bash', ['-n', bench(name)]);
     const text = await readFile(bench(name), 'utf8');
     assert.doesNotMatch(text, /PASSWORD=(?!\$|")[^\s"]+/, `${name} 不能有密码字面量`);
@@ -232,18 +241,23 @@ test('测试台脚本语法正确，里面没有写死的密码', async () => {
   }
 });
 
-test('MySQL 固定用 mysql:8.0，只听本机，参数和九安自己的测试编排一致；只建 root（九安 v0.7.10 的库和账号由 bench07-configure.sh 建），root 密码只认原值', async () => {
+test('MySQL 固定用 mysql:8.0，只听本机，参数和九安自己的测试编排一致；只建 root（九安 v0.7.10 的库和账号由 bench-configure.sh 建），root 密码只认原值', async () => {
   const script = await readFile(bench('mysql-install.sh'), 'utf8');
   for (const expected of ['mysql:8.0', '127.0.0.1:3306:3306', '--skip-log-bin', '--character-set-server=utf8mb4', '--collation-server=utf8mb4_unicode_ci', 'TZ=Asia/Shanghai',
     '/var/lib/jiuan-mysql:/var/lib/mysql', 'MYSQL_ROOT_PASSWORD_FILE=/run/bench-secrets/mysql_root_password', '"$DIR":/run/bench-secrets:ro']) {
     assert.ok(script.includes(expected), `mysql-install.sh 应包含 ${expected}`);
   }
-  for (const gone of ['MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_PASSWORD_FILE', 'jiuan_analysis', 'jiuan_app', 'root:andon', '-g andon']) assert.ok(!script.includes(gone), `不该有 ${gone}`);
+  for (const gone of ['-e MYSQL_DATABASE', '-e MYSQL_USER', '-e MYSQL_PASSWORD_FILE', 'jiuan_analysis', 'root:andon', '-g andon']) assert.ok(!script.includes(gone), `不该有 ${gone}`);
   assert.doesNotMatch(script, /0\.0\.0\.0/);
   assert.match(script, /mysqladmin ping/);
   assert.match(script, /拒绝替换/);
   assert.match(script, /chmod 0600 "\$DIR\/mysql_root_password\.new"/);
-  const configure = await readFile(bench('bench07-configure.sh'), 'utf8');
+  // v0.5.3 时建的容器（带 MYSQL_PASSWORD_FILE，那个文件已经没了）：只换容器、数据目录不动，再按现在的参数建
+  const replace = script.indexOf("grep -q '^MYSQL_PASSWORD_FILE='");
+  assert.ok(replace > 0 && replace < script.indexOf('docker run -d --name jiuan-mysql'), '先换掉旧容器再建');
+  assert.match(script, /docker rm -f jiuan-mysql >\/dev\/null\n  echo "BENCH_MYSQL_CONTAINER_REPLACED"/);
+  assert.doesNotMatch(script, /rm -rf \/var\/lib\/jiuan-mysql/);
+  const configure = await readFile(bench('bench-configure.sh'), 'utf8');
   assert.ok(configure.indexOf('bash "$HERE/mysql-install.sh"') > 0 && configure.indexOf('bash "$HERE/mysql-install.sh"') < configure.indexOf('CREATE DATABASE IF NOT EXISTS'), '先装好 MySQL 再建库');
 });
 
@@ -265,7 +279,7 @@ test('换型脚本只做「停机再开」：变更集里实例要被替换就�
   assert.match(script, /\[\[ "\$IMAGE_ARCH" == "\$TYPE_ARCH" \]\] \|\| \{/);
 });
 
-test('备份脚本：只做根卷快照（MySQL、PG 和 /var/lib/jiuan07 都在根卷上），不登实例', async () => {
+test('备份脚本：只做根卷快照（MySQL、PG 和 /var/lib/jiuan 都在根卷上），不登实例', async () => {
   const script = await readFile(infra('backup.sh'), 'utf8');
   assert.match(script, /create-snapshot/);
   assert.match(script, /snapshot-completed/);
@@ -284,7 +298,7 @@ test('换型脚本：InstanceType 变化在 CloudFormation 里永远是 Conditio
 // 一个环境一份配置文件（poc/infra/env/<环境名>.env，poc/infra/lib/deploy-env.sh 读）：不给 DEPLOY_ENV 就是现有环境
 test('各脚本先读环境配置（DEPLOY_ENV）再定栈名和区域：不给就是 andon-finance-poc、us-east-1，栈名不再写死', async () => {
   const scripts = { 'deploy.sh': infra('deploy.sh'), 'destroy.sh': infra('destroy.sh'), 'backup.sh': infra('backup.sh'), 'upgrade-instance.sh': infra('upgrade-instance.sh'),
-    'kb.sh': infra('kb.sh'), 'run07.sh': e2e07('run07.sh'), 'migrate-data.sh': infra('migrate-data.sh') };
+    'kb.sh': infra('kb.sh'), 'run.sh': e2eFile('run.sh'), 'migrate-data.sh': infra('migrate-data.sh') };
   for (const [name, file] of Object.entries(scripts)) {
     const text = await readFile(file, 'utf8');
     assert.match(text, /source "[^"\n]*\/lib\/deploy-env\.sh"\nload_deploy_env\n/, `${name} 先 source deploy-env.sh 再 load_deploy_env`);
@@ -302,30 +316,30 @@ test('deploy.sh：配置文件里写了值的栈参数都传给 CloudFormation�
   assert.match(deploy, /\[\[ -z "\$\{DEPLOY_ENV:-\}" && -n "\$\{KB_ALLOWED_CIDR:-\}" \]\] && overrides\+=\("KbAllowedCidr=\$KB_ALLOWED_CIDR"\)/);
 });
 
-test('九安 v0.7.10 的端到端测试不写死区域和 Nexus 地址：run07.sh 按配置 / 栈导出 E2E07_REGION、E2E07_NEXUS_HOST', async () => {
-  const spec = await readFile(e2e07('jiuan07.e2e.mjs'), 'utf8');
+test('九安 v0.7.10 的端到端测试不写死区域和 Nexus 地址：run.sh 按配置 / 栈导出 E2E_REGION、E2E_NEXUS_HOST', async () => {
+  const spec = await readFile(e2eFile('api.e2e.mjs'), 'utf8');
   assert.doesNotMatch(spec, /'--region', 'us-east-1'/);
   assert.doesNotMatch(spec, /nxs-beine1013/);
-  assert.match(spec, /process\.env\.E2E07_REGION/);
-  assert.match(spec, /process\.env\.E2E07_NEXUS_HOST/);
-  const runner = await readFile(e2e07('run07.sh'), 'utf8');
-  assert.match(runner, /E2E07_REGION="\$REGION"/);
-  assert.match(runner, /E2E07_NEXUS_HOST="\$\(output_param NexusOrigin \| sed -E 's#\^https\?:\/\/##; s#\[\/:\]\.\*\$##'\)"/);
+  assert.match(spec, /process\.env\.E2E_REGION/);
+  assert.match(spec, /process\.env\.E2E_NEXUS_HOST/);
+  const runner = await readFile(e2eFile('run.sh'), 'utf8');
+  assert.match(runner, /E2E_REGION="\$REGION"/);
+  assert.match(runner, /E2E_NEXUS_HOST="\$\(output_param NexusOrigin \| sed -E 's#\^https\?:\/\/##; s#\[\/:\]\.\*\$##'\)"/);
 });
 
-test('九安 v0.7.10 的端到端测试按知识库方式走：run07.sh 从 DEPLOY_ENV 导出方式（缺省 pg）和这种方式的知识库 Agent 发布，s3vectors 另给桶和规则索引；测试不再调已删掉的直连 PG 接口，自定义规则的日志按带空格的 POC_CUSTOM_RULES 找', async () => {
-  const runner = await readFile(e2e07('run07.sh'), 'utf8');
-  assert.match(runner, /E2E07_KB_MODE="\$\{KB_MODE:-pg\}"/);
-  assert.match(runner, /if \[\[ "\$E2E07_KB_MODE" == s3vectors \]\]; then\n  E2E07_KB_PUBLICATION_ID="\$\{KB_S3V_PUBLICATION_ID:-\}"\n  E2E07_KB_S3V_BUCKET="\$\{KB_S3V_BUCKET:-\}"\n  E2E07_KB_S3V_RULES_INDEX="\$\{KB_S3V_RULES_INDEX:-\}"\n  export E2E07_KB_S3V_BUCKET E2E07_KB_S3V_RULES_INDEX\nelse\n  E2E07_KB_PUBLICATION_ID="\$\{KB_PG_PUBLICATION_ID:-\}"\nfi\nexport E2E07_KB_MODE E2E07_KB_PUBLICATION_ID\n/);
-  assert.ok(runner.indexOf('export E2E07_KB_MODE') < runner.lastIndexOf('node --test --test-concurrency=1'), '先导出再跑测试');
-  // 先跑新前端的 web07.e2e.mjs，再跑 jiuan07.e2e.mjs（检索日志认的是 web07 在知识库页上的那次检索），共用一个开始时间
-  assert.match(runner, /FILES="\$\{E2E07_FILES:-web07\.e2e\.mjs jiuan07\.e2e\.mjs\}"/);
-  assert.ok(runner.indexOf('export E2E07_STARTED_AT') > 0 && runner.indexOf('export E2E07_STARTED_AT') < runner.lastIndexOf('node --test --test-concurrency=1'), '先给开始时间再跑测试');
-  const spec = await readFile(e2e07('jiuan07.e2e.mjs'), 'utf8');
-  const web = await readFile(e2e07('web07.e2e.mjs'), 'utf8');
-  // 方式和 s3vectors 的桶、索引：jiuan07 核对引用的规则编号；知识库 Agent 的发布：web07 的「Agent 接入 · 知识库 Agent」和知识库页
-  for (const name of ['E2E07_KB_MODE', 'E2E07_KB_S3V_BUCKET', 'E2E07_KB_S3V_RULES_INDEX']) assert.match(spec, new RegExp(`process\\.env\\.${name}\\b`), name);
-  for (const name of ['E2E07_KB_MODE', 'E2E07_KB_PUBLICATION_ID']) assert.match(web, new RegExp(`process\\.env\\.${name}\\b`), name);
+test('九安 v0.7.10 的端到端测试按知识库方式走：run.sh 从 DEPLOY_ENV 导出方式（缺省 pg）和这种方式的知识库 Agent 发布，s3vectors 另给桶和规则索引；测试不再调已删掉的直连 PG 接口，自定义规则的日志按带空格的 POC_CUSTOM_RULES 找', async () => {
+  const runner = await readFile(e2eFile('run.sh'), 'utf8');
+  assert.match(runner, /E2E_KB_MODE="\$\{KB_MODE:-pg\}"/);
+  assert.match(runner, /if \[\[ "\$E2E_KB_MODE" == s3vectors \]\]; then\n  E2E_KB_PUBLICATION_ID="\$\{KB_S3V_PUBLICATION_ID:-\}"\n  E2E_KB_S3V_BUCKET="\$\{KB_S3V_BUCKET:-\}"\n  E2E_KB_S3V_RULES_INDEX="\$\{KB_S3V_RULES_INDEX:-\}"\n  export E2E_KB_S3V_BUCKET E2E_KB_S3V_RULES_INDEX\nelse\n  E2E_KB_PUBLICATION_ID="\$\{KB_PG_PUBLICATION_ID:-\}"\nfi\nexport E2E_KB_MODE E2E_KB_PUBLICATION_ID\n/);
+  assert.ok(runner.indexOf('export E2E_KB_MODE') < runner.lastIndexOf('node --test --test-concurrency=1'), '先导出再跑测试');
+  // 先跑新前端的 web.e2e.mjs，再跑 api.e2e.mjs（检索日志认的是 web 在知识库页上的那次检索），共用一个开始时间
+  assert.match(runner, /FILES="\$\{E2E_FILES:-web\.e2e\.mjs api\.e2e\.mjs\}"/);
+  assert.ok(runner.indexOf('export E2E_STARTED_AT') > 0 && runner.indexOf('export E2E_STARTED_AT') < runner.lastIndexOf('node --test --test-concurrency=1'), '先给开始时间再跑测试');
+  const spec = await readFile(e2eFile('api.e2e.mjs'), 'utf8');
+  const web = await readFile(e2eFile('web.e2e.mjs'), 'utf8');
+  // 方式和 s3vectors 的桶、索引：jiuan 核对引用的规则编号；知识库 Agent 的发布：web 的「Agent 接入 · 知识库 Agent」和知识库页
+  for (const name of ['E2E_KB_MODE', 'E2E_KB_S3V_BUCKET', 'E2E_KB_S3V_RULES_INDEX']) assert.match(spec, new RegExp(`process\\.env\\.${name}\\b`), name);
+  for (const name of ['E2E_KB_MODE', 'E2E_KB_PUBLICATION_ID']) assert.match(web, new RegExp(`process\\.env\\.${name}\\b`), name);
   for (const file of [spec, web]) assert.doesNotMatch(file, /\/poc\/kb\/(documents|search-log)/, '0005 之后没有这两个接口');
   assert.match(spec, /journalLines\('POC_CUSTOM_RULES '\)/, '带空格：POC_CUSTOM_RULES_FAILED 不算');
   assert.match(spec, /'s3vectors', 'get-vectors'[\s\S]{0,300}'--return-metadata'/);
@@ -334,7 +348,7 @@ test('九安 v0.7.10 的端到端测试按知识库方式走：run07.sh 从 DEPL
   assert.match(spec, /createHash\('md5'\)\.update\(KB_QUESTION\.trim\(\), 'utf8'\)/);
   assert.match(spec, /count\(\*\) FILTER \(WHERE md5\(question\) = /);
   const question = file => /const KB_QUESTION = process\.env\.KB_E2E_QUESTION \|\| '([^']+)'/.exec(file)?.[1];
-  assert.ok(question(spec) && question(spec) === question(web), '检索日志认的问题和 web07 在页面上检索的是同一个');
+  assert.ok(question(spec) && question(spec) === question(web), '检索日志认的问题和 web 在页面上检索的是同一个');
   // 日志里「没有这一行」要有凭据：只有 grep 的退出码 1 算没找到，journalctl 读不出就失败
   const journal = spec.slice(spec.indexOf('async function journalLines'), spec.indexOf('async function knownRuleIds'));
   assert.doesNotMatch(journal, /\|\| true/);
@@ -379,7 +393,7 @@ test('搬数据（migrate-data.sh）：旧环境只读导出、整包加密、�
   assert.match(exportScript, /\ncounts\(\) \{\n[\s\S]*\n\}\ncounts > "\$w\/counts\.txt"\n/);
   assert.doesNotMatch(exportScript, /systemctl stop|DROP DATABASE|pg_restore|rm -rf \/var\/lib/);
   // 新环境在起服务之前数（服务一起来九安的同步就会写批次表），数完再起、再等健康检查
-  assert.match(importScript, /systemctl stop andon-jiuan07\.service[\s\S]*\ncounts > "\$w\/counts\.txt"\nsystemctl start [\s\S]*echo IMPORT_OK\ncat "\$w\/counts\.txt"\n/);
+  assert.match(importScript, /systemctl stop andon-jiuan\.service[\s\S]*\ncounts > "\$w\/counts\.txt"\nsystemctl start [\s\S]*echo IMPORT_OK\ncat "\$w\/counts\.txt"\n/);
   // 密钥只经文件和变量，不 echo
   assert.doesNotMatch(script, /echo[^\n]*\$KEY|echo[^\n]*\$\(cat "\$WORK\/key"\)/);
 });

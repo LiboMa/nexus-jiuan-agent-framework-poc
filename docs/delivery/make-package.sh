@@ -35,7 +35,7 @@ if $CHECKS; then
   # 部署脚本、栈模板、测试台脚本（poc/infra/test；九安 v0.7.10 副本的构建测试要本机有开发包，没有就跳过那几条）
   (cd "$ROOT/poc/infra" && node --test "test/**/*.test.mjs" >/dev/null) && echo "部署脚本和栈模板的测试通过"
   # 九安 v0.7.10 测试台的外壳：先构建九安副本（打补丁），外壳的测试要用到副本里的契约
-  bash "$ROOT/poc/bench/build-jiuan07.sh" >/dev/null && (cd "$ROOT/poc/app07" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "九安 v0.7.10 外壳的单元测试通过"
+  bash "$ROOT/poc/bench/build-jiuan.sh" >/dev/null && (cd "$ROOT/poc/app" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "九安 v0.7.10 外壳的单元测试通过"
   # 知识库工具：脚本语法与 Python 编译检查（它的部署和验证要线上环境，见 kb/GUIDE.md）
   for f in "$ROOT"/kb/deploy.sh "$ROOT"/kb/lib/common.sh "$ROOT"/kb/host/*.sh "$ROOT"/poc/infra/kb.sh; do bash -n "$f"; done
   python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$ROOT"/kb/lib/*.py && echo "知识库工具的语法检查通过"
@@ -71,8 +71,8 @@ copy README.md
 copy VERSION
 copy CHANGELOG.md
 copy docs "${NOT_HANDOVER[@]}"
-copy poc/app07
-copy poc/web07 --exclude /web07/dist
+copy poc/app
+copy poc/web --exclude /web/dist
 copy poc/bench
 copy patches
 copy audit-agent

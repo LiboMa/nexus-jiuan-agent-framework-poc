@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 在实例上装好测试台的 MySQL（可以重复运行；bench07-configure.sh 调用，root 运行）：
+# 在实例上装好测试台的 MySQL（可以重复运行；bench-configure.sh 调用，root 运行）：
 #   1. 从 /etc/andon-finance/secrets.env 取 BENCH_MYSQL_ROOT_PASSWORD，写成 /etc/andon-finance/bench/mysql_root_password（root 0600）；
 #      实例上已有的值只认原值（库是按它建的，换了就连不上），不一样就失败，什么都不写；
 #   2. Docker → 容器 jiuan-mysql（mysql:8.0，只听 127.0.0.1:3306，参数照九安的 compose.test.yaml）→ 等它就绪。
-# 九安 v0.7.10 的库 jiuan07 和它的账号由 bench07-configure.sh 建。密码只经文件传给容器（*_FILE，目录只读挂进容器），不出现在命令行和日志里。
+# 九安 v0.7.10 的库 jiuan 和它的账号由 bench-configure.sh 建。密码只经文件传给容器（*_FILE，目录只读挂进容器），不出现在命令行和日志里。
 set -euo pipefail
 SECRETS=/etc/andon-finance/secrets.env
 DIR=/etc/andon-finance/bench
@@ -22,6 +22,12 @@ if ! command -v docker >/dev/null 2>&1; then
   for attempt in 1 2 3; do dnf install -y docker && break; sleep 10; done
 fi
 systemctl enable --now docker
+# v0.5.3 时建的容器每次启动都要读 mysql_app_password（MYSQL_PASSWORD_FILE；那个文件随 v0.5.3 拿掉了，读不到容器就起不来）：
+# 只换容器，数据目录 /var/lib/jiuan-mysql 原样挂回去（库已经建好，root 口令在库里，*_FILE 只在第一次初始化时用）
+if docker inspect jiuan-mysql >/dev/null 2>&1 && docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' jiuan-mysql | grep -q '^MYSQL_PASSWORD_FILE='; then
+  docker rm -f jiuan-mysql >/dev/null
+  echo "BENCH_MYSQL_CONTAINER_REPLACED"
+fi
 if ! docker inspect jiuan-mysql >/dev/null 2>&1; then
   mkdir -p /var/lib/jiuan-mysql
   docker run -d --name jiuan-mysql --restart unless-stopped \

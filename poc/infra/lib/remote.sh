@@ -1,4 +1,4 @@
-# 经 SSH 管理测试台实例：deploy.sh、kb.sh、migrate-data.sh 和端到端测试的 run07.sh 共用（source 本文件）。
+# 经 SSH 管理测试台实例：deploy.sh、kb.sh、migrate-data.sh 和端到端测试的 run.sh 共用（source 本文件）。
 # 环境配置（DEPLOY_ENV）写了 SSH_KEY_FILE 就经 SSH（REMOTE=ssh），否则照原来经 SSM（REMOTE=ssm），本文件的函数都用不到。
 #   remote_mode                     输出 ssh 或 ssm
 #   ssh_check_key                   动 AWS 之前核对：SSH_KEY_NAME 也写了、私钥文件在、权限只有自己能读、本机有 ssh

@@ -51,7 +51,7 @@ aws cloudformation execute-change-set --region "$REGION" --stack-name "$STACK" -
 aws cloudformation wait stack-update-complete --region "$REGION" --stack-name "$STACK"
 INSTANCE="$(output InstanceId)"
 echo "实例 ${INSTANCE} 现在是：$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE" --query 'Reservations[0].Instances[0].InstanceType' --output text)"
-SITE="$(output Jiuan07Url)"
+SITE="$(output SiteUrl)"
 for attempt in $(seq 1 36); do
   if curl -fsS "$SITE/poc/healthz" >/dev/null 2>&1; then echo "健康检查通过：$SITE"; exit 0; fi
   sleep 10

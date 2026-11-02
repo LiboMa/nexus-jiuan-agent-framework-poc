@@ -12,7 +12,7 @@
 --                        先读它防混用。这里只在新库上写；换模型由 migrate_embeddings.sql / restore_embeddings.sql 写。
 --   kb_search(...)       审核 Agent 经 Nexus 数据连接器调用的语义检索：SELECT * FROM kb_search('问题', 8)。
 --                        每次记一行 kb_search_log（谁查的、问了什么、命中了哪些）。
---   kb_documents         「规则库 › 制度知识库」页的上传历史（外壳 poc/app07 经 kb_admin.py 写）。
+--   kb_documents         「规则库 › 制度知识库」页的上传历史（外壳 poc/app 经 kb_admin.py 写）。
 --
 -- plpython3u 是不受信语言：只有超级用户能建这类函数；连接器用的应用用户只能执行，碰不到函数本身。
 -- 本机测试（kb/tests/pg_harness.py）把 kb_embed_impl 前后两行标记（>>> / <<<）之间换成按内容算的假函数：标记别删、别改。

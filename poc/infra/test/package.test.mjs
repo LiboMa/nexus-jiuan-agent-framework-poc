@@ -21,15 +21,15 @@ test('make-package.sh --export：交接仓库只放交接内容（九安 v0.7.10
   assert.match(stdout, /已导出到/);
   for (const keep of ['README.md', 'VERSION', 'CHANGELOG.md', '.gitignore', 'docs/delivery/README.md', 'docs/delivery/handover.md', 'docs/delivery/customer-rollout.md',
     'docs/delivery/deploy-iteration.md', 'docs/build-html.sh', 'skills/nexus-ai-operator/SKILL.md', 'skills/nexus-ai-operator/scripts/nexus.py',
-    'poc/app07/server.mjs', 'poc/app07/lib/a2a-client.mjs', 'poc/web07/package.json', 'poc/infra/deploy.sh', 'poc/infra/test/infra.test.mjs', 'poc/bench/build-jiuan07.sh',
+    'poc/app/server.mjs', 'poc/app/lib/a2a-client.mjs', 'poc/web/package.json', 'poc/infra/deploy.sh', 'poc/infra/test/infra.test.mjs', 'poc/bench/build-jiuan.sh',
     'patches/jiuan-v0.7.10', 'audit-agent/prompt.yaml', 'kb/deploy.sh', 'knowledgebase-writer-agent-pg/README.md', 'customer-deploy/README.md']) {
     assert.ok(await exists(path.join(out, keep)), `应该有 ${keep}`);
   }
   for (const drop of ['docs/specs', 'docs/plans', 'docs/progress.html', 'progress.json', 'tools', 'RULES_PLAN.md', 'docs/delivery/code-review-2026-10-17.md',
     'docs/assessment.md', 'docs/feasibility-round2.md', 'docs/compromise-round3.md', 'docs/poc-a2a-round4.md', 'docs/replication-feasibility.md',
     'docs/agent-discovery-registration.html', 'docs/assets/diagrams/review-quadrant.svg', 'evidence', 'archive', 'poc/infra/secrets.env', 'poc/a2a-entry',
-    'get_passwd.sh', 'poc/bench/node_modules', 'poc/app07/test/e2e/node_modules', 'poc/infra/.state', 'stale.md', 'MANIFEST.txt', 'PACKAGE-INFO.txt',
-    'poc/app', 'poc/tools', 'skills/agent-access', 'knowledge-agent', 'contract', 'docs/delivery/patches']) {
+    'get_passwd.sh', 'poc/bench/node_modules', 'poc/app/test/e2e/node_modules', 'poc/infra/.state', 'stale.md', 'MANIFEST.txt', 'PACKAGE-INFO.txt',
+    'poc/tools', 'skills/agent-access', 'knowledge-agent', 'contract', 'docs/delivery/patches', 'poc/app07', 'poc/web07']) {
     assert.equal(await exists(path.join(out, drop)), false, `不应该有 ${drop}`);
   }
   assert.ok(await exists(path.join(out, '.git', 'HEAD')), '.git 要保留');
@@ -109,12 +109,12 @@ test('secrets.env.example 随交接内容走：键都在、值都是假的；.gi
   const out = await exportTo(t);
   const example = await readFile(path.join(out, 'poc/infra/secrets.env.example'), 'utf8');
   const keys = [...example.matchAll(/^(# )?([A-Z][A-Za-z0-9_]*)=(.*)$/gm)];
-  for (const name of ['REVIEWER_PASSWORD', 'CHECKER_PASSWORD', 'BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN07_MYSQL_APP_PASSWORD', 'JIUAN07_DATA_KEY']) {
+  for (const name of ['REVIEWER_PASSWORD', 'CHECKER_PASSWORD', 'BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
     assert.ok(keys.some(([, , key]) => key === name), `样例里要有 ${name}`);
   }
   // 照抄样例不能上线一套公开的口令：没注释掉的值一律留空；要 deploy.sh 自动生成的几项保持注释
   for (const [, commented, key, value] of keys) assert.equal(value, '', `${key}${commented ? '（注释里）' : ''} 不能带值`);
-  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN07_MYSQL_APP_PASSWORD', 'JIUAN07_DATA_KEY']) {
+  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
     assert.match(example, new RegExp(`^# ${name}=$`, 'm'), `${name} 要保持注释，让 deploy.sh 自动生成`);
   }
   assert.match(example, /\/etc\/andon-finance\/secrets\.env/);

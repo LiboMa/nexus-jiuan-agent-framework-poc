@@ -1,0 +1,35 @@
+# 测试台上的九安 v0.7.10（虚构数据；AI 独立建议经 A2A 交给 Nexus）。bench-configure.sh 装到 /etc/systemd/system/。
+# 以 jiuan 用户运行：读不到 /etc/andon-finance/secrets.env（只有 root 能读）；听 0.0.0.0:4180，安全组只放 CloudFront 回源进来。
+# 九安的包是不可信的第三方代码：屏蔽实例元数据（实例角色能读构件桶里的 secrets.env），系统目录只读，出网由外壳的守卫和 /etc/hosts 管。
+[Unit]
+Description=Jiuan audit platform v0.7.10 test copy (fictitious data)
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=jiuan
+Group=jiuan
+EnvironmentFile=/etc/andon-finance/jiuan/env
+WorkingDirectory=/var/lib/jiuan
+ExecStart=/usr/bin/node-24 /opt/andon-finance/current/app/server.mjs
+Restart=always
+RestartSec=10
+MemoryMax=1G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/jiuan
+IPAddressDeny=169.254.169.254 fd00:ec2::254
+
+[Install]
+WantedBy=multi-user.target

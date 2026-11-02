@@ -1,6 +1,6 @@
 /**
  * 契约测试：PG 版工具的真实回复（tests/local_test.py 在 PGlite 上跑出来、写进 .build/contract-replies.json 的，内容全部虚构）
- * 经测试台的客户端 createKbStewardClient（poc/app07/kb-steward-client.mjs，九安「制度知识库」页用的就是它）送一遍：
+ * 经测试台的客户端 createKbStewardClient（poc/app/kb-steward-client.mjs，九安「制度知识库」页用的就是它）送一遍：
  * 每一条都要被它收下，不能有 KB_AGENT_REPLY_INVALID。A2A 调用是假的（call 直接回那条回复的 JSON），不出网、不碰真钥匙。
  *
  *   node --test knowledgebase-writer-agent-pg/tests/contract.test.mjs
@@ -15,7 +15,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createKbStewardClient } from '../../poc/app07/kb-steward-client.mjs';
+import { createKbStewardClient } from '../../poc/app/kb-steward-client.mjs';
 import { parseA2aUrl, run } from '../scripts/a2a_rules.mjs';
 
 const REPLIES = fileURLToPath(new URL('../.build/contract-replies.json', import.meta.url));

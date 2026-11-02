@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Jiuan v0.7.10 test bench (the new UI, poc/web07 + poc/app07; fictitious data) with Nexus agents over A2A, its MySQL and the
-  knowledge base's PostgreSQL on one EC2 instance in the Nexus VPC public subnet, exposed only through CloudFront (Jiuan07DomainName).
+  Jiuan v0.7.10 test bench (the new UI, poc/web + poc/app; fictitious data) with Nexus agents over A2A, its MySQL and the
+  knowledge base's PostgreSQL on one EC2 instance in the Nexus VPC public subnet, exposed only through CloudFront (DomainName).
   Managed through SSM by default; with KeyName and SshAllowedCidr / SshVia set (and SsmManaged=false) it is managed over SSH instead.
 
 Parameters:
@@ -69,10 +69,10 @@ Parameters:
   NexusOrigin:
     Type: String
     Default: https://nxs-beine1013.tinyboat.blog
-  Jiuan07DomainName:
+  DomainName:
     Type: String
     Default: jiuan-v0710.tinyboat.blog
-    Description: Site of the Jiuan v0.7.10 test bench. Its CloudFront distribution reaches AppPort on the instance, where the bench shell (poc/app07) listens.
+    Description: Site of the Jiuan v0.7.10 test bench. Its CloudFront distribution reaches AppPort on the instance, where the bench shell (poc/app) listens.
   KbAllowedCidr:
     Type: String
     Default: ''
@@ -277,7 +277,7 @@ Resources:
         Fn::Base64: |
           #!/bin/bash
           # Instance setup for the Jiuan v0.7.10 test bench. cloud-init runs this once, at first boot. deploy.sh installs the release
-          # from the artifact bucket, configures the bench (poc/infra/bench/bench07-configure.sh: MySQL, the jiuan07 user and service)
+          # from the artifact bucket, configures the bench (poc/infra/bench/bench-configure.sh: MySQL, the jiuan user and service)
           # and starts it; the knowledge base's PostgreSQL comes from poc/infra/kb.sh.
           set -euxo pipefail
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -303,14 +303,14 @@ Resources:
       TTL: '60'
       ResourceRecords: [!Ref ElasticIp]
 
-  Jiuan07Distribution:
+  Distribution:
     Type: AWS::CloudFront::Distribution
     DependsOn: OriginRecord
     Properties:
       DistributionConfig:
         Enabled: true
         Comment: Jiuan v0.7.10 test copy on the andon-finance bench (fictitious data)
-        Aliases: [!Ref Jiuan07DomainName]
+        Aliases: [!Ref DomainName]
         HttpVersion: http2and3
         IPV6Enabled: true
         PriceClass: PriceClass_200
@@ -337,31 +337,31 @@ Resources:
           MinimumProtocolVersion: TLSv1.2_2021
       Tags: [{ Key: project, Value: andon-finance-poc }]
 
-  Jiuan07RecordA:
+  SiteRecordA:
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref HostedZoneId
-      Name: !Ref Jiuan07DomainName
+      Name: !Ref DomainName
       Type: A
-      AliasTarget: { DNSName: !GetAtt Jiuan07Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
 
-  Jiuan07RecordAAAA:
+  SiteRecordAAAA:
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref HostedZoneId
-      Name: !Ref Jiuan07DomainName
+      Name: !Ref DomainName
       Type: AAAA
-      AliasTarget: { DNSName: !GetAtt Jiuan07Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
 
 Outputs:
-  Jiuan07Url:
-    Value: !Sub 'https://${Jiuan07DomainName}'
+  SiteUrl:
+    Value: !Sub 'https://${DomainName}'
   InstanceId:
     Value: !Ref Instance
   ArtifactBucketName:
     Value: !Ref ArtifactBucket
-  Jiuan07DistributionId:
-    Value: !Ref Jiuan07Distribution
+  DistributionId:
+    Value: !Ref Distribution
   OriginDomain:
     Value: !Ref OriginDomainName
   ElasticIp:

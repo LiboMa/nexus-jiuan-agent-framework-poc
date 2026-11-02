@@ -205,20 +205,20 @@ test('模板：知识库在库里生成向量（PG 容器经实例角色调 Bedr
   assert.doesNotMatch(policy, /bedrock:\*|Resource: '\*'|foundation-model\/\*/);
 });
 
-test('测试台配置：「制度知识库」页经知识库 Agent，不直连 PG——jiuan07-kb 段不读 PG 主机的 .env、不写连库密码、不建 venv、不取私网 IP；先算出知识库的设置再写 env', async () => {
-  const configure = await readFile(infra('bench/bench07-configure.sh'), 'utf8');
-  const kb = configure.slice(configure.indexOf('# >>> jiuan07-kb'), configure.indexOf('# <<< jiuan07-kb'));
-  assert.ok(kb.length > 100, 'bench07-configure.sh 里要有 jiuan07-kb 段');
-  assert.doesNotMatch(kb, /nexus-pgvector|NEXUS_DB_|write_secret|kb-venv|psycopg|meta-data|POC07_KB_PG_HOST/);
-  assert.match(kb, /install -d -o jiuan07 -g jiuan07 -m 0700 \/var\/lib\/jiuan07\/kb-uploads/);
-  assert.ok(configure.indexOf('# <<< jiuan07-kb') < configure.indexOf('cat > "$DIR/env.new" <<ENV'), '先算出知识库的设置再写 env');
+test('测试台配置：「制度知识库」页经知识库 Agent，不直连 PG——jiuan-kb 段不读 PG 主机的 .env、不写连库密码、不建 venv、不取私网 IP；先算出知识库的设置再写 env', async () => {
+  const configure = await readFile(infra('bench/bench-configure.sh'), 'utf8');
+  const kb = configure.slice(configure.indexOf('# >>> jiuan-kb'), configure.indexOf('# <<< jiuan-kb'));
+  assert.ok(kb.length > 100, 'bench-configure.sh 里要有 jiuan-kb 段');
+  assert.doesNotMatch(kb, /nexus-pgvector|NEXUS_DB_|write_secret|kb-venv|psycopg|meta-data|POC_KB_PG_HOST/);
+  assert.match(kb, /install -d -o jiuan -g jiuan -m 0700 \/var\/lib\/jiuan\/kb-uploads/);
+  assert.ok(configure.indexOf('# <<< jiuan-kb') < configure.indexOf('cat > "$DIR/env.new" <<ENV'), '先算出知识库的设置再写 env');
   assert.match(configure.slice(configure.indexOf('cat > "$DIR/env.new" <<ENV')), /\$\{KB_LINES\}\nENV/);
 });
 
 test('部署：构件里不再带知识库的入库代码与 SQL（kb/lib、kb/sql）——「制度知识库」页两种方式都经 Nexus 上的知识库 Agent，测试台不起入库子进程', async () => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   assert.doesNotMatch(deploy, /kb\/lib|kb\/sql|release\/kb/);
-  assert.match(deploy, /mkdir -p "\$STAGE\/release\/operator\/scripts" [^\n]*"\$STAGE\/release\/jiuan07"\n/, '构件目录里没有 kb');
+  assert.match(deploy, /mkdir -p "\$STAGE\/release\/operator\/scripts" [^\n]*"\$STAGE\/release\/jiuan"\n/, '构件目录里没有 kb');
 });
 
 test('kb/deploy.sh ingest --dry-run：规则编号已属于库里另一份文档时先警告（实跑时 ingest_rules.py 拒绝入库，一条不写）', async () => {

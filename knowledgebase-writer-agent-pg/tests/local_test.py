@@ -91,7 +91,7 @@ def setUpModule():
     T = load_tools()
 
 
-# ─────────────── 测试台客户端的回复校验（照 poc/app07/kb-steward-client.mjs 的 SHAPES / failedShape 写成 Python） ───────────────
+# ─────────────── 测试台客户端的回复校验（照 poc/app/kb-steward-client.mjs 的 SHAPES / failedShape 写成 Python） ───────────────
 
 def _count(v):
     return isinstance(v, int) and not isinstance(v, bool) and v >= 0

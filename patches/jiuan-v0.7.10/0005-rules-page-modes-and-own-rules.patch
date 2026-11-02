@@ -42,7 +42,7 @@
 +//     data.success === false，按失败显示。
 +//   「我的规则」给能进这一页的人（管理员、分析员）：上传 .md / .docx（显示转出来的文字）、列表、查看全文、删除，一次一个请求；
 +//     只在本人从单据页手动发起 AI 独立建议时随请求带上。
-+// 接口在测试台外壳 /api/analysis/v1/poc/kb/*（poc/app07/kb-steward-routes.mjs）、/poc/custom-rules。analysis.js 在 #rules?view=kb 上发
++// 接口在测试台外壳 /api/analysis/v1/poc/kb/*（poc/app/kb-steward-routes.mjs）、/poc/custom-rules。analysis.js 在 #rules?view=kb 上发
 +// kb-page:mount（管理员和分析员）；样式沿用平台页的卡片、表格、标签和按钮。外壳和 Agent 回的文字一律当纯文本放进页面。
  const API = '/api/analysis/v1';
  const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
