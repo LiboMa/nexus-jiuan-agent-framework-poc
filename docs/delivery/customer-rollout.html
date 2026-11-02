@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="data:,">
-<title>客户部署路线：从 v0.1.0 到九安上线</title>
+<title>客户部署路线：从测试台到九安上线</title>
 <style>
 :root{
   --paper:#F4F5F7; --sheet:#FCFCFD;
@@ -93,13 +93,13 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1.0</span>客户部署路线：从 v0.1.0 到九安上线</h1>
+v0.7.10</span>客户部署路线：从测试台到九安上线</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
-    <tr><th scope="row">状态</th><td>建议稿
-v2（部署方式已定：九安自己适配，我们用代码协助部署；其余待项目负责人确认）<span class="stamp">路线</span></td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">状态</th><td>建议稿 v3（部署分三块：先 PG，再
+Agent，再分批部署前端；九安自己适配，我们用代码协助部署；其余待项目负责人确认）<span class="stamp">路线</span></td></tr>
     <tr><th scope="row">范围</th><td>九安审核平台（客户环境）、Nexus
-上的审核 Agent、我们的测试台</td></tr>
+上的审核 Agent 与 PG 知识库 Agent、我们的测试台</td></tr>
     <tr><th scope="row">读者</th><td>项目负责人、应用开发、九安团队</td></tr>
   </table>
 </header>
@@ -108,8 +108,8 @@ v2（部署方式已定：九安自己适配，我们用代码协助部署；其
 <ul>
 <li><a href="#1-结论从哪里入手" id="toc-1-结论从哪里入手">1.
 结论：从哪里入手</a></li>
-<li><a href="#2-现在在哪v010" id="toc-2-现在在哪v010">2.
-现在在哪（v0.1.0）</a></li>
+<li><a href="#2-现在在哪2026-11-02" id="toc-2-现在在哪2026-11-02">2.
+现在在哪（2026-11-02）</a></li>
 <li><a href="#3-整体部署要部署哪三块" id="toc-3-整体部署要部署哪三块">3.
 「整体部署」要部署哪三块</a></li>
 <li><a href="#4-分阶段怎么走" id="toc-4-分阶段怎么走">4.
@@ -117,20 +117,19 @@ v2（部署方式已定：九安自己适配，我们用代码协助部署；其
 <ul>
 <li><a href="#阶段-0对接与拍板" id="toc-阶段-0对接与拍板">阶段
 0：对接与拍板</a></li>
-<li><a href="#阶段-1测试台上跑通-mvp第二份计划我们做"
-id="toc-阶段-1测试台上跑通-mvp第二份计划我们做">阶段 1：测试台上跑通
-MVP（第二份计划，我们做）</a></li>
-<li><a href="#阶段-2九安测试环境九安适配我们用代码协助部署"
-id="toc-阶段-2九安测试环境九安适配我们用代码协助部署">阶段
-2：九安测试环境（九安适配，我们用代码协助部署）</a></li>
-<li><a href="#阶段-3试运行" id="toc-阶段-3试运行">阶段
-3：试运行</a></li>
+<li><a href="#阶段-1先部署-pg-与知识库"
+id="toc-阶段-1先部署-pg-与知识库">阶段 1：先部署 PG 与知识库</a></li>
+<li><a href="#阶段-2nexus-上的-agent-与发布"
+id="toc-阶段-2nexus-上的-agent-与发布">阶段 2：Nexus 上的 Agent
+与发布</a></li>
+<li><a href="#阶段-3前端分批部署与试运行"
+id="toc-阶段-3前端分批部署与试运行">阶段
+3：前端分批部署与试运行</a></li>
 <li><a href="#阶段-4生产上线" id="toc-阶段-4生产上线">阶段
 4：生产上线</a></li>
 </ul></li>
-<li><a href="#5-我们交付的部署代码部署工具包"
-id="toc-5-我们交付的部署代码部署工具包">5.
-我们交付的部署代码（部署工具包）</a></li>
+<li><a href="#5-我们交付的部署代码" id="toc-5-我们交付的部署代码">5.
+我们交付的部署代码</a></li>
 <li><a href="#6-第一周做什么" id="toc-6-第一周做什么">6.
 第一周做什么</a></li>
 <li><a href="#7-要九安和客户提供的" id="toc-7-要九安和客户提供的">7.
@@ -142,45 +141,48 @@ id="toc-5-我们交付的部署代码部署工具包">5.
 </nav>
 <main id="main">
 <h1 id="1-结论从哪里入手">1. 结论：从哪里入手</h1>
-<p><strong>先做三件事，同时开工：</strong></p>
+<p><strong>部署分三块，按这个次序：</strong></p>
 <ol type="1">
-<li><strong>约九安开一次对接会，把四项前置定下来</strong>（第 4 节阶段
-0）。这四项不定，补丁定不了稿，Agent 也不知道发布到哪里：
-<ul>
-<li>设计稿 v2 批准；</li>
-<li>九安真实代码线上的相关文件（补丁基线）；</li>
-<li>生产用哪一套 Nexus，以及单据数据能不能发出去；</li>
-<li><a href="agent-framework.html">Agent 接入框架</a>第 10
-节要九安拍板的 8 件事。</li>
-</ul></li>
-<li><strong>你批准设计稿之后，我这边马上开工第二份计划</strong>：在测试台上写补丁
-0001–0006 和部署工具包（第 5 节），让初审 MVP 跑通（第 4 节阶段
-1）。其中 0001–0003 是通用层，不依赖九安的决定，可以先写。</li>
-<li><strong>选定生产用的 Nexus 环境</strong>，在上面建审核
-Agent（<code>first_review@1</code>）的发布。</li>
+<li><strong>PG 与知识库后端</strong>（<code>kb/</code>）：九安用自己的
+SSH 密钥起一台主机，先部署 PG + pgvector、库内检索、规则入库，并把 PG
+登记进 Nexus（数据连接器、数据库凭证密钥）。做法见 <a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4 节「用自己的 SSH
+密钥部署（PG 先于前端）」。</li>
+<li><strong>Nexus 上的 Agent 与发布</strong>：审核
+Agent（<code>audit-agent/</code>，处理
+<code>review_advice@1</code>，只读查 PG）和 PG 知识库
+Agent（客户部署交付件
+<code>customer-deploy/knowledgebase-writer-agent-pg/</code>，1.0.1）。换
+PG 主机不用动它们。</li>
+<li><strong>前端</strong>：测试阶段是 <code>poc/infra/deploy.sh</code>
+部署的这一套（新前端 + 外壳 + 九安 v0.7.10 副本 + 九安的 MySQL），和 PG
+在同一台机器上；客户环境里由专人在 PG 之后分批部署。</li>
 </ol>
-<p><strong>先说清楚一件事</strong>：客户那边部署的不是我们的 PoC
-服务器，而是<strong>九安自己的系统，打上我们的补丁</strong>，再连到
-Nexus 上的
-Agent。我们的测试台（<code>andon-finance.tinyboat.blog</code>）一直留在我们这边，只用来验收补丁，只放虚构数据。所以
-PoC 测试台自己的那些上生产前事项（源站明文 HTTP、<code>deploy.sh</code>
-的回滚缺口等，<a href="handover.html">交接文档</a>第 6.1 节第
-1、2、10、11
-条）<strong>不挡客户部署</strong>；前提是测试台上永远不放真实单据。</p>
+<p><strong>同时要做的</strong>：约九安开一次对接会，把第 4 节阶段 0
+的前置定下来。</p>
+<p><strong>先说清楚一件事</strong>：我们的测试台（2026-11-02 起只留新
+UI）一直留在我们这边，只用来验收补丁和
+Agent，只放虚构数据。所以测试台自己的那些上生产前事项（源站明文
+HTTP、构件不带提交号等，<a href="handover.html">交接文档</a>第 6.1 节第
+1、2、8、9
+条）<strong>不挡客户部署</strong>；前提是测试台上永远不放真实单据。新前端和补丁
+0001–0007 以什么形式进九安自己的系统，要和九安在阶段 0 定。</p>
 <p><strong>部署方式</strong>（2026-10-19
-定）：九安拿到补丁和代码后，在自己的环境里自己适配；<strong>部署由我们用代码协助完成</strong>。我们交付一套部署工具包（第
-5 节），接进九安现有的 Gitea Actions + Docker Compose
-流水线。九安的人或他们的编码工具运行它，就能完成打补丁、测试、部署、检查，不靠手工步骤。只有一步必须人手做：发布者本人在
-Nexus 网页上签发调用密钥。</p>
+定）：九安拿到补丁和代码后，在自己的环境里自己适配；<strong>部署由我们用代码协助完成</strong>。九安的人或他们的编码工具运行我们的部署代码（第
+5
+节），就能完成部署、检查，不靠手工步骤。只有两步必须人手做：发布者本人在
+Nexus 网页上签发调用密钥；管理员在「Agent 接入」页粘贴它、指定审批
+Agent。</p>
 <figure>
 <a href="../assets/diagrams/rollout-phases.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/rollout-phases.svg" loading="lazy"
-alt="五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环境 → 试运行 → 生产上线；每一步都有进入下一步的门槛" /></a>
-<figcaption>五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环境 →
-试运行 → 生产上线；每一步都有进入下一步的门槛</figcaption>
+alt="五个阶段：对接与拍板 → 先部署 PG 与知识库 → Nexus 上的 Agent 与发布 → 前端分批部署与试运行 → 生产上线；每一步都有进入下一步的门槛" /></a>
+<figcaption>五个阶段：对接与拍板 → 先部署 PG 与知识库 → Nexus 上的 Agent
+与发布 → 前端分批部署与试运行 →
+生产上线；每一步都有进入下一步的门槛</figcaption>
 </figure>
-<h1 id="2-现在在哪v010">2. 现在在哪（v0.1.0）</h1>
+<h1 id="2-现在在哪2026-11-02">2. 现在在哪（2026-11-02）</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -192,40 +194,45 @@ alt="五个阶段：对接与拍板 → 测试台跑通 MVP → 九安测试环�
 </thead>
 <tbody>
 <tr>
-<td>测试台（九安开发包副本 + 九安真实运行时 + 本机 MySQL）</td>
-<td>已就绪，端到端测试可以跑</td>
-<td>不用再动；用来验收补丁</td>
+<td>测试台（九安 v0.7.10 副本 + 新前端 <code>poc/<wbr>web07</code> +
+外壳 <code>poc/<wbr>app07</code> + 本机 MySQL）</td>
+<td>已就绪；2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过</td>
+<td>不用再动；用来验收补丁和 Agent</td>
 </tr>
 <tr>
-<td>Agent
-接入框架（<code>jiuan.<wbr>agent/<wbr>v1</code>、<code>first_<wbr>review@1</code>、<code>contract/<wbr></code>）</td>
-<td>设计稿 v2，<strong>待批准</strong></td>
-<td>批准</td>
+<td>九安 v0.7.10 自带的 Agent 接入那一套（契约
+<code>src/<wbr>agent-<wbr>contract/<wbr></code>，即
+<code>jiuan.<wbr>agent/<wbr>v1</code>；A2A 适配层
+<code>providers/<wbr>nexus-<wbr>a2a.<wbr>mjs</code>；Agent
+任务服务；「Agent 接入」）</td>
+<td>已在九安的代码里</td>
+<td>—</td>
 </tr>
 <tr>
-<td>九安补丁 0001–0006</td>
-<td><strong>没开始</strong></td>
-<td>第二份计划</td>
+<td>测试台补丁 0001–0007（连 Nexus 列发布、测试与调用记录、一个审批
+Agent、制度知识库页、我的规则、两处时限）</td>
+<td>测试台上可用</td>
+<td>九安评审；在真实代码线上重新打一次（前置 2）</td>
 </tr>
 <tr>
-<td>审核 Agent 的 <code>first_<wbr>review@1</code></td>
-<td><strong>没开始</strong></td>
-<td>新提示词与发布，和补丁 0005 一起</td>
+<td>审核 Agent（<code>review_<wbr>advice@1</code>，查 PG 知识库）</td>
+<td>测试台上可用；提示词在 <code>audit-<wbr>agent/<wbr></code>，一轮
+7–20 秒</td>
+<td>在生产用的 Nexus 上建发布、下发提示词</td>
 </tr>
 <tr>
-<td>现在审批流用的「九安审核AI」</td>
-<td>可用（前提：至少一个账号在「我的 Agent」里启用了它）；偶发输出不合法
-JSON 的问题已在请求里加输出规则处理（<a
-href="handover.html">交接文档</a>第 6 节第 12 条）</td>
-<td>新提示词里把输出规则固定下来</td>
+<td>PG 知识库 Agent「知识库文档管家（PG
+版）」（<code>kb.<wbr>rules/<wbr>v1</code>）</td>
+<td>测试台上可用；客户部署交付件 1.0.1</td>
+<td>在客户的 Nexus 上部署</td>
 </tr>
 <tr>
-<td>「我的 Nexus」（每个账号连接自己的 Nexus）</td>
-<td>PoC 里可用</td>
-<td>九安第三期再做，不在这次部署里</td>
+<td>知识库（PG + pgvector，Cohere Embed v4）</td>
+<td><code>kb/<wbr></code> 可用，PG 主机可以经部署人自己的 SSH 密钥</td>
+<td>九安先部署</td>
 </tr>
 <tr>
-<td>两个 Skill（nexus-ai-operator、agent-access）</td>
+<td>nexus-ai-operator</td>
 <td>可用，见 <a href="skills-guide.html">Skills 配置指南</a></td>
 <td>九安开发者按指南装好就能用</td>
 </tr>
@@ -240,23 +247,37 @@ href="handover.html">交接文档</a>第 6 节第 12 条）</td>
 <th>块</th>
 <th>部署什么</th>
 <th>谁做</th>
-<th>在哪</th>
+<th>工具</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Nexus 侧</strong></td>
-<td>审核 Agent（提示词、模型）、A2A
-发布（名片里写契约和任务）、调用密钥</td>
-<td>Agent 开发用 nexus-ai-operator；调用密钥由发布者本人在网页签发</td>
-<td>生产用的那套 Nexus（第 4 节阶段 0 定）</td>
+<td><strong>PG 与知识库后端</strong></td>
+<td>PG + pgvector 容器、库内检索
+<code>kb_<wbr>search</code>、规则入库、Nexus
+数据连接器与数据库凭证密钥、Sandbox 出站放行</td>
+<td>九安运维用自己的 SSH 密钥；我们协助</td>
+<td><code>kb/<wbr>deploy.<wbr>sh</code>（<code>deploy.<wbr>env</code> 写
+<code>PG_<wbr>HOST_<wbr>MODE=existing</code>、<code>PG_<wbr>HOST_<wbr>TRANSPORT=ssh</code>
+等，<a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 3、4 节）</td>
 </tr>
 <tr>
-<td><strong>九安侧</strong></td>
-<td>补丁 0001–0006 打进九安真实代码线；「Agent
-接入」里启用发布、粘贴调用密钥；路由表；规则发布；任务开关</td>
-<td>九安适配、评审、合入；我们交付补丁和部署工具包，用代码协助部署</td>
-<td>九安的测试环境 → 生产环境</td>
+<td><strong>Nexus 上的 Agent 与发布</strong></td>
+<td>审核 Agent（提示词、模型、A2A 发布，名片声明
+<code>review_<wbr>advice@1</code>）、PG 知识库
+Agent（工具、提示词、发布）、调用密钥</td>
+<td>Agent 开发用 nexus-ai-operator；调用密钥由发布者本人在网页签发</td>
+<td><code>audit-<wbr>agent/<wbr>apply.<wbr>py</code>、<code>customer-<wbr>deploy/<wbr>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（部署指南、部署手册、发布
+zip）</td>
+</tr>
+<tr>
+<td><strong>前端</strong></td>
+<td>新前端、外壳、九安 v0.7.10 副本（打补丁）、九安的 MySQL；「Agent
+接入」里启用发布、指定审批 Agent</td>
+<td>专人分批部署；九安适配</td>
+<td>测试阶段是
+<code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>；客户环境的形式阶段 0
+定</td>
 </tr>
 <tr>
 <td><strong>运维侧</strong></td>
@@ -270,7 +291,7 @@ TLS；调用额度；日志与告警；密钥保管；回退办法</td>
 </div>
 <h1 id="4-分阶段怎么走">4. 分阶段怎么走</h1>
 <h2 id="阶段-0对接与拍板">阶段 0：对接与拍板</h2>
-<p>进入阶段 1 的门槛：下面「前置」四项都有结论。</p>
+<p>进入阶段 1 的门槛：下面「前置」几项都有结论。</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -284,17 +305,14 @@ TLS；调用额度；日志与告警；密钥保管；回退办法</td>
 <tbody>
 <tr>
 <td>前置 1</td>
-<td>设计稿 v2 批准（<a href="agent-framework.html">框架</a>、<a
-href="agent-interface.html">接口</a>、<a
-href="first-review-contract.html">初审契约</a>）</td>
-<td>补丁按它写</td>
-<td>项目负责人；九安评审</td>
+<td>新前端、外壳和补丁 0001–0007 以什么形式进九安自己的系统</td>
+<td>决定前端那一块部署什么、谁来部署</td>
+<td>项目负责人 + 九安</td>
 </tr>
 <tr>
 <td>前置 2</td>
-<td>九安真实代码线上的相关文件：<code>start-<wbr>analysis.<wbr>mjs</code>、<code>analysis-<wbr>server.<wbr>mjs</code>、<code>public/<wbr>analysis.<wbr>js</code>、<code>providers/<wbr>ai-<wbr>model.<wbr>mjs</code>、<code>src/<wbr>platform/<wbr></code>
-下的连接器、调用中间件、流水线</td>
-<td>我们手上的开发包是裁剪过的测试环境副本，补丁要在真实代码线上重新生成一次才能定稿</td>
+<td>九安真实代码线上的相关文件（补丁基线）</td>
+<td>我们手上的开发包是测试环境副本，补丁要在真实代码线上重新打一次才能定稿</td>
 <td>九安</td>
 </tr>
 <tr>
@@ -303,183 +321,149 @@ href="first-review-contract.html">初审契约</a>）</td>
 Nexus AI（<a
 href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>）；我们的测试台仍连
 <code>nxs-<wbr>beine1013</code></td>
-<td>决定 Agent 发布到哪里、名片地址、网络怎么通</td>
+<td>决定 Agent 发布到哪里、PG 登记到哪里、网络怎么通</td>
 <td>项目负责人 + 九安</td>
 </tr>
 <tr>
 <td>前置 4</td>
-<td>数据外发：单据事实（金额、公司、费用说明、附件内容）要发到 Nexus
+<td>数据外发：单据事实（金额、公司、费用说明、原件文字）要发到 Nexus
 和它后面的模型；九安的数据治理（<code>ai-<wbr>data-<wbr>governance.<wbr>mjs</code>）和客户的合规要同意</td>
 <td>不同意就不能接真实单据</td>
 <td>九安 + 客户合规</td>
 </tr>
+<tr>
+<td>前置 5</td>
+<td>九安契约里 <code>review_<wbr>advice@1</code> 的时限（现在 120
+秒；测试台用 180 秒）</td>
+<td>带知识库查询的一轮要 15–120 秒，120 秒太紧（第 8 节）</td>
+<td>九安</td>
+</tr>
 </tbody>
 </table>
 </div>
-<p>同时要九安拍板、但可以在阶段 1 期间定的（<a
-href="agent-framework.html">框架</a>第 10 节）：</p>
+<p>同时要九安拍板、但可以在阶段 1 期间定的：</p>
 <ul>
-<li><strong>系统身份</strong>
-<code>system:pipeline</code>（安全相关）；</li>
-<li><strong>额度</strong>：<code>ai-model</code> 每天 150 次、并发
-2，每张单据至少一次调用；</li>
-<li><strong>人工复核</strong>只记在九安里，不回写汇联易；</li>
-<li><strong>什么时候打开任务开关</strong>：九安现在有意下线了 AI
-功能；</li>
-<li><strong>调度</strong>；</li>
-<li><strong>连接器密钥</strong>改成来自「Agent 接入」（安全相关）；</li>
-<li><strong>租户级调用</strong>：这次的 MVP 用不到。</li>
+<li><strong>人工复核</strong>只记在九安里，不回写汇联易（测试台就是这样）；</li>
+<li><strong>额度</strong>：调用中间件给 <code>nexus-a2a</code>
+的每天次数、并发；</li>
+<li><strong>什么时候打开任务开关</strong>、先开哪几家公司、哪类单据。</li>
 </ul>
-<h2 id="阶段-1测试台上跑通-mvp第二份计划我们做">阶段 1：测试台上跑通
-MVP（第二份计划，我们做）</h2>
-<p>进入阶段 2 的门槛：<a href="agent-framework.html">框架</a>第 11
-节的验收全部通过，端到端测试通过，你确认。</p>
+<h2 id="阶段-1先部署-pg-与知识库">阶段 1：先部署 PG 与知识库</h2>
+<p>进入阶段 2 的门槛：<code>kb/deploy.sh verify</code>
+通过；规则入库的条数对得上。</p>
 <ol type="1">
-<li>写实现计划，按顺序交付：
-<ul>
-<li>0001 契约与 A2A 适配层；</li>
-<li>0002 模型接入口与「Agent 接入」；</li>
-<li>0003 Agent 任务服务（MVP
-只做一问一答、按单据存结果、按单据类型路由）；</li>
-<li>0004 规则生效；</li>
-<li>0005 初审与审批流；</li>
-<li>0006 界面。</li>
-</ul></li>
-<li>在 Nexus 上建审核 Agent 的 <code>first_review@1</code>
-提示词与发布。字符串里不用英文双引号，修掉现在的偶发问题。</li>
-<li>补丁放进
-<code>patches/jiuan-v0.5.3/</code>，<code>build-jiuan.sh</code>
-打进副本，<code>deploy.sh</code> 部署到测试台。</li>
-<li><strong>部署工具包</strong>（第 5
-节）和补丁一起写，先在我们的测试台上用它走一遍：打补丁、测试、检查、Nexus
-侧配方、启用、验收测试。</li>
-<li>端到端测试覆盖这几种情况：
-<ul>
-<li>来单自动初审；</li>
-<li>失败自动重试一次；</li>
-<li>单据改版开新一轮；</li>
-<li>规则发布后标「规则已更新」；</li>
-<li>两个人同时操作，后到的回 409。</li>
-</ul></li>
+<li>九安起一台主机（自己的密钥对；安全组对部署人的地址开 22、对 Nexus
+的私网段开 PG 端口）。</li>
+<li>照 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4
+节：<code>preflight</code> → <code>all --dry-run</code> →
+<code>all</code>（<code>db</code> 装
+Docker、起容器；<code>connector</code> 把私网地址和密码登记进
+Nexus）。</li>
+<li>规则入库：用客户自己的制度文档（制度原文不进我们的仓库）。</li>
+<li>向量模型用 Cohere Embed v4（缺省）；跑 <code>db</code> 前确认
+<code>EMBED_MODEL_ID</code>（<a href="../../kb/GUIDE.md">kb/GUIDE.md</a>
+7.6）。</li>
 </ol>
-<h2 id="阶段-2九安测试环境九安适配我们用代码协助部署">阶段
-2：九安测试环境（九安适配，我们用代码协助部署）</h2>
-<p>进入阶段 3
-的门槛：九安评审过补丁（两处安全相关的改动单独评审），九安测试环境上的部署检查和验收测试都通过。</p>
+<h2 id="阶段-2nexus-上的-agent-与发布">阶段 2：Nexus 上的 Agent
+与发布</h2>
+<p>进入阶段 3 的门槛：两个 Agent 在测试页上合格（「Agent
+接入」页的请求信封测试、单据测试；知识库 Agent 的检索）。</p>
 <ol type="1">
-<li><strong>定稿</strong>：在九安真实代码线（前置 2）上用
-<code>apply-patches.sh</code>
-试打补丁，打不上的地方改好，补丁定稿。适配层和契约同时作为独立目录交付，九安以后升级时直接换文件。</li>
-<li><strong>九安适配</strong>：九安在自己的分支上运行工具包，按自己的环境和习惯改，比如界面、配置方式。契约测试和适配层测试加进九安的
-CI，改坏了接口当场就报。</li>
-<li><strong>部署</strong>：我们协助九安，用他们现有的 Gitea Actions +
-Docker Compose 流水线（<code>deploy/gitea/</code>）部署到测试环境（MySQL
-8.0）。流水线不用加新密钥：调用密钥存在「Agent
-接入」的启用记录里，用九安已有的数据密钥加密。部署后自动跑部署检查。</li>
-<li><strong>配置</strong>：
-<ul>
-<li>管理员在「Agent 接入」里填发布编号、粘贴调用密钥（发布者本人在 Nexus
-网页签发），也可以用启用脚本，密钥只经标准输入。九安当场验证名片和密钥；</li>
-<li>填好路由表（单据类型 → 发布）；</li>
-<li>复核人发布规则。</li>
-</ul></li>
-<li>接上汇联易测试租户的真实同步。凭据由九安放进自己的密钥源，我们不经手。</li>
-<li>对九安测试环境跑验收测试。</li>
-<li>九安开发者需要时，按 <a href="skills-guide.html">Skills
-配置指南</a>装两个 Skill，自己调试 Agent。</li>
+<li><strong>PG 知识库 Agent</strong>：照
+<code>customer-deploy/knowledgebase-writer-agent-pg/</code>
+的部署指南和部署手册在客户的 Nexus 上部署、发布。</li>
+<li><strong>审核 Agent</strong>：在生产 Nexus 上建 Agent
+和发布（名片声明 <code>review_advice@1</code>），用
+<code>audit-agent/apply.py</code> 下发提示词（先
+<code>--dry-run</code>）；数据连接器绑到阶段 1 的 PG。</li>
+<li>发布者本人签发两把调用密钥。</li>
+<li>提示词里不要求知识库里没有的东西，查询次数写死（<a
+href="developer-guide.html">开发者快速对接指南</a>第 5 节）。</li>
 </ol>
-<h2 id="阶段-3试运行">阶段 3：试运行</h2>
+<h2 id="阶段-3前端分批部署与试运行">阶段 3：前端分批部署与试运行</h2>
 <p>进入阶段 4 的门槛：试运行指标达标、九安签字。</p>
-<ul>
-<li>九安打开任务开关，先限定一两家公司、一种单据类型；</li>
-<li>盯这几项指标：
+<ol type="1">
+<li>按前置 1 定下的形式部署前端，一批一批来；测试阶段的做法是
+<code>poc/infra/deploy.sh</code>（<a
+href="../../poc/infra/README.md">部署说明</a>）。</li>
+<li>管理员在「Agent 接入」页启用两个 Agent，把审核 Agent「设为审批
+Agent」（<a href="quick-guide.html">快速上手</a>）。</li>
+<li>接上汇联易测试租户的真实同步。凭据由九安放进自己的密钥源，我们不经手。</li>
+<li>九安打开任务开关，先限定一两家公司、一种单据类型；盯这几项指标：
 <ul>
 <li>每天的调用量和额度；</li>
-<li>初审失败率（<code>AI_*</code> 错误码）；</li>
-<li>单次时长（v0.5.3 测试台上是 40–100 秒，带附件的更慢；v0.7.10
-测试台的审核 Agent 带知识库查询，2026-11-01 改过提示词后 7–20
-秒）；</li>
-<li>复核人推翻初审的比例；</li>
+<li>AI 建议的失败率（<code>AI_*</code> 错误码）；</li>
+<li>单次时长（测试台 2026-11-01 改过提示词后 7–20 秒）；</li>
+<li>复核人改判的比例（新前端的工作台上有「人工改判率」）；</li>
 </ul></li>
 <li>调用密钥失效、Nexus 不通要能告警，不能只靠健康检查。</li>
-</ul>
+</ol>
 <h2 id="阶段-4生产上线">阶段 4：生产上线</h2>
 <ul>
 <li>生产 Nexus 加固：TLS、关掉多余的入口、发布固定版本。</li>
 <li>密钥与凭证：生产用的调用密钥单独签发、单独保管；开发测试期间用过的凭证在这一步统一清理（<a
 href="handover.html">交接文档</a>第 2.5 节）。</li>
 <li>回退办法：关掉任务开关就回到纯人工复核，业务不受影响。上线前演练一次。</li>
-<li>上线后：财务类、知识库类任务和网关层（多轮对话、长任务、租户级调用）按<a
-href="agent-framework.html">Agent 接入框架</a>第 0
-节的「以后」排期。</li>
 </ul>
-<h1 id="5-我们交付的部署代码部署工具包">5.
-我们交付的部署代码（部署工具包）</h1>
-<p>和补丁一起在第二份计划里做，先在我们的测试台上用一遍，再交给九安。</p>
+<h1 id="5-我们交付的部署代码">5. 我们交付的部署代码</h1>
 <div class="table-wrap">
 <table>
 <thead>
 <tr>
+<th>块</th>
 <th>组件</th>
 <th>做什么</th>
-<th>接到九安哪里</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>补丁与独立目录</td>
-<td>补丁 0001–0006，加上独立目录（A2A
-适配层、契约与任务检查代码）。<code>apply-<wbr>patches.<wbr>sh &lt;九安代码目录&gt;</code>
-先用 <code>-<wbr>-<wbr>dry-<wbr>run -<wbr>-<wbr>fuzz=0</code>
-试打，打不上就列出冲突的文件和位置，不留半成品</td>
-<td>九安在自己的分支上运行</td>
+<td>PG 与知识库</td>
+<td><code>kb/<wbr></code>（<code>deploy.<wbr>sh</code> 的
+preflight、db、network、egress、connector、ingest、agent、verify
+阶段；<code>regress</code> 检索回归）</td>
+<td>幂等、先 <code>-<wbr>-<wbr>dry-<wbr>run</code> 看改什么；PG 主机经
+SSM 或部署人自己的 SSH 密钥；换向量模型有防混用、迁移、回退</td>
 </tr>
 <tr>
-<td>测试</td>
-<td>契约测试、适配层测试（本地假 A2A 网关，不连
-Nexus、不花钱）、九安侧的单元测试</td>
-<td>加进九安 CI 的测试步骤</td>
+<td>Nexus 上的 Agent</td>
+<td><code>customer-<wbr>deploy/<wbr>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（1.0.1）</td>
+<td>PG 知识库 Agent
+的部署指南、编码工具部署说明、交付说明、部署手册、发布 zip</td>
 </tr>
 <tr>
-<td>部署检查
-<code>check-<wbr>agent-<wbr>integration.<wbr>mjs</code></td>
-<td>照九安自己的
-<code>scripts/<wbr>check-<wbr>deployment.<wbr>mjs</code>
-的写法，检查这几项，都不花钱：<br>Nexus
-通不通；名片里有没有契约和任务；调用密钥有效（<code>tasks/<wbr>get</code>）；路由表指向的发布都已启用；任务开关和数据治理变量（<code>AI_<wbr>DATA_<wbr>ENVIRONMENT</code>、<code>AI_<wbr>PROD_<wbr>DATA_<wbr>COMPANY_<wbr>IDS</code>）是什么状态</td>
-<td>部署后自动跑，不通过就报失败</td>
+<td></td>
+<td><code>audit-<wbr>agent/<wbr></code>（<code>apply.<wbr>py</code>、<code>setup.<wbr>py</code>、<code>prompt-<wbr>history/<wbr></code>）</td>
+<td>审核 Agent 的提示词下发、先演练再下发、每次留底</td>
 </tr>
 <tr>
-<td>配置即代码</td>
-<td>每个环境一份：路由表（单据类型 →
-发布）、任务开关、额度、数据治理变量</td>
-<td>走九安现有的 Actions Variables，不加新密钥</td>
+<td></td>
+<td><code>skills/<wbr>nexus-<wbr>ai-<wbr>operator/<wbr></code></td>
+<td>编码工具在 Nexus 上建 Agent、发布</td>
 </tr>
 <tr>
-<td>Nexus 侧即代码</td>
-<td>审核 Agent 的提示词文件，加一个 operator 配方脚本：建或更新
-Agent、建 A2A
-发布、写名片描述（契约与任务）、固定版本；先只读预览，确认后执行</td>
-<td>在维护人的编码工具里运行（nexus-ai-operator）</td>
+<td>前端</td>
+<td><code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>、<code>migrate-<wbr>data.<wbr>sh</code>、<code>backup.<wbr>sh</code>、<code>upgrade-<wbr>instance.<wbr>sh</code></td>
+<td>测试阶段的前端部署：测试 → 构建 → 建栈 → 装构件 → 健康检查；经 SSM
+或 SSH；换机器搬数据</td>
 </tr>
 <tr>
-<td>启用脚本</td>
-<td>把调用密钥经标准输入交给九安的「Agent 接入」接口，当场验证</td>
-<td>管理员运行，或者在页面上粘贴</td>
+<td></td>
+<td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code> +
+<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code></td>
+<td>补丁
+0001–0007，按清单复制开发包、打补丁，打不上就报错，不留半成品</td>
 </tr>
 <tr>
-<td>验收测试</td>
-<td>端到端冒烟：站点地址、账号、公司都参数化；先在我们测试台上跑通，再对九安测试环境跑</td>
-<td>九安测试环境部署后跑一次</td>
-</tr>
-<tr>
-<td>给编码工具的说明</td>
-<td><code>AGENTS.<wbr>md</code>：哪些文件按契约不能改，哪些可以按九安的习惯改，改完必须跑哪些测试</td>
-<td>放进独立目录；九安开发者用 Claude Code、Codex 适配时直接读它</td>
+<td></td>
+<td><code>poc/<wbr>app07/<wbr>test/<wbr>e2e/<wbr>run07.<wbr>sh</code></td>
+<td>端到端验收：站点、账号都从环境配置读；先在我们测试台上跑通</td>
 </tr>
 </tbody>
 </table>
 </div>
+<p>原来计划、还没做的：在九安真实代码线上试打补丁的脚本、接进九安 Gitea
+Actions + Docker Compose 流水线的部署检查和配置，等前置 1、2
+定了再做。</p>
 <h1 id="6-第一周做什么">6. 第一周做什么</h1>
 <div class="table-wrap">
 <table>
@@ -493,28 +477,25 @@ Agent、建 A2A
 <tbody>
 <tr>
 <td>1</td>
-<td>读<a href="agent-framework-overview.html">Agent
-接入框架总览</a>，批准设计稿 v2，或者提修改</td>
-<td>你</td>
+<td>定前置 1：新前端和补丁怎么进九安</td>
+<td>你 + 九安</td>
 </tr>
 <tr>
 <td>2</td>
-<td>约九安对接会，带上：一页总览、本文第 4 节阶段 0 的表、第 7
-节的资料清单</td>
+<td>约九安对接会，带上：本文第 4 节阶段 0 的表、第 7 节的资料清单</td>
 <td>你</td>
 </tr>
 <tr>
 <td>3</td>
-<td>生产用线上 Nexus AI（<a
-href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>，已定）：在上面建审核
-Agent 的发布</td>
-<td>我们</td>
+<td>九安按 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4 节起 PG
+主机（我们协助）</td>
+<td>九安 + 我们</td>
 </tr>
 <tr>
 <td>4</td>
-<td>设计批准后写第二份计划：补丁 0001–0006 加部署工具包（第 5 节），从
-0001 开工</td>
-<td>我</td>
+<td>在生产用的线上 Nexus AI 上部署 PG 知识库 Agent、建审核 Agent
+的发布</td>
+<td>我们</td>
 </tr>
 <tr>
 <td>5</td>
@@ -536,39 +517,44 @@ Agent 的发布</td>
 </thead>
 <tbody>
 <tr>
-<td>真实代码线上的相关文件（第 4 节前置 2）</td>
+<td>PG 主机（EC2 或九安自己的机器）、部署人的 SSH 密钥和网段</td>
+<td>阶段 1 部署 PG</td>
+<td>阶段 1 开始前</td>
+</tr>
+<tr>
+<td>真实代码线上的相关文件（前置 2）</td>
 <td>补丁定稿</td>
-<td>阶段 1 结束前</td>
+<td>阶段 3 之前</td>
 </tr>
 <tr>
 <td>测试环境的部署方式、反向代理配置、出站到 Nexus 的网络</td>
-<td>阶段 2 部署</td>
-<td>阶段 2 开始前</td>
+<td>前端部署</td>
+<td>阶段 3 开始前</td>
 </tr>
 <tr>
 <td>数据外发与模型使用的书面同意</td>
 <td>接真实单据</td>
-<td>阶段 2 开始前</td>
+<td>阶段 3 开始前</td>
+</tr>
+<tr>
+<td>制度文档（规则入库用；原文只进客户的知识库）</td>
+<td>知识库</td>
+<td>阶段 1</td>
 </tr>
 <tr>
 <td>汇联易测试租户的凭据（九安自己保管）</td>
 <td>真实同步</td>
-<td>阶段 2</td>
+<td>阶段 3</td>
 </tr>
 <tr>
 <td>预计的单据量（每天多少张、高峰多少）</td>
 <td>额度和并发的规划</td>
-<td>阶段 2</td>
+<td>阶段 3</td>
 </tr>
 <tr>
 <td>试运行的范围（哪几家公司、哪类单据）和验收人</td>
 <td>阶段 3</td>
-<td>阶段 2 结束前</td>
-</tr>
-<tr>
-<td>客户规则的样例（几条真实规则）</td>
-<td>规则生效和初审效果的验证</td>
-<td>阶段 1 中</td>
+<td>阶段 3 开始前</td>
 </tr>
 </tbody>
 </table>
@@ -585,25 +571,25 @@ Agent 的发布</td>
 </thead>
 <tbody>
 <tr>
-<td>开发包是裁剪过的，和真实代码线不一致</td>
+<td>开发包是测试环境副本，和真实代码线不一致</td>
 <td>补丁打不上，或者打上了运行才出错</td>
-<td>尽早拿基线（前置
-2）；适配层和契约做成独立目录，少依赖九安内部名字</td>
+<td>尽早拿基线（前置 2）；补丁打不上就报错，不留半成品</td>
 </tr>
 <tr>
-<td>九安适配时改到了契约</td>
+<td>九安适配时改到了契约（<code>src/<wbr>agent-<wbr>contract/<wbr></code>）</td>
 <td>Agent 收到的请求或九安读到的结果对不上</td>
-<td>契约测试加进九安 CI；<code>AGENTS.<wbr>md</code> 写明哪些不能改</td>
+<td>九安自己的契约测试（逐个核对契约文件的 sha256）留在 CI 里</td>
 </tr>
 <tr>
 <td>九安有意下线了 AI 功能</td>
-<td>补丁做好了也不开</td>
+<td>部署好了也不开</td>
 <td>阶段 0 就问清楚开关的时间和条件</td>
 </tr>
 <tr>
-<td>额度：每天 150 次、并发 2</td>
+<td>额度：调用中间件给 <code>nexus-<wbr>a2a</code> 每天 150 次、并发
+2</td>
 <td>单据多时排队、超额</td>
-<td>按单据量估算，阶段 2 前改中间件按任务分额度</td>
+<td>按单据量估算，阶段 3 前调额度</td>
 </tr>
 <tr>
 <td>数据外发不被批准</td>
@@ -612,25 +598,15 @@ Agent 的发布</td>
 </tr>
 <tr>
 <td>Agent 输出偶尔不合规</td>
-<td>单次初审失败</td>
-<td>九安校验兜底、自动重试一次、提示词约束；失败率进试运行指标</td>
-</tr>
-<tr>
-<td>Nexus 没有推送，任务只在内存里存 24 小时</td>
-<td>长任务不可靠</td>
-<td>MVP 只做一问一答（单次不超过 5 分钟）；长任务等网关层</td>
-</tr>
-<tr>
-<td>系统身份、连接器密钥是安全相关的改动</td>
-<td>九安安全评审不通过</td>
-<td>改动收窄（只读、只用于登记过的任务、只限配置里的公司），单独评审</td>
+<td>单次建议失败</td>
+<td>九安的适配层修正一次、可自动重试的再试一次、提示词约束；失败率进试运行指标</td>
 </tr>
 <tr>
 <td>九安契约里 <code>review_<wbr>advice@1</code> 的时限是 120
 秒，带知识库查询的真实审核一轮要 15–120 秒（v0.7.10
 测试台，2026-11-01）</td>
 <td>一轮超时，出不来 AI 建议</td>
-<td>阶段 2 前请九安在契约里调高：测试台用 180 秒（补丁
+<td>前置 5：请九安在契约里调高：测试台用 180 秒（补丁
 0006），调用中间件给 <code>nexus-<wbr>a2a</code> 的时限要比它长（测试台
 200 秒，补丁 0007）。提示词里写死查询次数</td>
 </tr>
@@ -640,7 +616,13 @@ Agent 的发布</td>
 一轮查 11–16 次去找库里没有的东西</td>
 <td>一轮从十几秒拖到超时</td>
 <td>换知识库内容时同时核对、改提示词，跑端到端测试再上线；提示词不要求库里没有的事实，关键词对上库里的行是按什么编的（<a
-href="developer-guide.html">开发者快速对接指南</a>第 5.1 节）</td>
+href="developer-guide.html">开发者快速对接指南</a>第 5 节）</td>
+</tr>
+<tr>
+<td>PG 主机换了地址</td>
+<td>两个 Agent 都连不上库</td>
+<td><code>kb/<wbr>deploy.<wbr>sh connector</code> 改登记（测试台
+2026-11-02 就这样换到 m7g 那台）；Agent 本身不用动</td>
 </tr>
 </tbody>
 </table>
@@ -653,9 +635,16 @@ href="developer-guide.html">开发者快速对接指南</a>第 5.1 节）</td>
 href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.net/</a>。</li>
 <li><strong>第一批上线范围和时间窗</strong>：没有固定的。</li>
 <li><strong>九安的生产环境也用这套 Gitea + Compose
-流水线吗</strong>：大概率是，部署工具包先按这一套做。</li>
+流水线吗</strong>：大概率是，部署代码先按这一套做。</li>
 <li><strong>要不要在我们的测试台上演练九安的部署方式</strong>：现在不需要，以后需要时再做。</li>
 </ol>
+<p>2026-11-02 的决定：</p>
+<ul>
+<li>部署分三块：前端、PG 与知识库后端、Nexus 上的 Agent
+与发布；客户先用自己的 SSH 密钥部署 PG，再分批部署前端。</li>
+<li>机器类型用 m7g.xlarge（arm64）；测试台只留新 UI，v0.5.3 PoC
+拿掉。</li>
+</ul>
 <p>部署由谁做已经定了：九安自己适配，我们用代码协助部署（第 1 节）。</p>
 </main>
 </div>

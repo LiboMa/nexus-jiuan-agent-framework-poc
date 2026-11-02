@@ -1,5 +1,30 @@
 # 变更记录
 
+## 2026-11-02（二）：只留新 UI，拿掉 v0.5.3 PoC；以后用 m7g
+
+项目负责人 2026-11-02 定：机器类型以后用 **m7g.xlarge**（arm64）；旧的应用不要了。只留新 UI：九安 v0.7.10 测试台 = 新前端 `poc/web07` + 外壳 `poc/app07` + 九安 v0.7.10 副本。九安自己的原页面 `/analysis.html` 留着（它在九安开发包里；新 UI 的「设置」还链到它的后台配置和平台）。部署分三块：前端（`poc/infra/deploy.sh`）、PG 与知识库后端（`kb/`，测试台上由 `poc/infra/kb.sh` 驱动）、Nexus 上的 Agent 与发布（`audit-agent/`、`knowledgebase-writer-agent-pg/`、`skills/nexus-ai-operator`）。
+
+**拿掉的**（v0.5.3 PoC 整套）
+- 代码：`poc/app/`（v0.5.3 的 PoC 服务端、它的前端扩展 `public-src`、单元测试、v0.5.3 的端到端测试 `run.sh`、`poc.e2e.mjs`、`access.e2e.mjs`、`attachments.e2e.mjs`、截图脚本 `capture-screens.mjs`）、`poc/bench/build-jiuan.sh`、`poc/tools/`、`skills/agent-access/`、`knowledge-agent/`、`contract/`（Agent 接入框架的契约；九安 v0.7.10 自己的 `src/agent-contract/` 里有一份原样拷入的，不受影响）、`docs/delivery/patches/`（v0.5.3 参考补丁和 `make-reference-patch.sh`）、`poc/infra/bench/bench-configure.sh`、`andon-finance-bench.conf`、`bench-reset.sh`、`poc/infra/bench-test.sh`。
+- 文档：并入九安、Agent 接入框架（含一页总览）、Agent 接口、单据初审契约、客户规则与 AI 初审、调用链、2026-10-17 的代码评审、开发者工作流；只用于它们的图和 v0.5.3 页面的截图。其余文档改成只写新 UI。
+
+**挪了位置的**
+- 外壳原来从 `poc/app` 借的 5 个模块搬进 `poc/app07/lib/`（`http`、`login`、`a2a-client`、`catalog`、`cli`），测试在 `poc/app07/test/unit/`。
+- 部署脚本、模板、测试台脚本的测试搬到 `poc/infra/test/`（`cd poc/infra && node --test "test/**/*.test.mjs"`；夹具在 `test/fixtures/deploy-env`）。
+- v0.7.10 的端到端测试在 `poc/app07/test/e2e/`：`DEPLOY_ENV=poc/infra/env/<环境>.env [KB_E2E_DOCX=…] bash poc/app07/test/e2e/run07.sh`。
+
+**实例上的样子**：外壳（`andon-jiuan07.service`，用户 `jiuan07`）直接听 `0.0.0.0:4180`，安全组只放 CloudFront 回源前缀列表进 4180；没有 PoC 进程、没有按 Host 转发、没有 `andon` 用户。一个 CloudFront 分发（`Jiuan07Distribution`，别名是栈参数 `Jiuan07DomainName`）。MySQL 容器 `jiuan-mysql` 里只有 `jiuan07` 库；知识库的 PG 容器 `nexus-pgvector` 在同一台。
+
+**栈模板**（`poc/infra/andon-finance-poc.yaml`）：去掉参数 `DomainName`、`AdvisoryPublicationId`；输出 `SiteUrl`、`DistributionId` 去掉（现在是 `Jiuan07Url`、`Jiuan07DistributionId`）；默认 `InstanceType=m7g.xlarge`、`RootVolumeSize=30`；用户数据只装 Node 24、Python、tar，建 `/opt/andon-finance`、`/etc/andon-finance`，构件由 `deploy.sh` 装，不在启动时拉。经 SSH 管理的参数照旧（`KeyName`、`SshAllowedCidr`、`SshVia`、`SsmManaged`）。
+
+**`deploy.sh`**：跑 `poc/infra/test` → 构建九安 v0.7.10 副本 → 构建、测试新前端 → 外壳的单元测试 → 建栈或更新栈 → 补上缺的密钥 → 打包（外壳、九安副本、`web07/dist`、测试台脚本、operator）上传 → 实例上（root，经 SSM 或 SSH）装 `secrets.env`（root 0600）→ 解包 → `bench/bench07-configure.sh`（还会停掉、删掉留下的 `andon-finance-poc.service`，经 `bench/mysql-install.sh` 装 MySQL，建 jiuan07 的库和账号，写服务单元）→ 换上 `/opt/andon-finance/current`（上一版留在 `previous`）→ 重启 `andon-jiuan07`。健康检查 `https://<Jiuan07DomainName>/poc/healthz`。
+
+**密钥与配置**：`secrets.env` 现在是五项：`REVIEWER_PASSWORD`、`CHECKER_PASSWORD`、`BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN07_MYSQL_APP_PASSWORD`、`JIUAN07_DATA_KEY`（`poc/infra/secrets.env.example`）；`REGISTRY_KEY`、`BENCH_MYSQL_APP_PASSWORD`、`BENCH_DATA_KEY` 只有 v0.5.3 用，旧文件里留着不碍事。环境配置去掉 `DOMAIN_NAME`、`ADVISORY_PUBLICATION_ID`（`poc/infra/env/example.env`）。
+
+**其他脚本**：`backup.sh` 只做根卷快照；`upgrade-instance.sh` 认 m7g.large / m7g.xlarge / t3.*，不许换架构；`migrate-data.sh` 只搬 `jiuan07` 库、PG 库 `nexus`（`--skip-pg` 时不搬）和 `/var/lib/jiuan07`；`kb.sh`、SSH 与 EC2 Instance Connect（`lib/remote.sh`）不变。交付包的检查改成跑 `poc/infra/test`、外壳的测试和 kb、audit-agent 的检查，白名单里去掉上面拿掉的目录。
+
+**环境**：新代码 2026-11-02 部署到 m7g 栈 `andon-finance-m7g`（栈更新删掉了 v0.5.3 的分发和记录，实例停机再开一次）；实例上 v0.5.3 留下的库、文件、`andon` 用户清掉；端到端 26 条全部通过（第一次跑时本机网络中途断了，重跑通过）。2026-11-02 19:13–19:18（UTC+8）把 `jiuan-v0710.tinyboat.blog` 迁到 m7g 栈：先最后同步一次 `jiuan07` 库和状态目录（73 项一致），旧栈只改站点名为 `jiuan-v0710-old.tinyboat.blog` 腾出别名，m7g 栈再接上，站点停了约 5 分钟；迁完不改数据的检查都通过。旧栈 `andon-finance-poc` 项目负责人定先留几天再删，根卷快照 `snap-05180f1a83a6edada`。
+
 ## 2026-11-02：经 SSH 管理、Graviton（m7g）的测试环境；搬数据；交付包带上知识库文档管家（PG 版）的客户部署交付件
 
 部署分成三块：PG 与知识库后端（`kb/`）、前端（`poc/infra/deploy.sh`）、Nexus 上的 Agent 与发布（`audit-agent/`、`knowledgebase-writer-agent-pg/`）。以后客户先用自己的 SSH 密钥部署 PG，再分批部署前端；测试阶段三样在一台机器上。
@@ -133,8 +158,8 @@ PG 方式也走「文档管家」那条路：制度文档经 A2A 的规则请求
 - 任务模板：`description`、`doc`、`limits` 的占位说明改清楚。
 
 **接口文档与框架**
-- [Agent 接口](docs/delivery/agent-interface.md)：contextId 的每一项怎么算；断线后怎么轮询；时限只听调用中间件的 `signal`；修正消息只带文字；错误码表按 `error-map.json` 拆开 `rejected`，加 `AI_CANCELLED`，写明以 `error-map.json` 为准，错误对象带 `autoRetry`。
-- [Agent 接入框架](docs/delivery/agent-framework.md)：适配层接口加 `verifyKey`、`onKeyRejected`、`partition`；写明打开模型接入口的开关时，草稿核验会误判「已配置」，要一起改。
+- Agent 接口（`docs/delivery/agent-interface.md`，2026-11-02 随 v0.5.3 PoC 拿掉）：contextId 的每一项怎么算；断线后怎么轮询；时限只听调用中间件的 `signal`；修正消息只带文字；错误码表按 `error-map.json` 拆开 `rejected`，加 `AI_CANCELLED`，写明以 `error-map.json` 为准，错误对象带 `autoRetry`。
+- Agent 接入框架（`docs/delivery/agent-framework.md`，2026-11-02 随 v0.5.3 PoC 拿掉）：适配层接口加 `verifyKey`、`onKeyRejected`、`partition`；写明打开模型接入口的开关时，草稿核验会误判「已配置」，要一起改。
 
 **测试**：单元测试 280 个：本机 269 个通过，11 个要 MySQL 的跳过（这 11 个用 `poc/infra/bench-test.sh` 在测试台上跑，2026-10-19 11/11 通过，之后这部分没改）。Skill 与命令行测试 13 个通过。2026-10-21 完整端到端测试 15 个全部通过（0 失败、0 跳过；测试只用审核员本人在前端的连接和启用）。另外，开发者指南的演习在九安开发包副本上留下 145 个测试（演习用，不进交付包），全部通过。
 

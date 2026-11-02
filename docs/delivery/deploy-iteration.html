@@ -93,12 +93,12 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1.0</span>部署与迭代规范</h1>
+v0.7.10</span>部署与迭代规范</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
-    <tr><th scope="row">状态</th><td>交付版
-v2（加了测试台：九安副本、本机 MySQL）</td></tr>
-    <tr><th scope="row">范围</th><td>poc/app、poc/bench、poc/infra、skills/agent-access、knowledge-agent、contract、docs</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">状态</th><td>交付版 v3（只留新 UI：九安 v0.7.10
+测试台；部署分三块；默认 m7g）</td></tr>
+    <tr><th scope="row">范围</th><td>poc/app07、poc/web07、poc/bench、patches/jiuan-v0.7.10、poc/infra、kb、audit-agent、knowledgebase-writer-agent-pg、skills/nexus-ai-operator、docs</td></tr>
     <tr><th scope="row">读者</th><td>应用开发、Agent
 开发、运维</td></tr>
   </table>
@@ -134,20 +134,25 @@ id="toc-10-九安开发包升级的步骤">10. 九安开发包升级的步骤</a
 <main id="main">
 <h1 id="1-六条原则">1. 六条原则</h1>
 <ol type="1">
-<li><strong>只有一条发布路径</strong>：<code>poc/infra/deploy.sh</code>。不手工改实例上的文件，不手工上传构件。</li>
+<li><strong>每一块只有一条发布路径</strong>：前端只用
+<code>poc/infra/deploy.sh</code>，知识库只用
+<code>poc/infra/kb.sh</code>（驱动 <code>kb/deploy.sh</code>），审核
+Agent 的提示词只用
+<code>audit-agent/apply.py</code>。不手工改实例上的文件，不手工上传构件。</li>
 <li><strong>先测再发，确认再推</strong>：单元测试 → 部署 → 端到端测试 →
 项目负责人确认 → 推送、打标签。开发完、测完不等于可以提交。</li>
-<li><strong>密钥不进构件、不进仓库、不进文档、不进对话</strong>：只在本机的
+<li><strong>密钥不进构件、不进仓库、不进文档、不进对话</strong>：测试台的启动配置只在本机的
 <code>poc/infra/secrets.env</code>（0600），由 <code>deploy.sh</code>
-经加密的构件桶装到实例。现在整个文件都会传上去，包括只给测试用的密钥；改成按白名单生成服务端的文件之前，不用的测试密钥别留在文件里（评审
+经加密的构件桶装到实例；Agent 的调用密钥只在「Agent
+接入」页粘贴。现在整个 <code>secrets.env</code>
+都会传上去；改成按白名单生成服务端的文件之前，不用的行别留在文件里（评审
 I3，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
-<li><strong>九安开发包只读</strong>：前端改动只靠
-<code>scripts/build-public.mjs</code>
-的锚点补丁生成；服务端只经九安自己的扩展点接入（见<a
-href="integration.html">并入九安</a>）。</li>
-<li><strong>接口只增不改</strong>：<code>agent-access-v1</code>
-的接口、错误码、命令行退出码，只能加，不能改含义；要改就出 v2，v1
-并存一个版本周期。</li>
+<li><strong>九安开发包只读</strong>：九安的改动只靠
+<code>patches/jiuan-v0.7.10/</code> 下的补丁，由
+<code>poc/bench/build-jiuan07.sh</code>
+打进副本；外壳只经九安自己的扩展点（<code>platformRoutes</code>
+钩子、前门）接入。</li>
+<li><strong>接口只增不改</strong>：外壳的接口（<code>/api/analysis/v1/poc/*</code>）和补丁加的接口，只能加字段、加错误码，不能改含义；要改就加新的，旧的并存一个版本周期。</li>
 <li><strong>Markdown 是文档的唯一来源</strong>：HTML 由
 <code>docs/build-html.sh</code> 生成；推送前跑
 <code>docs/build-html.sh --check</code>。</li>
@@ -160,10 +165,14 @@ v4（连同 <code>KbBedrockPolicy</code>），从本仓库跑知识库的 db
 v4（缺省就是），否则防混用检查（<code>kb/GUIDE.md</code>
 7.6）会停下。测试台的日常发布照旧用
 <code>deploy.sh --code-only</code>。</p>
+<p><strong>2026-11-02 起只留新 UI</strong>：v0.5.3
+PoC（<code>poc/app/</code>、<code>build-jiuan.sh</code>、<code>skills/agent-access/</code>、<code>knowledge-agent/</code>、<code>contract/</code>、v0.5.3
+的端到端测试）从代码里拿掉了，下面只写九安 v0.7.10
+测试台；机器类型以后用 m7g.xlarge（arm64，模板的默认）。</p>
 <h1 id="2-代码托管与版本">2. 代码托管与版本</h1>
 <p>2026-10-19 起有两个私有仓库。交接仓库的封板标签是
-<code>v0.1</code>（2026-10-19）和
-<code>v0.1.0</code>（2026-10-21）；开发仓库停在 <code>v0.1</code>：</p>
+<code>v0.1</code>（2026-10-19）、<code>v0.1.0</code>（2026-10-21）和
+<code>v0.7.10</code>（2026-10-26）；开发仓库停在 <code>v0.1</code>：</p>
 <ul>
 <li><strong>交接仓库</strong> <a
 href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide">https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide</a>：只有交接内容，给客户用。不要直接在里面改，改开发目录，再用
@@ -183,28 +192,28 @@ href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc">https://github.
 </thead>
 <tbody>
 <tr>
-<td><code>poc/<wbr>app/<wbr></code>（除生成物）、<code>poc/<wbr>bench/<wbr></code>（除
-<code>node_<wbr>modules/<wbr></code>）、<code>poc/<wbr>infra/<wbr>*.<wbr>yaml</code>、<code>poc/<wbr>infra/<wbr>*.<wbr>sh</code>、<code>poc/<wbr>infra/<wbr>bench/<wbr></code>、<code>poc/<wbr>infra/<wbr>README.<wbr>md</code></td>
-<td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code></td>
+<td><code>poc/<wbr>app07/<wbr></code>、<code>poc/<wbr>web07/<wbr></code>（除
+<code>dist/<wbr></code>）、<code>poc/<wbr>bench/<wbr></code>（除
+<code>node_<wbr>modules/<wbr></code>）、<code>patches/<wbr></code></td>
+<td><code>.<wbr>build/<wbr></code>（九安副本，<code>build-<wbr>jiuan07.<wbr>sh</code>
+生成）、<code>dist/<wbr></code>（交付包和新前端的构建产物）</td>
 </tr>
 <tr>
-<td><code>skills/<wbr></code>、<code>knowledge-<wbr>agent/<wbr></code>、<code>contract/<wbr></code>、<code>docs/<wbr></code>（含生成的
-HTML）</td>
-<td><code>poc/<wbr>app/<wbr>public/<wbr></code>（<code>build-<wbr>public.<wbr>mjs</code>
-生成）、<code>.<wbr>build/<wbr></code>（九安副本，<code>build-<wbr>jiuan.<wbr>sh</code>
-生成）、<code>dist/<wbr></code>（交付包）</td>
+<td><code>poc/<wbr>infra/<wbr></code>：模板、脚本、<code>bench/<wbr></code>、<code>lib/<wbr></code>、<code>test/<wbr></code>、<code>env/<wbr>example.<wbr>env</code>、<code>secrets.<wbr>env.<wbr>example</code>、<code>README.<wbr>md</code></td>
+<td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code>、<code>poc/<wbr>infra/<wbr>env/<wbr>*.<wbr>env</code>（各环境的配置）、<code>poc/<wbr>infra/<wbr>.<wbr>state/<wbr></code>（钉住的主机公钥）</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>tools/<wbr></code>、<code>patches/<wbr></code>（打进九安副本的补丁）</td>
+<td><code>kb/<wbr></code>、<code>audit-<wbr>agent/<wbr></code>、<code>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>、<code>knowbase-<wbr>s3vectors-<wbr>agent/<wbr></code>、<code>customer-<wbr>deploy/<wbr></code>、<code>skills/<wbr></code></td>
+<td>它们的
+<code>deploy.<wbr>env</code>、<code>.<wbr>state/<wbr></code>、<code>.<wbr>build/<wbr></code>；制度原文（.docx）</td>
+</tr>
+<tr>
+<td><code>docs/<wbr></code>（含生成的 HTML）</td>
 <td><code>source/<wbr></code>（九安开发包，另行存放、按版本号引用）</td>
 </tr>
 <tr>
-<td></td>
-<td><code>evidence/<wbr></code>（测试证据，只随交付包走）</td>
-</tr>
-<tr>
 <td><code>README.<wbr>md</code>、<code>VERSION</code>、<code>CHANGELOG.<wbr>md</code></td>
-<td>设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；<code>archive/<wbr></code>（旧证据、旧包，只在本机）</td>
+<td>设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；<code>archive/<wbr></code>（旧证据、旧包，只在本机）；<code>evidence/<wbr></code>（测试证据，只随交付包走）</td>
 </tr>
 <tr>
 <td></td>
@@ -220,9 +229,7 @@ HTML）</td>
 <li><strong>标签</strong>：每次线上发布打一个标签
 <code>poc-YYYYMMDD-N</code>，合并请求里附上端到端测试结果。</li>
 <li><strong>构件与版本对应</strong>：<code>deploy.sh</code> 现在用 UTC
-时间命名归档包（<code>releases/archive/20261017T094000Z.tgz</code>）。接入
-Git
-后，把提交号也写进包名和健康检查的返回里，线上跑的是哪个版本一查就知道（评审
+时间命名归档包（<code>releases/archive/20261102T094000Z.tgz</code>）。把提交号也写进包名和健康检查的返回里，线上跑的是哪个版本一查就知道（评审
 C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 <li><strong>变更记录</strong>：仓库根目录放
 <code>CHANGELOG.md</code>，每次发布一节：改了什么、跑了哪些测试、谁确认的。</li>
@@ -240,28 +247,31 @@ C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 <tbody>
 <tr>
 <td>本机</td>
-<td>开发、单元测试（假 A2A 网关，不连 Nexus）、命令行测试</td>
+<td>开发、单元测试（假 A2A 网关，不连 Nexus）</td>
 <td>可用</td>
-</tr>
-<tr>
-<td>线上 PoC（栈 <code>andon-<wbr>finance-<wbr>poc</code>）</td>
-<td>演示、端到端测试；2026-10-19 起是测试台（t3.large，本机 MySQL
-8.0，九安的真实运行时）</td>
-<td>可用；正式域名还在这里</td>
 </tr>
 <tr>
 <td>m7g 测试环境（栈
 <code>andon-<wbr>finance-<wbr>m7g</code>，2026-11-02 起）</td>
-<td>一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经 SSH
-管理（<code>poc/<wbr>infra/<wbr>README.<wbr>md</code>「经 SSH
-管理」）；数据从线上 PoC
-搬来（<code>migrate-<wbr>data.<wbr>sh</code>）</td>
-<td>临时域名 <code>andon-<wbr>finance-<wbr>m7g</code> /
-<code>jiuan-<wbr>v0710-<wbr>m7g</code>（.tinyboat.blog）；域名迁移还没定</td>
+<td>一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经
+SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
+端点管理（<code>poc/<wbr>infra/<wbr>README.<wbr>md</code>「经 SSH
+管理」）；数据从旧栈搬来（<code>migrate-<wbr>data.<wbr>sh</code>）；2026-11-02
+16:59（UTC+8）起 Nexus 的 PG 连接器和密钥指向它的 PG</td>
+<td><code>jiuan-<wbr>v0710.<wbr>tinyboat.<wbr>blog</code>（2026-11-02
+19:13–19:18 UTC+8 从旧栈迁来）；新代码部署在这里</td>
+</tr>
+<tr>
+<td>旧栈（<code>andon-<wbr>finance-<wbr>poc</code>）</td>
+<td>t3.large，经 SSM；旧版本，站点名已改成
+<code>jiuan-<wbr>v0710-<wbr>old.<wbr>tinyboat.<wbr>blog</code>，<code>andon-<wbr>finance.<wbr>tinyboat.<wbr>blog</code>
+还在，都没人用</td>
+<td>等删：项目负责人定先留几天；根卷快照
+<code>snap-<wbr>05180f1a83a6edada</code></td>
 </tr>
 <tr>
 <td>预发（建议）</td>
-<td>并入九安之前，用同一模板另建一个栈（不同栈名和域名）先验证</td>
+<td>部署到九安之前，用同一模板另建一个栈（不同栈名和域名）先验证</td>
 <td>未建</td>
 </tr>
 </tbody>
@@ -280,6 +290,14 @@ C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 </thead>
 <tbody>
 <tr>
+<td>前端</td>
+<td>测试台外壳 <code>poc/<wbr>app07</code>、新前端
+<code>poc/<wbr>web07</code>、九安 v0.7.10 副本、九安的 MySQL</td>
+<td><code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>；测试阶段和 PG
+放在同一台机器上，以后由专人部署、可以分批</td>
+<td>PG 之后</td>
+</tr>
+<tr>
 <td>PG 与知识库后端</td>
 <td>PG + pgvector 容器、库内检索
 <code>kb_<wbr>search</code>、规则入库；PG 的地址和密码登记进
@@ -288,14 +306,6 @@ Nexus（数据连接器、数据库凭证密钥）</td>
 <code>poc/<wbr>infra/<wbr>kb.<wbr>sh</code> 驱动）；PG 主机经 SSM
 或部署人自己的 SSH 密钥（kb/GUIDE.md 第 4 节）</td>
 <td>先部署</td>
-</tr>
-<tr>
-<td>前端</td>
-<td>测试台外壳、两套九安站点、新前端 <code>poc/<wbr>web07</code>、九安的
-MySQL</td>
-<td><code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>；测试阶段和 PG
-放在同一台机器上，以后由专人部署、可以分批</td>
-<td>PG 之后</td>
 </tr>
 <tr>
 <td>Nexus 上的 Agent 与发布</td>
@@ -307,9 +317,9 @@ MySQL</td>
 </tbody>
 </table>
 </div>
-<p>线上的测试台是一套共用的环境，所以：端到端测试会<strong>重置测试台</strong>（<code>bench-reset.sh</code>
-删掉并重建九安的库，单据回到 8
-张种子；审批记录、登录状态、运行记录清空；各账号的连接与启用在磁盘上，不受影响），跑之前通知正在用的人。</p>
+<p>线上的测试台是一套共用的环境，所以：端到端测试会<strong>重置测试台</strong>（<code>bench07-reset.sh</code>
+删掉并重建 <code>jiuan07</code> 库，单据从假汇联易重新同步；「Agent
+接入」的启用记录和 Nexus 连接保留），跑之前通知正在用的人。</p>
 <h1 id="4-每类变更怎么做">4. 每类变更怎么做</h1>
 <div class="table-wrap">
 <table>
@@ -325,51 +335,46 @@ MySQL</td>
 </thead>
 <tbody>
 <tr>
-<td>应用代码（服务端、前端扩展）</td>
-<td><code>poc/<wbr>app/<wbr></code></td>
-<td>单元测试；相关的端到端测试</td>
-<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
+<td>外壳、新前端</td>
+<td><code>poc/<wbr>app07/<wbr></code>、<code>poc/<wbr>web07/<wbr></code></td>
+<td>新前端
+<code>npm test</code>、外壳的单元测试（<code>deploy.<wbr>sh</code>
+都会先跑）；<code>run07.<wbr>sh</code> 里相关的几条（第 7 节）</td>
+<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>：动 AWS
+之前先在 <code>poc/<wbr>web07</code> 里
+<code>npm ci</code>、测试、构建，<code>dist/<wbr></code>
+随构件发出；外壳启动时读一次 <code>dist/<wbr></code></td>
+<td>第 6.1 节（构件里带着那一版的 <code>dist/<wbr></code>）</td>
+<td>应用开发 + 项目负责人</td>
+</tr>
+<tr>
+<td>九安补丁</td>
+<td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>（<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>
+按文件名顺序打进副本）</td>
+<td>外壳的单元测试（要先构建副本）；<code>poc/<wbr>infra/<wbr>test</code>
+的构建测试；全部端到端测试</td>
+<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>（构件里的九安是
+<code>.<wbr>build/<wbr>jiuan07</code>，带 node_modules）</td>
 <td>第 6.1 节</td>
-<td>项目负责人</td>
+<td>应用开发 + 项目负责人</td>
 </tr>
 <tr>
-<td>前端锚点（九安页面上的插入点）</td>
-<td><code>scripts/<wbr>build-<wbr>public.<wbr>mjs</code></td>
-<td>单元测试（含锚点检查）；<code>poc.<wbr>e2e.<wbr>mjs</code> 和
-<code>attachments.<wbr>e2e.<wbr>mjs</code> 的界面部分</td>
-<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
+<td>部署脚本、测试台脚本</td>
+<td><code>poc/<wbr>infra/<wbr>*.<wbr>sh</code>、<code>poc/<wbr>infra/<wbr>lib/<wbr></code>、<code>poc/<wbr>infra/<wbr>bench/<wbr></code></td>
+<td><code>cd poc/<wbr>infra &amp;&amp; node -<wbr>-<wbr>test "test/<wbr>**/<wbr>*.<wbr>test.<wbr>mjs"</code>；健康检查；全部端到端测试</td>
+<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>（<code>bench/<wbr></code>
+随构件发出）；测试台的三项密钥只补不换，实例上已有的只认原值（不一样就在重启前失败，服务照旧跑）</td>
 <td>第 6.1 节</td>
-<td>项目负责人</td>
+<td>运维 + 项目负责人</td>
 </tr>
 <tr>
-<td>agent-access Skill 与命令行</td>
-<td><code>skills/<wbr>agent-<wbr>access/<wbr></code></td>
-<td>Python 测试 13
-个；<code>agent-<wbr>access-<wbr>cli.<wbr>test.<wbr>mjs</code>；<code>access.<wbr>e2e.<wbr>mjs</code></td>
-<td>不随服务部署；告诉用的人更新</td>
-<td>用上一个版本的文件</td>
-<td>应用开发</td>
-</tr>
-<tr>
-<td>Agent 提示词、能力清单</td>
-<td><code>knowledge-<wbr>agent/<wbr>prompt.<wbr>yaml</code>，经 Operator
-写到 Nexus</td>
-<td>先在 Nexus 上试用；<code>attachments.<wbr>e2e.<wbr>mjs</code> 的知识
-Agent 部分；版本号
-<code>knowledge-<wbr>agent-<wbr>YYYY-<wbr>MM-<wbr>DD.<wbr>N</code>
-要加一</td>
-<td>Operator 更新 Agent（发布跟随最新版本，立即生效）</td>
-<td>用上一版的提示词（如
-<code>prompt-<wbr>v1.<wbr>yaml</code>）再更新一次</td>
-<td>Agent 开发 + 应用开发</td>
-</tr>
-<tr>
-<td>栈参数（审批用哪个发布、Nexus 地址、端口）</td>
-<td><code>aws cloudformation deploy -<wbr>-<wbr>parameter-<wbr>overrides …</code></td>
-<td>健康检查；<code>poc.<wbr>e2e.<wbr>mjs</code></td>
-<td>改完参数再
-<code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>（它会按参数重写实例的
-<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>env</code>）</td>
+<td>栈参数（Nexus 地址、站点名、知识库的入站网段）</td>
+<td>环境配置
+<code>poc/<wbr>infra/<wbr>env/<wbr>&lt;环境&gt;.<wbr>env</code>，或
+<code>aws cloudformation deploy -<wbr>-<wbr>parameter-<wbr>overrides …</code></td>
+<td>健康检查；<code>run07.<wbr>sh</code></td>
+<td><code>deploy.<wbr>sh</code>（它把配置里写了的栈参数传上去），再
+<code>-<wbr>-<wbr>code-<wbr>only</code>（按参数重写实例上外壳的配置）</td>
 <td>参数改回去，再部署一次</td>
 <td>运维 + 项目负责人</td>
 </tr>
@@ -384,7 +389,7 @@ Agent 部分；版本号
 <td>运维 + 项目负责人</td>
 </tr>
 <tr>
-<td>启动配置（口令、<code>REGISTRY_<wbr>KEY</code>、测试台密钥）</td>
+<td>启动配置（口令、测试台密钥）</td>
 <td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code></td>
 <td>健康检查；端到端测试</td>
 <td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
@@ -392,57 +397,12 @@ Agent 部分；版本号
 <td>运维</td>
 </tr>
 <tr>
-<td>Agent 调用密钥、Nexus 连接</td>
-<td>不在文件里：用户在前端「Nexus Agent」页加载</td>
-<td>页面上当场验证（<code>tasks/<wbr>get</code>）</td>
-<td>「我的 Agent」里启用、换密钥、停用，不部署、不重启</td>
-<td>换回上一把密钥</td>
-<td>用户本人</td>
-</tr>
-<tr>
-<td>测试台（MySQL、九安副本、补丁）</td>
-<td><code>poc/<wbr>bench/<wbr></code>（副本构建、锁定的依赖）、<code>poc/<wbr>infra/<wbr>bench/<wbr></code>、<code>patches/<wbr>jiuan-<wbr>v0.<wbr>5.<wbr>3/<wbr></code>（补丁，按文件名顺序打进副本）</td>
-<td>单元测试；<code>poc/<wbr>infra/<wbr>bench-<wbr>test.<wbr>sh</code>（在实例上跑要
-MySQL 的测试）；全部端到端测试</td>
-<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>（构件里的九安是
-<code>.<wbr>build/<wbr>jiuan</code>，带
-node_modules）；三项测试台密钥只补不换，实例上已有的只认原值（不一样就在重启前失败，服务照旧跑）</td>
-<td>第 6.1
-节；<code>POC_<wbr>STORE=memory deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>
-回到内存存储</td>
-<td>应用开发 + 项目负责人</td>
-</tr>
-<tr>
-<td>九安开发包升级</td>
-<td><code>source/<wbr></code> 换成新版本，再跑
-<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>（补丁要能打上）</td>
-<td>全部单元测试；全部端到端测试</td>
-<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
-<td>指回旧版本再部署</td>
-<td>应用开发 + 项目负责人</td>
-</tr>
-<tr>
-<td>Nexus 平台升级</td>
-<td>Nexus 那边</td>
-<td>全部端到端测试；必要时更新 <code>verify.<wbr>mjs</code>
-里记录的实测行为</td>
-<td>—</td>
-<td>—</td>
-<td>应用开发</td>
-</tr>
-<tr>
-<td>九安 v0.7.10 测试台（外壳、新前端、补丁）</td>
-<td><code>poc/<wbr>app07/<wbr></code>、<code>poc/<wbr>web07/<wbr></code>、<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>（<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>
-打进副本）</td>
-<td>新前端
-<code>npm test</code>、外壳的单元测试（<code>deploy.<wbr>sh</code>
-都会先跑）；<code>run07.<wbr>sh</code> 里相关的几条（第 7 节）</td>
-<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>：动 AWS
-之前先在 <code>poc/<wbr>web07</code> 里
-<code>npm ci</code>、测试、构建，<code>dist/<wbr></code>
-随构件发出；外壳启动时读一次 <code>dist/<wbr></code></td>
-<td>第 6.1 节（构件里带着那一版的 <code>dist/<wbr></code>）</td>
-<td>应用开发 + 项目负责人</td>
+<td>Agent 调用密钥、Nexus 连接、审批 Agent</td>
+<td>不在文件里：管理员在新前端「Agent 接入」页操作</td>
+<td>页面上当场验证（名片 + <code>tasks/<wbr>get</code>）</td>
+<td>启用、换钥匙、停用、设为审批 Agent，不部署、不重启</td>
+<td>换回上一把密钥；把审批 Agent 指回原来那个</td>
+<td>管理员</td>
 </tr>
 <tr>
 <td>审核 Agent 提示词（「九安审核AI」）</td>
@@ -453,6 +413,43 @@ node_modules）；三项测试台密钥只补不换，实例上已有的只认�
 <td>第 6.3 节</td>
 <td>第 6.3 节</td>
 <td>Agent 开发 + 项目负责人</td>
+</tr>
+<tr>
+<td>PG 知识库 Agent</td>
+<td><code>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（工具、提示词）</td>
+<td>它自己的本机测试（它的 README 第 2 节）；<code>run07.<wbr>sh</code>
+知识库的几条</td>
+<td>按它的 README 第 10 节：更新工具代码、重存提示词</td>
+<td>它的 README 第 17 节</td>
+<td>Agent 开发 + 项目负责人</td>
+</tr>
+<tr>
+<td>知识库（PG、连接器、规则）</td>
+<td><code>kb/<wbr></code>、<code>kb/<wbr>deploy.<wbr>env</code></td>
+<td><code>kb.<wbr>sh verify</code>；<code>run07.<wbr>sh</code>
+知识库的几条</td>
+<td><code>bash poc/<wbr>infra/<wbr>kb.<wbr>sh &lt;阶段&gt;</code>（先
+<code>-<wbr>-<wbr>dry-<wbr>run</code>）</td>
+<td>按 <code>kb/<wbr>GUIDE.<wbr>md</code>（制度可以下线、恢复；换模型有
+<code>-<wbr>-<wbr>restore-<wbr>embeddings</code>）</td>
+<td>运维 + 项目负责人</td>
+</tr>
+<tr>
+<td>九安开发包升级</td>
+<td><code>source/<wbr></code> 换成新版本，再跑
+<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>（补丁要能打上）</td>
+<td>全部单元测试；全部端到端测试</td>
+<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
+<td>指回旧版本再部署</td>
+<td>应用开发 + 项目负责人</td>
+</tr>
+<tr>
+<td>Nexus 平台升级</td>
+<td>Nexus 那边</td>
+<td>全部端到端测试</td>
+<td>—</td>
+<td>—</td>
+<td>应用开发</td>
 </tr>
 <tr>
 <td>换机器（另建一个栈，搬数据）</td>
@@ -467,7 +464,7 @@ node_modules）；三项测试台密钥只补不换，实例上已有的只认�
 <code>-<wbr>-<wbr>dry-<wbr>run</code>）→ 端到端 → 域名迁移前
 <code>migrate-<wbr>data.<wbr>sh -<wbr>-<wbr>skip-<wbr>pg</code>
 再同步一次</td>
-<td>旧栈一直不动：<code>kb.<wbr>sh connector</code>
+<td>旧栈删掉之前不动：<code>kb.<wbr>sh connector</code>
 用旧环境的配置再跑一次，Nexus 就指回旧 PG；域名没迁就不影响用户</td>
 <td>运维 + 项目负责人</td>
 </tr>
@@ -488,36 +485,36 @@ node_modules）；三项测试台密钥只补不换，实例上已有的只认�
 <a href="../assets/diagrams/deploy-pipeline.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/deploy-pipeline.svg" loading="lazy"
-alt="发布流水线：本机检查 → 评审 → deploy.sh → 三道关（SSM 是 Success、健康检查 200、端到端测试全部通过）→ 项目负责人确认 → 推送、打标签；任何一道没过就回滚" /></a>
-<figcaption>发布流水线：本机检查 → 评审 → deploy.sh → 三道关（SSM 是
-Success、健康检查 200、端到端测试全部通过）→ 项目负责人确认 →
-推送、打标签；任何一道没过就回滚</figcaption>
+alt="发布流水线：本机检查 → 评审 → deploy.sh → 三道关（实例上那一步成功、健康检查通过、端到端测试全部通过）→ 项目负责人确认 → 推送、打标签；任何一道没过就回滚" /></a>
+<figcaption>发布流水线：本机检查 → 评审 → deploy.sh →
+三道关（实例上那一步成功、健康检查通过、端到端测试全部通过）→
+项目负责人确认 → 推送、打标签；任何一道没过就回滚</figcaption>
 </figure>
 <ol type="1">
 <li><strong>本机检查</strong>
 <ul>
-<li><code>cd poc/app &amp;&amp; node --test "test/unit/**/*.test.mjs"</code>：0
-失败（现在 275 个，本机有 11 个要 MySQL 的跳过）；</li>
-<li>改了测试台（<code>poc/app/bench/</code>、<code>server.mjs</code>、<code>poc/bench/</code>、<code>poc/infra/bench/</code>）：<code>poc/infra/bench-test.sh</code>
-在测试台上把那 11 个跑一遍，全部通过；</li>
-<li><code>python3 -m unittest discover -s ../../skills/agent-access/tests</code>：全部通过（13
-个）；</li>
+<li><code>cd poc/infra &amp;&amp; node --test "test/**/*.test.mjs"</code>：0
+失败；</li>
+<li><code>cd poc/web07 &amp;&amp; npm ci &amp;&amp; npm test</code>；<code>bash poc/bench/build-jiuan07.sh &amp;&amp; (cd poc/app07 &amp;&amp; node --test "test/unit/**/*.test.mjs")</code>：0
+失败；</li>
+<li>改了 <code>kb/</code> 或
+<code>audit-agent/</code>：<code>python3 -B -m unittest discover -s kb/tests</code>、<code>python3 -B -m unittest discover -s audit-agent/tests</code>；</li>
 <li><code>docs/build-html.sh --check</code>：HTML 都是最新的。</li>
 </ul></li>
 <li><strong>评审</strong>：合并请求有人看过；涉及接口、密钥、权限的改动，按<a
 href="handover.html">交接文档</a>第 6.1 节逐条核对。</li>
-<li><strong>部署</strong>：<code>poc/infra/deploy.sh --code-only</code>（改了模板才去掉
-<code>--code-only</code>）。脚本会先跑单元测试、构建九安副本（<code>poc/bench/build-jiuan.sh</code>、<code>build-jiuan07.sh</code>）、生成前端副本、构建九安
-v0.7.10 的新前端（<code>poc/web07</code>）并跑外壳的单元测试、补上缺的
-<code>REGISTRY_KEY</code>
-和测试台密钥，再打包上传、让实例拉取、配置测试台（<code>bench-configure.sh</code>）、重启并做健康检查。
+<li><strong>部署</strong>：<code>DEPLOY_ENV=poc/infra/env/&lt;环境&gt;.env poc/infra/deploy.sh --code-only</code>（改了模板才去掉
+<code>--code-only</code>）。脚本先跑
+<code>poc/infra/test</code>、构建九安副本、构建并测试新前端、跑外壳的单元测试，补上缺的测试台密钥，再打包上传，在实例上（经
+SSM 或
+SSH）装构件、配置测试台（<code>bench07-configure.sh</code>）、重启并做健康检查。
 <ul>
-<li>SSM 的结果不是 <code>Success</code>，脚本就报失败（2026-10-19
-起，评审 I1）；健康检查还分不出新旧版本，要靠第 6.1 节回滚。</li>
+<li>实例上的安装或重启没有成功，脚本就报失败，不做健康检查；健康检查还分不出新旧版本，要靠第
+6.1 节回滚。</li>
 </ul></li>
-<li><strong>端到端测试</strong>：按改动选文件（第 7 节），用
-<code>poc/app/test/e2e/run.sh &lt;文件…&gt;</code> 运行。</li>
-<li><strong>确认</strong>：把端到端测试结果（<code>evidence/e2e/last-run.jsonl</code>）和截图（<code>evidence/round5/e2e/</code>、<code>evidence/round6/e2e/</code>）交项目负责人。</li>
+<li><strong>端到端测试</strong>：<code>DEPLOY_ENV=poc/infra/env/&lt;环境&gt;.env [KB_E2E_DOCX=…] bash poc/app07/test/e2e/run07.sh</code>；只跑一部分见第
+7 节。</li>
+<li><strong>确认</strong>：把端到端测试结果和截图（<code>evidence/round7/e2e/</code>）交项目负责人。</li>
 <li><strong>推送与标签</strong>：确认之后再推送，打
 <code>poc-YYYYMMDD-N</code> 标签，写
 <code>CHANGELOG.md</code>；交接内容有变化时，用
@@ -528,41 +525,33 @@ v0.7.10 的新前端（<code>poc/web07</code>）并跑外壳的单元测试、�
 <a href="../assets/diagrams/rollback-decision.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/rollback-decision.svg" loading="lazy"
-alt="回滚怎么选：代码、密钥、栈参数、模板、提示词各有各的回法；不要只换实例上的 current 或 previous" /></a>
-<figcaption>回滚怎么选：代码、密钥、栈参数、模板、提示词各有各的回法；不要只换实例上的
-current 或 previous</figcaption>
+alt="回滚怎么选：代码、密钥、栈参数、模板、提示词各有各的回法" /></a>
+<figcaption>回滚怎么选：代码、密钥、栈参数、模板、提示词各有各的回法</figcaption>
 </figure>
 <h2 id="61-应用代码回滚最常用">6.1 应用代码回滚（最常用）</h2>
-<p>实例每次启动服务前都会从构件桶拉
-<code>releases/current.tgz</code>；所以回滚就是把旧的归档包放回
-<code>current.tgz</code>，再重启。归档包只保留 14
-天（桶的生命周期规则）。</p>
-<pre class="bash"><code>REGION=us-east-1; STACK=andon-finance-poc
-out() { aws cloudformation describe-stacks --region $REGION --stack-name $STACK --query &quot;Stacks[0].Outputs[?OutputKey==&#39;$1&#39;].OutputValue&quot; --output text; }
-BUCKET=$(out ArtifactBucketName); INSTANCE=$(out InstanceId); SITE=$(out SiteUrl)
-aws s3 ls s3://$BUCKET/releases/archive/ --region $REGION                    # 找到要回到的那一版
-aws s3 cp s3://$BUCKET/releases/archive/&lt;时间&gt;.tgz s3://$BUCKET/releases/current.tgz --region $REGION
-aws ssm send-command --region $REGION --instance-ids $INSTANCE --document-name AWS-RunShellScript \
-  --parameters &#39;commands=[&quot;systemctl restart andon-finance-poc.service&quot;,&quot;sleep 5&quot;,&quot;systemctl is-active andon-finance-poc.service&quot;]&#39;
-curl -fsS $SITE/api/health</code></pre>
+<p>实例启动时不从构件桶拉包，只跑
+<code>/opt/andon-finance/current</code> 里的版本；<code>deploy.sh</code>
+每次把上一版留在 <code>/opt/andon-finance/previous</code>。所以：</p>
+<p><strong>回到上一版</strong>（上一次部署之前的那一版）：</p>
+<pre class="bash"><code># 在实例上（经 SSH 或 SSM 的会话里，见运维第 1.2 节）
+cd /opt/andon-finance &amp;&amp; sudo mv current failed &amp;&amp; sudo mv previous current
+sudo systemctl restart andon-jiuan07.service &amp;&amp; sleep 5 &amp;&amp; systemctl is-active andon-jiuan07.service
+curl -fsS http://127.0.0.1:4180/poc/healthz
+sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以后</code></pre>
+<p><strong>回到更早的版本</strong>：取那个提交，<code>DEPLOY_ENV=… poc/infra/deploy.sh --code-only</code>（照常跑测试、构建、装上）。构件桶里也有归档包
+<code>releases/archive/&lt;时间&gt;.tgz</code>（保留 14 天），和
+<code>current.tgz</code> 一样的结构；要直接装它，在实例上照
+<code>deploy.sh</code> 里 <code># &gt;&gt;&gt; install</code> 到
+<code># &lt;&lt;&lt; install</code> 那一段手工做一遍，把
+<code>current.tgz</code> 换成这个归档包。</p>
 <p>注意：</p>
 <ul>
-<li>只替换实例上的 <code>/opt/andon-finance/current</code>
-没有用，下次重启又会拉回 <code>current.tgz</code>；实例上的
-<code>previous</code> 也不可靠，服务崩溃循环时会被坏版本覆盖（评审
-I2）；</li>
-<li>回滚不动 <code>secrets.env</code>；如果问题出在密钥，按第 4
-节「密钥」那一行处理；</li>
-<li>回滚后在 <code>CHANGELOG.md</code> 记一笔，下一次正常发布会覆盖
-<code>current.tgz</code>。</li>
-<li>九安 v0.7.10 测试台在同一个构件里（外壳 <code>app07/</code>、副本
-<code>jiuan07/</code>、新前端 <code>web07/dist/</code>）：PoC
-服务重启拉完包以后，再
-<code>systemctl restart andon-jiuan07.service</code>（外壳启动时才读一次新前端的
-<code>dist/</code>），看
-<code>https://jiuan-v0710.tinyboat.blog/poc/healthz</code>；</li>
+<li>回滚不动 <code>secrets.env</code> 和 MySQL
+里的数据；如果问题出在密钥，按第 4 节「密钥」那几行处理；</li>
 <li>回滚代码不动 Nexus 上的东西：审核 Agent 的提示词按第 6.3
-节回退，知识库里的规则在知识库 Agent 那边（下线的制度可以恢复）。</li>
+节回退，知识库里的规则在知识库 Agent 那边（下线的制度可以恢复）；</li>
+<li>回滚后在 <code>CHANGELOG.md</code> 记一笔；下一次正常部署会把现在的
+<code>current</code> 挪进 <code>previous</code>。</li>
 </ul>
 <h2 id="62-其他回滚">6.2 其他回滚</h2>
 <ul>
@@ -571,9 +560,11 @@ I2）；</li>
 <li><strong>模板</strong>：CloudFormation
 更新失败会自动回滚；更新成功但有问题的，用上一版模板跑
 <code>deploy.sh</code>。</li>
-<li><strong>Agent 提示词</strong>：用上一版提示词经 Operator
-再更新一次；发布跟随最新版本，所以立即生效。</li>
-<li><strong>各账号的数据</strong>（<code>/var/lib/andon-finance/users/</code>）：没有备份；回滚代码不会动它。</li>
+<li><strong>「Agent 接入」</strong>：审批 Agent
+指错了，在原来那个上再「设为审批
+Agent」；密钥换坏了，再「换钥匙」。</li>
+<li><strong>知识库</strong>：制度下线、恢复都在知识库页上；PG 指错了用
+<code>kb.sh connector</code> 指回去（第 4 节「换机器」那一行）。</li>
 </ul>
 <h2 id="63-审核-agent-提示词怎么下发怎么留底怎么回退">6.3 审核 Agent
 提示词：怎么下发、怎么留底、怎么回退</h2>
@@ -621,57 +612,34 @@ Nexus 网页上重新加；<code>apply.py</code> 在 pg 方式下每次都按
 </thead>
 <tbody>
 <tr>
-<td>单元测试 <code>test/<wbr>unit/<wbr></code>（275 个）</td>
-<td>本机，假 A2A 网关；要 MySQL 的 11 个本机跳过</td>
+<td>部署脚本、模板、测试台脚本：<code>poc/<wbr>infra/<wbr>test/<wbr></code>（夹具在
+<code>test/<wbr>fixtures/<wbr>deploy-<wbr>env</code>）</td>
+<td>本机；九安副本的构建测试要本机有开发包，没有就跳过那几条</td>
+<td>免费</td>
+<td>每次改
+<code>poc/<wbr>infra/<wbr></code>；<code>deploy.<wbr>sh</code>
+每次都先跑</td>
+</tr>
+<tr>
+<td>新前端 <code>poc/<wbr>web07</code> 的 <code>npm test</code>、外壳
+<code>poc/<wbr>app07/<wbr>test/<wbr>unit/<wbr></code></td>
+<td>本机，假 A2A
+网关（<code>poc/<wbr>app07/<wbr>test/<wbr>unit/<wbr>helpers/<wbr>fake-<wbr>a2a.<wbr>mjs</code>）</td>
 <td>免费</td>
 <td>每次改代码；<code>deploy.<wbr>sh</code> 每次都先跑</td>
 </tr>
 <tr>
-<td>要 MySQL
-的单元测试（<code>bench-<wbr>*.<wbr>test.<wbr>mjs</code>，11 个）</td>
-<td>测试台，经
-<code>poc/<wbr>infra/<wbr>bench-<wbr>test.<wbr>sh</code>；只用
-<code>jiuan_<wbr>bench_<wbr>test</code> 库</td>
-<td>免费</td>
-<td>改了测试台的代码或脚本</td>
-</tr>
-<tr>
-<td>命令行测试 <code>skills/<wbr>agent-<wbr>access/<wbr>tests</code>（6
-个）</td>
+<td>知识库工具 <code>kb/<wbr>tests</code>、审核 Agent 下发脚本
+<code>audit-<wbr>agent/<wbr>tests</code></td>
 <td>本机</td>
 <td>免费</td>
-<td>改了 <code>agent_<wbr>access.<wbr>py</code></td>
+<td>改了它们；<code>make-<wbr>package.<wbr>sh</code> 出包前会跑</td>
 </tr>
 <tr>
-<td><code>poc.<wbr>e2e.<wbr>mjs</code></td>
-<td>线上</td>
-<td>约 0.15 美元</td>
-<td>改了审批流、九安锚点、模型客户端</td>
-</tr>
-<tr>
-<td><code>attachments.<wbr>e2e.<wbr>mjs</code></td>
-<td>线上</td>
-<td>约 0.15 美元</td>
-<td>改了附件、调用测试、A2A 客户端、提示词</td>
-</tr>
-<tr>
-<td><code>access.<wbr>e2e.<wbr>mjs</code></td>
-<td>线上</td>
-<td>约 0.06 美元</td>
-<td>改了「我的 Nexus」、命令行、加密存储</td>
-</tr>
-<tr>
-<td>九安 v0.7.10：新前端 <code>poc/<wbr>web07</code> 的
-<code>npm test</code>、外壳 <code>poc/<wbr>app07</code> 的单元测试</td>
-<td>本机</td>
-<td>免费</td>
-<td>每次改代码；<code>deploy.<wbr>sh</code> 每次都先跑</td>
-</tr>
-<tr>
-<td>九安 v0.7.10：<code>run07.<wbr>sh</code>（先
+<td><code>run07.<wbr>sh</code>（先
 <code>web07.<wbr>e2e.<wbr>mjs</code>，再
 <code>jiuan07.<wbr>e2e.<wbr>mjs</code>）</td>
-<td>线上（jiuan-v0710）；开始前重置 <code>jiuan07</code> 库，保留「Agent
+<td>线上测试台；开始前重置 <code>jiuan07</code> 库，保留「Agent
 接入」的启用记录</td>
 <td>完整一次约 1–3 美元</td>
 <td>改了外壳、新前端、补丁、审核 Agent
@@ -687,14 +655,14 @@ node 的
 <ul>
 <li><strong>先写会失败的测试</strong>，看着它失败，再写实现；修 bug
 也一样，先写能复现的测试。</li>
-<li><strong>单元测试不连网</strong>：Nexus 一律用
-<code>test/unit/helpers/fake-a2a.mjs</code> 和假的 CLI。</li>
-<li><strong>端到端测试用的线上账号是真人也在用的</strong>：不替换、不停用账号本人启用的
+<li><strong>单元测试不连网</strong>：Nexus 一律用假 A2A 网关和假的
+CLI。</li>
+<li><strong>端到端测试用的线上账号和启用记录是真人也在用的</strong>：不停用、不替换管理员启用的
 Agent，只清理测试自己建的东西；跳过时写明原因。</li>
-<li><strong>端到端测试输出里不能出现密钥</strong>：<code>access.e2e.mjs</code>
-会逐条检查。</li>
+<li><strong>端到端测试只从 <code>secrets.env</code>
+读两个账号的口令</strong>，不读任何调用密钥；输出里不能出现密钥。</li>
 <li>端到端测试的截图存到
-<code>evidence/&lt;轮次&gt;/e2e/</code>，交付时一并给项目负责人。</li>
+<code>evidence/round7/e2e/</code>，交付时一并给项目负责人；知识库页的制度详情、检索结果不截图。</li>
 </ul>
 <h1 id="8-接口与版本号">8. 接口与版本号</h1>
 <div class="table-wrap">
@@ -707,23 +675,22 @@ Agent，只清理测试自己建的东西；跳过时写明原因。</li>
 </thead>
 <tbody>
 <tr>
-<td><code>agent-<wbr>access-<wbr>v1</code>（<code>/<wbr>api/<wbr>analysis/<wbr>v1/<wbr>poc/<wbr>nexus/<wbr>me*</code>）</td>
-<td>只增不改：可以加字段、加错误码、加接口；不能改已有字段和错误码的含义。见
-<code>skills/<wbr>agent-<wbr>access/<wbr>references/<wbr>interface.<wbr>md</code></td>
+<td>外壳的接口（<code>/<wbr>api/<wbr>analysis/<wbr>v1/<wbr>poc/<wbr>*</code>）和补丁加的「Agent
+接入」接口</td>
+<td>只增不改：可以加字段、加错误码、加接口；不能改已有字段和错误码的含义</td>
 </tr>
 <tr>
-<td>命令行退出码（0、2–9）</td>
-<td>和 nexus-ai-operator 一致，只增不改。见
-<code>skills/<wbr>agent-<wbr>access/<wbr>SKILL.<wbr>md</code> 第 6
-节</td>
+<td>审核 Agent 的 <code>agentVersion</code></td>
+<td><code>jiuan-<wbr>audit-<wbr>ai-<wbr>kb-<wbr>YYYY-<wbr>MM-<wbr>DD.<wbr>N</code>，改了提示词就加一（第
+6.3 节）</td>
 </tr>
 <tr>
-<td>知识 Agent 返回的 <code>version</code></td>
-<td><code>knowledge-<wbr>agent-<wbr>YYYY-<wbr>MM-<wbr>DD.<wbr>N</code>，改了提示词就加一；能力清单（<code>describe</code>）随之更新</td>
+<td>知识库的约定 <code>kb.<wbr>rules/<wbr>v1</code></td>
+<td>只增不改；测试台的客户端按它校验回复（<code>poc/<wbr>app07/<wbr>kb-<wbr>steward-<wbr>client.<wbr>mjs</code>）</td>
 </tr>
 <tr>
 <td>九安开发包</td>
-<td>用目录名里的版本号（现在 v0.5.3）；升级时在
+<td>用目录名里的版本号（现在 v0.7.10）；升级时在
 <code>CHANGELOG.<wbr>md</code> 写明</td>
 </tr>
 </tbody>
@@ -744,25 +711,20 @@ href="handover.html">交接文档</a>第 6.1 节）：</p>
 <tr>
 <td><code>deploy.<wbr>sh</code> 拒绝从有未提交改动的目录发布；版本号 =
 短提交号 + 包的 sha256</td>
-<td>代码进 Git（C1）</td>
+<td>构件带版本（C1）</td>
 </tr>
 <tr>
 <td><code>/<wbr>poc/<wbr>healthz</code>
-版本不对，部署失败并打印回滚命令（SSM 不是 Success 就失败，2026-10-19
-已做）</td>
+版本不对，部署失败并打印回滚命令（实例上那一步不成功就失败，已做）</td>
 <td>健康检查带版本号（C1）</td>
 </tr>
 <tr>
-<td>实例只装部署指定的版本，崩溃重启不重新下载</td>
-<td>改模板的拉包方式（I2）</td>
-</tr>
-<tr>
-<td>单元测试在 Node 24、命令行测试在 Python 3.9 上跑</td>
+<td>单元测试在 Node 24、下发脚本在 Python 3.9 上跑</td>
 <td>容器化的测试关卡（I9）</td>
 </tr>
 <tr>
 <td>先上预发，发布那次端到端测试里「跳过」算失败</td>
-<td>预发环境、栈名参数化（I10）</td>
+<td>预发环境（I10）</td>
 </tr>
 <tr>
 <td>服务端密钥文件按白名单生成，测试密钥不离开本机</td>
@@ -779,12 +741,10 @@ href="handover.html">交接文档</a>第 6.1 节）：</p>
 <h1 id="10-九安开发包升级的步骤">10. 九安开发包升级的步骤</h1>
 <ol type="1">
 <li>新版本解压到 <code>source/</code> 下的新目录，老版本保留。</li>
-<li><code>JIUAN_CODE_DIR=&lt;新目录&gt;/code node scripts/build-public.mjs</code>：哪个锚点对不上，脚本会直接报错，不会悄悄漏改。</li>
-<li>服务端跑的是 <code>poc/bench/build-jiuan.sh</code>
-构建的副本：把脚本里的开发包路径和补丁目录（<code>patches/jiuan-v0.5.3/</code>）改成新版本，再跑一次；补丁打不上会报错，不留半成品。</li>
-<li>逐个修锚点和补丁，跑全部单元测试，再用
-<code>poc/infra/bench-test.sh</code> 在测试台上跑要 MySQL 的测试。</li>
-<li>用新目录部署（<code>JIUAN_CODE_DIR=&lt;新目录&gt;/code poc/infra/deploy.sh --code-only</code>），跑全部端到端测试。</li>
+<li>把 <code>poc/bench/build-jiuan07.sh</code>
+里的开发包路径和补丁目录（<code>patches/jiuan-v0.7.10/</code>）改成新版本，再跑一次；补丁打不上会报错，不留半成品。</li>
+<li>逐个修补丁，跑 <code>poc/infra/test</code> 和外壳的单元测试。</li>
+<li>部署到测试环境（<code>deploy.sh --code-only</code>），跑全部端到端测试。</li>
 <li>确认后在 <code>CHANGELOG.md</code>
 写明九安版本变化；老目录再保留一个发布周期。</li>
 </ol>

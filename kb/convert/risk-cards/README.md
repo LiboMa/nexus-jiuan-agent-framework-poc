@@ -40,7 +40,7 @@ uv run --no-project --with openpyxl python3 -I kb/convert/risk-cards/make_xlsx.p
 
 1. 用管理员登录测试台，打开知识库页的「上传制度」，选转出来的 .docx。制度标识 `risk-cards`，版本 `2026-10-29`，标题预填的就是完整的文件名（带 .docx），不用改。上传经 Nexus 上的 PG 知识库 Agent 入库（[`../../GUIDE.md`](../../GUIDE.md) 7.6）。
 2. 库里应是 449 条：`risk-cards-H1` 是说明（条款），`risk-cards-T1.1`…`T1.448` 一条一张卡，都是 `rule_type=clause`，卡片全文在 `scope_controls` / `content`。同一份 .docx 再传一次是「没有变化」。
-3. 端到端测试用的也是这一份：`KB_E2E_DOCX=<这份 .docx> DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/app/test/e2e/run07.sh`（[`../../../poc/README.md`](../../../poc/README.md)「九安 v0.7.10」）。
+3. 端到端测试用的也是这一份：`KB_E2E_DOCX=<这份 .docx> DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/app07/test/e2e/run07.sh`（[`../../../poc/README.md`](../../../poc/README.md)「端到端测试」）。
 
 2026-11-01 核对过：转出来的 .docx 能过测试台的上传校验（`poc/app07/kb-docx.mjs`）；PG 知识库 Agent 的离线解析器（分支 `feat/pg-kb-steward` 上的 `kb/lib/kb_parse.py`，还没合进本仓库）解析出 449 条，表格行 448 + 条款 1，没有拆错、没有重复。
 

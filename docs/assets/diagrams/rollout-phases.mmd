@@ -1,14 +1,14 @@
 flowchart TB
-  p0["阶段 0 · 对接与拍板<br/>设计稿批准 · 补丁基线<br/>用哪套 Nexus · 数据外发<br/>九安的 8 个决定"]
-  p1["阶段 1 · 测试台跑通 MVP<br/>补丁 0001–0006 + 部署工具包<br/>审核 Agent first_review@1<br/>（我们，测试台上）"]
-  p2["阶段 2 · 九安测试环境<br/>补丁定稿 · 九安自己适配<br/>我们用代码协助部署<br/>Gitea + Compose 流水线"]
-  p3["阶段 3 · 试运行<br/>九安打开任务开关<br/>限定公司与单据类型<br/>额度与告警"]
-  p4["阶段 4 · 生产上线<br/>生产 Nexus 加固<br/>密钥与凭证清理<br/>回退演练"]
-  p0 -- "门槛：四项前置都有结论" --> p1
-  p1 -- "门槛：第 11 节验收 · 端到端通过 · 你确认" --> p2
-  p2 -- "门槛：九安评审补丁 · 测试环境端到端" --> p3
+  p0["阶段 0 · 对接与拍板<br/>补丁基线 · 生产用哪套 Nexus<br/>数据外发 · review_advice@1 的时限"]
+  p1["阶段 1 · 先部署 PG 与知识库<br/>九安用自己的 SSH 密钥（kb/）<br/>Nexus 连接器 · 规则入库"]
+  p2["阶段 2 · Nexus 上的 Agent 与发布<br/>审核 Agent · PG 知识库 Agent<br/>（audit-agent/ · customer-deploy/）"]
+  p3["阶段 3 · 前端分批部署与试运行<br/>补丁 0001–0007 并入九安<br/>Agent 接入 · 限定公司与单据"]
+  p4["阶段 4 · 生产上线<br/>密钥与凭证清理<br/>回退演练"]
+  p0 -- "门槛：前置都有结论" --> p1
+  p1 -- "门槛：kb verify 通过" --> p2
+  p2 -- "门槛：Agent 在测试页上合格" --> p3
   p3 -- "门槛：试运行指标达标 · 九安签字" --> p4
   class p0 warn
-  class p1 poc
-  class p2,p3 jiuan
+  class p1,p2 poc
+  class p3 jiuan
   class p4 good

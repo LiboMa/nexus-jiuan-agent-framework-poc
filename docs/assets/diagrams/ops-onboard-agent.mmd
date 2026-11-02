@@ -2,17 +2,16 @@ sequenceDiagram
   actor Dev as Agent 开发<br/>编码工具 + Operator
   actor Owner as 发布者本人<br/>（网页）
   participant N as Nexus
-  participant App as 九安 PoC
-  actor User as 使用者
+  participant App as 测试台<br/>（新前端 + 九安）
+  actor Admin as 管理员
   Dev->>N: ① 建 Agent · 写提示词 · 试用<br/>建发布 · 打开 A2A
   Owner->>N: ② 签发调用密钥
   N-->>Owner: nxa_…（只显示一次）
-  Owner-->>User: 当面交给使用者（不经聊天工具）
-  User->>App: ③ Agent 页启用，粘贴调用密钥
+  Owner-->>Admin: 当面交给管理员（不经聊天工具）
+  Admin->>App: ③「Agent 接入」页启用，只粘贴调用密钥
   App->>N: 名片 + tasks/get（不花钱）
-  App->>N: describe 能力清单
-  App-->>User: 已启用
-  User->>App: ④ 调用测试（按任务、带附件）
+  App-->>Admin: 就绪（页面上只显示指纹）
+  Admin->>App: ④ 设为审批 Agent（写原因）· 测试
   App->>N: A2A message/stream
-  N-->>App: 结果 → 运行记录
-  Note over Dev,User: 不改 secrets.env · 不部署 · 不重启；改了提示词点「重新读能力清单」
+  N-->>App: 结果 → 调用记录
+  Note over Dev,Admin: 不改 secrets.env · 不部署 · 不重启；改了提示词点「重新验证」

@@ -93,13 +93,14 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1.0</span>运维与后续迭代</h1>
+v0.7.10</span>运维与后续迭代</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-10-19</td></tr>
-    <tr><th scope="row">状态</th><td>交付版
-v2（实例已是测试台：t3.large、本机 MySQL 8.0、九安运行时）</td></tr>
-    <tr><th scope="row">范围</th><td>线上 PoC（栈 andon-finance-poc）与
-Nexus nxs-beine1013（线上 Nexus AI
+    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">状态</th><td>交付版 v3（只留新 UI：九安 v0.7.10
+测试台；一台机器一个服务 andon-jiuan07）</td></tr>
+    <tr><th scope="row">范围</th><td>九安 v0.7.10 测试台（栈
+andon-finance-m7g；旧栈 andon-finance-poc 等删）与 Nexus
+nxs-beine1013（线上 Nexus AI
 的实际地址：d3u3hj2us186y.cloudfront.net）</td></tr>
     <tr><th scope="row">读者</th><td>运维、值班、应用开发、Agent
 开发</td></tr>
@@ -121,25 +122,24 @@ Nexus nxs-beine1013（线上 Nexus AI
 <li><a href="#21-接入一个新-agent固定的四步使用逻辑"
 id="toc-21-接入一个新-agent固定的四步使用逻辑">2.1 接入一个新
 Agent（固定的四步使用逻辑）</a></li>
-<li><a href="#22-审批流用哪把调用密钥"
-id="toc-22-审批流用哪把调用密钥">2.2 审批流用哪把调用密钥</a></li>
-<li><a href="#23-换口令或-registry_key"
-id="toc-23-换口令或-registry_key">2.3 换口令或
-<code>REGISTRY_KEY</code></a></li>
-<li><a href="#24-某个账号连不上或启用失败"
-id="toc-24-某个账号连不上或启用失败">2.4
-某个账号连不上或启用失败</a></li>
-<li><a href="#25-审批流出不来建议" id="toc-25-审批流出不来建议">2.5
-审批流出不来建议</a></li>
-<li><a href="#26-实例被替换之后" id="toc-26-实例被替换之后">2.6
-实例被替换之后</a></li>
-<li><a href="#27-测试台mysql-的检查重置备份"
-id="toc-27-测试台mysql-的检查重置备份">2.7 测试台：MySQL
+<li><a href="#22-审批流调谁用哪把调用密钥"
+id="toc-22-审批流调谁用哪把调用密钥">2.2
+审批流调谁、用哪把调用密钥</a></li>
+<li><a href="#23-换口令" id="toc-23-换口令">2.3 换口令</a></li>
+<li><a href="#24-agent-接入页上连不上或启用失败"
+id="toc-24-agent-接入页上连不上或启用失败">2.4 「Agent
+接入」页上连不上或启用失败</a></li>
+<li><a href="#25-实例被替换换机器" id="toc-25-实例被替换换机器">2.5
+实例被替换、换机器</a></li>
+<li><a href="#26-测试台mysql-的检查重置备份"
+id="toc-26-测试台mysql-的检查重置备份">2.6 测试台：MySQL
 的检查、重置、备份</a></li>
-<li><a href="#28-销毁" id="toc-28-销毁">2.8 销毁</a></li>
-<li><a href="#29-九安-v0710-测试台jiuan-v0710"
-id="toc-29-九安-v0710-测试台jiuan-v0710">2.9 九安 v0.7.10
-测试台（jiuan-v0710）</a></li>
+<li><a href="#27-ai-建议出不来慢" id="toc-27-ai-建议出不来慢">2.7 AI
+建议出不来、慢</a></li>
+<li><a href="#28-清理-v053-poc-留在实例上的东西"
+id="toc-28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
+留在实例上的东西</a></li>
+<li><a href="#29-销毁" id="toc-29-销毁">2.9 销毁</a></li>
 </ul></li>
 <li><a href="#3-后续迭代的最佳方式" id="toc-3-后续迭代的最佳方式">3.
 后续迭代的最佳方式</a>
@@ -158,6 +158,18 @@ id="toc-29-九安-v0710-测试台jiuan-v0710">2.9 九安 v0.7.10
 </nav>
 <main id="main">
 <h1 id="1-日常运维">1. 日常运维</h1>
+<p>一台实例上只有一个服务：测试台外壳 <code>andon-jiuan07</code>（用户
+<code>jiuan07</code>，直接听 4180），里面跑新前端、九安 v0.7.10
+的副本和外壳的接口；旁边是两个容器：MySQL
+<code>jiuan-mysql</code>、知识库的 PG
+<code>nexus-pgvector</code>。对外只有一个站点（CloudFront 分发
+<code>Jiuan07Distribution</code>，别名是栈参数
+<code>Jiuan07DomainName</code>）。2026-11-02 起没有 v0.5.3 PoC 的服务
+<code>andon-finance-poc</code> 了。</p>
+<p>下面的 <code>&lt;站点&gt;</code> 是这个栈的
+<code>Jiuan07DomainName</code>：现在是
+<code>jiuan-v0710.tinyboat.blog</code>（2026-11-02 从旧栈迁到 m7g 栈，<a
+href="handover.html">交接文档</a>第 2.2 节）。</p>
 <h2 id="11-每天看什么">1.1 每天看什么</h2>
 <div class="table-wrap">
 <table>
@@ -171,373 +183,63 @@ id="toc-29-九安-v0710-测试台jiuan-v0710">2.9 九安 v0.7.10
 <tbody>
 <tr>
 <td>站点是否在线</td>
-<td><code>curl -<wbr>fsS https:/<wbr>/<wbr>andon-<wbr>finance.<wbr>tinyboat.<wbr>blog/<wbr>api/<wbr>health</code></td>
-<td>HTTP 200，<code>status</code> 为 <code>ok</code>（刚重启的几秒是
-<code>starting</code>）</td>
-</tr>
-<tr>
-<td>九安 v0.7.10 测试台</td>
-<td><code>curl -<wbr>fsS https:/<wbr>/<wbr>jiuan-<wbr>v0710.<wbr>tinyboat.<wbr>blog/<wbr>poc/<wbr>healthz</code>；页面上看单据池里有没有新的
-AI 建议（第 2.9 节）</td>
+<td><code>curl -<wbr>fsS https:/<wbr>/<wbr>&lt;站点&gt;/<wbr>poc/<wbr>healthz</code></td>
 <td>HTTP 200</td>
 </tr>
 <tr>
-<td>MySQL 容器</td>
-<td>经 SSM：<code>docker ps</code>（<code>jiuan-<wbr>mysql</code> 是
-Up）；健康检查 <code>/<wbr>api/<wbr>health</code>
-每次都问一次库（<code>SELECT 1</code>，3 秒超时），<code>database</code>
-是 <code>ok</code>、<code>source</code> 是
-<code>poc-<wbr>bench</code></td>
-<td>容器 Up；<code>database: ok</code>。库断了健康检查回
-503，<code>database</code> 是 <code>unavailable</code></td>
-</tr>
-<tr>
-<td>服务日志</td>
-<td>第 1.2 节</td>
-<td>有
-<code>andon-<wbr>finance-<wbr>poc listening on …</code>；没有成串的
-<code>APP_<wbr>ERROR</code> / <code>APPROVAL_<wbr>ERROR</code></td>
-</tr>
-<tr>
-<td>审批流能不能出建议</td>
-<td>单据池顶上点一次「模拟来单」，看新卡片上出现「AI
-初审：…」和「待人工复核」</td>
+<td>AI 建议还出不出</td>
+<td>单据池「最近审核」一栏有新的「AI
+建议」；或者管理员模拟来单一张（<code>https:/<wbr>/<wbr>&lt;站点&gt;/<wbr>poc/<wbr>intake</code>），约
+1 分钟后同步进单据池，读完原件后自动出建议</td>
 <td>健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（评审
 I6，<a href="handover.html">交接文档</a>第 6.1 节）</td>
 </tr>
 <tr>
+<td>两个容器</td>
+<td>登上实例（第 1.2 节）：<code>sudo docker ps</code></td>
+<td><code>jiuan-<wbr>mysql</code>、<code>nexus-<wbr>pgvector</code> 都是
+Up</td>
+</tr>
+<tr>
+<td>服务日志</td>
+<td>第 1.2 节</td>
+<td>有「九安 v0.7.10 测试台已启动」；没有成串的错误码</td>
+</tr>
+<tr>
 <td>Nexus 费用</td>
 <td>Nexus 网页上发布者名下的用量</td>
-<td>每次 Agent 调用约 0.05 美元；读能力清单约 0.03
-美元；验证调用密钥不花钱</td>
+<td>每一轮 AI 独立建议约 0.1–0.3 美元；「Agent
+接入」页验证调用密钥不花钱</td>
 </tr>
 <tr>
 <td>AWS 费用</td>
 <td>账单</td>
-<td>t3.large 约 61 美元 / 月（2026-10-19 前是 t3.small，约 15 美元），16
-GB gp3 根卷约 1.3 美元 / 月，公网 IPv4 约 3.6 美元 /
-月；升级前的快照不到 1 美元 / 月</td>
+<td>一台 m7g.xlarge（按需价，以 AWS 价目表为准）、30 GiB gp3 根卷、公网
+IPv4；升级前的快照很便宜</td>
 </tr>
 </tbody>
 </table>
 </div>
 <h2 id="12-看日志">1.2 看日志</h2>
-<p>线上 PoC（栈 <code>andon-finance-poc</code>）不开 22 端口，只走
-SSM：</p>
-<pre class="bash"><code>aws ssm start-session --region us-east-1 --target i-01d753d48056fd423
-sudo journalctl -u andon-finance-poc -n 200 --no-pager      # 服务日志
-sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志</code></pre>
-<p>经 SSH 管理的栈（如 m7g 测试环境 <code>andon-finance-m7g</code>）不用
-SSM：22 端口只对环境配置里的 <code>SSH_ALLOWED_CIDR</code> 开，用
-<code>SSH_KEY_FILE</code> 以 <code>ec2-user</code>
+<p>经 SSH 管理的栈（m7g 测试环境 <code>andon-finance-m7g</code>
+就是）不用 SSM：22 端口只对环境配置里的 <code>SSH_ALLOWED_CIDR</code> 或
+Instance Connect 端点开，用 <code>SSH_KEY_FILE</code> 以
+<code>ec2-user</code>
 登录，主机公钥用部署时钉住的那份（<code>poc/infra/README.md</code>「经
 SSH 管理」）：</p>
 <pre class="bash"><code>ssh -i &lt;SSH_KEY_FILE&gt; -o UserKnownHostsFile=poc/infra/.state/&lt;栈&gt;-&lt;实例&gt;.known_hosts ec2-user@&lt;栈输出 ElasticIp&gt;
 # SSH_VIA=eice（m7g 测试环境是这样）：经 EC2 Instance Connect 端点，再加
 #   -o ProxyCommand=&#39;aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id &lt;实例&gt;&#39;
-sudo journalctl -u andon-jiuan07 -n 200 --no-pager          # 九安 v0.7.10 测试台外壳的日志</code></pre>
+sudo journalctl -u andon-jiuan07 -n 200 --no-pager          # 外壳（和九安）的日志
+sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志</code></pre>
+<p>经 SSM 的栈（旧栈 <code>andon-finance-poc</code>
+是）：<code>aws ssm start-session --region us-east-1 --target &lt;InstanceId&gt;</code>，再执行上面两条
+<code>sudo …</code>。</p>
 <p>直连时本机的公网地址变了就连不上：改环境配置里的
 <code>SSH_ALLOWED_CIDR</code>，再跑一次
 <code>deploy.sh</code>（更新栈）；经端点（<code>SSH_VIA=eice</code>）不看本机地址，要的是
 AWS 凭证有 <code>ec2-instance-connect:OpenTunnel</code>。</p>
-<p>日志里只有错误码，没有口令、密钥和单据内容。主要几种：</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>日志</th>
-<th>意思</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>andon-<wbr>finance-<wbr>poc listening on 0.<wbr>0.<wbr>0.<wbr>0:4180</code></td>
-<td>服务起来了</td>
-</tr>
-<tr>
-<td><code>APP_<wbr>ERROR &lt;错误码&gt;</code></td>
-<td>九安服务端或 PoC 插件里的错误（含预热失败
-<code>POC_<wbr>WARMUP_<wbr>FAILED</code>）</td>
-</tr>
-<tr>
-<td><code>APPROVAL_<wbr>ERROR &lt;错误码&gt;</code></td>
-<td>审批流后台执行出错（预审或审批建议）</td>
-</tr>
-<tr>
-<td><code>SAMPLES_<wbr>ERROR &lt;错误码&gt;</code></td>
-<td>示例附件不合规（代码问题；调用测试照常可用，只是没有示例附件）</td>
-</tr>
-<tr>
-<td><code>release download failed; keeping the current release</code></td>
-<td>启动时从构件桶拉包失败，继续用当前版本</td>
-</tr>
-<tr>
-<td><code>andon-<wbr>finance-<wbr>poc starting on … (waiting for MySQL)</code></td>
-<td>测试台：服务起来了，在等 MySQL；这期间健康检查回 503 starting</td>
-</tr>
-<tr>
-<td><code>BENCH_<wbr>DB_<wbr>WAIT &lt;错误码&gt;</code></td>
-<td>还连不上 MySQL（第一次和之后每 15
-次记一行）；服务不会退出，一直等</td>
-</tr>
-<tr>
-<td><code>PLATFORM_<wbr>&lt;错误码&gt;</code></td>
-<td>九安流水线运行器的错误</td>
-</tr>
-</tbody>
-</table>
-</div>
-<h2 id="13-重启与健康检查">1.3 重启与健康检查</h2>
-<pre class="bash"><code>aws ssm send-command --region us-east-1 --instance-ids i-01d753d48056fd423 --document-name AWS-RunShellScript \
-  --parameters &#39;commands=[&quot;systemctl restart andon-finance-poc.service&quot;,&quot;sleep 5&quot;,&quot;systemctl is-active andon-finance-poc.service&quot;]&#39;
-curl -fsS https://andon-finance.tinyboat.blog/api/health</code></pre>
-<p>重启会：</p>
-<ul>
-<li>先从构件桶重新拉 <code>releases/current.tgz</code> 和
-<code>secrets/secrets.env</code>；</li>
-<li>测试台：先回 503 starting，等 MySQL
-连上（一直等，不退出），迁移、写种子（写两遍等于写一遍），再正常服务；</li>
-<li>单据和模拟来单在 MySQL
-里，重启不丢；清空内存里的审批记录、登录状态和运行记录；</li>
-<li>各账号的连接与启用都在磁盘上，不受影响。</li>
-</ul>
-<h1 id="2-操作手册">2. 操作手册</h1>
-<h2 id="21-接入一个新-agent固定的四步使用逻辑">2.1 接入一个新
-Agent（固定的四步使用逻辑）</h2>
-<figure>
-<a href="../assets/diagrams/ops-onboard-agent.svg" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/diagrams/ops-onboard-agent.svg" loading="lazy"
-alt="接入一个新 Agent 的时序：建好、发布 → 本人签发调用密钥 → 使用者在 Agent 页启用 → 调用测试" /></a>
-<figcaption>接入一个新 Agent 的时序：建好、发布 → 本人签发调用密钥 →
-使用者在 Agent 页启用 → 调用测试</figcaption>
-</figure>
-<p>两个 Skill 怎么装、怎么连见 <a href="skills-guide.html">Skills
-配置指南</a>。</p>
-<ol type="1">
-<li><p><strong>构建与发布</strong>（Agent 开发，用 Claude Code / Codex /
-Kiro CLI + nexus-ai-operator Skill）：建
-Agent、写提示词、在平台内试用、建发布并打开 A2A。</p></li>
-<li><p><strong>签发调用密钥</strong>（发布者本人，Nexus 网页「互联中心 ›
-对外发布」）。Operator 和 API 密钥都签不了，这是平台的限制。</p></li>
-<li><p><strong>启用</strong>（使用者自己）：</p>
-<ul>
-<li>页面：Agent 页 › 我的 Agent › 待启用 › 启用，粘贴调用密钥；</li>
-<li>命令行：<code>python3 skills/agent-access/scripts/agent_access.py enable &lt;发布编号&gt; --key-stdin --yes</code>（密钥从标准输入读）。</li>
-</ul>
-<p>应用当场验证（读名片 +
-<code>tasks/get</code>，不花钱），默认顺便读一次能力清单。</p></li>
-<li><p><strong>调用测试、再迭代</strong>：在调用测试里按任务调用；改提示词后在
-Nexus 上更新
-Agent（发布跟随最新版本），回到页面点「重新读能力清单」。</p></li>
-</ol>
-<p>不需要改 <code>secrets.env</code>，不需要部署，不需要重启。</p>
-<figure class="screen">
-<a href="../assets/screens/invoke-panel.png" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/screens/invoke-panel.png" loading="lazy"
-alt="调用测试面板：选一个你已启用的发布，看它的 A2A 名片，加示例附件或本机文件，再发送" /></a>
-<figcaption>调用测试面板：选一个你已启用的发布，看它的 A2A
-名片，加示例附件或本机文件，再发送</figcaption>
-</figure>
-<h2 id="22-审批流用哪把调用密钥">2.2 审批流用哪把调用密钥</h2>
-<p>审批流的调用密钥<strong>从系统里读</strong>，不用另外配：</p>
-<ol type="1">
-<li>先用发起（或重试）这张单据审批的人，在 Agent
-页启用的「九安审核AI」那把；</li>
-<li>他没启用，就用别的账号启用的、最近验证过的那把；</li>
-<li>都没有，审批停在「AI 初审失败」，错误码
-<code>AI_AUTH_INVALID</code>：在 Agent 页启用「九安审核AI」后点「重试
-AI」。不要往 <code>secrets.env</code> 里放调用密钥。</li>
-</ol>
-<p>Nexus 回 401
-时，只把用到的那一把标记为「密钥失效」，下一次自动换下一把。要换密钥：在
-Agent 页那张卡片上点「换密钥」，粘贴新的；不用改文件，不用部署。</p>
-<p>开发测试阶段，给出的密钥一直用到过期，不主动吊销、不轮换。</p>
-<h2 id="23-换口令或-registry_key">2.3 换口令或
-<code>REGISTRY_KEY</code></h2>
-<ul>
-<li><strong>口令</strong>：改 <code>secrets.env</code> 里的
-<code>REVIEWER_PASSWORD</code> / <code>CHECKER_PASSWORD</code>，再
-<code>deploy.sh --code-only</code>。</li>
-<li><strong><code>REGISTRY_KEY</code></strong>：只在怀疑泄露时换。换了以后，所有账号已保存的调用密钥都解不开，页面上会显示「密钥失效」，每个人都要重新粘贴启用。步骤：
-<ol type="1">
-<li>先通知所有在用的人；</li>
-<li>删掉 <code>secrets.env</code> 里这一行；</li>
-<li>运行 <code>deploy.sh --code-only</code>，脚本会生成新的一把；</li>
-<li>通知大家重新启用。</li>
-</ol></li>
-</ul>
-<h2 id="24-某个账号连不上或启用失败">2.4 某个账号连不上或启用失败</h2>
-<p>先看页面上的提示或命令行的退出码：</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>退出码 / 错误码</th>
-<th>原因</th>
-<th>处理</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>3 / <code>POC_<wbr>NEXUS_<wbr>NOT_<wbr>CONNECTED</code></td>
-<td>这个账号还没连接 Nexus，或连接在 Nexus 上被停用了</td>
-<td>用自己的 API 密钥重新连接</td>
-</tr>
-<tr>
-<td>4 / <code>POC_<wbr>NEXUS_<wbr>API_<wbr>KEY_<wbr>INVALID</code></td>
-<td>API 密钥无效或已经用过（第一次连接后平台会换新）</td>
-<td>在 Nexus「个人设置 › API 密钥」新建一把再连接</td>
-</tr>
-<tr>
-<td>4 / <code>POC_<wbr>CALL_<wbr>KEY_<wbr>INVALID</code></td>
-<td>调用密钥无效、被吊销，或不属于这个发布</td>
-<td>签一把新的，「换密钥」</td>
-</tr>
-<tr>
-<td>5 / <code>POC_<wbr>PUBLICATION_<wbr>NOT_<wbr>MINE</code></td>
-<td>这个发布不在这个人的 Nexus 列表里</td>
-<td>确认用的是发布者本人或被分享者的 API 密钥</td>
-</tr>
-<tr>
-<td>6 / <code>POC_<wbr>CARD_<wbr>UNAVAILABLE</code></td>
-<td>发布暂停了，或 A2A 没打开</td>
-<td>在 Nexus 上恢复发布、打开 A2A</td>
-</tr>
-<tr>
-<td>6 / <code>POC_<wbr>AGENT_<wbr>NOT_<wbr>ENABLED</code></td>
-<td>还没启用，或刚被停用</td>
-<td>先启用</td>
-</tr>
-<tr>
-<td>7 / <code>POC_<wbr>ME_<wbr>RATE_<wbr>LIMIT</code></td>
-<td>每个账号连接与启用每分钟最多 5 次</td>
-<td>等一分钟</td>
-</tr>
-<tr>
-<td>8 / <code>POC_<wbr>NEXUS_<wbr>UNREACHABLE</code></td>
-<td>暂时连不上 Nexus</td>
-<td>点「刷新」重试；<strong>不要</strong>因此去换新的 API
-密钥，连接还在</td>
-</tr>
-</tbody>
-</table>
-</div>
-<h2 id="25-审批流出不来建议">2.5 审批流出不来建议</h2>
-<figure>
-<a href="../assets/diagrams/ops-troubleshoot.svg" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/diagrams/ops-troubleshoot.svg" loading="lazy"
-alt="审批停在「AI 失败」时，按运行记录里的错误码处理" /></a>
-<figcaption>审批停在「AI 失败」时，按运行记录里的错误码处理</figcaption>
-</figure>
-<figure class="screen">
-<a href="../assets/screens/document-approval.png" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/screens/document-approval.png" loading="lazy"
-alt="单据详情里的审批流卡片：五步进度，从「发起审批」开始" /></a>
-<figcaption>单据详情里的审批流卡片：五步进度，从「发起审批」开始</figcaption>
-</figure>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>现象</th>
-<th>原因</th>
-<th>处理</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>状态停在「AI 初审失败」（系统已自动重试过一次），错误码
-<code>AI_<wbr>AUTH_<wbr>INVALID</code></td>
-<td>系统里找不到能用的调用密钥：没有人启用「九安审核AI」，或启用的那把过期了</td>
-<td>在 Agent 页启用或「换密钥」（第 2.2 节），再「重试 AI」</td>
-</tr>
-<tr>
-<td><code>AI_<wbr>UNAVAILABLE</code></td>
-<td>Nexus 超时（单次最长 5 分钟）、5xx，或预算用完</td>
-<td>看 Nexus 状态和预算；稍后点「重试 AI」，或「转人工」（不带 Agent
-建议）</td>
-</tr>
-<tr>
-<td><code>AI_<wbr>RATE_<wbr>LIMIT</code></td>
-<td>Nexus 限流</td>
-<td>稍后重试</td>
-</tr>
-<tr>
-<td><code>AI_<wbr>REQUEST_<wbr>INVALID</code></td>
-<td>请求不合规（附件超限、内容残缺）</td>
-<td>看运行记录里的 <code>detail</code></td>
-</tr>
-<tr>
-<td>校验失败</td>
-<td>Agent 的输出没通过九安自己的校验</td>
-<td>看运行记录里的原始返回；多半要改审批 Agent 的提示词</td>
-</tr>
-</tbody>
-</table>
-</div>
-<p>运行记录（Agent 页最下面）最多保留 50
-条、重启清空，每条带错误码、用时和原始返回。</p>
-<h2 id="26-实例被替换之后">2.6 实例被替换之后</h2>
-<p>实例被替换（重建栈、换 AMI、实例故障）后：</p>
-<ul>
-<li>代码和密钥会在第一次启动时自动从构件桶装上；</li>
-<li>各账号的数据（<code>/var/lib/andon-finance/users/</code>）会丢：每个人要重新连接、重新启用；</li>
-<li>旧的共享 CLI 连接目录 <code>/var/lib/andon-finance/nexus/</code>
-也会重新建（空的）；</li>
-<li>测试台的 MySQL
-数据（<code>/var/lib/jiuan-mysql</code>）也会丢；新实例上还没有
-<code>bench.env</code>，服务先按内存存储起来。再跑一次
-<code>deploy.sh --code-only</code>，它会装好
-MySQL、写测试台密钥文件、切回
-MySQL，启动时重新迁移、写种子。<code>secrets.env</code> 里的
-<code>BENCH_DATA_KEY</code> 不变就行。</li>
-</ul>
-<p>替换前先跑 <code>poc/infra/backup.sh</code>：根卷快照 +
-在实例上打包账号目录（里面的调用密钥是加密的，<code>REGISTRY_KEY</code>
-不变就能解开）。要放回账号目录时，属主 <code>andon:andon</code>，目录
-0700、文件 0600；要整盘恢复，用快照建卷。换实例类型用
-<code>upgrade-instance.sh</code>，它只允许停机再开，不替换实例。</p>
-<h2 id="27-测试台mysql-的检查重置备份">2.7 测试台：MySQL
-的检查、重置、备份</h2>
-<ul>
-<li><strong>检查</strong>：经 SSM 运行 <code>docker ps</code> 和
-<code>docker exec jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysqladmin ping -uroot'</code>。</li>
-<li><strong>重置</strong>（端到端测试会自动做）：<code>/opt/andon-finance/current/bench/bench-reset.sh</code>：停服务，删掉并重建
-<code>jiuan_analysis</code>，再开服务（启动时迁移、写种子）。不碰各账号的数据。</li>
-<li><strong>跑要 MySQL 的单元测试</strong>：本机运行
-<code>poc/infra/bench-test.sh</code>，测试在实例上跑，只用
-<code>jiuan_bench_test</code> 这个库。</li>
-<li><strong>升级前备份</strong>：<code>poc/infra/backup.sh</code>（根卷快照
-+ 实例上打包账号目录）。</li>
-<li><strong>换实例类型</strong>：<code>poc/infra/upgrade-instance.sh &lt;类型&gt;</code>：只允许停机再开；变更集里实例会被替换就不执行。</li>
-<li><strong>回到内存存储</strong>：<code>POC_STORE=memory poc/infra/deploy.sh --code-only</code>。内存模式不碰
-MySQL，所以 MySQL 坏了也能用它退回来。</li>
-<li><strong>测试台密钥只认原值</strong>：实例上已有的三项测试台密钥（<code>/etc/andon-finance/bench/</code>）和
-<code>secrets.env</code>
-里的不一样时，部署在重启之前就失败，服务照旧跑。多半是
-<code>secrets.env</code>
-被重新生成了：找回交接的那份。真要换值，先有意重建测试台（删容器和
-<code>/var/lib/jiuan-mysql</code>、删
-<code>/etc/andon-finance/bench/</code>
-下的文件，再部署）；库里的数据会全部重建。</li>
-</ul>
-<h2 id="28-销毁">2.8 销毁</h2>
-<pre class="bash"><code>audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认</code></pre>
-<p>销毁前确认：构件桶里没有要留的东西；Nexus 上的调用密钥、API
-密钥已停用。</p>
-<h2 id="29-九安-v0710-测试台jiuan-v0710">2.9 九安 v0.7.10
-测试台（jiuan-v0710）</h2>
-<p>同一台实例上的 systemd 服务 <code>andon-jiuan07</code>，部署、回滚和
-PoC 共用一个构件（<a href="deploy-iteration.html">部署与迭代规范</a>第
-6.1 节）。<strong>现在只用
-<code>deploy.sh --code-only</code>，不从本仓库跑知识库的 db
-阶段</strong>（<a href="deploy-iteration.html">部署与迭代规范</a>第 1
-节末尾）。</p>
-<p><strong>看日志</strong>：<code>sudo journalctl -u andon-jiuan07 -n 200 --no-pager</code>。日志只记错误码和计数，不记回复、制度内容和密钥。要认得的几行：</p>
+<p>日志里只有错误码和计数，没有口令、密钥、回复、制度内容和单据内容。要认得的几行：</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -548,6 +250,21 @@ PoC 共用一个构件（<a href="deploy-iteration.html">部署与迭代规范</
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>九安 v0.<wbr>7.<wbr>10 测试台已启动：…（端口 4180；AI 独立建议按「Agent 接入」的启用记录路由，当前 …）</code></td>
+<td>服务起来了；括号里是审批流现在会发给谁</td>
+<td>「当前 无可用发布」就去「Agent 接入」页指定审批 Agent</td>
+</tr>
+<tr>
+<td><code>POC_<wbr>EGRESS_<wbr>BLOCKED &lt;主机&gt;</code></td>
+<td>九安代码想连 Nexus 以外的地址，被出网守卫挡了</td>
+<td>偶尔有不用管；成串的说明有功能在找外部服务</td>
+</tr>
+<tr>
+<td><code>POC_<wbr>HLY_<wbr>WRITE_<wbr>BLOCKED &lt;方法&gt; &lt;路径&gt;</code></td>
+<td>九安想往（假）汇联易写东西，被挡了</td>
+<td>测试台不回写汇联易，不用管</td>
+</tr>
 <tr>
 <td><code>POC_<wbr>KB_<wbr>AGENT_<wbr>REPLY_<wbr>LEADIN &lt;操作&gt; &lt;字数&gt;</code></td>
 <td>知识库 Agent 在 JSON 前面多写了一句话（不超过 200 字、不含
@@ -567,15 +284,236 @@ PoC 共用一个构件（<a href="deploy-iteration.html">部署与迭代规范</
 </tbody>
 </table>
 </div>
-<p>「我的规则」的两个错误码在页面上：上传时单个文件转出的文字就超过九安一次请求的上限（87,442
-字）回
-<code>CUSTOM_RULES_UNSENDABLE</code>；发起一轮时规则加单据放不进一次请求，这一轮在发给
-Nexus 之前就失败，回 <code>CUSTOM_RULES_TOO_LONG</code>。知识库 Agent
-的回复不合格式是 <code>KB_AGENT_REPLY_INVALID</code>（不重试）。</p>
-<p><strong>一轮 AI 建议慢、超时</strong>：一轮的上限是 180 秒，超时报
-<code>AI_UNAVAILABLE</code>；正常是 7–20 秒。先在「Agent
-接入」页的调用记录里看用时和错误码；再到 Nexus 上看这一轮的 A2A 会话，查
-Agent
+<h2 id="13-重启与健康检查">1.3 重启与健康检查</h2>
+<pre class="bash"><code># 在实例上（第 1.2 节的会话里）
+sudo systemctl restart andon-jiuan07.service &amp;&amp; sleep 5 &amp;&amp; systemctl is-active andon-jiuan07.service
+curl -fsS http://127.0.0.1:4180/poc/healthz                 # 实例上直接看
+curl -fsS https://&lt;站点&gt;/poc/healthz                         # 本机经 CloudFront 看</code></pre>
+<p>重启会：</p>
+<ul>
+<li>用 <code>/opt/andon-finance/current</code>
+里现有的版本起来：启动时不从构件桶拉包，换版本只经
+<code>deploy.sh</code>；</li>
+<li>外壳启动时读一次新前端的 <code>dist/</code> 和
+<code>/etc/andon-finance/jiuan07/</code> 下的配置；</li>
+<li>单据、AI 建议的各轮、「Agent 接入」的启用记录都在 MySQL
+里，重启不丢。</li>
+</ul>
+<h1 id="2-操作手册">2. 操作手册</h1>
+<h2 id="21-接入一个新-agent固定的四步使用逻辑">2.1 接入一个新
+Agent（固定的四步使用逻辑）</h2>
+<figure>
+<a href="../assets/diagrams/ops-onboard-agent.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/ops-onboard-agent.svg" loading="lazy"
+alt="接入一个新 Agent 的时序：建好、发布 → 本人签发调用密钥 → 管理员在「Agent 接入」页启用 → 设为审批 Agent 或测试" /></a>
+<figcaption>接入一个新 Agent 的时序：建好、发布 → 本人签发调用密钥 →
+管理员在「Agent 接入」页启用 → 设为审批 Agent 或测试</figcaption>
+</figure>
+<p>nexus-ai-operator 怎么装、怎么连见 <a href="skills-guide.html">Skills
+配置指南</a>；页面上一步步怎么点见<a
+href="quick-guide.html">快速上手</a>。</p>
+<ol type="1">
+<li><strong>构建与发布</strong>（Agent 开发，用 Claude Code / Codex /
+Kiro CLI + nexus-ai-operator Skill）：建
+Agent、写提示词、在平台内试用、建发布并打开
+A2A。要接审批流的，名片要声明 <code>review_advice@1</code>（<a
+href="developer-guide.html">开发者快速对接指南</a>）。</li>
+<li><strong>签发调用密钥</strong>（发布者本人，Nexus 网页「互联中心 ›
+对外发布」）。Operator 和 API 密钥都签不了，这是平台的限制。</li>
+<li><strong>启用</strong>（管理员）：新前端「Agent
+接入」页，在这个发布一行点「启用」，只粘贴调用密钥，「验证并启用」。平台当场验证名片和密钥（不花钱），通过后
+Agent 就绪；页面上只显示指纹。</li>
+<li><strong>用起来</strong>：要它审单就「设为审批
+Agent」（要写原因，同一时间只有一个）；不然它只是就绪，供前端工作流调用。点「测试」（文本、请求信封、单据）看它回什么；改了提示词后点「重新验证」。</li>
+</ol>
+<p>不需要改 <code>secrets.env</code>，不需要部署，不需要重启。</p>
+<h2 id="22-审批流调谁用哪把调用密钥">2.2 审批流调谁、用哪把调用密钥</h2>
+<p>单据池的 AI 独立建议只发给管理员在「Agent
+接入」页指定的那一个<strong>审批
+Agent</strong>，用的是它启用时粘贴的那把调用密钥（在九安的库里，加密）。现在是「九安审核AI（PoC）」<code>pub_5c53e70d8dc7ddea</code>。</p>
+<ul>
+<li>没有审批 Agent，或它停用、密钥失效：这一轮记成
+<code>AGENT_TASK_UNROUTED</code>，表格上方一行写着审批流停着；在一个就绪的
+Agent 上「设为审批
+Agent」，或给它「换钥匙」，九安的流水线会自动重排。</li>
+<li>Nexus 不认这把密钥时，这一行变成「密钥失效」：在 Nexus
+上签一把新的，点「换钥匙」粘贴；不用改文件，不用部署。</li>
+<li>知识库 Agent「知识库文档管家（PG
+版）」也在这一页启用，就绪、不进审批流；它的密钥失效时，知识库页的操作都会失败。</li>
+</ul>
+<p>开发测试阶段，给出的密钥一直用到过期，不主动吊销、不轮换。</p>
+<h2 id="23-换口令">2.3 换口令</h2>
+<p>改 <code>secrets.env</code> 里的 <code>REVIEWER_PASSWORD</code> /
+<code>CHECKER_PASSWORD</code>（至少 12 个字符），再
+<code>deploy.sh --code-only</code>。另外三项（<code>BENCH_MYSQL_ROOT_PASSWORD</code>、<code>JIUAN07_MYSQL_APP_PASSWORD</code>、<code>JIUAN07_DATA_KEY</code>）不要换，见第
+2.6 节。</p>
+<h2 id="24-agent-接入页上连不上或启用失败">2.4 「Agent
+接入」页上连不上或启用失败</h2>
+<p>先看页面上的提示，或调用记录、操作记录里的错误码：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>错误码</th>
+<th>页面上的说法</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AGENT_<wbr>NEXUS_<wbr>NOT_<wbr>CONNECTED</code>、<code>AGENT_<wbr>NEXUS_<wbr>RECONNECT</code></td>
+<td>还没有连接 Nexus / 连接失效了</td>
+<td>点「连接 Nexus」，用自己的 API 密钥重新连接</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>NEXUS_<wbr>KEY_<wbr>INVALID</code></td>
+<td>API 密钥无效、已经用过，或者不属于这个 Nexus</td>
+<td>在 Nexus「个人设置 › API
+密钥」新建一把再连接（第一次连接后平台会换新，原来那串作废）</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>NEXUS_<wbr>UNREACHABLE</code></td>
+<td>连不上 Nexus</td>
+<td>稍后点「刷新清单」；<strong>不要</strong>因此去换新的 API 密钥</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>KEY_<wbr>REJECTED</code></td>
+<td>Nexus 不认这把密钥</td>
+<td>在这个发布里重新签一把，「换钥匙」或重新启用</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>KEY_<wbr>WRONG_<wbr>PUBLICATION</code></td>
+<td>密钥属于别的发布或发布已暂停</td>
+<td>确认粘的是这个发布的调用密钥；在 Nexus 上恢复发布</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>PUBLICATION_<wbr>NOT_<wbr>FOUND</code>、<code>AGENT_<wbr>CARD_<wbr>INVALID</code></td>
+<td>读不到名片 / 名片不合契约</td>
+<td>在 Nexus 上确认发布没暂停、A2A 打开了</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>VERIFY_<wbr>TIMEOUT</code></td>
+<td>验证超时</td>
+<td>稍后再试</td>
+</tr>
+<tr>
+<td><code>AGENT_<wbr>TEST_<wbr>RATE_<wbr>LIMIT</code></td>
+<td>测试太频繁</td>
+<td>每分钟最多 5 次，等一分钟</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="25-实例被替换换机器">2.5 实例被替换、换机器</h2>
+<p>实例被替换（重建栈、换
+AMI、改根卷大小、实例故障）后，根卷上的东西都会丢：MySQL 的
+<code>jiuan07</code> 库（单据、AI 建议、复核、启用记录）、知识库的
+PG、<code>/var/lib/jiuan07/</code>（「Agent 接入」页的 Nexus
+连接、我的规则）。新实例上要重新
+<code>deploy.sh</code>、<code>kb.sh db</code>，再把数据放回去，或者管理员重新连接
+Nexus、重新启用 Agent。</p>
+<ul>
+<li><strong>替换前</strong>：先跑
+<code>poc/infra/backup.sh</code>（根卷快照；MySQL、PG 和
+<code>/var/lib/jiuan07</code>
+都在根卷上，一个快照就够）。要整盘恢复，用快照建卷替换根卷。</li>
+<li><strong>换实例类型</strong>：用
+<code>upgrade-instance.sh &lt;类型&gt;</code>，它只允许停机再开，不替换实例；不能在
+arm64 和 x86 之间换。</li>
+<li><strong>换机器</strong>（另建一个栈）：新栈 <code>deploy.sh</code> →
+<code>kb.sh db</code> → <code>migrate-data.sh</code>（搬
+<code>jiuan07</code> 库、PG 库
+<code>nexus</code>、<code>/var/lib/jiuan07</code>；两边
+<code>secrets.env</code> 要是同一份）→ <code>kb.sh connector</code>（把
+Nexus 指到新 PG，先 <code>--dry-run</code>）→ 端到端测试 → 迁域名前
+<code>migrate-data.sh --skip-pg</code> 再同步一次。步骤见 <a
+href="../../poc/infra/README.md"><code>poc/infra/README.md</code></a>「换机器时搬数据」。</li>
+</ul>
+<h2 id="26-测试台mysql-的检查重置备份">2.6 测试台：MySQL
+的检查、重置、备份</h2>
+<ul>
+<li><strong>检查</strong>：在实例上 <code>sudo docker ps</code>，再
+<code>sudo docker exec jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysqladmin ping -uroot'</code>。</li>
+<li><strong>重置</strong>（端到端测试会自动做）：<code>sudo bash /opt/andon-finance/current/bench/bench07-reset.sh</code>：停服务，导出「Agent
+接入」的启用记录，删掉并重建 <code>jiuan07</code>
+库、删掉种子时间锚点，起服务跑迁移，写回启用记录，再起服务、等健康检查。单据从假汇联易重新同步。</li>
+<li><strong>升级前备份</strong>：<code>poc/infra/backup.sh</code>（根卷快照）。</li>
+<li><strong>换实例类型</strong>：<code>poc/infra/upgrade-instance.sh &lt;类型&gt;</code>：只允许停机再开；变更集里实例会被替换就不执行。</li>
+<li><strong>测试台密钥只认原值</strong>：实例上已有的 MySQL root
+口令（<code>/etc/andon-finance/bench/</code>）、<code>jiuan07_app</code>
+的口令和数据密钥（<code>/etc/andon-finance/jiuan07/</code>）和
+<code>secrets.env</code>
+里的不一样时，部署在重启之前就失败，服务照旧跑。多半是
+<code>secrets.env</code> 被重新生成了：找回交接的那份。真要换
+<code>jiuan07_app</code> 的口令或数据密钥，先运行
+<code>bench07-reset.sh</code>
+重建库（库里的数据和启用记录会全部重建）。</li>
+</ul>
+<h2 id="27-ai-建议出不来慢">2.7 AI 建议出不来、慢</h2>
+<figure>
+<a href="../assets/diagrams/ops-troubleshoot.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/ops-troubleshoot.svg" loading="lazy"
+alt="单据池里一张单「AI 失败」时，按「Agent 接入」页调用记录里的错误码处理" /></a>
+<figcaption>单据池里一张单「AI 失败」时，按「Agent
+接入」页调用记录里的错误码处理</figcaption>
+</figure>
+<p>先在「Agent
+接入」页下方的调用记录里找到这一轮，看错误码和用时，「查看反馈」看 Agent
+返回了什么：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AGENT_<wbr>TASK_<wbr>UNROUTED</code></td>
+<td>没有就绪的审批 Agent</td>
+<td>第 2.2 节</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>AUTH_<wbr>INVALID</code>，或这一行「密钥失效」</td>
+<td>Nexus 不认这把调用密钥</td>
+<td>「换钥匙」，再在单据抽屉里「重新审核」</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>UNAVAILABLE</code></td>
+<td>一轮超过 180 秒，或 Nexus 5xx、预算用完</td>
+<td>看 Nexus 状态和预算；按下面的办法查慢在哪；稍后「重新审核」</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>RATE_<wbr>LIMIT</code></td>
+<td>Nexus 限流</td>
+<td>稍后重试</td>
+</tr>
+<tr>
+<td><code>AI_<wbr>INVALID_<wbr>RESPONSE</code></td>
+<td>回答修正一次后仍不合契约</td>
+<td>看「查看反馈」；多半要改审核 Agent 的提示词（<a
+href="deploy-iteration.html">部署与迭代规范</a>第 6.3 节）</td>
+</tr>
+<tr>
+<td><code>CUSTOM_<wbr>RULES_<wbr>TOO_<wbr>LONG</code></td>
+<td>发起人的「我的规则」加上单据放不进九安一次请求（87,442 字）</td>
+<td>请他删减规则；上传时单个文件就超过的回
+<code>CUSTOM_<wbr>RULES_<wbr>UNSENDABLE</code></td>
+</tr>
+<tr>
+<td>知识库页操作失败，<code>KB_<wbr>AGENT_<wbr>REPLY_<wbr>INVALID</code></td>
+<td>知识库 Agent 的回复不合格式（不重试）</td>
+<td>看知识库 Agent 的提示词；它的密钥失效时在「Agent 接入」页换钥匙</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>一轮 AI 建议慢、超时</strong>：一轮的上限是 180 秒，正常是
+7–20 秒。到 Nexus 上看这一轮的 A2A 会话，查 Agent
 到底查了几次库、每次查什么、哪一步慢。会话存在发布者名下，用发布者的账号经
 nexus-ai-operator 只读查：</p>
 <pre class="bash"><code>python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/me/sessions --raw            # 找到这一轮的会话
@@ -591,25 +529,87 @@ href="deploy-iteration.html">部署与迭代规范</a>第 6.3 节，每次改线
 <code>audit-agent/prompt-history/</code> 留底。</p>
 <p><strong>知识库</strong>：测试台经 A2A 调 PG 知识库
 Agent（<code>pub_6ea5f0855dff6c1b</code>，调用密钥在「Agent
-接入」页启用）；知识库 Agent
-的密钥失效时，知识库页的操作都会失败，在「Agent
-接入」页换钥匙。部署、核对 PG 本身见 <a
+接入」页启用）。部署、核对 PG 本身见 <a
 href="../../kb/GUIDE.md">kb/GUIDE.md</a>。</p>
+<h2 id="28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
+留在实例上的东西</h2>
+<p>新代码部署时（<code>bench/bench07-configure.sh</code>）会停掉、删掉
+v0.5.3 PoC 的服务单元
+<code>andon-finance-poc.service</code>、它的补充配置和转发设置；它的数据不动，要另外清。旧栈
+<code>andon-finance-poc</code> 整个删掉时（<a
+href="handover.html">交接文档</a>第 6 节第 24
+条）一起没，不用单独清。m7g 实例上 2026-11-02
+从旧机器搬来的那一份、和按旧模板建栈时留下的，新代码都不再用：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>东西</th>
+<th>在哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v0.5.3 的两个库、应用账号</td>
+<td>MySQL 容器 <code>jiuan-<wbr>mysql</code> 里的库
+<code>jiuan_<wbr>analysis</code>、<code>jiuan_<wbr>bench_<wbr>test</code>，账号
+<code>jiuan_<wbr>app</code></td>
+</tr>
+<tr>
+<td>各账号的 Nexus 连接与启用（调用密钥用旧的
+<code>REGISTRY_<wbr>KEY</code> 加密）、旧的共享 CLI 连接</td>
+<td><code>/<wbr>var/<wbr>lib/<wbr>andon-<wbr>finance/<wbr></code>（系统用户
+<code>andon</code> 的家目录）</td>
+</tr>
+<tr>
+<td>v0.5.3 的配置与密钥文件</td>
+<td><code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>env</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench.<wbr>env</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench/<wbr>mysql_<wbr>app_<wbr>password</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench/<wbr>analysis_<wbr>data_<wbr>key</code></td>
+</tr>
+<tr>
+<td>启动时拉包的脚本</td>
+<td><code>/<wbr>usr/<wbr>local/<wbr>bin/<wbr>andon-<wbr>finance-<wbr>fetch</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>不要动</strong>：<code>/etc/andon-finance/secrets.env</code>、<code>/etc/andon-finance/bench/mysql_root_password</code>、<code>/etc/andon-finance/jiuan07/</code>、<code>/var/lib/jiuan07/</code>、MySQL
+的 <code>jiuan07</code> 库、<code>/opt/andon-finance/</code>。</p>
+<p>2026-11-02 已在 m7g 实例上照下面清过一次（另外删了 <code>andon</code>
+用户和组）。以后在别的实例上要清，做法（项目负责人当场同意后再动手；先
+<code>poc/infra/backup.sh</code> 做根卷快照）：</p>
+<pre class="bash"><code># 在实例上（第 1.2 节的会话里）
+sudo docker exec -i jiuan-mysql sh -c &#39;MYSQL_PWD=&quot;$(cat /run/bench-secrets/mysql_root_password)&quot; mysql -uroot&#39; &lt;&lt;&#39;SQL&#39;
+DROP DATABASE IF EXISTS `jiuan_analysis`;
+DROP DATABASE IF EXISTS `jiuan_bench_test`;
+DROP USER IF EXISTS &#39;jiuan_app&#39;@&#39;%&#39;;
+SQL
+sudo rm -f /etc/andon-finance/env /etc/andon-finance/bench.env /etc/andon-finance/bench/mysql_app_password /etc/andon-finance/bench/analysis_data_key /usr/local/bin/andon-finance-fetch
+sudo rm -rf /var/lib/andon-finance
+id andon &gt;/dev/null 2&gt;&amp;1 &amp;&amp; sudo userdel andon
+curl -fsS http://127.0.0.1:4180/poc/healthz                 # 测试台照常</code></pre>
+<p>清完在<a href="handover.html">交接文档</a>第 6 节第 24 条记一笔。</p>
+<h2 id="29-销毁">2.9 销毁</h2>
+<pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境&gt;.env audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认</code></pre>
+<p>销毁前确认：构件桶里没有要留的东西；数据要留的先
+<code>backup.sh</code> 或 <code>migrate-data.sh</code> 搬走；Nexus 的 PG
+连接器和数据库凭证密钥没有指着这台的 PG（<a
+href="handover.html">交接文档</a>第 6 节第 23
+条）；用不着的调用密钥、API 密钥在 Nexus 上停用。</p>
 <h1 id="3-后续迭代的最佳方式">3. 后续迭代的最佳方式</h1>
 <h2 id="31-固定的四步使用逻辑">3.1 固定的四步使用逻辑</h2>
 <p>一切设计都按这条走，这条不会变：</p>
 <ol type="1">
 <li><strong>构建</strong>：开发者用 Claude Code / Codex / Kiro CLI +
 Operator Skill 在 Nexus 上建 Agent、发布、拿调用密钥。</li>
-<li><strong>发现与加载</strong>：前端经 A2A
-自动发现（名片、能力清单），在 Agent 页上启用、调用测试。</li>
+<li><strong>发现与加载</strong>：前端经 A2A 读名片，管理员在「Agent
+接入」页启用、测试。</li>
 <li><strong>按业务迭代</strong>：用 vibe coding
 优化前端的调用方式和界面。</li>
 <li><strong>测试、上线</strong>：单元测试 + 端到端测试 +
 项目负责人确认。</li>
 </ol>
-<p>知识和 Agent 在一起（在 Nexus
-上）；前端只做调用，不在应用里另建知识库。</p>
+<p>知识和 Agent 在一起（在 Nexus 上）；前端只做调用，知识库由 Nexus
+上的知识库 Agent 读写。</p>
 <h2 id="32-一次迭代怎么走">3.2 一次迭代怎么走</h2>
 <div class="table-wrap">
 <table>
@@ -661,47 +661,47 @@ HTML</td>
 </table>
 </div>
 <p>用编码工具（Claude Code、Codex、Kiro CLI）的时候，把这份文档和<a
-href="../agent-developer-workflow.html">开发者工作流</a>交给它；写操作一律要人确认后才加
+href="developer-guide.html">开发者快速对接指南</a>交给它；写操作一律要人确认后才加
 <code>--yes</code>，密钥只经标准输入。</p>
 <h2 id="33-改-agent-时">3.3 改 Agent 时</h2>
 <ul>
-<li>提示词放在仓库里（<code>knowledge-agent/prompt.yaml</code>），每次改都把返回里的
-<code>version</code>
-加一，能力清单（<code>describe</code>）同步更新；旧版本另存一份（如
-<code>prompt-v1.yaml</code>）。</li>
-<li>先在 Nexus
-上试用，再用调用测试面板按任务调一次，最后跑相关的端到端测试。</li>
-<li>任务约定只增不改：新任务可以加，已有任务的输入输出不改含义；要改就加新任务名。</li>
+<li>审核 Agent
+的提示词放在仓库里（<code>audit-agent/prompt.yaml</code>），只经
+<code>audit-agent/apply.py</code> 下发；每次改都把
+<code>agentVersion</code> 的日期和序号加一，在
+<code>audit-agent/prompt-history/</code> 留底。</li>
+<li>先在 Nexus 上试用，再在「Agent
+接入」页「测试」一次（请求信封、单据），最后跑相关的端到端测试。</li>
+<li>任务约定只增不改：已有任务的输入输出不改含义；要改就升任务的版本。</li>
 </ul>
 <h2 id="34-改应用时">3.4 改应用时</h2>
 <ul>
-<li>新接口加在 PoC
-插件里（<code>/api/analysis/v1/poc/*</code>），不改九安原接口。</li>
-<li>九安页面上的改动只加锚点补丁；能放进独立文件（<code>nexus-poc.js</code>
-这类）的就不放进补丁。</li>
+<li>新接口加在外壳里（<code>/api/analysis/v1/poc/*</code>，挂在九安的
+<code>platformRoutes</code> 钩子上），不改九安原接口；九安的改动只经
+<code>patches/jiuan-v0.7.10/</code> 下的补丁。</li>
+<li>新前端只调本站后端，不直连 Nexus。</li>
 <li>涉及密钥的代码：返回里只出现指纹；日志只记错误码；测试里检查输出没有密钥。</li>
-<li>每个账号的数据只经 <code>access/store.mjs</code>
-读写；跨账号的东西（名片缓存）不能带任何账号的信息。</li>
+<li>新接口都按「这个人的公司 ∩
+测试台的公司」过滤（<code>poc/app07/user-scope.mjs</code>）。</li>
 </ul>
 <h1 id="4-下一步要建的运维能力">4. 下一步要建的运维能力</h1>
 <p>按优先级：</p>
 <ol type="1">
-<li><strong>代码进 Git</strong>，构件包名和健康检查带上提交号（评审
-C1；<a href="deploy-iteration.html">部署与迭代规范</a>第 2 节）。</li>
+<li><strong>构件包名和健康检查带上提交号</strong>（评审 C1；<a
+href="deploy-iteration.html">部署与迭代规范</a>第 2 节）。</li>
 <li><strong>源站走 HTTPS</strong> 并加源站校验头（评审 C2）。</li>
 <li><strong>可观测性</strong>：每个请求、每次 Nexus 调用一行 JSON
 日志（不含密钥），送 CloudWatch；定时用
-<code>tasks/get</code>（不花钱）探测审批流会用到的那把调用密钥，结果放进健康检查；健康、5xx
+<code>tasks/get</code>（不花钱）探测审批 Agent
+那把调用密钥，结果放进健康检查；健康、5xx
 比例、<code>AI_AUTH_INVALID</code> 比例设告警（评审 I6）。</li>
-<li><strong>回滚可靠</strong>（评审 I2）。部署能看出安装失败（I1）已在
-2026-10-19 修好。</li>
 <li><strong>主机打补丁</strong>：SSM Patch Manager 或定时
 <code>dnf upgrade</code>（评审 I11）。</li>
-<li><strong>各账号数据的定时备份</strong>：<code>backup.sh</code>
-现在要手动跑；改成定时，并把打包文件放到构件桶。</li>
-<li><strong>预发环境</strong>：同一模板另建一个栈，并入九安之前先在那里验证（评审
+<li><strong>定时备份</strong>：<code>backup.sh</code>
+现在要手动跑；改成定时。</li>
+<li><strong>预发环境</strong>：同一模板另建一个栈，部署到九安之前先在那里验证（评审
 I10）。</li>
-<li><strong>调用量与费用看板</strong>：按账号、按发布统计调用次数（运行记录现在只在内存里）。</li>
+<li><strong>调用量与费用看板</strong>：按发布统计调用次数（调用记录在九安的库里）。</li>
 </ol>
 <p>编号对应<a href="handover.html">交接文档</a>第 6.1
 节「上生产前必须改的」。</p>

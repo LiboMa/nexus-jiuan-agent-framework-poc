@@ -1,11 +1,12 @@
 flowchart LR
-  s(["审批停在「AI 初审失败」<br/>（系统已自动重试过一次）"]) --> code{"运行记录里<br/>的错误码"}
-  code -- AI_AUTH_INVALID --> k["系统里找不到能用的调用密钥<br/>在 Agent 页启用「九安审核AI」<br/>或「换密钥」→ 重试 AI"]
-  code -- AI_UNAVAILABLE --> u["Nexus 超时、5xx 或预算用完<br/>恢复后点「重试 AI」，或转人工"]
+  s(["单据池里一张单「AI 失败」<br/>（可自动重试的已重试过一次）"]) --> code{"「Agent 接入」页<br/>调用记录里的错误码"}
+  code -- AGENT_TASK_UNROUTED --> r["没有就绪的审批 Agent<br/>设为审批 Agent，或给它换钥匙"]
+  code -- "AI_AUTH_INVALID · 密钥失效" --> k["Nexus 不认这把密钥<br/>「换钥匙」→ 抽屉里「重新审核」"]
+  code -- AI_UNAVAILABLE --> u["超过 180 秒、Nexus 5xx 或预算用完<br/>看 Nexus 上这一轮的会话 → 稍后重新审核"]
   code -- AI_RATE_LIMIT --> rl["Nexus 限流：稍后重试"]
-  code -- AI_REQUEST_INVALID --> ri["请求不合规：看 detail<br/>（附件超限、内容残缺）"]
-  code -- 校验失败 --> v["输出没过九安校验<br/>看原始返回 → 改提示词"]
+  code -- AI_INVALID_RESPONSE --> v["回答不合契约<br/>看「查看反馈」→ 改审核 Agent 的提示词"]
+  code -- CUSTOM_RULES_TOO_LONG --> c["我的规则加单据超过一次请求的上限<br/>请发起人删减规则"]
   class s warn
   class code gate
-  class k risk
-  class u,rl,ri,v poc
+  class k,r risk
+  class u,rl,v,c poc

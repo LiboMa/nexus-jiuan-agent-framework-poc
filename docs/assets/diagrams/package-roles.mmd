@@ -1,11 +1,11 @@
 flowchart TB
   subgraph pm["项目负责人"]
     direction LR
-    pm1["交付包指南"] --> pm2["交接文档 §1 · §6"] --> pm3["代码评审 §1 · §4"] --> pm4["验收签收"]
+    pm1["交付包指南"] --> pm2["交接文档 §1 · §6"] --> pm3["客户部署路线"] --> pm4["验收签收"]
   end
   subgraph dev["应用开发"]
     direction LR
-    d1["交接文档"] --> d1s["Skills 配置指南"] --> d2["架构、模块与工作流"] --> d3["并入九安"] --> d4["部署与迭代规范"] --> d5["跑测试 · 走一遍页面"]
+    d1["交接文档"] --> d2["架构"] --> d3["PoC 说明"] --> d4["部署与迭代规范"] --> d5["跑测试 · 走一遍页面"]
   end
   subgraph ops["运维 / 值班"]
     direction LR
@@ -13,7 +13,7 @@ flowchart TB
   end
   subgraph agent["Agent 开发"]
     direction LR
-    a1["Skills 配置指南"] --> a1w["开发者工作流"] --> a2["知识 Agent 说明"] --> a3["接入新 Agent"] --> a4["改提示词 · 调用测试"]
+    a1["Skills 配置指南"] --> a2["开发者快速对接指南"] --> a3["审核 Agent 说明"] --> a4["改提示词 · 测试"]
   end
   pm ~~~ dev ~~~ ops ~~~ agent
   class pm1,d1,o1,a1 nexus

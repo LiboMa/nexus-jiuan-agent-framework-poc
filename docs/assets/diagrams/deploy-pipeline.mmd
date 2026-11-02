@@ -1,11 +1,11 @@
 flowchart TD
-  local["本机检查<br/>单元测试（要 MySQL 的在测试台跑）· Skill 测试 · build-html.sh --check"]
+  local["本机检查<br/>poc/infra/test · 外壳与新前端的测试 · build-html.sh --check"]
   review["评审：合并请求"]
-  deploy["deploy.sh --code-only<br/>测试 → 前端副本 → 打包上传 → SSM 让实例拉取、重启"]
-  gates["三道关<br/>① SSM 那一行是 Success（脚本不替你检查）<br/>② 健康检查 200<br/>③ 端到端测试全部通过（发布那次「跳过」算失败）"]
+  deploy["deploy.sh --code-only<br/>测试 → 构建 → 打包上传 → 实例上装构件、配置、重启"]
+  gates["三道关<br/>① 实例上那一步成功（失败就不做健康检查）<br/>② 健康检查 /poc/healthz 通过<br/>③ run07.sh 端到端测试全部通过"]
   confirm["项目负责人确认"]
   tag["推送 · 打标签 poc-YYYYMMDD-N · 写 CHANGELOG"]
-  rollback["回滚<br/>归档包 → releases/current.tgz → 重启"]
+  rollback["回滚<br/>previous 换回 current → 重启 andon-jiuan07"]
   local e1@==> review e2@==> deploy e3@==> gates
   gates -- 都过了 --> confirm
   confirm e4@==> tag

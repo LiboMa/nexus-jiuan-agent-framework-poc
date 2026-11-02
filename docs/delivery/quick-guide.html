@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="data:,">
-<title>快速上手：把前端接上 Nexus 上的 Agent</title>
+<title>快速上手：在「Agent 接入」页接上 Nexus 上的 Agent</title>
 <style>
 :root{
   --paper:#F4F5F7; --sheet:#FCFCFD;
@@ -93,14 +93,15 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="page">
 <header class="form">
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
-v0.1.0</span>快速上手：把前端接上 Nexus 上的 Agent</h1>
+v0.7.10</span>快速上手：在「Agent 接入」页接上 Nexus 上的 Agent</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-10-20</td></tr>
-    <tr><th scope="row">状态</th><td>快速上手指南（给前端用户）<span class="stamp">上手</span></td></tr>
-    <tr><th scope="row">范围</th><td>在客户自己的前端和线上 Nexus AI
-之间，把 Agent 接起来、用起来</td></tr>
-    <tr><th scope="row">读者</th><td>前端用户：审核员、复核人、Agent
-开发者</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">状态</th><td>快速上手指南（给管理员；只写新前端的「Agent
+接入」页）<span class="stamp">上手</span></td></tr>
+    <tr><th scope="row">范围</th><td>在九安 v0.7.10 测试台的新前端和线上
+Nexus AI 之间，把 Agent 接起来、用起来</td></tr>
+    <tr><th scope="row">读者</th><td>管理员（测试台上是
+poc-reviewer）、Agent 开发者</td></tr>
   </table>
 </header>
 <div class="layout">
@@ -119,41 +120,34 @@ id="toc-3-第-1-步确认-agent-已经发布">3. 第 1 步：确认 Agent
 已经发布</a></li>
 <li><a href="#4-第-2-步生成-api-密钥" id="toc-4-第-2-步生成-api-密钥">4.
 第 2 步：生成 API 密钥</a></li>
-<li><a href="#5-第-3-步登录前端打开nexus-agent页"
-id="toc-5-第-3-步登录前端打开nexus-agent页">5. 第 3
-步：登录前端，打开「Nexus Agent」页</a></li>
+<li><a href="#5-第-3-步登录打开agent-接入页"
+id="toc-5-第-3-步登录打开agent-接入页">5. 第 3 步：登录，打开「Agent
+接入」页</a></li>
 <li><a href="#6-第-4-步连接-nexus" id="toc-6-第-4-步连接-nexus">6. 第 4
 步：连接 Nexus</a></li>
 <li><a href="#7-第-5-步签发调用密钥" id="toc-7-第-5-步签发调用密钥">7.
 第 5 步：签发调用密钥</a></li>
-<li><a href="#8-第-6-步启用-agent" id="toc-8-第-6-步启用-agent">8. 第 6
-步：启用 Agent</a></li>
-<li><a href="#9-第-7-步调用测试" id="toc-9-第-7-步调用测试">9. 第 7
-步：调用测试</a></li>
-<li><a href="#10-第-8-步在审批流里用"
-id="toc-10-第-8-步在审批流里用">10. 第 8 步：在审批流里用</a></li>
+<li><a href="#8-第-6-步启用" id="toc-8-第-6-步启用">8. 第 6
+步：启用</a></li>
+<li><a href="#9-第-7-步设为审批-agent测试"
+id="toc-9-第-7-步设为审批-agent测试">9. 第 7 步：设为审批
+Agent、测试</a></li>
+<li><a href="#10-第-8-步在单据池里用"
+id="toc-10-第-8-步在单据池里用">10. 第 8 步：在单据池里用</a></li>
 <li><a href="#11-日常维护" id="toc-11-日常维护">11. 日常维护</a></li>
 <li><a href="#12-遇到问题" id="toc-12-遇到问题">12. 遇到问题</a></li>
-<li><a href="#13-用编码工具做同样的事可选"
-id="toc-13-用编码工具做同样的事可选">13.
-用编码工具做同样的事（可选）</a></li>
-<li><a href="#14-九安-v0710-测试台agent-接入页2026-11-01-起"
-id="toc-14-九安-v0710-测试台agent-接入页2026-11-01-起">14. 九安 v0.7.10
-测试台：「Agent 接入」页（2026-11-01 起）</a></li>
 </ul>
 </nav>
 <main id="main">
-<p>这份指南带你一步步把前端和 Nexus 上的 Agent 接起来：先在 Nexus
-网页上准备两把密钥，再在前端「Nexus
-Agent」页连接、启用、调用测试，最后在审批流里用上它。第一次从头做完大约
-10 分钟。</p>
+<p>这份指南带你一步步把新前端和 Nexus 上的 Agent 接起来：先在 Nexus
+网页上准备两把密钥，再在新前端的「<strong>Agent 接入</strong>」页连接
+Nexus、启用、指定审批
+Agent、测试，最后在单据池里用上它。第一次从头做完大约 10 分钟。</p>
 <p>全程只在两个网页上操作，<strong>不用改任何文件，不用找运维部署，也不用重启服务</strong>。</p>
-<p>第 1–13 章写的是 v0.5.3 参考环境的「Nexus
-Agent」页（每个账号各自连接、启用）。九安 v0.7.10 测试台（<a
-href="https://jiuan-v0710.tinyboat.blog">https://jiuan-v0710.tinyboat.blog</a>）上是管理员在「<strong>Agent
-接入</strong>」页为整个平台启用，按钮和做法有些不同，见第 14
-章。两把密钥（第 1.2 节）和在 Nexus 网页上做的几步（第 3、4、7
-章）都一样。</p>
+<p>这一页是<strong>管理员为整个平台启用</strong>：启用一次，所有人的单据池都用它。审批流只调管理员指定的一个「审批
+Agent」。九安原来的页面（<code>/analysis.html</code> 的「后台配置 ›
+Agent 接入」）还在，两边是同一份启用记录。2026-11-02 起 v0.5.3
+参考环境的「Nexus Agent」页（每个账号各自连接、启用）已经拿掉。</p>
 <h1 id="1-开始前">1. 开始前</h1>
 <h2 id="11-你需要准备的">1.1 你需要准备的</h2>
 <div class="table-wrap">
@@ -167,12 +161,15 @@ href="https://jiuan-v0710.tinyboat.blog">https://jiuan-v0710.tinyboat.blog</a>�
 <tbody>
 <tr>
 <td>前端地址</td>
-<td>你们部署的九安前端。下文说「前端」就是它。我们的参考环境是 <a
-href="https://andon-finance.tinyboat.blog">https://andon-finance.tinyboat.blog</a></td>
+<td>九安 v0.7.10 测试台的站点，首页 <code>/<wbr></code>
+就是新前端。参考环境是 <a
+href="https://jiuan-v0710.tinyboat.blog">https://jiuan-v0710.tinyboat.blog</a></td>
 </tr>
 <tr>
-<td>前端账号</td>
-<td>能登录前端的账号，比如审核员、复核人。参考环境用口令登录；你们的正式环境按你们自己的登录方式</td>
+<td>管理员账号</td>
+<td>只有管理员看得到「Agent 接入」页。参考环境用口令登录，管理员是
+<code>poc-<wbr>reviewer</code>；分析员 <code>poc-<wbr>checker</code>
+的导航里没有这一页</td>
 </tr>
 <tr>
 <td>Nexus 地址</td>
@@ -206,8 +203,8 @@ href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.ne
 <tbody>
 <tr>
 <td>用来做什么</td>
-<td>让前端用你的 Nexus 身份，列出你能用的 Agent</td>
-<td>让前端调用某一个发布</td>
+<td>让平台用你的 Nexus 身份，列出你发布的 Agent</td>
+<td>让平台调用某一个发布</td>
 </tr>
 <tr>
 <td>在哪生成</td>
@@ -215,31 +212,37 @@ href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.ne
 <td>Nexus「互联中心 › 对外发布」，在那个发布里签发</td>
 </tr>
 <tr>
+<td>长什么样</td>
+<td><code>nxc_<wbr></code> 开头</td>
+<td><code>nxa_<wbr></code> 开头</td>
+</tr>
+<tr>
 <td>要几把</td>
-<td>每个前端账号一把，连接一次就行</td>
+<td>一把，连接一次就行</td>
 <td>每个要用的发布一把</td>
 </tr>
 <tr>
 <td>粘贴到哪</td>
-<td>前端「我的 Nexus 连接」</td>
-<td>前端「我的 Agent」里那个发布的「启用」</td>
+<td>「Agent 接入」页的「连接 Nexus」对话框</td>
+<td>那个发布一行的「启用」对话框</td>
 </tr>
 </tbody>
 </table>
 </div>
 <p>两把都只能由你本人在 Nexus
-网页上生成。密钥只粘贴进前端的输入框，不要发到聊天工具、邮件里，也不要写进任何文件。</p>
+网页上生成。密钥只粘贴进对话框里的密码框，不要发到聊天工具、邮件里，也不要写进任何文件。</p>
 <h1 id="2-整个流程">2. 整个流程</h1>
 <figure>
 <a href="../assets/diagrams/quick-guide-flow.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/quick-guide-flow.svg" loading="lazy"
-alt="八步：Nexus 网页上确认 Agent 已发布、生成 API 密钥；前端登录、连接 Nexus；Nexus 网页上签发调用密钥；前端启用 Agent、调用测试；最后在单据池的审批流里用" /></a>
+alt="八步：Nexus 网页上确认 Agent 已发布、生成 API 密钥；新前端登录、打开「Agent 接入」、连接 Nexus；Nexus 网页上签发调用密钥；新前端启用、设为审批 Agent 或测试；最后在单据池里用" /></a>
 <figcaption>八步：Nexus 网页上确认 Agent 已发布、生成 API
-密钥；前端登录、连接 Nexus；Nexus 网页上签发调用密钥；前端启用
-Agent、调用测试；最后在单据池的审批流里用</figcaption>
+密钥；新前端登录、打开「Agent 接入」、连接 Nexus；Nexus
+网页上签发调用密钥；新前端启用、设为审批 Agent
+或测试；最后在单据池里用</figcaption>
 </figure>
-<p>黄色的步骤在 Nexus 网页上做，蓝色和绿色的步骤在前端做。</p>
+<p>黄色的步骤在 Nexus 网页上做，蓝色和绿色的步骤在新前端做。</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -262,12 +265,12 @@ Agent、调用测试；最后在单据池的审批流里用</figcaption>
 </tr>
 <tr>
 <td>3</td>
-<td>前端</td>
-<td>登录，打开「Nexus Agent」页</td>
+<td>新前端</td>
+<td>管理员登录，打开「Agent 接入」页</td>
 </tr>
 <tr>
 <td>4</td>
-<td>前端</td>
+<td>新前端</td>
 <td>连接 Nexus（粘贴 API 密钥）</td>
 </tr>
 <tr>
@@ -277,24 +280,24 @@ Agent、调用测试；最后在单据池的审批流里用</figcaption>
 </tr>
 <tr>
 <td>6</td>
-<td>前端</td>
-<td>启用 Agent（粘贴调用密钥）</td>
+<td>新前端</td>
+<td>启用（粘贴调用密钥）</td>
 </tr>
 <tr>
 <td>7</td>
-<td>前端</td>
-<td>调用测试</td>
+<td>新前端</td>
+<td>设为审批 Agent（要审单的）、测试</td>
 </tr>
 <tr>
 <td>8</td>
-<td>前端</td>
-<td>在审批流里用</td>
+<td>新前端</td>
+<td>在单据池里用</td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>第 2、4 步每个账号只做一次。以后每接一个新的 Agent，只要重复第
-1、5、6、7 步。</p>
+<p>第 2、4 步只做一次。以后每接一个新的 Agent，只要重复第 1、5、6、7
+步。</p>
 <h1 id="3-第-1-步确认-agent-已经发布">3. 第 1 步：确认 Agent
 已经发布</h1>
 <ol type="1">
@@ -306,53 +309,41 @@ Nexus 账号登录。</li>
 </ol>
 <p>还没有这个发布，就请 Agent 开发者先建好：他们用编码工具（Claude
 Code、Codex、Kiro CLI）加 nexus-ai-operator 建 Agent、试用、建发布并打开
-A2A。做法见 <a href="skills-guide.html">Skills 配置指南</a>第 3 节。</p>
+A2A。做法见 <a href="skills-guide.html">Skills 配置指南</a>和<a
+href="developer-guide.html">开发者快速对接指南</a>。要接审批流的
+Agent，名片里要声明 <code>review_advice@1</code>。</p>
 <h1 id="4-第-2-步生成-api-密钥">4. 第 2 步：生成 API 密钥</h1>
 <ol type="1">
 <li>在 Nexus 网页进「个人设置 › API 密钥」。</li>
-<li>新建一把。名字写清楚给谁用，比如「九安前端」。档位选<strong>只读</strong>就够了。</li>
+<li>新建一把。名字写清楚给谁用，比如「九安测试台」。档位选<strong>只读</strong>就够了。</li>
 <li>复制生成的密钥（<code>nxc_</code> 开头）。</li>
 </ol>
-<p>这把密钥只给前端用一次：第一次连接时，Nexus
-会把它换成新的，你复制的那一串随即作废。以后要给别的地方用（比如编码工具），再新建一把。</p>
-<h1 id="5-第-3-步登录前端打开nexus-agent页">5. 第 3
-步：登录前端，打开「Nexus Agent」页</h1>
+<p>这把密钥只给平台用一次：第一次连接时，Nexus
+会把它换成新的，你复制的那一串随即作废；之后平台自己保存、续期。以后要给别的地方用（比如编码工具），再新建一把。</p>
+<h1 id="5-第-3-步登录打开agent-接入页">5. 第 3 步：登录，打开「Agent
+接入」页</h1>
 <ol type="1">
-<li><p>打开前端，用你的前端账号登录。登录后先看到单据池。</p>
-<figure class="screen">
-<a href="../assets/screens/documents.png" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/screens/documents.png" loading="lazy"
-alt="单据池：单据卡片上显示审批状态，顶上有「模拟来单」" /></a>
-<figcaption>单据池：单据卡片上显示审批状态，顶上有「模拟来单」</figcaption>
-</figure></li>
-<li><p>点左侧导航「Nexus」分组下的 <strong>Nexus
-Agent</strong>。</p></li>
+<li>打开新前端，用管理员账号登录（参考环境：<code>poc-reviewer</code>
+和它的口令）。登录后先看到工作台。</li>
+<li>点左侧导航「<strong>平台</strong>」分组下的 <strong>Agent
+接入</strong>。</li>
 </ol>
 <h1 id="6-第-4-步连接-nexus">6. 第 4 步：连接 Nexus</h1>
 <ol type="1">
-<li>在「<strong>我的 Nexus 连接</strong>」里，把第 2 步复制的 API
-密钥粘贴进「Nexus API 密钥」框。</li>
-<li>点「<strong>连接</strong>」。</li>
+<li>点「<strong>连接 Nexus</strong>」，在弹出的对话框里粘贴第 2 步复制的
+API 密钥，点「连接」。</li>
 <li>连上以后：
 <ul>
-<li>状态变成「<strong>已连接</strong>」，下面显示你的 Nexus
-账号和档位；</li>
-<li>下面的「<strong>我的 Agent</strong>」列出你在 Nexus
-上的发布，分「已启用」「待启用」「有问题」三组；还没发布的 Agent
-折叠在最下面。</li>
+<li>顶上一条显示「<strong>已连接
+Nexus</strong>」和你的账号，带「刷新清单」「断开 Nexus」；</li>
+<li>下面一张表列出你在 Nexus 上开了 A2A
+的发布，和已经启用的合在一起，每个 Agent 一行。</li>
 </ul></li>
 </ol>
-<figure class="screen">
-<a href="../assets/screens/agents-page.png" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/screens/agents-page.png" loading="lazy"
-alt="「Nexus Agent」页：上面是「我的 Nexus 连接」（已连接、Nexus 账号与档位），下面是「我的 Agent」" /></a>
-<figcaption>「Nexus Agent」页：上面是「我的 Nexus 连接」（已连接、Nexus
-账号与档位），下面是「我的 Agent」</figcaption>
-</figure>
-<p>以后打开这一页，列表会自动更新；在 Nexus 上刚发布的 Agent
-没出现，点「<strong>刷新</strong>」。</p>
+<p>在 Nexus 上刚发布的 Agent
+没出现，点「<strong>刷新清单</strong>」。不连 Nexus
+也能接：用「<strong>手动添加 Agent</strong>」，贴它的 A2A
+地址和调用密钥（都在 Nexus「互联中心 › 对外发布」）。</p>
 <h1 id="7-第-5-步签发调用密钥">7. 第 5 步：签发调用密钥</h1>
 <ol type="1">
 <li>回到 Nexus 网页，进「互联中心 ›
@@ -361,107 +352,95 @@ alt="「Nexus Agent」页：上面是「我的 Nexus 连接」（已连接、Nex
 </ol>
 <p>每把调用密钥只对这一个发布有效。只有你本人在网页上能签发：编码工具和
 API 密钥都签不了，这是平台的限制。</p>
-<h1 id="8-第-6-步启用-agent">8. 第 6 步：启用 Agent</h1>
+<h1 id="8-第-6-步启用">8. 第 6 步：启用</h1>
 <ol type="1">
-<li>回到前端「Nexus Agent」页，在「我的
-Agent」的「<strong>待启用</strong>」里找到这个发布的卡片。</li>
-<li>点「<strong>启用</strong>」，把第 5
-步复制的调用密钥粘贴进「调用密钥」框。</li>
-<li>「顺便读一次能力清单」默认是勾上的（约 0.03
-美元），建议保留：读到之后，调用测试里就能按任务来调。</li>
-<li>点「<strong>确认启用</strong>」。</li>
+<li>回到「Agent
+接入」页，在这个发布一行点「<strong>启用</strong>」。</li>
+<li>在对话框里只粘贴第 5
+步复制的调用密钥，点「<strong>验证并启用</strong>」。</li>
 </ol>
-<p>前端会当场检查：能读到这个发布的名片，这把密钥也有效。检查不花钱，通过才保存，密钥会加密存起来。成功后卡片移到「<strong>已启用</strong>」。</p>
-<p>检查没通过时，卡片上会写明原因，按第 12 章处理。</p>
-<h1 id="9-第-7-步调用测试">9. 第 7 步：调用测试</h1>
+<p>平台会当场向 Nexus
+验证名片和这把密钥（最长约三分钟，不花钱），通过后加密保存。这一行变成「<strong>就绪</strong>」，之后页面上<strong>只显示密钥的指纹</strong>，不再显示密钥。验证没通过时，对话框里写明原因，按第
+12 章处理。</p>
+<p>就绪不等于进审批流：就绪的 Agent
+供前端工作流调用；名片说明里有没有「契约 / 任务」两行都不挡启用。</p>
+<h1 id="9-第-7-步设为审批-agent测试">9. 第 7 步：设为审批
+Agent、测试</h1>
+<p><strong>设为审批 Agent</strong>（要它审单的才做）：</p>
 <ol type="1">
-<li>在「已启用」的卡片上点「<strong>调用测试</strong>」，或者往下翻到调用测试面板。</li>
-<li>「<strong>调用哪个发布</strong>」选你刚启用的
-Agent。下面会显示它的名片：协议版本，以及接受哪些附件类型。</li>
-<li>「<strong>输入方式</strong>」选一种：
-<ul>
-<li><strong>自由文本</strong>：直接写问题，比如「请对照附件里的发票，说明住宿是否超标」；</li>
-<li><strong>审批建议（选一张单据）</strong>：前端按九安审批建议的格式组装输入，并用九安的规则检查输出；</li>
-<li><strong>按任务（读取能力清单）</strong>：先点「读取能力清单」，再选一个任务，按提示填
-JSON 输入。</li>
-</ul></li>
-<li>「<strong>附件（可选）</strong>」可以带发票图片、PDF、Excel、Word、Markdown、JSON
-等：最多 5 个，单个不超过 5 MB，合计不超过 6
-MB。也可以点虚构的示例附件。</li>
-<li>点「<strong>发送</strong>」。通常 30–60
-秒出结果，带附件会慢一些。</li>
+<li>在一个就绪的 Agent 上点「<strong>设为审批 Agent</strong>」。</li>
+<li>对话框里<strong>要写原因</strong>才能确认。同一时间只有一个审批
+Agent，替换旧的之前会先确认换掉谁。</li>
+<li>这个 Agent 的名片没有声明审批流的任务（<code>review_advice@1</code>
+或 <code>first_review@1</code>）时，对话框会先提醒：设了以后单据池的 AI
+独立建议多半出不来，只有确定它能审单时才这样做。</li>
 </ol>
-<figure class="screen">
-<a href="../assets/screens/invoke-panel.png" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/screens/invoke-panel.png" loading="lazy"
-alt="调用测试面板：选发布、看名片、选输入方式、加附件，再发送" /></a>
-<figcaption>调用测试面板：选发布、看名片、选输入方式、加附件，再发送</figcaption>
-</figure>
-<p>看结果：</p>
+<p>表格上方一行写着审批流现在调谁。参考环境的审批 Agent
+是「九安审核AI（PoC）」；知识库 Agent「知识库文档管家（PG
+版）」也在这里启用，就绪、不进审批流。</p>
+<p><strong>测试</strong>：在就绪的 Agent
+上点「<strong>测试</strong>」，三种：</p>
 <ul>
-<li>「<strong>成功</strong>」：Agent
-的回答显示在下面。用「审批建议」方式调用时，还会显示「九安校验通过」或「九安校验未通过」。</li>
-<li>「<strong>失败</strong>」：下面写着错误码和原因，按第 12
-章处理。偶尔是 Agent 这一次没答好，再点一次「发送」就行。</li>
-<li>每次调用都记在页面最下面的调用记录里，能看到用时、错误码和原始返回。</li>
+<li><strong>文本</strong>：写一段话原样发过去，看它怎么回；</li>
+<li><strong>请求信封</strong>：选一个任务，页面按契约填好示例请求（可以改），回答按契约判合格
+/ 不合格，原始回答也能看；</li>
+<li><strong>单据</strong>：选一张对公付款单，照自动发起的做法组装请求，等结论。</li>
 </ul>
-<p>每次调用约 0.05 美元，记在发布者名下；每个账号每分钟最多 5 次。</p>
-<h1 id="10-第-8-步在审批流里用">10. 第 8 步：在审批流里用</h1>
-<p>审批流用的是「九安审核AI」这个发布。<strong>至少要有一个账号在「我的
-Agent」里启用它</strong>，审批流才能调到它：系统先用发起审批的人自己启用的那把，没有就用别的账号启用的。</p>
+<p>测试只记进下面的调用记录，不改单据的结论；每分钟最多 5
+次，每次都真实调用 Nexus。</p>
+<p>页面下方是调用记录：审批流的每一轮和每次测试一行，「<strong>查看反馈</strong>」看
+Agent 返回了什么。操作记录折叠在最下面。</p>
+<h1 id="10-第-8-步在单据池里用">10. 第 8 步：在单据池里用</h1>
 <ol type="1">
-<li>回到单据池。新单据一进来，系统会自动跑九安预审和 AI
-初审，不用点。参考环境里用顶上的「<strong>模拟来单</strong>」生成一张虚构单据来试。</li>
-<li>等 30–60 秒，卡片上出现「AI 初审：建议 · 风险」。</li>
-<li>打开单据详情，在「<strong>审批流</strong>」卡片里看 AI
-初审建议，再做人工复核：「<strong>通过</strong>」或「<strong>退回</strong>」。和
-AI 建议不一致时，要写明理由。</li>
+<li>回到「<strong>单据池</strong>」。新单据同步进来、读完原件后，平台会自动发给审批
+Agent，不用点。参考环境里，管理员可以在 <code>/poc/intake</code>
+模拟来单一张来试，约 1 分钟后同步进单据池。</li>
+<li>一轮通常 7–20 秒，上限 180 秒。「最近审核」一栏会出现「AI
+建议」。</li>
+<li>点这一行打开右侧抽屉：看 AI 建议（依据上的「第 N
+页」能跳到原件的那一页）、原件、单据信息、历史；底部复核：「<strong>采纳
+AI
+建议</strong>」或「<strong>改判</strong>」（选原因，选「其他」要写备注）。</li>
 </ol>
-<figure class="screen">
-<a href="../assets/screens/document-approval.png" class="figure-link"
-target="_blank" rel="noopener"><img
-src="../assets/screens/document-approval.png" loading="lazy"
-alt="单据详情里的审批流卡片：AI 初审建议，再由人工复核" /></a>
-<figcaption>单据详情里的审批流卡片：AI
-初审建议，再由人工复核</figcaption>
-</figure>
-<p>AI 只给初审建议，结论由人做。AI
-初审失败时，系统会自动重试一次；还不行，可以点「重试
-AI」，或者直接人工复核（不带 AI 建议）。</p>
+<p>AI 只给建议，结论由人做；复核只记在测试台，不回写汇联易。AI
+这一轮失败了，可以在抽屉里「重新审核」。</p>
 <h1 id="11-日常维护">11. 日常维护</h1>
 <div class="table-wrap">
 <table>
 <thead>
 <tr>
 <th>情况</th>
-<th>在前端怎么做</th>
+<th>在「Agent 接入」页怎么做</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Agent 在 Nexus 上改了版本</td>
-<td>卡片上会提示「Agent
-版本有变化」：点「<strong>重新读能力清单</strong>」。它会用已保存的密钥重新检查一遍</td>
+<td>点「<strong>重新验证</strong>」：用存着的密钥再向 Nexus
+验一次名片和密钥（九安原来的页面上这个按钮叫「复核」）</td>
 </tr>
 <tr>
-<td>调用密钥过期或失效</td>
+<td>调用密钥过期或失效（这一行显示「密钥失效」）</td>
 <td>在 Nexus
-上签一把新的，在卡片上点「<strong>换密钥</strong>」，粘贴新的，「确认换密钥」</td>
+上签一把新的，点「<strong>换钥匙</strong>」，在对话框里粘贴新的，「验证并更换」</td>
 </tr>
 <tr>
 <td>不再用某个 Agent</td>
-<td>卡片上点「<strong>停用</strong>」。以后要用，再「启用」一次</td>
+<td>点「<strong>停用</strong>」并确认：九安不再调用它，存着的调用密钥一并清除。停用的是审批
+Agent 时审批流暂停，重新启用后自动接上</td>
+</tr>
+<tr>
+<td>换一个审批 Agent</td>
+<td>在新的那个就绪的 Agent 上「设为审批 Agent」，写原因、确认替换</td>
 </tr>
 <tr>
 <td>换一个 Nexus 账号</td>
-<td>「我的 Nexus 连接」里点「<strong>断开</strong>」，再用新账号的 API
-密钥连接。断开只删前端保存的连接；那把 API 密钥要到
-Nexus「个人设置」里停用</td>
+<td>「断开 Nexus」（只删平台保存的连接；那把 API 密钥要到
+Nexus「个人设置」里停用），再用新账号的 API 密钥连接</td>
 </tr>
 <tr>
 <td>Nexus 上新发布了 Agent</td>
-<td>点「<strong>刷新</strong>」，它会出现在「待启用」里</td>
+<td>点「刷新清单」，它会出现在表里</td>
 </tr>
 </tbody>
 </table>
@@ -479,199 +458,68 @@ Nexus「个人设置」里停用</td>
 </thead>
 <tbody>
 <tr>
-<td>还没有连接 Nexus：先在上面填入你的 API 密钥</td>
-<td>这个账号还没连接</td>
-<td>按第 4、6 章做</td>
+<td>还没有连接 Nexus</td>
+<td>还没连接，或连接失效了</td>
+<td>点「连接 Nexus」，按第 4、6 章做</td>
 </tr>
 <tr>
-<td>API 密钥无效、已经用过，或者不属于这个 Nexus</td>
+<td>Nexus API 密钥无效、已经用过，或者不属于这个 Nexus</td>
 <td>这把用过了（第一次连接就会被换掉）、已经停用，或者是别的 Nexus
 上生成的</td>
 <td>在线上 Nexus AI「个人设置 › API 密钥」新建一把，再连接</td>
 </tr>
 <tr>
-<td>暂时连不上 Nexus，稍后再试</td>
+<td>连不上 Nexus</td>
 <td>网络或 Nexus 一时不通</td>
-<td>等一会儿点「刷新」。<strong>不要</strong>因此换新的 API
+<td>等一会儿点「刷新清单」。<strong>不要</strong>因此换新的 API
 密钥，连接还在</td>
 </tr>
 <tr>
-<td>这个发布不在你的 Nexus 列表里</td>
-<td>用的 API 密钥不是发布者本人的，发布也没分享给这个账号</td>
-<td>换成发布者本人的 API
-密钥，或者请发布者把发布分享给你，再「刷新」</td>
+<td>Nexus 不认这把密钥 / 密钥属于别的发布或发布已暂停</td>
+<td>粘错了、这把不是这个发布签的，或发布暂停了</td>
+<td>在这个发布里重新签一把再粘贴；在 Nexus 上恢复发布</td>
 </tr>
 <tr>
-<td>读不到这个发布的 A2A 名片</td>
+<td>读不到名片 / 名片不合契约</td>
 <td>发布暂停了，或者 A2A 没打开</td>
 <td>在 Nexus「互联中心 › 对外发布」恢复发布、打开 A2A</td>
 </tr>
 <tr>
-<td>调用密钥无效，或者不属于这个发布</td>
-<td>粘错了，或者这把不是这个发布签的</td>
-<td>在这个发布里重新签一把，再粘贴</td>
+<td>验证超时</td>
+<td>Nexus 一时答不过来</td>
+<td>稍后再试</td>
 </tr>
 <tr>
-<td>调用密钥失效（卡片在「有问题」里）</td>
-<td>密钥过期或被停用</td>
-<td>签一把新的，点「换密钥」</td>
+<td>审批流还没有审批 Agent，单据池的 AI 独立建议停着</td>
+<td>没指定审批 Agent，或它停用、密钥失效</td>
+<td>在一个就绪的 Agent 上「设为审批 Agent」，或给它「换钥匙」</td>
 </tr>
 <tr>
-<td>这个 Agent 还没有启用</td>
-<td>还没启用就去调用</td>
-<td>先在「我的 Agent」里启用</td>
+<td>这个 Agent 现在不是「就绪」</td>
+<td>还没启用，或密钥失效</td>
+<td>先启用（或换好钥匙），再设为审批 Agent、测试</td>
 </tr>
 <tr>
-<td>连接和启用每分钟最多 5 次 / 调用测试每分钟最多 5 次</td>
-<td>太快了</td>
+<td>测试太频繁</td>
+<td>每分钟最多 5 次</td>
 <td>等一分钟</td>
 </tr>
 <tr>
-<td>调用失败，错误码 <code>AI_<wbr>INVALID_<wbr>RESPONSE</code></td>
-<td>Agent 这一次的输出不合格式</td>
-<td>再发送一次；总是这样就告诉 Agent 开发者</td>
-</tr>
-<tr>
-<td>调用失败，错误码 <code>AI_<wbr>UNAVAILABLE</code></td>
+<td>调用记录里 <code>AI_<wbr>UNAVAILABLE</code>（Nexus
+暂时答不了或超时）</td>
 <td>Nexus 暂时不可用、额度用完，或者超过 180 秒没答完</td>
-<td>稍后再试；附件多时可以减少附件</td>
+<td>稍后再试；总是这样就告诉 Agent 开发者（<a
+href="operations.html">运维</a>第 2.7 节）</td>
 </tr>
 <tr>
-<td>审批停在「AI 初审失败」，错误码
-<code>AI_<wbr>AUTH_<wbr>INVALID</code></td>
-<td>系统里没有能用的「九安审核AI」调用密钥</td>
-<td>有人在「我的 Agent」里启用（或换密钥）「九安审核AI」，再点「重试
-AI」</td>
-</tr>
-<tr>
-<td>附件被挡住</td>
-<td>类型不支持、超过大小，或者扩展名和内容对不上</td>
-<td>换成支持的类型，控制大小，用原始文件</td>
+<td>调用记录里
+<code>AI_<wbr>INVALID_<wbr>RESPONSE</code>（回答不合契约）</td>
+<td>Agent 这一次的输出修正一次后仍不合格式</td>
+<td>再试一次；总是这样就告诉 Agent 开发者</td>
 </tr>
 </tbody>
 </table>
 </div>
-<h1 id="13-用编码工具做同样的事可选">13.
-用编码工具做同样的事（可选）</h1>
-<p>习惯在 Claude Code、Codex、Kiro CLI 里工作，可以装应用自己的 Skill
-agent-access，用命令完成第 4–7
-步。命令前后和网页上的操作一一对应，两边看到的是同一份数据：</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>步</th>
-<th>网页上</th>
-<th>命令</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>登录前端</td>
-<td>登录</td>
-<td><code>agent_<wbr>access.<wbr>py login -<wbr>-<wbr>origin &lt;前端地址&gt; -<wbr>-<wbr>account &lt;账号&gt; -<wbr>-<wbr>password-<wbr>stdin -<wbr>-<wbr>client claude_<wbr>code -<wbr>-<wbr>yes</code></td>
-</tr>
-<tr>
-<td>连接 Nexus</td>
-<td>「我的 Nexus 连接」› 连接</td>
-<td><code>agent_<wbr>access.<wbr>py nexus connect -<wbr>-<wbr>yes</code>（API
-密钥从标准输入给）</td>
-</tr>
-<tr>
-<td>看列表</td>
-<td>「我的 Agent」</td>
-<td><code>agent_<wbr>access.<wbr>py status</code>、<code>agent_<wbr>access.<wbr>py agents -<wbr>-<wbr>state pending</code></td>
-</tr>
-<tr>
-<td>启用</td>
-<td>启用 › 粘贴调用密钥</td>
-<td><code>agent_<wbr>access.<wbr>py enable &lt;发布编号&gt; -<wbr>-<wbr>key-<wbr>stdin -<wbr>-<wbr>yes</code></td>
-</tr>
-<tr>
-<td>调用测试</td>
-<td>调用测试 › 发送</td>
-<td><code>agent_<wbr>access.<wbr>py invoke &lt;发布编号&gt; -<wbr>-<wbr>text "…" -<wbr>-<wbr>wait -<wbr>-<wbr>yes</code></td>
-</tr>
-<tr>
-<td>停用</td>
-<td>停用</td>
-<td><code>agent_<wbr>access.<wbr>py disable &lt;发布编号&gt; -<wbr>-<wbr>yes</code></td>
-</tr>
-</tbody>
-</table>
-</div>
-<p>怎么装、怎么连，见 <a href="skills-guide.html">Skills 配置指南</a>第
-4 节。</p>
-<h1 id="14-九安-v0710-测试台agent-接入页2026-11-01-起">14. 九安 v0.7.10
-测试台：「Agent 接入」页（2026-11-01 起）</h1>
-<p>测试台的首页 <code>/</code> 是新前端。用管理员账号（参考环境是
-<code>poc-reviewer</code>）登录后，点左侧导航「<strong>平台</strong>」分组下的
-<strong>Agent
-接入</strong>。只有管理员看得到这一页；复核人（<code>poc-checker</code>）的导航里没有它。九安原来的页面还在
-<code>/analysis.html</code>（「后台配置 › Agent
-接入」），两边是同一份启用记录。</p>
-<p>和第 5–11
-章的区别：这里是<strong>管理员为整个平台启用</strong>，不是每个账号各自启用；审批流只调管理员指定的一个「审批
-Agent」。</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>要做的</th>
-<th>在页面上怎么做</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>连接 Nexus</td>
-<td>点「连接 Nexus」，在弹出的对话框里粘贴 API 密钥（第 4
-章那把）。连上后列出你在 Nexus 上开了 A2A
-的发布，和已启用的合在一张表里</td>
-</tr>
-<tr>
-<td>启用</td>
-<td>在那个发布一行点「<strong>启用</strong>」，在对话框里只粘贴这个发布的调用密钥（第
-7 章那把），点「验证并启用」。平台当场向 Nexus
-验证名片和密钥（最长约三分钟），通过后加密保存。之后页面上<strong>只显示密钥的指纹</strong>，不再显示密钥</td>
-</tr>
-<tr>
-<td>列表里没有的发布</td>
-<td>「<strong>手动添加 Agent</strong>」：贴它的 A2A
-地址和调用密钥。Nexus 上刚发布的没出现，点「刷新清单」</td>
-</tr>
-<tr>
-<td>设为审批 Agent</td>
-<td>在一个就绪的 Agent 上点「<strong>设为审批
-Agent</strong>」，对话框里<strong>要写原因</strong>才能确认。这个 Agent
-的名片没有声明审批流的任务（<code>review_<wbr>advice@1</code> 或
-<code>first_<wbr>review@1</code>）时，对话框会先提醒：设了以后单据池的
-AI 独立建议多半出不来，只有确定它能审单时才这样做。同一时间只有一个审批
-Agent，表格上方一行写着审批流现在调谁</td>
-</tr>
-<tr>
-<td>测试</td>
-<td>就绪的 Agent
-上点「<strong>测试</strong>」，三种：文本、请求信封、单据。测试只记进下面的调用记录，不改单据的结论</td>
-</tr>
-<tr>
-<td>重新验证</td>
-<td>点「<strong>重新验证</strong>」：用存着的密钥再向 Nexus
-验一次名片和密钥（九安原来的页面上这个按钮叫「复核」）</td>
-</tr>
-<tr>
-<td>换密钥</td>
-<td>密钥失效的一行点「<strong>换钥匙</strong>」，在对话框里粘贴新的调用密钥</td>
-</tr>
-<tr>
-<td>停用</td>
-<td>点「<strong>停用</strong>」并确认：九安不再调用它，存着的调用密钥一并清除。停用的是审批
-Agent 时审批流暂停，重新启用后自动接上</td>
-</tr>
-</tbody>
-</table>
-</div>
-<p>页面下方是调用记录：审批流的每一轮和每次测试一行，「查看反馈」看
-Agent 返回了什么。</p>
 <p>调用密钥只粘贴进对话框里的密码框。Chrome
 在这个框上会不会弹出「保存密码」，还要项目负责人在自己的浏览器上确认；弹出了也不要保存。</p>
 </main>

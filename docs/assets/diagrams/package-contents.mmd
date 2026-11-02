@@ -1,35 +1,43 @@
 flowchart TB
-  pkg["andon-finance-poc-delivery-日期.tar.gz<br/>+ .sha256 · 包内 MANIFEST.txt · PACKAGE-INFO.txt"]
-  subgraph code["代码与测试"]
+  pkg["dist/Finance-Audit-Nexus-PoC-v0.7.10.tar.gz<br/>+ .sha256 · 包内 MANIFEST.txt · PACKAGE-INFO.txt"]
+  subgraph front["① 前端：九安 v0.7.10 测试台"]
     direction TB
-    app["poc/app/<br/>服务端 · 测试台组合根 · 前端扩展 · 示例附件 · 单元与端到端测试"]
-    bench["poc/bench/<br/>build-jiuan.sh：九安副本 + 补丁 + mysql2"]
-    contract["contract/<br/>Agent 接入框架的契约"]
-    infra["poc/infra/<br/>模板 · deploy.sh · 备份 · 换型 · 测试台脚本（不含 secrets.env）"]
-    skills["skills/agent-access/<br/>命令行 agent_access.py + 测试"]
-    ka["knowledge-agent/<br/>提示词 v2（当前）· v1"]
-    tools["poc/tools/ · poc/README.md"]
+    web["poc/web07/<br/>新前端（React）"]
+    app["poc/app07/<br/>外壳 · lib/ · 单元与端到端测试"]
+    bench["poc/bench/ · patches/jiuan-v0.7.10/<br/>build-jiuan07.sh · 补丁 0001–0007"]
+    infra["poc/infra/<br/>模板 · deploy.sh · test/ · bench/（不含 secrets.env）"]
+  end
+  subgraph back["② PG 与知识库后端"]
+    direction TB
+    kb["kb/<br/>PG + pgvector · kb_search · 连接器 · 入库"]
+  end
+  subgraph agents["③ Nexus 上的 Agent 与发布"]
+    direction TB
+    aa["audit-agent/<br/>审核 Agent 的提示词 · apply.py"]
+    pga["knowledgebase-writer-agent-pg/ · customer-deploy/<br/>PG 知识库 Agent · 客户部署交付件"]
+    op["skills/nexus-ai-operator/<br/>Nexus 一侧的 Skill"]
   end
   subgraph docsg["文档与证据"]
     direction TB
-    delivery["docs/delivery/<br/>交付文档 md + html · 参考补丁 · 打包脚本"]
-    assets["docs/assets/<br/>图（.mmd 源 + .svg）· 线上截图"]
-    rest["docs/ 其余<br/>架构 · 设计 · 计划 · 历次评估 · build-html.sh"]
-    ev["evidence/<br/>端到端测试截图 · 测试台升级记录"]
+    delivery["docs/<br/>交付文档 md + html · 图 · 截图 · 打包脚本"]
+    ev["evidence/<br/>端到端测试结果与截图"]
   end
   subgraph outg["不在包里，另行交接"]
     direction TB
     o1["secrets.env（含测试台密钥）：当面交接"]
-    o2["九安开发包：按版本号从九安取"]
+    o2["九安开发包 v0.7.10：按版本号从九安取"]
     o3["~/.nexus：接手人用自己的"]
-    o4["实例上的账号数据与 MySQL：留在实例"]
+    o4["实例上的 MySQL、PG 和 /var/lib/jiuan07：留在实例"]
   end
-  pkg ==> code
+  pkg ==> front
+  pkg ==> back
+  pkg ==> agents
   pkg ==> docsg
   pkg -.-> outg
-  app ~~~ bench ~~~ contract ~~~ infra ~~~ skills ~~~ ka ~~~ tools
-  delivery ~~~ assets ~~~ rest ~~~ ev
+  web ~~~ app ~~~ bench ~~~ infra
+  aa ~~~ pga ~~~ op
+  delivery ~~~ ev
   o1 ~~~ o2 ~~~ o3 ~~~ o4
   class pkg nexus
-  class app,bench,contract,infra,skills,ka,tools,delivery,assets,rest,ev poc
+  class web,app,bench,infra,kb,aa,pga,op,delivery,ev poc
   class o1,o2,o3,o4 risk
