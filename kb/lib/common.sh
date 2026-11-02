@@ -7,7 +7,8 @@
 #   状态文件    state_get / state_set / state_del      → .state/<DEPLOY_NAME>.env
 #   密钥文件    secret_file                             → .build/secrets/（700），退出时自动删除
 #   SSM         ssm_run / ssm_read_secret / ssm_wait_online
-#   端口转发    pf_start / pf_stop
+#   PG 主机     host_run / host_read_secret / host_reachable  → 按 PG_HOST_TRANSPORT 经 SSM（缺省）或 SSH（ssh_run）
+#   端口转发    pf_start / pf_stop（SSM 或 SSH）
 #   Python      py <script> [args]                      → uv 临时环境，-I 隔离模式
 #   向量模型    model_family / embed_guard               → db 阶段防混用
 #
@@ -49,6 +50,9 @@ load_config() {
   : "${AWS_REGION:=us-east-1}"
   : "${NEXUS_ADMIN_USER:=admin}"
   : "${PG_HOST_MODE:=existing}"
+  : "${PG_HOST_TRANSPORT:=ssm}"
+  : "${PG_SSH_USER:=ec2-user}"
+  : "${PG_SSH_PORT:=22}"
   : "${PG_CREATE_INSTANCE_TYPE:=t3.medium}"
   : "${PG_CREATE_VOLUME_GB:=30}"
   : "${PG_IMAGE:=pgvector/pgvector:pg17}"
@@ -78,9 +82,11 @@ load_config() {
   # 可选项：留空即可（各阶段按注释里的规则自动发现或跳过）
   : "${NEXUS_URL:=}" "${NEXUS_ENV_ID:=}" "${NEXUS_ADMIN_PASSWORD_FILE:=}" "${NEXUS_ADMIN_PASSWORD_SSM:=}"
   : "${PG_HOST_INSTANCE_ID:=}" "${PG_CREATE_SUBNET_ID:=}" "${PG_BIND_IP:=}" "${PG_ALLOWED_CIDR:=}"
+  : "${PG_SSH_HOST:=}" "${PG_SSH_KEY:=}" "${PG_SSH_KNOWN_HOSTS:=}" "${PG_SSH_PROXY_COMMAND:=}"
   : "${VM_EGRESS_ALLOW_CIDRS:=}" "${CONNECTOR_DESCRIPTION:=}" "${RULES_DOCX:=}" "${RULES_DOC_TITLE:=}"
   : "${RULES_SOURCE_VERSION:=}" "${RULES_SEGMENTS_HINT:=}" "${AGENT_NAME:=}" "${E2E_QUESTION:=}" "${E2E_EXPECT:=}"
   export DEPLOY_NAME AWS_REGION NEXUS_ADMIN_USER PG_HOST_MODE PG_CREATE_INSTANCE_TYPE PG_CREATE_VOLUME_GB \
+    PG_HOST_TRANSPORT PG_SSH_USER PG_SSH_PORT PG_SSH_HOST PG_SSH_KEY PG_SSH_KNOWN_HOSTS PG_SSH_PROXY_COMMAND \
     PG_IMAGE PG_CONTAINER_NAME PG_PORT PG_DATA_VOLUME PG_MEMORY_LIMIT PG_BASE_DIR PG_DB_NAME PG_DB_USER \
     PG_INSTALL_DOCKER CONNECTOR_NAME KEY_NAME CONNECTOR_PERMISSION CONNECTOR_ALLOW_DDL CONNECTOR_ALLOWED_SCHEMAS \
     CONNECTOR_MAX_ROWS RULES_TABLE RULES_SOURCE_TAG EMBED_MODEL_ID EMBED_DIM INGEST_LOCAL_PORT INGEST_PRUNE \
@@ -93,6 +99,18 @@ load_config() {
     *[!a-zA-Z0-9-]*|"") die "DEPLOY_NAME 只能含字母、数字和连字符（用作 CloudFormation 栈名）：$DEPLOY_NAME" ;;
   esac
   case "$PG_HOST_MODE" in existing|create) ;; *) die "PG_HOST_MODE 只能是 existing 或 create：$PG_HOST_MODE" ;; esac
+  case "$PG_HOST_TRANSPORT" in
+    ssm) ;;
+    ssh)
+      [ "$PG_HOST_MODE" = existing ] || die "PG_HOST_TRANSPORT=ssh 只用于 existing 模式（create 模式建的专用主机没有公网地址，只能经 SSM）"
+      [ -n "$PG_SSH_HOST" ] || die "PG_HOST_TRANSPORT=ssh 要写 PG_SSH_HOST（PG 主机的地址，本机要能 SSH 到）"
+      case "$PG_SSH_KEY" in /*) ;; *) die "PG_HOST_TRANSPORT=ssh 要写 PG_SSH_KEY（本机私钥的绝对路径）：${PG_SSH_KEY:-空}" ;; esac
+      [ -f "$PG_SSH_KEY" ] || die "找不到私钥 $PG_SSH_KEY"
+      case "$PG_SSH_USER$PG_SSH_PORT$PG_SSH_HOST" in *[!A-Za-z0-9._-]*) die "PG_SSH_USER / PG_SSH_PORT / PG_SSH_HOST 只能含字母、数字和 . _ -" ;; esac
+      case "$PG_SSH_PROXY_COMMAND" in *$'\n'*|*$'\r'*) die "PG_SSH_PROXY_COMMAND 只能是一行" ;; esac
+      ;;
+    *) die "PG_HOST_TRANSPORT 只能是 ssm 或 ssh：$PG_HOST_TRANSPORT" ;;
+  esac
   case "$CONNECTOR_PERMISSION" in read_only|read_write) ;; *) die "CONNECTOR_PERMISSION 只能是 read_only 或 read_write" ;; esac
   case "$RULES_TABLE" in *[!a-z0-9_]*|[0-9]*|"") die "RULES_TABLE 只能含小写字母、数字、下划线且不以数字开头：$RULES_TABLE" ;; esac
 }
@@ -153,14 +171,19 @@ secret_file() {
 #   远端 stdout 原样写到本地 stdout；状态与 stderr 写到本地 stderr；远端失败时返回 1。
 #   投递超时 120 秒（实例离线时命令不会排队到之后才执行）；本地等待超时则取消命令。
 #   注意：SSM 会保存命令输出约 30 天。要读机密请用 ssm_read_secret（输出只含密文）。
+# remote_script <script-file> [VAR=value ...]：远端要跑的整段脚本（set -e、export 的变量、seal 函数、脚本本身），ssm_run 和 ssh_run 共用
+remote_script() {
+  local file="$1"; shift
+  printf 'set -e\n'
+  for kv in "$@"; do printf 'export %s=%q\n' "${kv%%=*}" "${kv#*=}"; done
+  # seal：把 stdin 的机密用本次运行的一次性公钥加密成一行 base64（host_read_secret / ssm_read_secret 使用）
+  printf '%s\n' 'seal() { local k; k="$(mktemp)"; printf "%s" "$SEAL_PUB_B64" | base64 -d > "$k"; openssl pkeyutl -encrypt -pubin -inkey "$k" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 | base64 | tr -d "\n"; rm -f "$k"; echo; }'
+  cat "$file"
+}
 ssm_run() {
   local inst="$1" file="$2" to="${3:-300}"; shift 3 || shift $#
   local payload id st out err
-  payload="$( { printf 'set -e\n'
-                for kv in "$@"; do printf 'export %s=%q\n' "${kv%%=*}" "${kv#*=}"; done
-                # seal：把 stdin 的机密用本次运行的一次性公钥加密成一行 base64（ssm_read_secret 使用）
-                printf '%s\n' 'seal() { local k; k="$(mktemp)"; printf "%s" "$SEAL_PUB_B64" | base64 -d > "$k"; openssl pkeyutl -encrypt -pubin -inkey "$k" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 | base64 | tr -d "\n"; rm -f "$k"; echo; }'
-                cat "$file"; } | gzip -9 | base64 | tr -d '\n')"
+  payload="$(remote_script "$file" "$@" | gzip -9 | base64 | tr -d '\n')"
   id="$(aws_cli ssm send-command --instance-ids "$inst" --document-name AWS-RunShellScript --timeout-seconds 120 \
         --comment "${DEPLOY_NAME}: $(basename "$file")" \
         --parameters "$(python3 -I -c 'import json,sys;print(json.dumps({"commands":["f=$(mktemp /tmp/prk-op.XXXXXX); echo %s | base64 -d | gunzip > \"$f\" && bash \"$f\"; rc=$?; rm -f \"$f\"; exit $rc" % sys.argv[1]],"executionTimeout":[sys.argv[2]]}))' "$payload" "$to")" \
@@ -192,16 +215,23 @@ ssm_run() {
 #   远端脚本必须把机密经 `| seal` 输出（一行密文）。本地用一次性私钥解密后写进 <out-file>（调用方用 secret_file 建）。
 #   SSM 命令历史里只有密文；私钥在 SECRETS_DIR 里，进程退出即删。
 SEAL_PUB_B64=""
-ssm_read_secret() {
-  local inst="$1" script="$2" outf="$3"; shift 3
-  if [ -z "$SEAL_PUB_B64" ]; then
-    SEAL_PUB_B64="$(py seal.py keygen "$SECRETS_DIR/seal.key")" || die "生成一次性密钥失败"
-  fi
-  local ct
-  ct="$(ssm_run "$inst" "$script" 60 "SEAL_PUB_B64=$SEAL_PUB_B64" "$@" | tail -1)" || return 1
+seal_keygen() {
+  [ -n "$SEAL_PUB_B64" ] && return 0
+  [ -n "$SECRETS_DIR" ] || secret_file .seal-dir >/dev/null
+  SEAL_PUB_B64="$(py seal.py keygen "$SECRETS_DIR/seal.key")" || die "生成一次性密钥失败"
+}
+# seal_open <out-file>：stdin 是远端 seal 出来的那一行密文
+seal_open() {
+  local ct; ct="$(tail -1)"
   [ -n "$ct" ] || return 1
-  printf '%s' "$ct" | py seal.py open "$SECRETS_DIR/seal.key" > "$outf" || return 1
-  [ -s "$outf" ]
+  printf '%s' "$ct" | py seal.py open "$SECRETS_DIR/seal.key" > "$1" || return 1
+  [ -s "$1" ]
+}
+ssm_read_secret() {
+  local inst="$1" script="$2" outf="$3" out; shift 3
+  seal_keygen
+  out="$(ssm_run "$inst" "$script" 60 "SEAL_PUB_B64=$SEAL_PUB_B64" "$@")" || return 1
+  printf '%s\n' "$out" | seal_open "$outf"
 }
 
 # ssm_wait_online <instance-id> [timeout-sec]
@@ -216,8 +246,64 @@ ssm_wait_online() {
   return 1
 }
 
-# ---------- SSM 端口转发 ----------
-# pf_start <local-port> <instance-id> <remote-host> <remote-port>：后台建立转发，等到 "Waiting for connections"。
+# ---------- PG 主机：经 SSM（缺省）或 SSH ----------
+# PG_HOST_TRANSPORT=ssm：PG 主机经 SSM Run Command 和 SSM 端口转发（实例要 SSM 在线）。
+# PG_HOST_TRANSPORT=ssh：经 SSH（existing 模式）：PG_SSH_HOST、PG_SSH_KEY（本机私钥）、PG_SSH_USER（缺省 ec2-user，要能免密 sudo）、PG_SSH_PORT。
+#   本机连不到主机地址时给 PG_SSH_PROXY_COMMAND（ssh 的 ProxyCommand，比如跳板机，或 aws ec2-instance-connect open-tunnel --instance-id …）。
+#   主机公钥：给了 PG_SSH_KNOWN_HOSTS（核对过的 known_hosts 文件）就严格核对；没给就首次信任，记进 .state/<DEPLOY_NAME>.known_hosts，之后照它核对。
+# 远端脚本先写进远端的 mktemp 文件再 sudo bash 它（stdin 不留给脚本），超时由远端的 timeout 管；输出约定和 ssm_run 一样。
+ssh_opts() {
+  local known="$PG_SSH_KNOWN_HOSTS" checking=yes
+  if [ -z "$known" ]; then
+    known="$PKG_DIR/.state/${DEPLOY_NAME}.known_hosts"; checking=accept-new
+    mkdir -p "$PKG_DIR/.state"; chmod 700 "$PKG_DIR/.state"
+  fi
+  printf '%s\n' -i "$PG_SSH_KEY" -p "$PG_SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=8 -o "StrictHostKeyChecking=$checking" -o "UserKnownHostsFile=$known" \
+    -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR
+  [ -z "${PG_SSH_PROXY_COMMAND:-}" ] || printf '%s\n' -o "ProxyCommand=$PG_SSH_PROXY_COMMAND"
+}
+# ssh_run <script-file> [timeout-sec] [VAR=value ...]：在 PG 主机上以 root 执行本地脚本（同 ssm_run，只是不用实例 ID）
+ssh_run() {
+  local file="$1" to="${2:-300}" rc=0 opts=(); shift 2 || shift $#
+  while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts)
+  remote_script "$file" "$@" | ssh "${opts[@]}" "$PG_SSH_USER@$PG_SSH_HOST" \
+    "f=\$(mktemp /tmp/prk-op.XXXXXX) && cat > \"\$f\" && sudo -n timeout $to bash \"\$f\" </dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    124) warn "SSH 命令在 $PG_SSH_HOST 上超时（${to} 秒，$(basename "$file")）" ;;
+    255) warn "SSH 连不上 $PG_SSH_USER@$PG_SSH_HOST:$PG_SSH_PORT（$(basename "$file")）：地址、安全组、私钥、主机公钥" ;;
+    *) warn "SSH 命令在 $PG_SSH_HOST 上退出码 $rc（$(basename "$file")）" ;;
+  esac
+  return 1
+}
+# host_run <script-file> [timeout-sec] [VAR=value ...]：在 PG 主机（TGT_ID）上以 root 执行，按 PG_HOST_TRANSPORT 走 SSM 或 SSH
+host_run() {
+  local file="$1" to="${2:-300}"; shift 2 || shift $#
+  if [ "$PG_HOST_TRANSPORT" = ssh ]; then ssh_run "$file" "$to" "$@"; else ssm_run "$TGT_ID" "$file" "$to" "$@"; fi
+}
+# host_read_secret <script-file> <out-file> [VAR=value ...]：同 ssm_read_secret，对 PG 主机；远端只输出密文
+host_read_secret() {
+  local script="$1" outf="$2" out; shift 2
+  seal_keygen
+  out="$(host_run "$script" 60 "SEAL_PUB_B64=$SEAL_PUB_B64" "$@")" || return 1
+  printf '%s\n' "$out" | seal_open "$outf"
+}
+# host_reachable：preflight 用，PG 主机能不能执行命令（SSM：Online + Linux；SSH：能登录、能免密 sudo）。输出一行说明，失败返回 1
+host_reachable() {
+  if [ "$PG_HOST_TRANSPORT" = ssh ]; then
+    local f="$PKG_DIR/.build/host-ping.sh" out
+    mkdir -p "$PKG_DIR/.build"; printf 'echo "ssh-ok $(uname -m)"\n' > "$f"
+    out="$(ssh_run "$f" 30 | tail -1)" || { echo "SSH 不通（$PG_SSH_USER@$PG_SSH_HOST:$PG_SSH_PORT）"; return 1; }
+    case "$out" in ssh-ok*) echo "SSH 可登录、可 sudo（${out#ssh-ok }）"; return 0 ;; *) echo "SSH 输出不对：$out"; return 1 ;; esac
+  fi
+  local ping; ping="$(aws_cli ssm describe-instance-information --filters "Key=InstanceIds,Values=$TGT_ID" --query 'InstanceInformationList[0].[PingStatus,PlatformType]' --output text)"
+  case "$ping" in Online*Linux*) echo "SSM Online"; return 0 ;; *) echo "SSM 状态不对：$ping（需要 Online + Linux）"; return 1 ;; esac
+}
+
+# ---------- 端口转发（SSM 或 SSH）----------
+# pf_start <local-port> <instance-id> <remote-host> <remote-port>：后台建立转发。SSM：等到 "Waiting for connections"；
+#   SSH（PG_HOST_TRANSPORT=ssh，不用实例 ID）：ssh -N -L，等到本机端口能连上。
 PF_PID=""
 pf_start() {
   local lport="$1" inst="$2" rhost="$3" rport="$4" logf
@@ -225,6 +311,19 @@ pf_start() {
     die "本机端口 $lport 已被占用（可能是上次残留的端口转发）；换一个 INGEST_LOCAL_PORT 或结束占用进程"
   fi
   logf="$PKG_DIR/.build/port-forward.log"; mkdir -p "$PKG_DIR/.build"
+  if [ "$PG_HOST_TRANSPORT" = ssh ]; then
+    local opts=(); while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts)
+    ssh "${opts[@]}" -N -o ExitOnForwardFailure=yes -L "127.0.0.1:$lport:$rhost:$rport" "$PG_SSH_USER@$PG_SSH_HOST" > "$logf" 2>&1 &
+    PF_PID=$!
+    for _ in $(seq 1 30); do
+      (exec 3<>"/dev/tcp/127.0.0.1/$lport") 2>/dev/null && return 0
+      kill -0 "$PF_PID" 2>/dev/null || break
+      sleep 1
+    done
+    cat "$logf" >&2
+    pf_stop
+    die "SSH 端口转发没有建立（127.0.0.1:$lport → $rhost:$rport 经 $PG_SSH_HOST）"
+  fi
   # 直接后台运行 aws（不能用 aws_cli 函数：那样 $! 是子 shell 的 PID，结束它会让 aws 与 session-manager-plugin 成为孤儿进程）
   aws --region "$AWS_REGION" ssm start-session --target "$inst" --document-name AWS-StartPortForwardingSessionToRemoteHost \
     --parameters "{\"host\":[\"$rhost\"],\"portNumber\":[\"$rport\"],\"localPortNumber\":[\"$lport\"]}" > "$logf" 2>&1 &

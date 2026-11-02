@@ -20,6 +20,8 @@ done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/../../../infra/lib/deploy-env.sh"
 load_deploy_env
+# 环境配置写了 SSH_KEY_FILE（实例经 SSH 管理）：重置和测试里的只读命令都经 SSH，主机公钥用 deploy.sh 钉住的那份
+source "$HERE/../../../infra/lib/remote.sh"
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/../../../infra/secrets.env"
@@ -32,12 +34,22 @@ output_param() { aws cloudformation describe-stacks --region "$REGION" --stack-n
 SITE="$(output Jiuan07Url)"
 INSTANCE="$(output InstanceId)"
 echo "重置九安 v0.7.10：$INSTANCE"
+if [[ "$(remote_mode)" == ssh ]]; then
+  ssh_check_key && ssh_setup "$(output ElasticIp)" "$INSTANCE" || exit 1
+  [[ "$(remote_root /opt/andon-finance/current/bench/bench07-reset.sh)" == *JIUAN07_RESET_OK* ]] \
+    || { echo "重置没有成功：ssh -i $SSH_KEY_FILE $SSH_TARGET，然后 sudo journalctl -u andon-jiuan07 -n 200" >&2; exit 1; }
+  # 测试经 SSH 跑只读命令：目标和选项（JSON 数组）交给 node
+  E2E07_SSH_TARGET="$SSH_TARGET"
+  E2E07_SSH_OPTS_JSON="$(python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "${SSH_OPTS[@]}")"
+  export E2E07_SSH_TARGET E2E07_SSH_OPTS_JSON
+else
 COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --comment 'jiuan07 e2e reset' \
   --parameters 'commands=["/opt/andon-finance/current/bench/bench07-reset.sh"]' --query Command.CommandId --output text)"
 aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE"
 [[ "$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query StandardOutputContent --output text)" == *JIUAN07_RESET_OK* ]] \
   || { echo "重置没有成功：sudo journalctl -u andon-jiuan07 -n 200" >&2; exit 1; }
-# 区域和 Nexus 的主机名给测试用（经 SSM 查库、核对出站拦截记录里没有 Nexus）
+fi
+# 区域和 Nexus 的主机名给测试用（经 SSM 或 SSH 查库、核对出站拦截记录里没有 Nexus）
 E2E07_REGION="$REGION"
 E2E07_NEXUS_HOST="$(output_param NexusOrigin | sed -E 's#^https?://##; s#[/:].*$##')"
 export E2E07_BASE_URL="$SITE" E2E07_INSTANCE="$INSTANCE" E2E07_REGION E2E07_NEXUS_HOST

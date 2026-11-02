@@ -94,7 +94,7 @@ copy knowledgebase-writer-agent-pg --exclude /knowledgebase-writer-agent-pg/.sta
 copy customer-deploy
 # 两个文档管家的提示词共用片段在 kb/prompt（render.py 从包旁边的 ../kb/prompt 读），随上面的 kb 出包；少了就渲染不出提示词
 [[ -f "$stage/kb/prompt/kb_rules_v1.zh.md" ]] || { echo "暂存目录里没有 kb/prompt/kb_rules_v1.zh.md（文档管家的提示词共用片段）" >&2; exit 1; }
-copy poc/infra --exclude secrets.env --exclude kb.env --include /infra/env/example.env --exclude '/infra/env/*.env' --exclude design-jiuan-nexus-integrate.md
+copy poc/infra --exclude secrets.env --exclude kb.env --include /infra/env/example.env --exclude '/infra/env/*.env' --exclude /infra/.state --exclude design-jiuan-nexus-integrate.md
 copy poc/tools
 copy poc/README.md
 copy skills
@@ -108,6 +108,7 @@ poc/infra/secrets.env.*
 !poc/infra/secrets.env.example
 # 知识库：部署人的设置、生成的配置与状态（实例、网段等环境信息）
 poc/infra/kb.env
+poc/infra/.state/
 kb/deploy.env
 kb/.state/
 kb/.build/

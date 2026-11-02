@@ -2,6 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   andon-finance PoC: Jiuan audit platform (in-memory store, fictitious data) + Nexus agents over A2A.
   One EC2 instance in the Nexus VPC public subnet, exposed only through CloudFront (andon-finance.tinyboat.blog).
+  Managed through SSM by default; with KeyName and SshAllowedCidr set (and SsmManaged=false) it is managed over SSH instead.
 
 Parameters:
   VpcId:
@@ -29,11 +30,40 @@ Parameters:
     Description: com.amazonaws.global.cloudfront.origin-facing in us-east-1
   ImageId:
     Type: AWS::EC2::Image::Id
-    Description: Amazon Linux 2023 x86_64 AMI. deploy.sh resolves the latest one when the stack is created and keeps it afterwards, so stack updates do not replace the instance.
+    Description: Amazon Linux 2023 AMI for the instance type's architecture (x86_64 for t3, arm64 for m7g). deploy.sh resolves the latest one when the stack is created and keeps it afterwards, so stack updates do not replace the instance.
   InstanceType:
     Type: String
     Default: t3.small
-    AllowedValues: [t3.small, t3.medium, t3.large]
+    AllowedValues: [t3.small, t3.medium, t3.large, m7g.large, m7g.xlarge]
+  RootVolumeSize:
+    Type: Number
+    Default: 16
+    MinValue: 16
+    MaxValue: 200
+    Description: Root EBS volume in GiB (MySQL and PostgreSQL containers live on it). Changing it on an existing stack replaces the instance.
+  KeyName:
+    Type: String
+    Default: ''
+    Description: EC2 key pair for SSH (ec2-user). Empty = no key, no SSH. Changing it on an existing stack replaces the instance.
+  SshAllowedCidr:
+    Type: String
+    Default: ''
+    Description: Source range allowed to SSH (tcp 22), normally the deployer's own address as /32. Empty = no SSH rule. Needs KeyName.
+    AllowedPattern: '^$|^(\d{1,3}\.){3}\d{1,3}/(\d|[12]\d|3[0-2])$'
+    ConstraintDescription: empty, or an IPv4 CIDR such as 203.0.113.10/32
+  SshVia:
+    Type: String
+    Default: direct
+    AllowedValues: [direct, eice]
+    Description: >-
+      How the deployer reaches port 22. direct = straight to the Elastic IP (from SshAllowedCidr). eice = through an EC2 Instance
+      Connect Endpoint that this stack creates in SubnetId (one per VPC; the tunnel runs over HTTPS to the AWS API, still SSH with
+      KeyName, no SSM), for networks that cannot reach the Elastic IP. Needs KeyName.
+  SsmManaged:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Attach AmazonSSMManagedInstanceCore to the instance role. 'false' for an instance managed over SSH only.
   AppPort:
     Type: Number
     Default: 4180
@@ -66,6 +96,10 @@ Parameters:
 
 Conditions:
   KbEnabled: !Not [!Equals [!Ref KbAllowedCidr, '']]
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
+  SshEnabled: !And [!Condition HasKeyName, !Not [!Equals [!Ref SshAllowedCidr, '']]]
+  UseSsm: !Equals [!Ref SsmManaged, 'true']
+  UseEice: !And [!Condition HasKeyName, !Equals [!Ref SshVia, eice]]
 
 Resources:
   ArtifactBucket:
@@ -98,8 +132,10 @@ Resources:
           - Effect: Allow
             Principal: { Service: ec2.amazonaws.com }
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      ManagedPolicyArns: !If
+        - UseSsm
+        - [!Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore']
+        - !Ref AWS::NoValue
       Policies:
         - PolicyName: andon-finance-poc-runtime
           PolicyDocument:
@@ -127,7 +163,11 @@ Resources:
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: andon-finance PoC - app port only from the CloudFront origin-facing prefix list; no SSH
+      # SSH is a separate rule (SshIngress); the description only changes when it exists, so stacks without SSH keep their security group.
+      GroupDescription: !If
+        - SshEnabled
+        - andon-finance PoC - app port only from the CloudFront origin-facing prefix list; SSH from SshAllowedCidr
+        - andon-finance PoC - app port only from the CloudFront origin-facing prefix list; no SSH
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -152,6 +192,54 @@ Resources:
       ToPort: !Ref KbPort
       CidrIp: !Ref KbAllowedCidr
       Description: 'nexus-pgvector: Nexus server + sandbox VMs (private only)'
+
+  SshIngress:
+    # SSH for the deployer (deploy.sh, kb.sh, the e2e runner) when the instance is managed over SSH.
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: SshEnabled
+    Properties:
+      GroupId: !GetAtt AppSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SshAllowedCidr
+      Description: 'SSH: deployer only'
+
+  EiceSecurityGroup:
+    # The EC2 Instance Connect Endpoint's own group: it may only open SSH to the instance.
+    Type: AWS::EC2::SecurityGroup
+    Condition: UseEice
+    Properties:
+      GroupDescription: andon-finance - EC2 Instance Connect Endpoint, SSH to the instance only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          DestinationSecurityGroupId: !GetAtt AppSecurityGroup.GroupId
+          Description: SSH to the instance
+      Tags: [{ Key: project, Value: andon-finance-poc }]
+
+  EiceSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: UseEice
+    Properties:
+      GroupId: !GetAtt AppSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !GetAtt EiceSecurityGroup.GroupId
+      Description: 'SSH: EC2 Instance Connect Endpoint'
+
+  InstanceConnectEndpoint:
+    # aws ec2-instance-connect open-tunnel --instance-id <id> finds it by the instance's VPC (lib/remote.sh, SSH_VIA=eice).
+    Type: AWS::EC2::InstanceConnectEndpoint
+    Condition: UseEice
+    Properties:
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!GetAtt EiceSecurityGroup.GroupId]
+      PreserveClientIp: false
+      Tags: [{ Key: project, Value: andon-finance-poc }]
 
   KbBedrockPolicy:
     # In-database embeddings: the knowledge base's PG container (kb_embed, PL/Python via IMDSv2) calls these embedding models only.
@@ -179,6 +267,7 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref AWS::NoValue]
       IamInstanceProfile: !Ref InstanceProfile
       NetworkInterfaces:
         - DeviceIndex: '0'
@@ -187,9 +276,9 @@ Resources:
           AssociatePublicIpAddress: true
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
-          Ebs: { VolumeSize: 16, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+          Ebs: { VolumeSize: !Ref RootVolumeSize, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
       Tags:
-        - { Key: Name, Value: andon-finance-poc }
+        - { Key: Name, Value: !Ref AWS::StackName }
         - { Key: project, Value: andon-finance-poc }
       UserData:
         Fn::Base64: !Sub |

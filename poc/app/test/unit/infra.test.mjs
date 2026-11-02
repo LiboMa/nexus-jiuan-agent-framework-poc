@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DEPLOY_ENV_KEYS, childEnv } from './helpers/child-env.mjs';
+import { asBefore } from './helpers/template-as-before.mjs';
 
 const execFileAsync = promisify(execFile);
 // 子进程不继承部署的环境（DEPLOY_ENV 和环境配置的键，见 helpers/child-env.mjs）；自己给了 env 的调用照它给的
@@ -22,10 +23,19 @@ test('模板里的 Fn::Sub 只引用模板自己的参数、资源与伪参数�
     'DomainName', 'Jiuan07DomainName', 'NexusOrigin']);
 });
 
-test('模板的关键约束：只放 CloudFront 回源、不开 22 端口、固定 node-24、TLS 1.2、私有构件桶、关缓存并转发观众请求头', async () => {
+test('模板的关键约束：只放 CloudFront 回源、22 端口只在经 SSH 管理时对 SshAllowedCidr 开、固定 node-24、TLS 1.2、私有构件桶、关缓存并转发观众请求头', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
   assert.match(template, /SourcePrefixListId: !Ref CloudFrontPrefixListId/);
-  assert.doesNotMatch(template, /FromPort: 22\b/);
+  // 22 端口只在两种条件下开：SshEnabled（有密钥对、给了来源网段）下单独的 SshIngress，来源就是 SshAllowedCidr；
+  // UseEice（有密钥对、SshVia=eice）下只对栈自己建的 EC2 Instance Connect 端点的安全组开（端点的安全组也只许出 22 到实例）
+  assert.equal(template.match(/FromPort: 22\b/g)?.length, 3);
+  assert.match(template, /UseEice: !And \[!Condition HasKeyName, !Equals \[!Ref SshVia, eice\]\]/);
+  assert.match(template, /\n  EiceSshIngress:\n    Type: AWS::EC2::SecurityGroupIngress\n    Condition: UseEice\n    Properties:\n      GroupId: !GetAtt AppSecurityGroup\.GroupId\n      IpProtocol: tcp\n      FromPort: 22\n      ToPort: 22\n      SourceSecurityGroupId: !GetAtt EiceSecurityGroup\.GroupId\n/);
+  assert.match(template, /\n  EiceSecurityGroup:\n(?:    #[^\n]*\n)?    Type: AWS::EC2::SecurityGroup\n    Condition: UseEice\n[\s\S]*?SecurityGroupEgress:\n        - IpProtocol: tcp\n          FromPort: 22\n          ToPort: 22\n          DestinationSecurityGroupId: !GetAtt AppSecurityGroup\.GroupId\n/);
+  assert.match(template, /\n  InstanceConnectEndpoint:\n(?:    #[^\n]*\n)?    Type: AWS::EC2::InstanceConnectEndpoint\n    Condition: UseEice\n/);
+  assert.match(template, /\n  SshVia:\n    Type: String\n    Default: direct\n    AllowedValues: \[direct, eice\]\n/);
+  assert.match(template, /\n  SshIngress:\n(?:    #[^\n]*\n)?    Type: AWS::EC2::SecurityGroupIngress\n    Condition: SshEnabled\n    Properties:\n      GroupId: !GetAtt AppSecurityGroup\.GroupId\n      IpProtocol: tcp\n      FromPort: 22\n      ToPort: 22\n      CidrIp: !Ref SshAllowedCidr\n/);
+  assert.match(template, /SshEnabled: !And \[!Condition HasKeyName, !Not \[!Equals \[!Ref SshAllowedCidr, ''\]\]\]/);
   assert.match(template, /ExecStart=\/usr\/bin\/node-24 \/opt\/andon-finance\/current\/app\/server\.mjs/);
   assert.match(template, /MinimumProtocolVersion: TLSv1\.2_2021/);
   assert.match(template, /BlockPublicPolicy: true/);
@@ -218,10 +228,16 @@ test('测试台脚本里没有写死的密码', async () => {
 });
 
 // ---------- 测试台（任务 6）：模板、部署、备份、换型、在测试台上跑测试
-test('模板允许 t3.large；Resources 除了九安 v0.7.10 新增的分发、记录和输出、知识库的入站规则 KbIngress 和 Bedrock 策略 KbBedrockPolicy，一字不改（不会替换实例）', async () => {
+test('模板允许 t3.large 和 m7g；Resources 除了九安 v0.7.10 新增的分发、记录和输出、知识库的入站规则 KbIngress 和 Bedrock 策略 KbBedrockPolicy、经 SSH 管理的几处，一字不改（不会替换实例）', async () => {
   const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
-  assert.match(template, /InstanceType:\n\s+Type: String\n\s+Default: t3\.small\n\s+AllowedValues: \[t3\.small, t3\.medium, t3\.large\]/);
-  const resources = template.slice(template.indexOf('\nResources:')).replace(/\n  Jiuan07Distribution:\n[\s\S]*?\n(?=\nOutputs:)/, '')
+  assert.match(template, /InstanceType:\n\s+Type: String\n\s+Default: t3\.small\n\s+AllowedValues: \[t3\.small, t3\.medium, t3\.large, m7g\.large, m7g\.xlarge\]/);
+  // 经 SSH 管理的几个参数，默认值都等于原来的样子：没有密钥对、不开 22、带 SSM 托管策略、根卷 16 GiB
+  assert.match(template, /\n  RootVolumeSize:\n    Type: Number\n    Default: 16\n/);
+  assert.match(template, /\n  KeyName:\n    Type: String\n    Default: ''\n/);
+  assert.match(template, /\n  SshAllowedCidr:\n    Type: String\n    Default: ''\n/);
+  assert.match(template, /\n  SsmManaged:\n    Type: String\n    Default: 'true'\n/);
+  // 把这几处按默认值还原成原来的文字（helpers/template-as-before.mjs），再和原来的 Resources 比：默认参数下（现有的栈）实例、角色、安全组都不变
+  const resources = asBefore(template.slice(template.indexOf('\nResources:'))).replace(/\n  Jiuan07Distribution:\n[\s\S]*?\n(?=\nOutputs:)/, '')
     .replace("\n  Jiuan07Url:\n    Value: !Sub 'https://${Jiuan07DomainName}'", '')
     .replace(['\n\n  KbIngress:', "    # The knowledge base's PostgreSQL (kb/, container nexus-pgvector on this instance) from the Nexus VPC only.", '    Type: AWS::EC2::SecurityGroupIngress',
       '    Condition: KbEnabled', '    Properties:', '      GroupId: !GetAtt AppSecurityGroup.GroupId', '      IpProtocol: tcp', '      FromPort: !Ref KbPort', '      ToPort: !Ref KbPort',
@@ -407,7 +423,7 @@ test('换型脚本：InstanceType 变化在 CloudFormation 里永远是 Conditio
 const e2e07 = name => fileURLToPath(new URL(`../e2e/${name}`, import.meta.url));
 test('各脚本先读环境配置（DEPLOY_ENV）再定栈名和区域：不给就是现有环境（andon-finance-poc、us-east-1），栈名不再写死', async () => {
   const scripts = { 'deploy.sh': infra('deploy.sh'), 'destroy.sh': infra('destroy.sh'), 'backup.sh': infra('backup.sh'), 'upgrade-instance.sh': infra('upgrade-instance.sh'),
-    'bench-test.sh': infra('bench-test.sh'), 'kb.sh': infra('kb.sh'), 'run07.sh': e2e07('run07.sh') };
+    'bench-test.sh': infra('bench-test.sh'), 'kb.sh': infra('kb.sh'), 'run07.sh': e2e07('run07.sh'), 'migrate-data.sh': infra('migrate-data.sh') };
   for (const [name, file] of Object.entries(scripts)) {
     const text = await readFile(file, 'utf8');
     assert.match(text, /source "[^"\n]*\/lib\/deploy-env\.sh"\nload_deploy_env\n/, `${name} 先 source deploy-env.sh 再 load_deploy_env`);
@@ -477,4 +493,31 @@ test('交付包和交接仓库只带 poc/infra/env/example.env（各环境的配
   assert.match(pack, /copy poc\/infra [^\n]*--include \/infra\/env\/example\.env --exclude '\/infra\/env\/\*\.env'/);
   assert.match(pack, /unittest discover -s audit-agent\/tests/);
   assert.match(pack, /unittest discover -s kb\/tests/);
+});
+
+test('搬数据（migrate-data.sh）：旧环境只读导出、整包加密、预签名 URL 15 分钟、搬完删掉；新环境先核对密钥配置相同、换完逐表核对；--skip-pg 不动 PG', async () => {
+  const script = await readFile(infra('migrate-data.sh'), 'utf8');
+  await run('bash', ['-n', infra('migrate-data.sh')]);
+  assert.doesNotMatch(script, /set -x|set -euxo/);
+  assert.match(script, /mysqldump -uroot --single-transaction/);
+  assert.match(script, /pg_dump -U postgres -Fc nexus/);
+  assert.match(script, /openssl enc -aes-256-cbc -pbkdf2/);
+  assert.match(script, /ExpiresIn=900/);
+  assert.match(script, /presign --region "\$REGION" "s3:\/\/\$TGT_BUCKET\/\$OBJECT" --expires-in 900/);
+  assert.match(script, /aws s3 rm --region "\$REGION" --only-show-errors "s3:\/\/\$TGT_BUCKET\/\$OBJECT"/);
+  assert.match(script, /trap cleanup EXIT/);
+  assert.match(script, /secrets\.env 不是同一份/);
+  assert.match(script, /--skip-pg\) SKIP_PG=true/);
+  assert.match(script, /if ! \$SKIP_PG; then\n  docker exec nexus-pgvector psql[^\n]*DROP DATABASE IF EXISTS nexus/);
+  // 拼出来的导出、导入脚本（--print-scripts，不读配置、不连任何东西）语法都对；旧环境上只跑导出（没有 stop / DROP / restore），新环境上才换
+  const { stdout } = await run('bash', [infra('migrate-data.sh'), '--print-scripts']);
+  const [exportScript, importScript] = stdout.split('# ---- import ----\n');
+  assert.ok(exportScript.startsWith('# ---- export ----\n') && importScript, '要打印出导出和导入两段');
+  for (const text of [exportScript, importScript]) await run('bash', ['-n', '-c', text]);
+  assert.match(exportScript, /\ncounts\(\) \{\n[\s\S]*\n\}\ncounts > "\$w\/counts\.txt"\n/);
+  assert.doesNotMatch(exportScript, /systemctl stop|DROP DATABASE|pg_restore|rm -rf \/var\/lib/);
+  // 新环境在起服务之前数（服务一起来九安的同步就会写批次表），数完再起、再等健康检查
+  assert.match(importScript, /systemctl stop andon-finance-poc\.service andon-jiuan07\.service[\s\S]*\ncounts > "\$w\/counts\.txt"\nsystemctl start [\s\S]*echo IMPORT_OK\ncat "\$w\/counts\.txt"\n/);
+  // 密钥只经文件和变量，不 echo
+  assert.doesNotMatch(script, /echo[^\n]*\$KEY|echo[^\n]*\$\(cat "\$WORK\/key"\)/);
 });

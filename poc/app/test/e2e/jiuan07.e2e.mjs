@@ -8,7 +8,7 @@
  *   可用的审批 Agent（接口）
  * → 清场：poc-reviewer 的「我的规则」清空（下面以它手动发起，带上自定义规则就不只是公司制度的结论）
  * → 四张虚构对公付款单都有 AI 独立建议（web07.e2e.mjs 已经发起过的不再发起；没有的先读取原件、再手动发起）→ 都是通过或不通过、有依据，Agent 引用的
- *   规则编号按方式到知识库里逐个核对（pg：经 SSM 查 nexus-pgvector 的 approval_rules；s3vectors：本机凭证对规则索引 GetVectors，只认有效的）。
+ *   规则编号按方式到知识库里逐个核对（pg：经 SSM 或 SSH 查 nexus-pgvector 的 approval_rules；s3vectors：本机凭证对规则索引 GetVectors，只认有效的）。
  *   结论原来按 V4 审批矩阵设计；2026-10-31 起知识库是审批风险判断卡（risk-cards），结论不再写死：每张记下结论、引用的编号和用时，作新的基线；
  *   这几轮都没附自定义规则（外壳日志里没有 POC_CUSTOM_RULES）；新前端的单据抽屉里结论、依据里的规则编号和 AI 的说明都在
  *   → pg 方式：检索日志 kb_search_log 里有审核 Agent 审单时的检索（页面上的那次检索在 web07.e2e.mjs 的「知识库 · 检索」）
@@ -132,8 +132,21 @@ async function runAdvice(number) {
 }
 
 const aws = async args => (await run('aws', ['--region', REGION, ...args])).stdout.trim();
-/** 经 SSM 在测试台实例上跑一条只读命令，回标准输出；命令没成功就抛（带标准错误的开头）。 */
+// 实例经 SSH 管理时（run07.sh 给了 E2E07_SSH_TARGET 和 E2E07_SSH_OPTS_JSON），同样的只读命令经 SSH 以 sudo 跑；命令从 stdin 进去，不拼进参数
+const SSH_TARGET = process.env.E2E07_SSH_TARGET || '';
+const SSH_OPTS = SSH_TARGET ? JSON.parse(process.env.E2E07_SSH_OPTS_JSON || '[]') : [];
+function overSsh(command, comment) {
+  return new Promise((resolve, reject) => {
+    const child = execFile('ssh', [...SSH_OPTS, SSH_TARGET, 'sudo -n bash -c "$(cat)"'], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) reject(new Error(`经 SSH 的只读命令没有成功（${comment}）：退出码 ${error.code} ${String(stderr ?? '').trim().slice(0, 300)}`));
+      else resolve(String(stdout ?? '').trim());
+    });
+    child.stdin.end(command);
+  });
+}
+/** 在测试台实例上跑一条只读命令（经 SSM，或经 SSH），回标准输出；命令没成功就抛（带标准错误的开头）。 */
 async function ssm(command, comment) {
+  if (SSH_TARGET) return overSsh(command, comment);
   const id = await aws(['ssm', 'send-command', '--instance-ids', INSTANCE, '--document-name', 'AWS-RunShellScript', '--comment', comment,
     '--parameters', JSON.stringify({ commands: [command] }), '--query', 'Command.CommandId', '--output', 'text']);
   await aws(['ssm', 'wait', 'command-executed', '--command-id', id, '--instance-id', INSTANCE]).catch(() => {});
@@ -302,7 +315,7 @@ test('AI 独立建议：四张对公付款单都有结论（web07.e2e.mjs 已经
   }
 });
 
-test('检索日志（pg 方式）：这次测试期间审核 Agent 审单时经连接器调了 kb_search（经 SSM 只读查 kb_search_log；不算 web07.e2e.mjs 在知识库页上的那次检索）', { skip: KB_MODE === 'pg' ? false : 's3vectors 方式没有检索日志（审核 Agent 用 rules_search）' }, async () => {
+test('检索日志（pg 方式）：这次测试期间审核 Agent 审单时经连接器调了 kb_search（经 SSM 或 SSH 只读查 kb_search_log；不算 web07.e2e.mjs 在知识库页上的那次检索）', { skip: KB_MODE === 'pg' ? false : 's3vectors 方式没有检索日志（审核 Agent 用 rules_search）' }, async () => {
   // 页面那次检索（web07.e2e.mjs「知识库 · 检索」，同一次重置、同一个开始时间）经知识库 Agent 也记进来（约定里 caller 也是 agent）：
   // 按问题的 md5 认出它（问题本身不进 SQL；页面和接口都先去掉首尾空白）。
   // 一条查询数两样：页面那次（不限 caller，证明 md5 认得出它）和其余 caller = agent 的（审核 Agent 审单时的检索），两样都至少一次

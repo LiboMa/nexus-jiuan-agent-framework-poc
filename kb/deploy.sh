@@ -159,8 +159,8 @@ print("" if d is None else ("true" if d is True else "false" if d is False else 
 result_of() { sed -n "s/^RESULT $1=//p" | tail -1; }
 first_of() { awk -v k="RESULT $1=" 'index($0, k) == 1 && !n++ { print substr($0, length(k) + 1) }'; }
 st_of() { printf '%s\n' "$1" | result_of "$2"; }   # st_of <远端输出> <键>
-# read_db_password <out-file>：经 SSM 读应用密码（只传密文）
-read_db_password() { ssm_read_secret "$TGT_ID" "$PKG_DIR/host/read-db-password.sh" "$1" "PG_BASE_DIR=$PG_BASE_DIR"; }
+# read_db_password <out-file>：经 SSM 或 SSH（PG_HOST_TRANSPORT）读应用密码（只传密文）
+read_db_password() { host_read_secret "$PKG_DIR/host/read-db-password.sh" "$1" "PG_BASE_DIR=$PG_BASE_DIR"; }
 
 # Agent 提示词模板变量
 agent_vars() {
@@ -196,9 +196,11 @@ cfn_prepare() {
 phase_preflight() {
   log "preflight：只读预检"
   local t miss=""
-  for t in aws uv python3 gzip base64 session-manager-plugin; do command -v "$t" >/dev/null 2>&1 || miss="$miss $t"; done
+  local tools="aws uv python3 gzip base64 session-manager-plugin"
+  [ "$PG_HOST_TRANSPORT" = ssh ] && tools="aws uv python3 gzip base64 ssh"
+  for t in $tools; do command -v "$t" >/dev/null 2>&1 || miss="$miss $t"; done
   [ -z "$miss" ] || die "本机缺少工具:$miss（见 GUIDE.md 2.1）"
-  ok "本机工具齐全（aws / uv / python3 / session-manager-plugin）"
+  ok "本机工具齐全（${tools// / / }）"
   local ident; ident="$(aws_cli sts get-caller-identity --query Arn --output text)" || die "AWS 凭证不可用"
   ok "AWS 身份 $ident（region $AWS_REGION）"
   local me; me="$(napi whoami)"; [ "$(printf '%s' "$me" | jget role)" = "admin" ] || die "Nexus 登录用户不是管理员：$me"
@@ -208,9 +210,8 @@ phase_preflight() {
     require_vars PG_HOST_INSTANCE_ID
     resolve_target
     [ "$TGT_STATE" = "running" ] || die "PG 主机 $TGT_ID 状态是 $TGT_STATE"
-    local ping; ping="$(aws_cli ssm describe-instance-information --filters "Key=InstanceIds,Values=$TGT_ID" --query 'InstanceInformationList[0].[PingStatus,PlatformType]' --output text)"
-    case "$ping" in Online*Linux*) ;; *) die "PG 主机 $TGT_ID 的 SSM 状态不对：$ping（需要 Online + Linux）" ;; esac
-    ok "PG 主机 $TGT_ID：running、SSM Online，私网 $TGT_IP，VPC $TGT_VPC（$TGT_CIDR），SG $TGT_SGS"
+    local reach; reach="$(host_reachable)" || die "PG 主机 $TGT_ID：$reach"
+    ok "PG 主机 $TGT_ID：running、${reach}，私网 $TGT_IP，VPC $TGT_VPC（$TGT_CIDR），SG $TGT_SGS"
   else
     require_vars PG_CREATE_SUBNET_ID
     local sub; sub="$(aws_cli ec2 describe-subnets --subnet-ids "$PG_CREATE_SUBNET_ID" --query 'Subnets[0].[VpcId,CidrBlock,MapPublicIpOnLaunch]' --output text)" || die "查不到子网 $PG_CREATE_SUBNET_ID"
@@ -291,11 +292,11 @@ phase_host() {
   ok "PG 主机 $iid 已就绪（栈 $stack，AMI $ami）"
 }
 
-# db_status：只读，经 SSM 跑 host/pgvector-status.sh（容器、规则表和归档表、库里登记的向量模型）
+# db_status：只读，在 PG 主机上（SSM 或 SSH）跑 host/pgvector-status.sh（容器、规则表和归档表、库里登记的向量模型）
 db_status() {
-  ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" || true
+  host_run "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" || true
 }
-# db_up [<apply|migrate|restore> <库里登记的>]：经 SSM 跑 host/pgvector-up.sh。不给动作 = 只起容器、建库 / 用户 / 扩展，不碰 kb_search.sql。
+# db_up [<apply|migrate|restore> <库里登记的>]：在 PG 主机上（SSM 或 SSH）跑 host/pgvector-up.sh。不给动作 = 只起容器、建库 / 用户 / 扩展，不碰 kb_search.sql。
 #   migrate / restore：sql/migrate_embeddings.sql 或 sql/restore_embeddings.sql 拼在 kb_search.sql 后面，一个事务（psql -1）
 db_up() {
   local extra=()
@@ -307,7 +308,7 @@ db_up() {
       restore) extra+=("EMBED_SQL_B64=$(base64 < "$PKG_DIR/sql/restore_embeddings.sql" | tr -d '\n')") ;;
     esac
   fi
-  ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-up.sh" 900 \
+  host_run "$PKG_DIR/host/pgvector-up.sh" 900 \
     "PG_IMAGE=$PG_IMAGE" "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_PORT=$PG_PORT" "PG_BIND_IP=$TGT_BIND_IP" \
     "PG_DATA_VOLUME=$PG_DATA_VOLUME" "PG_MEMORY_LIMIT=$PG_MEMORY_LIMIT" "PG_BASE_DIR=$PG_BASE_DIR" \
     "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "PG_INSTALL_DOCKER=$PG_INSTALL_DOCKER" "RULES_TABLE=$RULES_TABLE" \
@@ -560,7 +561,7 @@ phase_verify() {
   log "verify：逐层核对（只读$($E2E && ! $DRY_RUN && printf '；--e2e 会建测试会话')）"
   local fails=0 st aid r nodes n set miss
   need_target verify || return 0
-  st="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" \
+  st="$(host_run "$PKG_DIR/host/pgvector-status.sh" 60 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DB_NAME=$PG_DB_NAME" "PG_DB_USER=$PG_DB_USER" "RULES_TABLE=$RULES_TABLE" \
     "E2E_QUESTION_B64=$(printf '%s' "$E2E_QUESTION" | base64 | tr -d '\n')" || true)"
   if [ "$(printf '%s\n' "$st" | result_of container_state)" = "running" ]; then
     ok "[db] 容器 running，$(printf '%s\n' "$st" | result_of port_binding)，PG $(printf '%s\n' "$st" | result_of pg_version)，vector $(printf '%s\n' "$st" | result_of vector_version)"
@@ -710,7 +711,7 @@ phase_destroy() {
       local pv=false pb=false
       $PURGE && [ "$(state_get DB_VOLUME_CREATED)" = "1" ] && pv=true
       $PURGE && [ "$(state_get DB_BASEDIR_CREATED)" = "1" ] && pb=true
-      r="$(ssm_run "$TGT_ID" "$PKG_DIR/host/pgvector-down.sh" 120 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DATA_VOLUME=$PG_DATA_VOLUME" \
+      r="$(host_run "$PKG_DIR/host/pgvector-down.sh" 120 "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" "PG_DATA_VOLUME=$PG_DATA_VOLUME" \
             "PG_BASE_DIR=$PG_BASE_DIR" "PG_PURGE_VOLUME=$pv" "PG_PURGE_BASEDIR=$pb")"
       ok "容器 $(printf '%s\n' "$r" | result_of container)，数据卷 $(printf '%s\n' "$r" | result_of volume)，密码目录 $(printf '%s\n' "$r" | result_of base_dir)"
       state_del DB_CONTAINER_CREATED
@@ -742,7 +743,7 @@ phase_rotate_db_password() {
     printf '轮换期间（约 30 秒）连接器会短暂认证失败。输入 %s 确认：' "$DEPLOY_NAME"
     local ans; read -r ans; [ "$ans" = "$DEPLOY_NAME" ] || die "已取消"
   fi
-  local r; r="$(ssm_run "$TGT_ID" "$PKG_DIR/host/rotate-db-password.sh" 60 "PG_BASE_DIR=$PG_BASE_DIR")" || die "主机上换密码失败"
+  local r; r="$(host_run "$PKG_DIR/host/rotate-db-password.sh" 60 "PG_BASE_DIR=$PG_BASE_DIR")" || die "主机上换密码失败"
   ok "主机 .env 已换新密码（旧文件：$(printf '%s\n' "$r" | result_of backup)）"
   phase_db
   phase_connector

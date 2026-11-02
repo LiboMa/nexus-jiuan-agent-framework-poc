@@ -9,11 +9,14 @@
 #   infra/kb.sh <阶段或命令> [参数…]         先生成配置，再原样交给 kb/deploy.sh --config：preflight、all --dry-run、all、verify --e2e、status……
 # infra/kb.env 是部署人自己的设置（从 kb.env.example 复制，不进仓库）：管理员密码的来源、制度原文的路径、Sandbox 节点标签等。
 # 不写任何密码：管理员密码用运行时的 NEXUS_ADMIN_PASSWORD 环境变量，或 kb.env 里的 NEXUS_ADMIN_PASSWORD_FILE / NEXUS_ADMIN_PASSWORD_SSM（kb/GUIDE.md 3.2）。
+# 环境配置写了 SSH_KEY_FILE（实例经 SSH 管理）：kb 也经 SSH 到 PG 主机（PG_HOST_TRANSPORT=ssh，地址是栈输出的 ElasticIp），
+# 主机公钥和 deploy.sh 用同一份钉住的 known_hosts（lib/remote.sh）；否则经 SSM。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 source "$HERE/lib/deploy-env.sh"
 load_deploy_env
+source "$HERE/lib/remote.sh"
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 KB_DIR="${KB_DIR:-$ROOT/kb}"
@@ -24,7 +27,7 @@ CONFIG="${KB_CONFIG:-$KB_DIR/.state/infra.env}"
 TEMPLATE="$HERE/andon-finance-poc.yaml"
 PRIVATE='^(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]|[12][0-9]|3[0-2])$'
 RULE_DESCRIPTION='nexus-pgvector: Nexus server + sandbox VMs (private only)'
-DERIVED="AWS_REGION PG_HOST_MODE PG_HOST_INSTANCE_ID PG_ALLOWED_CIDR PG_PORT NEXUS_URL"
+DERIVED="AWS_REGION PG_HOST_MODE PG_HOST_INSTANCE_ID PG_ALLOWED_CIDR PG_PORT NEXUS_URL PG_HOST_TRANSPORT PG_SSH_HOST PG_SSH_USER PG_SSH_KEY PG_SSH_KNOWN_HOSTS PG_SSH_PROXY_COMMAND"
 
 die() { echo "$1" >&2; exit "${2:-1}"; }
 clean() { [[ "$1" == None ]] && echo "" || echo "$1"; }
@@ -43,6 +46,13 @@ write_config() {
   [[ -n "$cidr" ]] || die "栈 $STACK 还没开 PG 端口（参数 KbAllowedCidr 为空）：先运行 infra/kb.sh sg --cidr <私网段>"
   [[ -n "$nexus" ]] || die "读不到栈 $STACK 的参数 NexusOrigin"
   local AWS_REGION_V="$REGION" PG_HOST_MODE_V=existing PG_HOST_INSTANCE_ID_V="$instance" PG_ALLOWED_CIDR_V="$cidr" PG_PORT_V="${port:-5432}" NEXUS_URL_V="${nexus%/}"
+  local PG_HOST_TRANSPORT_V=ssm PG_SSH_HOST_V="" PG_SSH_USER_V="" PG_SSH_KEY_V="" PG_SSH_KNOWN_HOSTS_V="" PG_SSH_PROXY_COMMAND_V=""
+  if [[ "$(remote_mode)" == ssh ]]; then
+    ssh_check_key || exit 2
+    ssh_setup "$(output ElasticIp)" "$instance" || exit 1
+    PG_HOST_TRANSPORT_V=ssh PG_SSH_HOST_V="$(output ElasticIp)" PG_SSH_USER_V="$SSH_USER" PG_SSH_KEY_V="$SSH_KEY_FILE" PG_SSH_KNOWN_HOSTS_V="$SSH_KNOWN_HOSTS"
+    PG_SSH_PROXY_COMMAND_V="$SSH_PROXY_COMMAND"
+  fi
   local key mine wanted
   for key in $DERIVED; do
     mine="$( set +u; set -a; source "$SETTINGS" >/dev/null 2>&1; printf '%s' "${!key-}" )"
@@ -78,7 +88,7 @@ write_config() {
     fi
   } > "$tmp"
   mv "$tmp" "$CONFIG"
-  echo "已生成 ${CONFIG}：PG 在实例 ${instance}（existing 模式），端口 ${PG_PORT_V} ← ${cidr}，Nexus ${NEXUS_URL_V}"
+  echo "已生成 ${CONFIG}：PG 在实例 ${instance}（existing 模式，经 ${PG_HOST_TRANSPORT_V}），端口 ${PG_PORT_V} ← ${cidr}，Nexus ${NEXUS_URL_V}"
 }
 
 sg_command() {

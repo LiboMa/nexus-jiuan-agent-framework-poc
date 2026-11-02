@@ -8,12 +8,15 @@
 #   POC_STORE=memory|mysql 决定服务用内存存储还是本机 MySQL（默认 mysql；回到内存存储：POC_STORE=memory deploy.sh --code-only）。
 #   KB_MODE=pg|s3vectors（一般写在 DEPLOY_ENV 的配置文件里）决定九安 v0.7.10「制度知识库」走哪种方式（默认 pg）；两种方式都经 Nexus 上的知识库 Agent，
 #   测试台不直连 PG。方式和当前方式的知识库 Agent 发布（pg：KB_PG_PUBLICATION_ID，可以不给；s3vectors：KB_S3V_PUBLICATION_ID，必须给）交给 bench/bench07-configure.sh。
-# 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
+#   环境配置写了 SSH_KEY_FILE（和 SSH_KEY_NAME、SSH_ALLOWED_CIDR）：实例经 SSH 管理，等实例上线、装构件和重启都经 SSH（ec2-user + sudo），不用 SSM；
+#   主机公钥第一次从实例的控制台输出里取来钉住（lib/remote.sh）。建栈时按 INSTANCE_TYPE 的架构（x86_64 / arm64，如 m7g）取 AMI。
+# 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command 或读实例的控制台输出）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$HERE/lib/deploy-env.sh"
 load_deploy_env
+source "$HERE/lib/remote.sh"
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/secrets.env"
@@ -33,6 +36,9 @@ POC_STORE="${POC_STORE:-mysql}"
 # 「制度知识库」页经哪个知识库 Agent：pg 方式取 KB_PG_PUBLICATION_ID（没给时页面说「知识库 Agent 还没配置」），s3vectors 方式取 KB_S3V_PUBLICATION_ID
 KB_PUBLICATION="${KB_PG_PUBLICATION_ID:-}"
 [[ "${KB_MODE:-pg}" == "pg" ]] || KB_PUBLICATION="$KB_S3V_PUBLICATION_ID"
+REMOTE="$(remote_mode)"
+# 经 SSH 管理：私钥和密钥对名字在动 AWS 之前核对
+[[ "$REMOTE" == ssm ]] || ssh_check_key || exit 2
 
 say() { printf '\n== %s\n' "$*"; }
 output() {
@@ -75,9 +81,18 @@ if ! $CODE_ONLY; then
   args=(--region "$REGION" --stack-name "$STACK" --template-file "$HERE/andon-finance-poc.yaml" --capabilities CAPABILITY_IAM
     --no-fail-on-empty-changeset --tags project=andon-finance-poc)
   overrides=()
+  # 实例类型的架构：x86_64（t3）或 arm64（m7g）；AMI 要和它一致
+  type_arch() { aws ec2 describe-instance-types --region "$REGION" --instance-types "$1" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures' --output text | grep -qw arm64 && echo arm64 || echo x86_64; }
   if ! aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then
-    AMI="$(aws ssm get-parameter --region "$REGION" --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)"
+    ARCH="$(type_arch "${INSTANCE_TYPE:-t3.small}")"
+    AMI="$(aws ssm get-parameter --region "$REGION" --name "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-$ARCH" --query Parameter.Value --output text)"
     overrides+=("ImageId=$AMI")
+  elif [[ -n "${INSTANCE_TYPE:-}" ]]; then
+    # 栈已在：AMI 不换，所以不能换到另一种架构的类型（更新会起不来），要换就另建一个栈
+    image="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Parameters[?ParameterKey=='ImageId'].ParameterValue" --output text)"
+    image_arch="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" --query 'Images[0].Architecture' --output text)"
+    [[ "$image_arch" == "$(type_arch "$INSTANCE_TYPE")" ]] \
+      || { echo "栈 $STACK 的 AMI 是 ${image_arch}，${INSTANCE_TYPE} 是另一种架构：不能就地换，另建一个栈" >&2; exit 2; }
   fi
   # 知识库的 PG 端口入站规则（模板里的 KbIngress）：第一次建栈时可以一起开；栈已在时用 infra/kb.sh sg（它会接管手工加的同样规则）。
   # 没给就沿用栈上的值（aws cloudformation deploy 对没写的参数用现值）。
@@ -141,6 +156,10 @@ aws s3 cp --region "$REGION" --only-show-errors "$STAGE/current.tgz" "s3://$BUCK
 aws s3 cp --region "$REGION" --only-show-errors "$STAGE/current.tgz" "s3://$BUCKET/releases/archive/$(date -u +%Y%m%dT%H%M%SZ).tgz"
 aws s3 cp --region "$REGION" --only-show-errors --sse AES256 "$SECRETS" "s3://$BUCKET/secrets/secrets.env"
 
+if [[ "$REMOTE" == ssh ]]; then
+  say "等实例经 SSH 能登录（$(output ElasticIp)）"
+  ssh_setup "$(output ElasticIp)" "$INSTANCE" && ssh_wait 60 || exit 1
+else
 say "等 EC2 的 SSM Agent 上线"
 status=""
 for attempt in $(seq 1 60); do
@@ -150,6 +169,7 @@ for attempt in $(seq 1 60); do
   sleep 10
 done
 [[ "$status" == "Online" ]] || { echo "SSM Agent 没有上线，请检查实例 $INSTANCE" >&2; exit 1; }
+fi
 
 say "按栈参数重写实例配置，让 EC2 拉取新构件并重启服务"
 # 用户数据只在首次启动时写 /etc/andon-finance/env；改了栈参数（如 AdvisoryPublicationId、NexusOrigin、AppPort）之后，靠这里同步到实例。
@@ -175,6 +195,11 @@ J07_DOMAIN="$(param Jiuan07DomainName)"
 [[ -n "$J07_DOMAIN" && "$J07_DOMAIN" != None ]] || J07_DOMAIN=jiuan-v0710.tinyboat.blog
 # 先装密钥配置文件（root:andon 0640），再写 env，最后重启；任何一步失败都不重启。
 INSTALL="aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors && chown root:andon /etc/andon-finance/secrets.env.new && chmod 0640 /etc/andon-finance/secrets.env.new && mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env && echo $ENV_B64 | base64 -d > /etc/andon-finance/env && chmod 0644 /etc/andon-finance/env && rm -rf /var/tmp/andon-bench-config && mkdir -p /var/tmp/andon-bench-config && aws s3 cp s3://$BUCKET/releases/current.tgz /var/tmp/andon-bench-config/release.tgz --region $REGION --only-show-errors && tar -xzf /var/tmp/andon-bench-config/release.tgz -C /var/tmp/andon-bench-config ./bench && bash /var/tmp/andon-bench-config/bench/bench-configure.sh $POC_STORE && bash /var/tmp/andon-bench-config/bench/bench07-configure.sh $J07_DOMAIN $(param NexusOrigin) '${KB_MODE:-pg}' '$KB_PUBLICATION' && systemctl restart andon-finance-poc.service && systemctl restart andon-jiuan07.service"
+if [[ "$REMOTE" == ssh ]]; then
+  # 经 SSH：一段 set -e 的脚本，安装或重启哪一步失败都不往下走，也不做健康检查
+  remote_root "$(printf 'set -euo pipefail\n%s\nsleep 5\nsystemctl is-active andon-finance-poc.service\nsystemctl is-active andon-jiuan07.service\n' "$INSTALL")" \
+    || { echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; }
+else
 COMMANDS="$(printf '{"commands":["%s","sleep 5","systemctl is-active andon-finance-poc.service","systemctl is-active andon-jiuan07.service"]}' "$INSTALL")"
 COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --comment 'andon-finance-poc deploy' \
   --parameters "$COMMANDS" --query Command.CommandId --output text)"
@@ -183,12 +208,14 @@ aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --i
 # SSM 没成功就停在这里，不再报「健康检查通过」（评审 I1）。
 [[ "$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query Status --output text)" == "Success" ]] \
   || { echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; }
+fi
 
+if [[ "$REMOTE" == ssh ]]; then LOGS="ssh -i $SSH_KEY_FILE $SSH_TARGET"; else LOGS="aws ssm start-session --region $REGION --target ${INSTANCE}"; fi
 say "健康检查 $SITE/api/health 和 https://$J07_DOMAIN/poc/healthz"
 healthy() { for attempt in $(seq 1 36); do curl -fsS "$1" >/dev/null 2>&1 && return 0; sleep 10; done; return 1; }
-healthy "$SITE/api/health" || { echo "PoC 健康检查没有通过。查看日志：aws ssm start-session --region $REGION --target ${INSTANCE}，然后 sudo journalctl -u andon-finance-poc -n 200" >&2; exit 1; }
+healthy "$SITE/api/health" || { echo "PoC 健康检查没有通过。查看日志：${LOGS}，然后 sudo journalctl -u andon-finance-poc -n 200" >&2; exit 1; }
 echo "健康检查通过：$SITE"
 # v0.7.10 经 PoC 进程按 Host 转发；第一次建它的 CloudFront 分发后，DNS 生效要几分钟
-healthy "https://$J07_DOMAIN/poc/healthz" || { echo "九安 v0.7.10 健康检查没有通过。查看日志：sudo journalctl -u andon-jiuan07 -n 200（实例 ${INSTANCE}）" >&2; exit 1; }
+healthy "https://$J07_DOMAIN/poc/healthz" || { echo "九安 v0.7.10 健康检查没有通过。查看日志：${LOGS}，然后 sudo journalctl -u andon-jiuan07 -n 200" >&2; exit 1; }
 echo "健康检查通过：https://${J07_DOMAIN}（九安 v0.7.10）"
 echo "两个账号的口令在 ${SECRETS}（REVIEWER_PASSWORD / CHECKER_PASSWORD），两个站点相同"

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DEPLOY_ENV_KEYS, childEnv } from './helpers/child-env.mjs';
+import { asBefore } from './helpers/template-as-before.mjs';
 
 const execFileAsync = promisify(execFile);
 // 子进程不继承部署的环境（DEPLOY_ENV 和环境配置的键，见 helpers/child-env.mjs）；自己给了 env 的调用照它给的
@@ -22,8 +23,8 @@ const block = (text, name) => {
 const BLACKHOLE = ['api.huilianyi.com', 'apistage.huilianyi.com', 'huoshantstapi.huilianyi.com', 'helioscloud-uat.huilianyi.com', 'oss-huilianyi.jiuan.com',
   'oapi.dingtalk.com', 'api.openai.com', 'finmcp.jiuan.local', 'sap-mcp.local', 'sub1api.jiuan.com', 'sub1api.theunifiedcare.com'];
 
-test('模板：九安 v0.7.10 只多一个 CloudFront 分发和两条记录，源站还是实例的 4180；实例和安全组一个字不改', async () => {
-  const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
+test('模板：九安 v0.7.10 只多一个 CloudFront 分发和两条记录，源站还是实例的 4180；实例和安全组一个字不改（经 SSH 管理的几处按默认值还原后）', async () => {
+  const template = asBefore(await readFile(infra('andon-finance-poc.yaml'), 'utf8'));
   const { stdout: committed } = await run('git', ['show', 'b7e710b:poc/infra/andon-finance-poc.yaml'], { cwd: infra('.'), maxBuffer: 8 * 1024 * 1024 });
   for (const name of ['Instance', 'AppSecurityGroup', 'InstanceRole', 'ElasticIp', 'OriginRecord', 'Distribution']) assert.equal(block(template, name), block(committed, name), `${name} 变了`);
   assert.match(block(template, 'Jiuan07DomainName'), /Default: jiuan-v0710\.tinyboat\.blog/);

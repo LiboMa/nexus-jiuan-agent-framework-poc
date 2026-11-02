@@ -47,6 +47,8 @@ case "$*" in
   *"revoke-security-group-ingress"*|*"authorize-security-group-ingress"*) echo '{"Return": true}' ;;
   *"cloudformation deploy"*) [[ "\${FAKE_DEPLOY_FAIL:-0}" == 1 ]] && exit 255 || echo deployed ;;
   *"OutputKey=='InstanceId'"*) echo i-0123456789abcdef0 ;;
+  *"OutputKey=='ElasticIp'"*) echo 203.0.113.10 ;;
+  *"get-console-output"*) printf 'boot\\n-----BEGIN SSH HOST KEY KEYS-----\\necdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY= \\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample= \\n-----END SSH HOST KEY KEYS-----\\n' ;;
   *"ParameterKey=='KbAllowedCidr'"*) echo "\${FAKE_KB_CIDR-10.0.0.0/8}" ;;
   *"ParameterKey=='KbPort'"*) echo 5432 ;;
   *"ParameterKey=='NexusOrigin'"*) echo https://nexus.example ;;
@@ -87,6 +89,38 @@ test('kb.sh config：由栈的输出和参数（实例、网段、端口、Nexus
     'PG_PORT=5432', 'NEXUS_URL=https://nexus.example', 'RULES_DOCX=/local/rules.docx', 'NEXUS_ADMIN_PASSWORD_FILE=/local/nexus-admin', ''].join('\n'));
   assert.match(result.stderr, /PG_HOST_INSTANCE_ID.*以栈为准/);
   assert.ok((await h.calls()).every(call => /describe-stacks/.test(call)), '生成配置只读栈');
+});
+
+test('kb.sh config：环境经 SSH 管理（SSH_KEY_FILE）时，kb 也经 SSH 到 PG 主机：地址取栈的 ElasticIp，主机公钥从控制台输出钉住；不写就是经 SSM', async t => {
+  const h = await harness();
+  t.after(h.done);
+  const key = path.join(h.dir, 'id_test');
+  await writeFile(key, 'not-a-real-key\n', { mode: 0o600 });
+  const state = path.join(h.dir, 'infra-state');
+  const result = await h.kb(['config'], { SSH_KEY_FILE: key, SSH_KEY_NAME: 'deployer-key', STACK: 'andon-finance-ssh', REMOTE_STATE_DIR: state, SSH_HOSTKEY_WAIT_MINUTES: '0' });
+  assert.equal(result.code, 0, result.stderr);
+  const values = (await run('bash', ['-c', `set -a; source "${h.config}"; for k in PG_HOST_TRANSPORT PG_SSH_HOST PG_SSH_USER PG_SSH_KEY PG_SSH_KNOWN_HOSTS; do echo "$k=\${!k}"; done`])).stdout;
+  const known = path.join(state, 'andon-finance-ssh-i-0123456789abcdef0.known_hosts');
+  assert.equal(values, ['PG_HOST_TRANSPORT=ssh', 'PG_SSH_HOST=203.0.113.10', 'PG_SSH_USER=ec2-user', `PG_SSH_KEY=${key}`, `PG_SSH_KNOWN_HOSTS=${known}`, ''].join('\n'));
+  assert.equal(await readFile(known, 'utf8'),
+    '203.0.113.10 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY=\n203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample=\n');
+  assert.equal((await stat(known)).mode & 0o777, 0o600);
+  assert.ok((await h.calls()).every(call => /describe-stacks|get-console-output/.test(call)), '只读栈和控制台输出');
+  // 私钥权限太宽：ssh 不会用它，kb.sh 先停下
+  await chmod(key, 0o644);
+  const loose = await h.kb(['config'], { SSH_KEY_FILE: key, SSH_KEY_NAME: 'deployer-key', STACK: 'andon-finance-ssh', REMOTE_STATE_DIR: state, SSH_HOSTKEY_WAIT_MINUTES: '0' });
+  assert.notEqual(loose.code, 0);
+  assert.match(loose.stderr, /chmod 600/);
+  // SSH_VIA=eice：经 EC2 Instance Connect 端点，kb 拿到同一条 ProxyCommand
+  await chmod(key, 0o600);
+  const eice = await h.kb(['config'], { SSH_KEY_FILE: key, SSH_KEY_NAME: 'deployer-key', SSH_VIA: 'eice', STACK: 'andon-finance-ssh', REMOTE_STATE_DIR: state, SSH_HOSTKEY_WAIT_MINUTES: '0' });
+  assert.equal(eice.code, 0, eice.stderr);
+  const proxy = (await run('bash', ['-c', `set -a; source "${h.config}"; printf '%s' "$PG_SSH_PROXY_COMMAND"`])).stdout;
+  assert.equal(proxy, 'aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id i-0123456789abcdef0');
+  // 不写 SSH_KEY_FILE：经 SSM
+  const plain = await h.kb(['config']);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.match(await readFile(h.config, 'utf8'), /^PG_HOST_TRANSPORT=ssm$/m);
 });
 
 test('kb.sh config：kb.env 里写了明文的 Nexus 管理员密码就拒绝；栈还没开 PG 端口（KbAllowedCidr 为空）就先让人跑 kb.sh sg', async t => {

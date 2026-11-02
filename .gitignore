@@ -4,6 +4,8 @@ poc/infra/secrets.env.*
 !poc/infra/secrets.env.example
 # 知识库部署人的设置（kb/ 自己的 .gitignore 挡住 kb/deploy.env、kb/.state/、kb/.build/、*.docx）
 poc/infra/kb.env
+# 经 SSH 管理的实例：钉住的主机公钥（poc/infra/lib/remote.sh）
+poc/infra/.state/
 # 各环境的配置（poc/infra/env/<环境名>.env）：只有 example.env 进仓库
 poc/infra/env/*.env
 !poc/infra/env/example.env
