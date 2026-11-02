@@ -124,8 +124,8 @@ Agent，两个 Agent 都经数据连接器到 PG</figcaption>
 <ul>
 <li><strong>九安 v0.7.10 测试台</strong>是唯一的一套：首页
 <code>/</code> 是新前端
-<code>poc/web07</code>（工作台、单据池、知识库、我的规则、Agent
-接入、设置），后面是外壳 <code>poc/app07</code> 和九安 v0.7.10
+<code>poc/web</code>（工作台、单据池、知识库、我的规则、Agent
+接入、设置），后面是外壳 <code>poc/app</code> 和九安 v0.7.10
 的副本；九安原来的页面在 <code>/analysis.html</code>。原来并排的 v0.5.3
 PoC 2026-11-02 从代码里拿掉了（<a
 href="../../CHANGELOG.md">变更记录</a>）。</li>
@@ -142,7 +142,8 @@ Agent「知识库文档管家（PG
 m7g.xlarge（arm64）。</li>
 </ul>
 <p><strong>先读<a
-href="package-guide.html">交付包指南</a></strong>：包里有什么、怎么校验、谁先读什么、怎么验收。这里是交付用的全部文档；每份都有
+href="package-guide.html">交付包指南</a></strong>：包里有什么、怎么校验、谁先读什么、怎么验收。<strong>部署一整套照<a
+href="delivery-guide.html">交付指南</a></strong>。这里是交付用的全部文档；每份都有
 Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打开。</p>
 <div class="table-wrap">
 <table>
@@ -154,6 +155,13 @@ Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打�
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><a href="delivery-guide.html">交付指南（Delivery Guide）</a></td>
+<td><strong>给部署的人</strong>：从零部署三块（PG 与知识库后端 → Nexus
+上的 Agent 与发布 →
+前端）、端到端验收、日常变更与回滚、交接；现在的环境</td>
+<td>部署的人、项目负责人，第一份</td>
+</tr>
 <tr>
 <td><a href="quick-guide.html">快速上手：在「Agent 接入」页接上 Nexus
 上的 Agent</a></td>

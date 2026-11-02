@@ -449,7 +449,7 @@ JSON」，加一个数据 Part <code>{ op, … }</code>。操作和回复的形�
 Agent「只调一次工具、原样返回工具的
 JSON」时，模型偶尔会在调工具前先写一句话，A2A
 把各段文字拼在一起回来，回复就成了「一句话 +
-JSON」。测试台的客户端（<code>poc/app07/kb-steward-client.mjs</code>）只放过这一种情况：前面是不超过
+JSON」。测试台的客户端（<code>poc/app/kb-steward-client.mjs</code>）只放过这一种情况：前面是不超过
 200 字、不含 <code>{ }</code> 的一句话，后面是一个完整的 JSON
 对象；收下以后记一行
 <code>POC_KB_AGENT_REPLY_LEADIN &lt;操作&gt; &lt;字数&gt;</code>，不记内容；别的照样判不合格（<code>KB_AGENT_REPLY_INVALID</code>）。九安的代码要解析这类回复时可以照这样做。</p>
@@ -638,12 +638,12 @@ Agent（<code>review_<wbr>advice@1</code>）和它的历次改动</td>
 <tr>
 <td>A2A 客户端、知识库客户端的参考写法</td>
 <td>交接仓库的
-<code>poc/<wbr>app07/<wbr>lib/<wbr>a2a-<wbr>client.<wbr>mjs</code>、<code>poc/<wbr>app07/<wbr>kb-<wbr>steward-<wbr>client.<wbr>mjs</code></td>
+<code>poc/<wbr>app/<wbr>lib/<wbr>a2a-<wbr>client.<wbr>mjs</code>、<code>poc/<wbr>app/<wbr>kb-<wbr>steward-<wbr>client.<wbr>mjs</code></td>
 </tr>
 <tr>
 <td>假 A2A 网关（测试用）</td>
 <td>交接仓库的
-<code>poc/<wbr>app07/<wbr>test/<wbr>unit/<wbr>helpers/<wbr>fake-<wbr>a2a.<wbr>mjs</code></td>
+<code>poc/<wbr>app/<wbr>test/<wbr>unit/<wbr>helpers/<wbr>fake-<wbr>a2a.<wbr>mjs</code></td>
 </tr>
 <tr>
 <td>知识库本身（PG、<code>kb_<wbr>search</code>、换向量模型）</td>

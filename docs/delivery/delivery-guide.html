@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>交付指南（Delivery Guide）</title>
+<style>
+:root{
+  --paper:#F4F5F7; --sheet:#FCFCFD;
+  --ink:#1D2430; --ink-2:#4A5463; --ink-3:#5E6878;
+  --line:#A9B3C1; --hair:#D9DEE5;
+  --seal:#C8352C; --accent:#1F5AA8; --accent-wash:#E5ECF7; --accent-soft:#9BB5DE;
+  --warn:#8A5A12; --warn-wash:#F8EEDC;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",system-ui,sans-serif;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --measure:46em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 var(--sans)}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:var(--mono);font-size:.86em;background:rgba(29,36,48,.06);padding:.06em .32em;border-radius:3px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--sheet);padding:6px 12px;z-index:20}
+.skip:focus{left:12px}
+.page{max-width:1320px;margin:0 auto;padding:40px 32px 72px}
+
+/* 抬头：公文表头，和《Agent 自动发现与注册机制》一致 */
+.form{background:var(--sheet);border:1px solid var(--line);padding:28px 34px 24px}
+.form h1{margin:0;text-align:center;font:700 29px/1.4 var(--sans);letter-spacing:.02em}
+.form h1 span{display:block;font:400 15.5px/1.6 var(--sans);color:var(--ink-2);letter-spacing:.08em;margin-bottom:4px}
+.form h1::after{content:"";display:block;width:12em;max-width:70%;height:5px;margin:12px auto 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
+.fields{width:100%;border-collapse:collapse;margin-top:20px;font-size:14.5px;line-height:1.65}
+.fields th,.fields td{border:1px solid var(--line);padding:7px 12px;text-align:left;vertical-align:top}
+.fields th{width:5.5em;background:#F0F2F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.stamp{display:inline-block;border:2px solid var(--seal);color:var(--seal);font-weight:700;padding:0 8px;border-radius:3px;transform:rotate(-2deg);margin-left:8px;font-size:13.5px;line-height:1.7}
+
+/* 目录在左，正文在右 */
+.layout{display:grid;grid-template-columns:15em minmax(0,1fr);gap:40px;margin-top:36px;align-items:start}
+.toc{position:sticky;top:20px;font-size:14px;line-height:1.6;border-left:2px solid var(--hair);padding-left:14px;max-height:calc(100vh - 40px);overflow:auto}
+.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.toc ul ul{margin-top:4px;padding-left:.9em;gap:3px;font-size:13px}
+.toc a{color:var(--ink-2);text-decoration:none}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+
+main{min-width:0}
+main > h1{font:700 23px/1.45 var(--sans);margin:64px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+main > h1:first-child{margin-top:0;border-top:0;padding-top:0}
+main h2{font:600 18px/1.5 var(--sans);margin:34px 0 8px}
+main h3{font:600 16px/1.5 var(--sans);margin:24px 0 6px;color:var(--ink-2)}
+main p,main ul,main ol,main blockquote{max-width:var(--measure)}
+main li{margin:2px 0}
+main li > p{margin:0}
+main blockquote{margin:16px 0;padding:10px 16px;background:var(--warn-wash);border-left:4px solid var(--warn);color:var(--ink)}
+main blockquote p{margin:4px 0}
+.table-wrap{overflow-x:auto;margin:16px 0}
+main table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.65;background:var(--sheet)}
+main th,main td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+main thead th{background:#EEF1F5;color:var(--ink-2);font-weight:600;white-space:nowrap}
+main td code,main th code{overflow-wrap:normal}
+main pre{background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--accent-soft);padding:12px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono)}
+main pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;white-space:pre}
+main hr{border:0;border-top:1px solid var(--hair);margin:32px 0}
+main figure{margin:24px 0;padding:18px 18px 12px;background:var(--sheet);border:1px solid var(--line)}
+main figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+main figure .figure-link{display:block;cursor:zoom-in}
+main figure figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);font-size:13.5px;line-height:1.6;color:var(--ink-3)}
+main figure.screen{padding:12px 12px 10px;background:#fff}
+main figure.screen img{border:1px solid var(--hair)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-3)}
+
+@media (max-width:900px){
+  .page{padding:24px 16px 56px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .toc{position:static;max-height:none;border-left:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:12px 0}
+  .form{padding:22px 16px 18px}
+  .fields,.fields tbody,.fields tr,.fields th,.fields td{display:block;width:auto}
+  .fields th{border-bottom:0;padding-bottom:2px}
+  .fields td{border-top:0;overflow-wrap:anywhere}
+}
+@media print{
+  body{background:#fff}
+  .toc,.skip{display:none}
+  .layout{display:block}
+  main pre,main table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="page">
+<header class="form">
+  <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
+v0.7.10</span>交付指南（Delivery Guide）</h1>
+  <table class="fields">
+    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">状态</th><td>交付版（写的是现在的做法；2026-11-02
+在 m7g 测试台上从部署到端到端验收走过一遍）</td></tr>
+    <tr><th scope="row">范围</th><td>从零部署一整套（PG 与知识库后端 →
+Nexus 上的 Agent 与发布 → 前端）、验收、日常变更与回滚、交接</td></tr>
+    <tr><th scope="row">读者</th><td>部署的人（我们、九安运维）、项目负责人</td></tr>
+  </table>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="目录">
+<ul>
+<li><a href="#1-交付的是什么" id="toc-1-交付的是什么">1.
+交付的是什么</a></li>
+<li><a href="#2-一页看懂" id="toc-2-一页看懂">2. 一页看懂</a></li>
+<li><a href="#3-开始前" id="toc-3-开始前">3. 开始前</a></li>
+<li><a href="#4-部署" id="toc-4-部署">4. 部署</a>
+<ul>
+<li><a href="#41-pg-与知识库后端" id="toc-41-pg-与知识库后端">4.1 PG
+与知识库后端</a></li>
+<li><a href="#42-nexus-上的-agent-与发布"
+id="toc-42-nexus-上的-agent-与发布">4.2 Nexus 上的 Agent 与发布</a></li>
+<li><a href="#43-前端" id="toc-43-前端">4.3 前端</a></li>
+</ul></li>
+<li><a href="#5-验收" id="toc-5-验收">5. 验收</a></li>
+<li><a href="#6-日常变更与回滚" id="toc-6-日常变更与回滚">6.
+日常变更与回滚</a></li>
+<li><a href="#7-交接与签收" id="toc-7-交接与签收">7. 交接与签收</a></li>
+<li><a href="#8-文档地图" id="toc-8-文档地图">8. 文档地图</a></li>
+</ul>
+</nav>
+<main id="main">
+<p>这份指南讲怎么把一整套从零部署起来、怎么验收、以后怎么改和怎么退。每一步都给出命令和「做完是什么样」。细节在各部分自己的文档里，这里只给顺序、要点和链接。</p>
+<h1 id="1-交付的是什么">1. 交付的是什么</h1>
+<p>一套「九安审核平台 × Nexus AI」：九安自助审核平台 v0.7.10
+跑在测试台上，前面是新前端，AI 能力在 Nexus 上，经 A2A
+调用；数据全部虚构。分三块部署，各有各的工具：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>块</th>
+<th>是什么</th>
+<th>代码</th>
+<th>文档</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PG 与知识库后端</strong></td>
+<td>PostgreSQL + pgvector 容器、库内语义检索
+<code>kb_<wbr>search</code>（库里调 Bedrock 的 Cohere Embed v4
+生成向量）、规则表、Nexus 上的数据连接器和数据库凭证密钥</td>
+<td><code>kb/<wbr></code>（测试台上由
+<code>poc/<wbr>infra/<wbr>kb.<wbr>sh</code>
+驱动）；<code>kb/<wbr>convert/<wbr>risk-<wbr>cards/<wbr></code>（审批风险判断卡
+→ 可入库的 .docx）</td>
+<td><a href="../../kb/README.md">kb/README.md</a>、<a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a></td>
+</tr>
+<tr>
+<td><strong>Nexus 上的 Agent 与发布</strong></td>
+<td>审核
+Agent「九安审核AI」（<code>review_<wbr>advice@1</code>，经连接器只读查知识库）；PG
+知识库 Agent「知识库文档管家（PG
+版）」（<code>kb.<wbr>rules/<wbr>v1</code>：入库、清单、检索）</td>
+<td><code>audit-<wbr>agent/<wbr></code>；<code>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（源码）与
+<code>customer-<wbr>deploy/<wbr>knowledgebase-<wbr>writer-<wbr>agent-<wbr>pg/<wbr></code>（客户部署件）；<code>skills/<wbr>nexus-<wbr>ai-<wbr>operator/<wbr></code></td>
+<td><a href="../../audit-agent/README.md">审核 Agent 说明</a>、<a
+href="../../knowledgebase-writer-agent-pg/README.md">PG 知识库
+Agent</a>、<a href="skills-guide.html">Skills 配置指南</a></td>
+</tr>
+<tr>
+<td><strong>前端</strong></td>
+<td>新前端 <code>poc/<wbr>web</code>（React）、测试台外壳
+<code>poc/<wbr>app</code>、九安 v0.7.10 副本（打
+<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>
+的补丁）、九安的 MySQL；一台 EC2 + CloudFront</td>
+<td><code>poc/<wbr>infra/<wbr></code>（栈模板、<code>deploy.<wbr>sh</code>、<code>migrate-<wbr>data.<wbr>sh</code>、<code>backup.<wbr>sh</code>、<code>upgrade-<wbr>instance.<wbr>sh</code>）、<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code></td>
+<td><a href="../../poc/infra/README.md">部署说明</a>、<a
+href="../../poc/README.md">PoC 说明</a></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>测试阶段三块在一台 m7g.xlarge（arm64）上；正式环境三块分开，先 PG，再
+Agent，再分批部署前端（<a
+href="customer-rollout.html">客户部署路线</a>）。</p>
+<h1 id="2-一页看懂">2. 一页看懂</h1>
+<figure>
+<a href="../assets/diagrams/bench-overview.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="../assets/diagrams/bench-overview.svg" loading="lazy"
+alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
+<figcaption>系统总览：浏览器经 CloudFront
+到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的
+PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库
+Agent，两个 Agent 都经数据连接器到 PG</figcaption>
+</figure>
+<ul>
+<li>浏览器 → CloudFront（站点 <code>DomainName</code>）→ 实例的 4180
+端口：测试台外壳 <code>andon-jiuan.service</code>
+直接在这里听（安全组只放 CloudFront 回源）。首页 <code>/</code>
+是新前端，九安原来的页面在 <code>/analysis.html</code>，接口在
+<code>/api/analysis/v1/…</code>。</li>
+<li>单据池里的单据读完原件后自动出「AI 独立建议」：九安经 A2A 调「Agent
+接入」页上指定的审批 Agent（审核 Agent），一轮上限 180 秒；审核 Agent 经
+Nexus 的 PostgreSQL 数据连接器只读查 PG（先
+<code>kb_search</code>）。</li>
+<li>知识库页（只给管理员）经 A2A 调 PG 知识库
+Agent；它的工具用数据库凭证密钥 <code>pg_kb</code> 经私网连
+PG，向量在库里生成。测试台不直连 PG。</li>
+<li>人工复核（采纳 AI
+建议或改判）只记在测试台，不回写汇联易；单据来自外壳里的假汇联易。</li>
+</ul>
+<h1 id="3-开始前">3. 开始前</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>要什么</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AWS 账号与区域</td>
+<td>能建 CloudFormation 栈、EC2、CloudFront、Route 53
+记录；<code>us-<wbr>east-<wbr>1</code>（证书和 Bedrock
+模型访问也在这里）</td>
+</tr>
+<tr>
+<td>网络</td>
+<td>Nexus 所在的 VPC 和其中一个公有子网（PG 要能被 Nexus 的 API Server
+和 Sandbox VM 经私网连到）</td>
+</tr>
+<tr>
+<td>域名</td>
+<td>Route 53 托管区，us-east-1 的 ACM 证书覆盖站点名</td>
+</tr>
+<tr>
+<td>Nexus</td>
+<td>一个管理员账号；Sandbox 已启用；Bedrock 开通 Cohere Embed
+v4（<code>us.<wbr>cohere.<wbr>embed-<wbr>v4:0</code>）</td>
+</tr>
+<tr>
+<td>SSH 密钥</td>
+<td><strong>用部署人自己的</strong>：EC2 密钥对 + 本机私钥（权限
+600）。本机网络连不到实例的弹性 IP 时用 EC2 Instance Connect
+端点（<code>SSH_<wbr>VIA=eice</code>）</td>
+</tr>
+<tr>
+<td>本机工具</td>
+<td>Node.js 24 与 npm、AWS CLI
+v2、<code>uv</code>、<code>python3</code>、<code>ssh</code>、<code>rsync</code>、<code>openssl</code>、<code>curl</code>；跑端到端要本机装
+Chrome</td>
+</tr>
+<tr>
+<td>九安开发包</td>
+<td><code>source/<wbr>九安自助审核平台-<wbr>测试环境开发包-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>（按版本号向九安取，不进仓库）</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>环境配置</strong>（一个环境一份，不进仓库）：</p>
+<pre class="bash"><code>cp poc/infra/env/example.env poc/infra/env/&lt;环境名&gt;.env &amp;&amp; chmod 600 poc/infra/env/&lt;环境名&gt;.env</code></pre>
+<p>照注释填：栈名和区域、VPC
+与子网、<code>INSTANCE_TYPE=m7g.xlarge</code>、站点
+<code>DOMAIN_NAME</code> 和回源名
+<code>ORIGIN_DOMAIN_NAME</code>、托管区与证书、<code>NEXUS_ORIGIN</code>
+和 <code>NEXUS_PROFILE</code>、知识库的 <code>KB_MODE=pg</code> 与
+<code>KB_ALLOWED_CIDR</code>、经 SSH 管理的 <code>SSH_KEY_NAME</code> /
+<code>SSH_KEY_FILE</code> / <code>SSH_ALLOWED_CIDR</code>（或
+<code>SSH_VIA=eice</code>）/ <code>SSM_MANAGED=false</code>。Agent
+和发布的编号（<code>AGENT_ID</code>、<code>PUBLICATION_ID</code>、<code>CONNECTOR_ID</code>、<code>KB_PG_PUBLICATION_ID</code>）部署完对应那一块再填回来。</p>
+<p><strong>密钥配置</strong>
+<code>poc/infra/secrets.env</code>：第一次跑 <code>deploy.sh</code>
+自动生成（两个账号的口令 +
+三项测试台密钥，0600），只在本机和实例上，当面交接；样例和对应关系见
+<code>poc/infra/secrets.env.example</code>。Agent
+的调用密钥不放这里。</p>
+<h1 id="4-部署">4. 部署</h1>
+<p>正式环境的顺序是 4.1 → 4.2 → 4.3：Agent 要绑到已经在的
+PG，前端要启用已经发布的 Agent。测试台三块在一台机器上，实例由
+<code>deploy.sh</code> 建，所以顺序是：先 4.3 的第 1、2
+步建栈、装前端，再 4.1、4.2，最后回到 4.3 的第 3 步在页面上启用。</p>
+<h2 id="41-pg-与知识库后端">4.1 PG 与知识库后端</h2>
+<p><strong>客户环境</strong>（独立的 PG 主机，用自己的 SSH 密钥）：</p>
+<ol type="1">
+<li><p>起一台主机：带自己的密钥对；安全组对部署人的地址开 22、对 Nexus
+的私网段开 PG 端口；实例角色许调 <code>EMBED_MODEL_ID</code>（Cohere v4
+的推理配置文件和它路由到的三个区域，<a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a> 2.4）。</p></li>
+<li><p>填 <code>kb/deploy.env</code>（从 <code>deploy.env.example</code>
+复制，0600）：<code>PG_HOST_MODE=existing</code>、<code>PG_HOST_INSTANCE_ID</code>、<code>PG_HOST_TRANSPORT=ssh</code>、<code>PG_SSH_HOST</code>、<code>PG_SSH_KEY</code>（连不到主机地址时加
+<code>PG_SSH_PROXY_COMMAND</code>）、<code>NEXUS_URL</code>
+和管理员密码来源；<code>EMBED_MODEL_ID</code> 不写就是 Cohere
+v4。</p></li>
+<li><p>照 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4 节：</p>
+<pre class="bash"><code>cd kb
+./deploy.sh preflight          # 只读预检：工具、AWS、Nexus 登录、PG 主机（SSH 能登录、能 sudo）
+./deploy.sh all --dry-run      # 只读：每个阶段会改什么（~ 行）
+./deploy.sh all                # db 装 Docker、起容器、建 kb_search；connector 把私网地址和密码登记进 Nexus
+./deploy.sh verify             # [db] [ingest] [search] [network] [egress] [connector] [agent] 逐层核对</code></pre></li>
+</ol>
+<p><strong>测试台</strong>（PG 和前端在同一台实例上，栈先建好；kb
+的设置在 <code>poc/infra/kb.env</code>）：</p>
+<pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境名&gt;.env bash poc/infra/kb.sh preflight
+DEPLOY_ENV=… bash poc/infra/kb.sh db --dry-run &amp;&amp; DEPLOY_ENV=… bash poc/infra/kb.sh db
+DEPLOY_ENV=… bash poc/infra/kb.sh connector --dry-run &amp;&amp; DEPLOY_ENV=… bash poc/infra/kb.sh connector
+DEPLOY_ENV=… bash poc/infra/kb.sh verify</code></pre>
+<p>环境配置写了 <code>SSH_KEY_FILE</code> 时，<code>kb.sh</code> 自动让
+kb 经 SSH（和 <code>deploy.sh</code> 用同一份钉住的主机公钥）。</p>
+<p><strong>规则入库</strong>：有效的规则是审批风险判断卡。原页面是
+HTML，先用 <a
+href="../../kb/convert/risk-cards/README.md">kb/convert/risk-cards/</a>
+转成 .docx，再在新前端的「知识库 › 上传制度」上传（经 PG 知识库
+Agent，所以要 4.2 做完）；制度标识
+<code>risk-cards</code>。制度原文不进仓库、日志和截图。</p>
+<p>做完是什么样：<code>verify</code> 只剩已知的一条（审批矩阵
+<code>finance-approval-v4</code> 下线期间 <code>C03-1.2</code>
+不在检索前 3 名）；规则表 449 行、都有向量；连接测试通过。</p>
+<h2 id="42-nexus-上的-agent-与发布">4.2 Nexus 上的 Agent 与发布</h2>
+<ol type="1">
+<li><p><strong>PG 知识库 Agent</strong>：照
+<code>customer-deploy/knowledgebase-writer-agent-pg/</code>
+的部署指南（<code>GUIDE.zh.md</code>；让编码工具代做看
+<code>AI-DEPLOY.zh.md</code>）在 Nexus 上复制一个
+Agent、经脚本导入工具（网页上的「导入工具」不会声明数据库密钥，别用）、把
+<code>pg_kb</code> 绑到 4.1 <code>connector</code>
+建的那把数据库凭证密钥、保存提示词、发布成 A2A。发布编号填进环境配置的
+<code>KB_PG_PUBLICATION_ID</code>。</p></li>
+<li><p><strong>审核 Agent</strong>：</p>
+<pre class="bash"><code>python3 audit-agent/setup.py --env poc/infra/env/&lt;环境名&gt;.env --dry-run   # 找或建 Agent 和 A2A 发布、处理动态配置
+python3 audit-agent/setup.py --env poc/infra/env/&lt;环境名&gt;.env
+python3 audit-agent/apply.py --env poc/infra/env/&lt;环境名&gt;.env --dry-run   # 下发提示词：打印线上 → 渲染结果的 diff
+python3 audit-agent/apply.py --env poc/infra/env/&lt;环境名&gt;.env</code></pre>
+<p>发布的名片要声明 <code>review_advice@1</code>；数据连接器绑 4.1
+的那个；思考强度
+<code>high</code>；动态配置里不留用不到的工具。每次改线上提示词在
+<code>audit-agent/prompt-history/</code>
+留一个目录（改前、改后、比对、下发记录）。<code>AGENT_ID</code>、<code>PUBLICATION_ID</code>、<code>CONNECTOR_ID</code>
+填回环境配置。</p></li>
+<li><p><strong>调用密钥</strong>：两个发布各一把，<strong>只能由发布者本人在
+Nexus 网页上签发</strong>（API
+签发会被拒）。下一步在前端页面上粘贴，不写进任何文件。</p></li>
+</ol>
+<p>写提示词的几条教训（<a
+href="developer-guide.html">开发者快速对接指南</a>第 5
+节）：不要求知识库里没有的东西；查询次数写死、不许探索性的查询；关键词照规则行的写法；用不到的工具别挂。</p>
+<h2 id="43-前端">4.3 前端</h2>
+<ol type="1">
+<li><p><strong>建栈、装前端</strong>（第一次建 CloudFront 要 5–15
+分钟）：</p>
+<pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境名&gt;.env bash poc/infra/deploy.sh             # 测试 → 构建 → 建栈或更新栈 → 打包上传 → 实例上安装 → 健康检查
+DEPLOY_ENV=poc/infra/env/&lt;环境名&gt;.env bash poc/infra/deploy.sh --code-only # 以后只改了代码：不动栈</code></pre>
+<p>动 AWS 之前先跑 <code>poc/infra/test</code>
+的测试、构建九安副本（<code>poc/bench/build-jiuan.sh</code>）、新前端
+<code>npm ci</code> → 测试 →
+构建、外壳的单元测试，哪一步不过就停。实例上（root，经 SSM 或 SSH）：装
+<code>secrets.env</code>（只有 root 能读）→ 解开新构件 →
+<code>bench/bench-configure.sh</code>（MySQL 容器、库 <code>jiuan</code>
+和账号 <code>jiuan_app</code>、系统用户 <code>jiuan</code>、服务
+<code>andon-jiuan</code>、<code>/etc/hosts</code>
+堵掉九安写死的外部地址）→ 换上新构件（上一版留在
+<code>previous</code>）→ 重启 → 查
+<code>https://&lt;站点&gt;/poc/healthz</code>。</p></li>
+<li><p><strong>经 SSH
+管理</strong>：主机公钥第一次从实例的控制台输出里取来钉住（<code>poc/infra/.state/</code>），之后严格核对；本机网络连不到弹性
+IP（2026-11-02 m7g 环境的弹性 IP 在
+<code>184.192.0.0/12</code>，公司网络到不了）时
+<code>SSH_VIA=eice</code>，栈另建一个 EC2 Instance Connect 端点，还是
+SSH + 自己的密钥，不用 SSM。</p></li>
+<li><p><strong>在页面上接好 Agent</strong>（管理员
+<code>poc-reviewer</code>，口令在 <code>secrets.env</code>；<a
+href="quick-guide.html">快速上手</a>第 3–9 步）：</p>
+<ul>
+<li>「Agent 接入」页：连接 Nexus（贴管理员自己的 Nexus API 密钥）→
+两个发布各贴一次调用密钥启用 → 审核 Agent「设为审批 Agent」（要写原因）→
+文本、请求信封、单据三种测试。</li>
+<li>「知识库」页：显示知识库 Agent 就绪；上传 4.1 转好的风险判断卡
+.docx。</li>
+</ul></li>
+</ol>
+<h1 id="5-验收">5. 验收</h1>
+<p><strong>端到端测试</strong>（真实调用 Nexus，一次约 1–3 美元、5
+分钟；会先重置测试台的库 <code>jiuan</code>，「Agent
+接入」的启用记录保留）：</p>
+<pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境名&gt;.env KB_E2E_DOCX=&lt;本机转好的风险判断卡 .docx&gt; bash poc/app/test/e2e/run.sh</code></pre>
+<p>先跑 <code>web.e2e.mjs</code>（新前端的页面），再跑
+<code>api.e2e.mjs</code>（接口、出网、写回、自定义规则），共 26 条。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>验收项</th>
+<th>做完是什么样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>站点</td>
+<td><code>https:/<wbr>/<wbr>&lt;站点&gt;/<wbr>poc/<wbr>healthz</code> 回
+<code>ok</code>；首页是新前端，带 CSP
+<code>style-<wbr>src 'self'</code>；<code>/<wbr>analysis.<wbr>html</code>
+能开</td>
+</tr>
+<tr>
+<td>登录与角色</td>
+<td>管理员看得到工作台、单据池、知识库、我的规则、Agent
+接入、设置；分析员 <code>poc-<wbr>checker</code> 看不到知识库、Agent
+接入、设置，接口也拒绝</td>
+</tr>
+<tr>
+<td>AI 独立建议</td>
+<td>四张对公付款单都有结论和依据；引用的规则编号都在知识库里；审核 Agent
+的检索记进 <code>kb_<wbr>search_<wbr>log</code></td>
+</tr>
+<tr>
+<td>复核</td>
+<td>采纳、改判后单据池和工作台跟着变；不回写汇联易</td>
+</tr>
+<tr>
+<td>知识库</td>
+<td>风险判断卡 449 条有效；再传同一份是「没有变化」；检索能命中卡片</td>
+</tr>
+<tr>
+<td>Agent 接入</td>
+<td>审批 Agent 就绪、接 <code>review_<wbr>advice@1</code>；知识库 Agent
+就绪、不进审批流；三种测试合格</td>
+</tr>
+<tr>
+<td>出网</td>
+<td>被拦下的只有九安写死的外部地址，没有 Nexus</td>
+</tr>
+<tr>
+<td>知识库后端</td>
+<td><code>kb.<wbr>sh verify</code>（或
+<code>kb/<wbr>deploy.<wbr>sh verify</code>）只剩已知的那一条</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>单元测试</strong>（不连任何服务）：<code>cd poc/infra &amp;&amp; node --test "test/**/*.test.mjs"</code>；<code>cd poc/app &amp;&amp; node --test "test/unit/**/*.test.mjs"</code>；<code>cd poc/web &amp;&amp; npm test</code>；kb
+的 Python 测试和 shell 测试（<a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a>）；<code>python3 -m unittest discover -s audit-agent/tests</code>。出包时
+<code>docs/delivery/make-package.sh</code> 会再跑一遍。</p>
+<p><strong>2026-11-02 的结果</strong>（m7g 测试台）：单元测试
+<code>poc/infra</code> 108 条、外壳 193 条（1 条跳过）、新前端 331
+条全过；端到端 26 条全过；<code>kb.sh verify</code> 只剩已知的一条。</p>
+<h1 id="6-日常变更与回滚">6. 日常变更与回滚</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>要做的事</th>
+<th>怎么做</th>
+<th>怎么退</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>改代码（外壳、新前端、补丁）</td>
+<td>跑对应的测试 →
+<code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
+<td>用构件桶 <code>releases/<wbr>archive/<wbr></code> 里上一版的包换回
+<code>releases/<wbr>current.<wbr>tgz</code> 再
+<code>-<wbr>-<wbr>code-<wbr>only</code>（<a
+href="deploy-iteration.html">部署与迭代规范</a>第 6.1 节）</td>
+</tr>
+<tr>
+<td>改审核 Agent 的提示词</td>
+<td><code>audit-<wbr>agent/<wbr>apply.<wbr>py -<wbr>-<wbr>dry-<wbr>run</code>
+→ 下发，留 <code>prompt-<wbr>history/<wbr></code></td>
+<td>用上一版的提示词 <code>apply.<wbr>py -<wbr>-<wbr>base …</code>
+再下发一次</td>
+</tr>
+<tr>
+<td>改规则</td>
+<td>新前端「知识库 ›
+上传制度」（同一份再传是「没有变化」；改版只写变了的）</td>
+<td>「下线」旧版本、「恢复」上一版</td>
+</tr>
+<tr>
+<td>改栈参数、换机型</td>
+<td>改环境配置 → <code>deploy.<wbr>sh</code>；换机型用
+<code>upgrade-<wbr>instance.<wbr>sh</code>（只在同一种架构之间换，先
+<code>backup.<wbr>sh</code>）</td>
+<td>参数改回去再 <code>deploy.<wbr>sh</code></td>
+</tr>
+<tr>
+<td>备份</td>
+<td><code>backup.<wbr>sh</code>：根卷快照（MySQL、PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan</code>
+都在根卷上）</td>
+<td>用快照建卷换回根卷</td>
+</tr>
+<tr>
+<td>换机器、迁域名</td>
+<td>另建一个栈 → <code>deploy.<wbr>sh</code> →
+<code>kb.<wbr>sh db</code> →
+<code>migrate-<wbr>data.<wbr>sh</code>（旧环境经 SSM
+只读导出、加密搬运、逐表核对）→ <code>kb.<wbr>sh connector</code> 把
+Nexus 指到新 PG → 端到端 → 旧栈腾出站点名、新栈接上（<a
+href="handover.html">交接文档</a>第 2.2 节有 2026-11-02
+的实际做法）</td>
+<td>旧栈没删之前：<code>kb.<wbr>sh connector</code>
+用旧环境的配置再跑一次，Nexus 就指回旧 PG</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>要知道的几件事</strong>：</p>
+<ul>
+<li>栈模板里实例的用户数据（哪怕只改注释）一变，栈更新时实例就要停机再开一次；容器都会重启。</li>
+<li>2026-11-02
+起目录、脚本、服务、用户、库名都去掉了「07」（<code>poc/web</code>、<code>poc/app</code>、<code>andon-jiuan</code>、库
+<code>jiuan</code>……）。旧名字的实例第一次部署新代码时，<code>bench-configure.sh</code>
+自动把服务、用户、目录、库和账号原地改名，数据不动。只有两个已经写进数据里的标识保留原值：假汇联易的租户编号
+<code>fake-tenant-jiuan07</code>（库里各表和「Agent
+接入」的启用记录按它存），和外壳连 Nexus 的 operator 配置名
+<code>jiuan07</code>。</li>
+<li>端到端测试每次都会重置库 <code>jiuan</code>；要留数据，先
+<code>backup.sh</code>。</li>
+<li>迁域名的那几分钟里查过 DNS 的机器，最多 15 分钟内可能只拿到 IPv6
+地址、连不上；macOS 上 <code>sudo killall -HUP mDNSResponder</code>
+清缓存。</li>
+</ul>
+<h1 id="7-交接与签收">7. 交接与签收</h1>
+<ol type="1">
+<li><strong>出包</strong>：<code>docs/delivery/make-package.sh</code>（跑完全部检查再出
+<code>dist/&lt;版本&gt;.tar.gz</code> 和 <code>.sha256</code>；AWS
+账号和 EC2 的标识脱敏成 AWS
+文档的示例值；暂存目录里有密钥就不出包）。<code>--export &lt;目录&gt;</code>
+同步到交接仓库。</li>
+<li><strong>对着清单验收</strong>：<a
+href="package-guide.html">交付包指南</a>第 6 节，加上本文第 5
+节的端到端结果。</li>
+<li><strong>当面交接</strong>：<code>poc/infra/secrets.env</code>；九安开发包按版本号另给；各人的
+Nexus API 密钥各人在自己的 Nexus 网页上生成。</li>
+<li><strong>交给维护的人</strong>：<a
+href="handover.html">交接文档</a>（资产清单、密钥清单、未完成事项、上生产前必须改的）。</li>
+</ol>
+<p><strong>现在的环境</strong>（2026-11-02）：</p>
+<div class="table-wrap">
+<table>
+<tbody>
+<tr>
+<td>测试台</td>
+<td>栈 <code>andon-<wbr>finance-<wbr>m7g</code>，一台
+m7g.xlarge（arm64），站点 <a
+href="https://jiuan-v0710.tinyboat.blog">https://jiuan-v0710.tinyboat.blog</a>；经
+SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
+端点管理，不用 SSM；环境配置
+<code>poc/<wbr>infra/<wbr>env/<wbr>m7g.<wbr>env</code></td>
+</tr>
+<tr>
+<td>Nexus</td>
+<td><code>nxs-<wbr>beine1013</code>；审核 Agent 发布
+<code>pub_<wbr>5c53e70d8dc7ddea</code>；PG 知识库 Agent 发布
+<code>pub_<wbr>6ea5f0855dff6c1b</code>；PG 数据连接器
+<code>pgvector-<wbr>andon</code>（<code>conn-<wbr>f0c7233959d9</code>）指向测试台实例的私网地址</td>
+</tr>
+<tr>
+<td>知识库</td>
+<td>测试台实例上的容器
+<code>nexus-<wbr>pgvector</code>；有效规则是审批风险判断卡
+<code>risk-<wbr>cards</code>（449 条），向量 Cohere Embed v4</td>
+</tr>
+<tr>
+<td>旧栈</td>
+<td><code>andon-<wbr>finance-<wbr>poc</code>（t3.large）等删（项目负责人定先留几天；根卷快照
+<code>snap-<wbr>05180f1a83a6edada</code>）</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="8-文档地图">8. 文档地图</h1>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>想做什么</th>
+<th>读哪份</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>包里有什么、怎么校验、验收、签收</td>
+<td><a href="package-guide.html">交付包指南</a></td>
+</tr>
+<tr>
+<td>接手维护：有什么、在哪、没做完什么</td>
+<td><a href="handover.html">交接文档</a></td>
+</tr>
+<tr>
+<td>九安怎么走到上线（阶段、前置、风险）</td>
+<td><a href="customer-rollout.html">客户部署路线</a></td>
+</tr>
+<tr>
+<td>每类变更怎么改、怎么测、怎么发、怎么退</td>
+<td><a href="deploy-iteration.html">部署与迭代规范</a></td>
+</tr>
+<tr>
+<td>日常运维、看日志、排障</td>
+<td><a href="operations.html">运维与后续迭代</a></td>
+</tr>
+<tr>
+<td>管理员在「Agent 接入」页接 Agent</td>
+<td><a href="quick-guide.html">快速上手</a></td>
+</tr>
+<tr>
+<td>九安开发者接 Nexus 上的 Agent（契约、时限、提示词）</td>
+<td><a href="developer-guide.html">开发者快速对接指南</a></td>
+</tr>
+<tr>
+<td>编码工具里装 nexus-ai-operator</td>
+<td><a href="skills-guide.html">Skills 配置指南</a></td>
+</tr>
+<tr>
+<td>架构与调用链</td>
+<td><a href="../architecture.html">架构</a></td>
+</tr>
+</tbody>
+</table>
+</div>
+</main>
+</div>
+<footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/delivery-guide.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>
+</div>
+</body>
+</html>

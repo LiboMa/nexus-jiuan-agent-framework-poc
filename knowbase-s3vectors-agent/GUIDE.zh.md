@@ -247,10 +247,10 @@ node frontend/a2a_kb_client.mjs stats
 1. **启用发布**：九安「Agent 接入」页会列出 Nexus 上开了 A2A 的发布。找到「知识库文档管家（S3 Vectors 版）」，贴上第 9 步的调用密钥启用。
    - 它不会进审批流，审批 Agent 另外指定。
    - 启用后供前端工作流调用。
-2. **在九安的后端代码里调用**：协议与测试台现有的 `poc/app07/lib/a2a-client.mjs`（`a2aCall`）相同。可以直接用它，也可以参考本包的 `frontend/a2a_kb_client.mjs`：
+2. **在九安的后端代码里调用**：协议与测试台现有的 `poc/app/lib/a2a-client.mjs`（`a2aCall`）相同。可以直接用它，也可以参考本包的 `frontend/a2a_kb_client.mjs`：
 
 ```js
-import { a2aCall } from '../app07/lib/a2a-client.mjs';
+import { a2aCall } from '../app/lib/a2a-client.mjs';
 // 入库：一行说明文字 + 文件 Part；要求只回 JSON，字段与工具返回值相同
 const text = '请把附件「' + name + '」入库：一步入库，write_strategy=skip。完成后只输出一个 JSON 对象，字段：success, doc_id, file_name, written_chunks, status, dedup_status, error_type, message。';
 const { text: reply } = await a2aCall({ url, key, text, files: [{ name, mimeType: DOCX, bytes }] });

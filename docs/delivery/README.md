@@ -11,15 +11,16 @@ audience: 所有接手的人
 ![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
 
 **Finance-Audit-Nexus-PoC v0.7.10**（2026-10-26 封板；2026-11-02 起只留新 UI）。现在的状态：
-- **九安 v0.7.10 测试台**是唯一的一套：首页 `/` 是新前端 `poc/web07`（工作台、单据池、知识库、我的规则、Agent 接入、设置），后面是外壳 `poc/app07` 和九安 v0.7.10 的副本；九安原来的页面在 `/analysis.html`。原来并排的 v0.5.3 PoC 2026-11-02 从代码里拿掉了（[变更记录](../../CHANGELOG.md)）。
+- **九安 v0.7.10 测试台**是唯一的一套：首页 `/` 是新前端 `poc/web`（工作台、单据池、知识库、我的规则、Agent 接入、设置），后面是外壳 `poc/app` 和九安 v0.7.10 的副本；九安原来的页面在 `/analysis.html`。原来并排的 v0.5.3 PoC 2026-11-02 从代码里拿掉了（[变更记录](../../CHANGELOG.md)）。
 - **单据池自动出 AI 独立建议**：管理员在「Agent 接入」页指定的审批 Agent「九安审核AI（PoC）」处理 `review_advice@1`，经数据连接器只读查 PG 知识库；一轮上限 180 秒。
 - **知识库**经 Nexus 上的 PG 知识库 Agent「知识库文档管家（PG 版）」读写（`kb.rules/v1`）；有效的规则是审批风险判断卡。
 - **部署分三块**：前端（`poc/infra/deploy.sh`）、PG 与知识库后端（`kb/`）、Nexus 上的 Agent 与发布（`audit-agent/`、`knowledgebase-writer-agent-pg/`、`skills/nexus-ai-operator`）。机器类型以后用 m7g.xlarge（arm64）。
 
-**先读[交付包指南](package-guide.md)**：包里有什么、怎么校验、谁先读什么、怎么验收。这里是交付用的全部文档；每份都有 Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打开。
+**先读[交付包指南](package-guide.md)**：包里有什么、怎么校验、谁先读什么、怎么验收。**部署一整套照[交付指南](delivery-guide.md)**。这里是交付用的全部文档；每份都有 Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打开。
 
 | 文档 | 回答什么 | 先读给谁 |
 |---|---|---|
+| [交付指南（Delivery Guide）](delivery-guide.md) | **给部署的人**：从零部署三块（PG 与知识库后端 → Nexus 上的 Agent 与发布 → 前端）、端到端验收、日常变更与回滚、交接；现在的环境 | 部署的人、项目负责人，第一份 |
 | [快速上手：在「Agent 接入」页接上 Nexus 上的 Agent](quick-guide.md) | **给管理员**：在新前端和线上 Nexus AI 之间，一步步生成密钥、连接 Nexus、启用、设为审批 Agent、测试、在单据池里用；日常维护和常见问题 | 管理员、Agent 开发者，第一份 |
 | [九安开发者快速对接指南](developer-guide.md) | **给九安的开发**：九安 v0.7.10 里已经有的契约、A2A 适配层和「Agent 接入」；怎么在 Nexus 上写一个 Agent、启用它；时限、知识库、提示词的教训 | 九安后端、Agent 开发 |
 | [客户部署路线](customer-rollout.md) | 九安怎么部署到上线：三块各部署什么、先 PG（九安自己的 SSH 密钥）、再 Agent、再分批部署前端；要九安提供什么、风险 | 项目负责人、九安团队 |

@@ -97,7 +97,7 @@ v0.7.10</span>运维与后续迭代</h1>
   <table class="fields">
     <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
     <tr><th scope="row">状态</th><td>交付版 v3（只留新 UI：九安 v0.7.10
-测试台；一台机器一个服务 andon-jiuan07）</td></tr>
+测试台；一台机器一个服务 andon-jiuan）</td></tr>
     <tr><th scope="row">范围</th><td>九安 v0.7.10 测试台（栈
 andon-finance-m7g；旧栈 andon-finance-poc 等删）与 Nexus
 nxs-beine1013（线上 Nexus AI
@@ -158,16 +158,16 @@ id="toc-28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
 </nav>
 <main id="main">
 <h1 id="1-日常运维">1. 日常运维</h1>
-<p>一台实例上只有一个服务：测试台外壳 <code>andon-jiuan07</code>（用户
-<code>jiuan07</code>，直接听 4180），里面跑新前端、九安 v0.7.10
+<p>一台实例上只有一个服务：测试台外壳 <code>andon-jiuan</code>（用户
+<code>jiuan</code>，直接听 4180），里面跑新前端、九安 v0.7.10
 的副本和外壳的接口；旁边是两个容器：MySQL
 <code>jiuan-mysql</code>、知识库的 PG
 <code>nexus-pgvector</code>。对外只有一个站点（CloudFront 分发
-<code>Jiuan07Distribution</code>，别名是栈参数
-<code>Jiuan07DomainName</code>）。2026-11-02 起没有 v0.5.3 PoC 的服务
+<code>Distribution</code>，别名是栈参数
+<code>DomainName</code>）。2026-11-02 起没有 v0.5.3 PoC 的服务
 <code>andon-finance-poc</code> 了。</p>
 <p>下面的 <code>&lt;站点&gt;</code> 是这个栈的
-<code>Jiuan07DomainName</code>：现在是
+<code>DomainName</code>：现在是
 <code>jiuan-v0710.tinyboat.blog</code>（2026-11-02 从旧栈迁到 m7g 栈，<a
 href="handover.html">交接文档</a>第 2.2 节）。</p>
 <h2 id="11-每天看什么">1.1 每天看什么</h2>
@@ -230,7 +230,7 @@ SSH 管理」）：</p>
 <pre class="bash"><code>ssh -i &lt;SSH_KEY_FILE&gt; -o UserKnownHostsFile=poc/infra/.state/&lt;栈&gt;-&lt;实例&gt;.known_hosts ec2-user@&lt;栈输出 ElasticIp&gt;
 # SSH_VIA=eice（m7g 测试环境是这样）：经 EC2 Instance Connect 端点，再加
 #   -o ProxyCommand=&#39;aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id &lt;实例&gt;&#39;
-sudo journalctl -u andon-jiuan07 -n 200 --no-pager          # 外壳（和九安）的日志
+sudo journalctl -u andon-jiuan -n 200 --no-pager          # 外壳（和九安）的日志
 sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志</code></pre>
 <p>经 SSM 的栈（旧栈 <code>andon-finance-poc</code>
 是）：<code>aws ssm start-session --region us-east-1 --target &lt;InstanceId&gt;</code>，再执行上面两条
@@ -286,7 +286,7 @@ AWS 凭证有 <code>ec2-instance-connect:OpenTunnel</code>。</p>
 </div>
 <h2 id="13-重启与健康检查">1.3 重启与健康检查</h2>
 <pre class="bash"><code># 在实例上（第 1.2 节的会话里）
-sudo systemctl restart andon-jiuan07.service &amp;&amp; sleep 5 &amp;&amp; systemctl is-active andon-jiuan07.service
+sudo systemctl restart andon-jiuan.service &amp;&amp; sleep 5 &amp;&amp; systemctl is-active andon-jiuan.service
 curl -fsS http://127.0.0.1:4180/poc/healthz                 # 实例上直接看
 curl -fsS https://&lt;站点&gt;/poc/healthz                         # 本机经 CloudFront 看</code></pre>
 <p>重启会：</p>
@@ -295,7 +295,7 @@ curl -fsS https://&lt;站点&gt;/poc/healthz                         # 本机经
 里现有的版本起来：启动时不从构件桶拉包，换版本只经
 <code>deploy.sh</code>；</li>
 <li>外壳启动时读一次新前端的 <code>dist/</code> 和
-<code>/etc/andon-finance/jiuan07/</code> 下的配置；</li>
+<code>/etc/andon-finance/jiuan/</code> 下的配置；</li>
 <li>单据、AI 建议的各轮、「Agent 接入」的启用记录都在 MySQL
 里，重启不丢。</li>
 </ul>
@@ -346,7 +346,7 @@ Agent」，或给它「换钥匙」，九安的流水线会自动重排。</li>
 <h2 id="23-换口令">2.3 换口令</h2>
 <p>改 <code>secrets.env</code> 里的 <code>REVIEWER_PASSWORD</code> /
 <code>CHECKER_PASSWORD</code>（至少 12 个字符），再
-<code>deploy.sh --code-only</code>。另外三项（<code>BENCH_MYSQL_ROOT_PASSWORD</code>、<code>JIUAN07_MYSQL_APP_PASSWORD</code>、<code>JIUAN07_DATA_KEY</code>）不要换，见第
+<code>deploy.sh --code-only</code>。另外三项（<code>BENCH_MYSQL_ROOT_PASSWORD</code>、<code>JIUAN_MYSQL_APP_PASSWORD</code>、<code>JIUAN_DATA_KEY</code>）不要换，见第
 2.6 节。</p>
 <h2 id="24-agent-接入页上连不上或启用失败">2.4 「Agent
 接入」页上连不上或启用失败</h2>
@@ -408,23 +408,23 @@ Agent」，或给它「换钥匙」，九安的流水线会自动重排。</li>
 <h2 id="25-实例被替换换机器">2.5 实例被替换、换机器</h2>
 <p>实例被替换（重建栈、换
 AMI、改根卷大小、实例故障）后，根卷上的东西都会丢：MySQL 的
-<code>jiuan07</code> 库（单据、AI 建议、复核、启用记录）、知识库的
-PG、<code>/var/lib/jiuan07/</code>（「Agent 接入」页的 Nexus
+<code>jiuan</code> 库（单据、AI 建议、复核、启用记录）、知识库的
+PG、<code>/var/lib/jiuan/</code>（「Agent 接入」页的 Nexus
 连接、我的规则）。新实例上要重新
 <code>deploy.sh</code>、<code>kb.sh db</code>，再把数据放回去，或者管理员重新连接
 Nexus、重新启用 Agent。</p>
 <ul>
 <li><strong>替换前</strong>：先跑
 <code>poc/infra/backup.sh</code>（根卷快照；MySQL、PG 和
-<code>/var/lib/jiuan07</code>
+<code>/var/lib/jiuan</code>
 都在根卷上，一个快照就够）。要整盘恢复，用快照建卷替换根卷。</li>
 <li><strong>换实例类型</strong>：用
 <code>upgrade-instance.sh &lt;类型&gt;</code>，它只允许停机再开，不替换实例；不能在
 arm64 和 x86 之间换。</li>
 <li><strong>换机器</strong>（另建一个栈）：新栈 <code>deploy.sh</code> →
 <code>kb.sh db</code> → <code>migrate-data.sh</code>（搬
-<code>jiuan07</code> 库、PG 库
-<code>nexus</code>、<code>/var/lib/jiuan07</code>；两边
+<code>jiuan</code> 库、PG 库
+<code>nexus</code>、<code>/var/lib/jiuan</code>；两边
 <code>secrets.env</code> 要是同一份）→ <code>kb.sh connector</code>（把
 Nexus 指到新 PG，先 <code>--dry-run</code>）→ 端到端测试 → 迁域名前
 <code>migrate-data.sh --skip-pg</code> 再同步一次。步骤见 <a
@@ -435,19 +435,19 @@ href="../../poc/infra/README.md"><code>poc/infra/README.md</code></a>「换机�
 <ul>
 <li><strong>检查</strong>：在实例上 <code>sudo docker ps</code>，再
 <code>sudo docker exec jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysqladmin ping -uroot'</code>。</li>
-<li><strong>重置</strong>（端到端测试会自动做）：<code>sudo bash /opt/andon-finance/current/bench/bench07-reset.sh</code>：停服务，导出「Agent
-接入」的启用记录，删掉并重建 <code>jiuan07</code>
+<li><strong>重置</strong>（端到端测试会自动做）：<code>sudo bash /opt/andon-finance/current/bench/bench-reset.sh</code>：停服务，导出「Agent
+接入」的启用记录，删掉并重建 <code>jiuan</code>
 库、删掉种子时间锚点，起服务跑迁移，写回启用记录，再起服务、等健康检查。单据从假汇联易重新同步。</li>
 <li><strong>升级前备份</strong>：<code>poc/infra/backup.sh</code>（根卷快照）。</li>
 <li><strong>换实例类型</strong>：<code>poc/infra/upgrade-instance.sh &lt;类型&gt;</code>：只允许停机再开；变更集里实例会被替换就不执行。</li>
 <li><strong>测试台密钥只认原值</strong>：实例上已有的 MySQL root
-口令（<code>/etc/andon-finance/bench/</code>）、<code>jiuan07_app</code>
-的口令和数据密钥（<code>/etc/andon-finance/jiuan07/</code>）和
+口令（<code>/etc/andon-finance/bench/</code>）、<code>jiuan_app</code>
+的口令和数据密钥（<code>/etc/andon-finance/jiuan/</code>）和
 <code>secrets.env</code>
 里的不一样时，部署在重启之前就失败，服务照旧跑。多半是
 <code>secrets.env</code> 被重新生成了：找回交接的那份。真要换
-<code>jiuan07_app</code> 的口令或数据密钥，先运行
-<code>bench07-reset.sh</code>
+<code>jiuan_app</code> 的口令或数据密钥，先运行
+<code>bench-reset.sh</code>
 重建库（库里的数据和启用记录会全部重建）。</li>
 </ul>
 <h2 id="27-ai-建议出不来慢">2.7 AI 建议出不来、慢</h2>
@@ -533,7 +533,7 @@ Agent（<code>pub_6ea5f0855dff6c1b</code>，调用密钥在「Agent
 href="../../kb/GUIDE.md">kb/GUIDE.md</a>。</p>
 <h2 id="28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
 留在实例上的东西</h2>
-<p>新代码部署时（<code>bench/bench07-configure.sh</code>）会停掉、删掉
+<p>新代码部署时（<code>bench/bench-configure.sh</code>）会停掉、删掉
 v0.5.3 PoC 的服务单元
 <code>andon-finance-poc.service</code>、它的补充配置和转发设置；它的数据不动，要另外清。旧栈
 <code>andon-finance-poc</code> 整个删掉时（<a
@@ -572,8 +572,8 @@ href="handover.html">交接文档</a>第 6 节第 24
 </tbody>
 </table>
 </div>
-<p><strong>不要动</strong>：<code>/etc/andon-finance/secrets.env</code>、<code>/etc/andon-finance/bench/mysql_root_password</code>、<code>/etc/andon-finance/jiuan07/</code>、<code>/var/lib/jiuan07/</code>、MySQL
-的 <code>jiuan07</code> 库、<code>/opt/andon-finance/</code>。</p>
+<p><strong>不要动</strong>：<code>/etc/andon-finance/secrets.env</code>、<code>/etc/andon-finance/bench/mysql_root_password</code>、<code>/etc/andon-finance/jiuan/</code>、<code>/var/lib/jiuan/</code>、MySQL
+的 <code>jiuan</code> 库、<code>/opt/andon-finance/</code>。</p>
 <p>2026-11-02 已在 m7g 实例上照下面清过一次（另外删了 <code>andon</code>
 用户和组）。以后在别的实例上要清，做法（项目负责人当场同意后再动手；先
 <code>poc/infra/backup.sh</code> 做根卷快照）：</p>
@@ -682,7 +682,7 @@ href="developer-guide.html">开发者快速对接指南</a>交给它；写操作
 <li>新前端只调本站后端，不直连 Nexus。</li>
 <li>涉及密钥的代码：返回里只出现指纹；日志只记错误码；测试里检查输出没有密钥。</li>
 <li>新接口都按「这个人的公司 ∩
-测试台的公司」过滤（<code>poc/app07/user-scope.mjs</code>）。</li>
+测试台的公司」过滤（<code>poc/app/user-scope.mjs</code>）。</li>
 </ul>
 <h1 id="4-下一步要建的运维能力">4. 下一步要建的运维能力</h1>
 <p>按优先级：</p>

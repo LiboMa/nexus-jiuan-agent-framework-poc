@@ -17,6 +17,7 @@ CHROME_PATH="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Googl
 DOCS=(
   delivery/README.md
   delivery/package-guide.md
+  delivery/delivery-guide.md
   delivery/quick-guide.md
   delivery/developer-guide.md
   delivery/skills-guide.md

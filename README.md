@@ -1,41 +1,81 @@
 # Finance-Audit-Nexus-PoC v0.7.10
 
-九安审核平台 × Nexus AI 的 PoC：九安自助审核平台 v0.7.10 的原服务端跑在测试台上（九安真实运行时 + 本机 MySQL），前面是我们的新前端，AI 能力在 Nexus 上，经 A2A 调用；数据全部虚构。2026-11-02 起只留这一套（新 UI）：原来并排的 v0.5.3 PoC 已从代码里拿掉（[变更记录](CHANGELOG.md)）。首页 `/` 是新前端 `poc/web07`（React）：工作台、单据池（抽屉里看 AI 建议、原件、单据信息、历史，采纳或改判）、知识库、我的规则、Agent 接入、设置；九安原来的页面在 `/analysis.html`。单据池自动出 AI 独立建议，审核 Agent 用库内语义检索查知识库；知识库经 Nexus 上的 PG 知识库 Agent 读写，2026-10-31 起有效的规则是审批风险判断卡。机器类型以后用 m7g.xlarge（arm64）。
+九安审核平台 × Nexus AI 的 PoC。九安自助审核平台 v0.7.10 的原服务端跑在测试台上（九安真实运行时 + 本机 MySQL），前面是新前端，AI 能力在 Nexus 上，经 A2A 调用；数据全部虚构。
 
-**部署分三块**：前端（`poc/infra/deploy.sh`）、PG 与知识库后端（`kb/`，测试台上由 `poc/infra/kb.sh` 驱动）、Nexus 上的 Agent 与发布（`audit-agent/`、`knowledgebase-writer-agent-pg/`、`skills/nexus-ai-operator`）；测试阶段三样在一台机器上。
+![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](docs/assets/diagrams/bench-overview.svg)
 
-**从这里开始**：用浏览器打开 `docs/delivery/README.html`（交付文档索引），第一份读[交付包指南](docs/delivery/package-guide.md)。
+- **新前端**（首页 `/`）：工作台、单据池（抽屉里看 AI 建议、原件、单据信息、历史，采纳或改判）、知识库、我的规则、Agent 接入、设置。九安原来的页面在 `/analysis.html`。
+- **AI 独立建议**：单据池里的单据读完原件后，九安经 A2A 调管理员指定的审批 Agent「九安审核AI」（`review_advice@1`）；它经 Nexus 的数据连接器只读查 PG 知识库（库内语义检索 `kb_search`，Cohere Embed v4）。
+- **知识库**：经 Nexus 上的「知识库文档管家（PG 版）」读写（`kb.rules/v1`）；有效的规则是审批风险判断卡（449 条）。
 
-| 想做什么 | 读哪份 |
+## 从哪里开始
+
+**部署一整套、验收、交接：读[交付指南](docs/delivery/delivery-guide.md)。** 其余按角色：
+
+| 你是 | 先读 |
 |---|---|
-| 在新前端的「Agent 接入」页接上 Nexus 上的 Agent（给管理员） | [快速上手](docs/delivery/quick-guide.md) |
-| 九安开发者在 v0.7.10 上接 Nexus 上的 Agent（契约、写 Agent、启用、时限、提示词的教训） | [开发者快速对接指南](docs/delivery/developer-guide.md) |
-| 验收、签收这个包 | [交付包指南](docs/delivery/package-guide.md) |
-| 接手维护 | [交接文档](docs/delivery/handover.md) |
-| 在编码工具里装 nexus-ai-operator | [Skills 配置指南](docs/delivery/skills-guide.md) |
-| 九安怎么部署、走到上线（先 PG，再 Agent，再分批部署前端） | [客户部署路线](docs/delivery/customer-rollout.md) |
-| 部署（三块：前端、PG 与知识库、Nexus 上的 Agent）、回滚、日常运维 | [部署与迭代规范](docs/delivery/deploy-iteration.md)、[运维与后续迭代](docs/delivery/operations.md)、[部署说明](poc/infra/README.md) |
-| 九安 v0.7.10 测试台：新前端（工作台、单据池、知识库、我的规则、Agent 接入）、审批 Agent、测试、模拟来单、端到端测试 | [PoC 说明](poc/README.md) |
-| 部署、核对知识库（PG + pgvector → Nexus 连接器 → 审核 Agent）、库内语义检索、测试台经 PG 知识库 Agent 入库 | [kb/README.md](kb/README.md)（先看「现状」）、[kb/GUIDE.md](kb/GUIDE.md) |
-| 把审批风险判断卡（HTML 原页面）转成可入库的 .docx | [kb/convert/risk-cards/README.md](kb/convert/risk-cards/README.md) |
-| 改审核 Agent（「九安审核AI」）的提示词、看历次改动 | [audit-agent/README.md](audit-agent/README.md)、`audit-agent/prompt-history/` |
-| 这个版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
+| 部署的人（我们、九安运维） | [交付指南](docs/delivery/delivery-guide.md) → 各块自己的说明（下表） |
+| 管理员（在页面上接 Agent） | [快速上手](docs/delivery/quick-guide.md) |
+| 九安的开发、Agent 开发 | [开发者快速对接指南](docs/delivery/developer-guide.md)、[Skills 配置指南](docs/delivery/skills-guide.md)、[架构](docs/architecture.md) |
+| 项目负责人 | [客户部署路线](docs/delivery/customer-rollout.md)、[交付包指南](docs/delivery/package-guide.md) |
+| 接手维护、值班 | [交接文档](docs/delivery/handover.md)、[运维与后续迭代](docs/delivery/operations.md)、[部署与迭代规范](docs/delivery/deploy-iteration.md) |
+
+全部交付文档的索引：浏览器打开 `docs/delivery/README.html`。这个版本改了什么：[CHANGELOG.md](CHANGELOG.md)。
+
+## 部署分三块
+
+| 块 | 代码 | 一句话 | 说明 |
+|---|---|---|---|
+| 1. PG 与知识库后端 | `kb/` | PG + pgvector 容器、`kb_search`、规则表、Nexus 上的数据连接器与数据库凭证密钥；客户用自己的 SSH 密钥部署（`kb/deploy.sh preflight → all → verify`） | [kb/README.md](kb/README.md)、[kb/GUIDE.md](kb/GUIDE.md) |
+| 2. Nexus 上的 Agent 与发布 | `audit-agent/`、`customer-deploy/knowledgebase-writer-agent-pg/` | 审核 Agent（`setup.py`、`apply.py`，都先 `--dry-run`）；PG 知识库 Agent（照部署指南）；调用密钥由发布者本人在 Nexus 网页上签发 | [审核 Agent 说明](audit-agent/README.md)、[PG 知识库 Agent](knowledgebase-writer-agent-pg/README.md) |
+| 3. 前端 | `poc/infra/`、`poc/web/`、`poc/app/`、`patches/` | 一台 EC2 + CloudFront；`deploy.sh` 测试 → 构建 → 建栈 → 装构件 → 健康检查，经 SSH（或 SSM） | [部署说明](poc/infra/README.md)、[PoC 说明](poc/README.md) |
+
+正式环境按 1 → 2 → 3 部署，前端分批上；测试阶段三块在一台 m7g.xlarge（arm64）上。
+
+## 现在的环境（2026-11-02）
+
+| | |
+|---|---|
+| 站点 | <https://jiuan-v0710.tinyboat.blog>（栈 `andon-finance-m7g`，一台 m7g.xlarge；经 SSH + EC2 Instance Connect 端点管理） |
+| Nexus | `nxs-beine1013`：审核 Agent 发布 `pub_5c53e70d8dc7ddea`，PG 知识库 Agent 发布 `pub_6ea5f0855dff6c1b`；生产用另一套线上 Nexus AI <https://d3u3hj2us186y.cloudfront.net/> |
+| 旧栈 | `andon-finance-poc`（t3.large）先留几天，等项目负责人说再删 |
+
+## 目录
 
 | 目录 | 内容 |
 |---|---|
-| `docs/` | 交接文档（Markdown 是源，HTML 由 `docs/build-html.sh` 生成）、图、截图 |
-| `poc/app07/` | 九安 v0.7.10 测试台的外壳：口令登录、假汇联易、出网守卫、「Agent 接入」页的后端（Nexus 发布列表、测试、调用记录）、知识库页的后端（经 Nexus 上的知识库 Agent 上传、制度清单、检索）、新前端用的接口（复核、工作台、AI 轮次、原件分页）；`lib/`：A2A 客户端、名片规整、operator 命令行、口令登录、HTTP 小工具；`test/unit/` 单元测试，`test/e2e/` 端到端测试（`run07.sh`、`web07.e2e.mjs`、`jiuan07.e2e.mjs`） |
-| `poc/web07/` | 九安 v0.7.10 测试台的新前端（React + Vite + Tailwind，哈希路由）：外壳在 `/` 给它的构建产物，九安原来的页面在 `/analysis.html`；`npm test`、`npm run build`，`poc/infra/deploy.sh` 构建后随构件发出 |
-| `poc/bench/` | 构建九安 v0.7.10 副本（开发包 + 补丁 + `mysql2`）：`build-jiuan07.sh` |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0007（「Agent 接入」页、就绪与审批 Agent、「规则库 › 制度知识库」页、两种知识库方式与「我的规则」、`review_advice@1` 的时限 180 秒、`nexus-a2a` 连接器的时限 200 秒） |
-| `audit-agent/` | 审核 Agent（「九安审核AI」）的提示词与下发脚本：信封模式、`review_advice@1`、只读查知识库（先 `kb_search`）；`prompt-history/`：每次改线上提示词的改前、改后、比对、下发记录 |
-| `kb/` | 知识库部署工具：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对；测试台上用 `poc/infra/kb.sh` 驱动（整库 Cohere Embed v4，跑 db 阶段前看 kb/README.md「现状」） |
-| `kb/convert/risk-cards/` | 审批风险判断卡 HTML → 可入库的 .docx、整理表的脚本（只有代码，原页面和转出来的文件不进仓库） |
-| `knowledgebase-writer-agent-pg/` | PG 知识库 Agent「知识库文档管家（PG 版）」的源码：工具、提示词、打包与导入脚本、A2A 命令行 `scripts/a2a_rules.mjs`（说明见它的 README.md） |
-| `customer-deploy/knowledgebase-writer-agent-pg/` | 「知识库文档管家（PG 版）」的客户部署交付件（1.0.1）：部署指南、部署手册、发布 zip；源码在根目录的 `knowledgebase-writer-agent-pg/` |
-| `poc/infra/` | CloudFormation 模板（默认 m7g.xlarge）、`deploy.sh`（部署前端）、备份、换型、搬数据、测试台脚本、`kb.sh`（从栈里取配置驱动 `kb/`）；`test/`：部署脚本、模板、测试台脚本的测试（`cd poc/infra && node --test "test/**/*.test.mjs"`） |
-| `skills/nexus-ai-operator/` | Nexus 一侧的 Skill（1.1.0）：编码工具用它在 Nexus 上建 Agent、发布 |
+| `poc/web/` | 新前端（React + Vite + Tailwind，哈希路由）；`npm test`、`npm run build` |
+| `poc/app/` | 测试台外壳：口令登录、假汇联易、出网守卫、「Agent 接入」与知识库页的后端、新前端用的接口；`lib/` 共用模块；`test/unit/` 单元测试，`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） |
+| `poc/bench/` | `build-jiuan.sh`：开发包 + 补丁 + `mysql2` → 九安 v0.7.10 副本 |
+| `patches/jiuan-v0.7.10/` | 打进九安副本的补丁 0001–0007（「Agent 接入」、审批 Agent、制度知识库页、我的规则、两处时限） |
+| `poc/infra/` | 栈模板（默认 m7g.xlarge）、`deploy.sh`、`kb.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`、`lib/remote.sh`（SSH / Instance Connect / SSM）、`bench/`（实例上的脚本：`bench-configure.sh`、`bench-reset.sh`、`mysql-install.sh`、服务单元）、`env/example.env`、`secrets.env.example`；`test/` |
+| `kb/` | 知识库部署工具（preflight、db、network、egress、connector、ingest、agent、verify）；`convert/risk-cards/` 把审批风险判断卡转成可入库的 .docx |
+| `audit-agent/` | 审核 Agent 的提示词与下发脚本；`prompt-history/` 每次改线上提示词的留底 |
+| `knowledgebase-writer-agent-pg/` | PG 知识库 Agent 的源码：工具、提示词、打包与导入脚本、A2A 命令行 |
+| `customer-deploy/knowledgebase-writer-agent-pg/` | PG 知识库 Agent 的客户部署交付件（1.0.1）：部署指南、部署手册、发布 zip |
+| `knowbase-s3vectors-agent/` | S3 Vectors 方式的知识库 Agent（备用的另一种知识库方式；现有环境用 PG） |
+| `skills/nexus-ai-operator/` | 编码工具在 Nexus 上建 Agent、发布用的 Skill（1.1.0） |
+| `docs/` | 交付文档（Markdown 是源，`docs/build-html.sh` 生成 HTML）、图；`docs/delivery/make-package.sh` 出交付包 |
+| `tools/progress/` | 项目进度页（`docs/progress.html`）的生成工具 |
 
-**不在这里、另行交接**：`poc/infra/secrets.env`（当面交接）、九安开发包 `source/九安自助审核平台-测试环境开发包-v0.7.10/`（按版本号向九安取）、各人的 Nexus API 密钥（各人在自己的 Nexus 网页上生成）。测试证据 `evidence/` 只在交付包里。`secrets.env` 的样例和对应关系见 `poc/infra/secrets.env.example` 和[交接文档](docs/delivery/handover.md)第 2.5 节。
+## 测试
 
-**脱敏**：AWS 账号和 EC2 的标识（实例、IP、VPC、子网、安全组、快照、卷、构件桶、CloudFront 分发、托管区、证书）都换成了 AWS 文档的示例值，比如账号 `123456789012`、实例 `i-0123456789abcdef0`。部署到自己的账号前，把 `poc/infra/andon-finance-poc.yaml` 里 Parameters 的默认值换成自己的。线上 Nexus AI 的实际地址：<https://d3u3hj2us186y.cloudfront.net/>。
+```bash
+cd poc/infra && node --test "test/**/*.test.mjs"           # 部署脚本、模板、实例上的脚本
+cd poc/app && node --test "test/unit/**/*.test.mjs"        # 外壳
+cd poc/web && npm test                                     # 新前端
+python3 -B -m unittest discover -s audit-agent/tests       # 审核 Agent 的提示词与下发
+# kb 的测试见 kb/GUIDE.md；出包时 docs/delivery/make-package.sh 全部再跑一遍
+
+# 端到端（真实调用 Nexus，约 5 分钟；会重置测试台的库）
+DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<转好的风险判断卡 .docx> bash poc/app/test/e2e/run.sh
+```
+
+## 不在仓库里、另行交接
+
+- `poc/infra/secrets.env`（两个账号的口令和三项测试台密钥，当面交接；样例 `poc/infra/secrets.env.example`）、`poc/infra/env/<环境名>.env`、`kb/deploy.env`、`poc/infra/.state/`。
+- 九安开发包 `source/九安自助审核平台-测试环境开发包-v0.7.10/`（按版本号向九安取）。
+- 各人的 Nexus API 密钥（各人在自己的 Nexus 网页上生成）；两个发布的调用密钥（发布者本人在网页上签发，管理员在「Agent 接入」页粘贴）。
+- 测试证据 `evidence/` 只在交付包里。
+
+**脱敏**：交付包里 AWS 账号和 EC2 的标识（实例、IP、VPC、子网、安全组、快照、卷、构件桶、CloudFront 分发、托管区、证书）都换成了 AWS 文档的示例值，比如账号 `123456789012`、实例 `i-0123456789abcdef0`。部署到自己的账号前，把 `poc/infra/andon-finance-poc.yaml` 里 Parameters 的默认值换成自己的。

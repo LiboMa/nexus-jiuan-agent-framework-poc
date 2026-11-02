@@ -1,11 +1,11 @@
 flowchart TB
   browser["浏览器<br/>管理员 poc-reviewer · 分析员 poc-checker（虚构账号）"]
-  cf["CloudFront（Jiuan07Distribution）<br/>站点 = 栈参数 Jiuan07DomainName · 不缓存<br/>HTTPS 到这里为止"]
+  cf["CloudFront（Distribution）<br/>站点 = 栈参数 DomainName · 不缓存<br/>HTTPS 到这里为止"]
   subgraph ec2["一台 EC2（m7g.xlarge · arm64 · Amazon Linux 2023）"]
     direction TB
-    shell["测试台外壳 poc/app07<br/>服务 andon-jiuan07 · 用户 jiuan07 · 0.0.0.0:4180<br/>/ 新前端 web07 · /analysis.html 九安原页面 · /poc/*"]
+    shell["测试台外壳 poc/app<br/>服务 andon-jiuan · 用户 jiuan · 0.0.0.0:4180<br/>/ 新前端 web · /analysis.html 九安原页面 · /poc/*"]
     jiuan["九安 v0.7.10 副本（开发包 + 补丁 0001–0007）<br/>单据池 · 流水线 · Agent 接入 · 任务服务 · A2A 适配层"]
-    mysql["MySQL 8.0 容器 jiuan-mysql<br/>127.0.0.1:3306 · 库 jiuan07"]
+    mysql["MySQL 8.0 容器 jiuan-mysql<br/>127.0.0.1:3306 · 库 jiuan"]
     pg["PG + pgvector 容器 nexus-pgvector<br/>私网 IP:5432 · 库 nexus · kb_search"]
   end
   subgraph nx["Nexus（nxs-beine1013）"]

@@ -68,7 +68,7 @@ PostgreSQL + pgvector（kb/ 部署的那一套）
 | 本机工具 | `python3`（`build_tools.py`、`render.py` 只用标准库）、`git`（打包时记提交号）、[uv](https://docs.astral.sh/uv/)（管理员脚本用它临时装 boto3；本机测试装 psycopg 等）、Node 18.17+（A2A 自测与契约测试；客户端用到 `AbortSignal.any`） |
 | 同仓库的 `kb/` | 核心模块的源码（`kb/lib`）、提示词共用片段（`kb/prompt/kb_rules_v1.zh.md`）、本机测试的 PGlite 底座（`kb/tests`）。管理员密码走 SSM 时，借它的密封读取（`kb/lib/common.sh`、`kb/host/read-admin-password.sh`），SSM 命令历史里只有密文 |
 | 同仓库的 `knowbase-s3vectors-agent/` | 两个文档管家共用的管理员脚本（`scripts/admin_run.sh`、`nexus_admin.py`、`render.py`、`nexus_package.py`），本机测试的替身（`tests/stubs`） |
-| 同仓库的 `poc/` | `a2a_rules.mjs` 用测试台的 A2A 客户端：`poc/app07/lib/a2a-client.mjs`、`poc/app07/kb-steward-client.mjs` |
+| 同仓库的 `poc/` | `a2a_rules.mjs` 用测试台的 A2A 客户端：`poc/app/lib/a2a-client.mjs`、`poc/app/kb-steward-client.mjs` |
 | PG 知识库 | 已按 `kb/GUIDE.md` 部署，审核 Agent 的 PG 连接器能用（Sandbox 出站已放行 PG 所在网段，`kb/GUIDE.md` 5.5）。库里要是新版 `kb_search.sql`（有 `kb_embed_batch`、`kb_meta`），并且**已经换成 Cohere v4**：还是 Titan 的库先照 `kb/GUIDE.md` 7.6 换（基线 → 改实例角色权限 → `db --migrate-embeddings` → 对比）。没升级的库，工具报 `kb_not_ready` |
 | Nexus 数据库密钥 | 「数据库凭证」（`database_credentials`）类型，字段 `host` / `port` / `database` / `username` / `password`，用应用用户：就是审核 Agent 的 PG 连接器用的那把（`kb/deploy.sh connector` 建的）。记下它的密钥 ID `<KEY_ID>` |
 | 复制来源 | PG 版的 `knowbase_writer_agent`；没有的话，任何一个用标准入口生成的 Agent 都行 |
@@ -510,7 +510,7 @@ Agent 只回工具返回的那个 JSON：不加文字、不改字段、不翻译
 | `kb/lib/common.sh`、`kb/host/read-admin-password.sh` | SSM 方式读管理员密码（密封读取） |
 | `knowbase-s3vectors-agent/scripts/admin_run.sh`、`nexus_admin.py`、`render.py`、`nexus_package.py` | 共用管理员脚本：导入、核对、发布、绑定、发调用密钥；渲染提示词；读包描述 |
 | `knowbase-s3vectors-agent/tests/stubs/` | 本机测试里 `strands`、`nexus_utils.secret_key` 的替身 |
-| `poc/app07/lib/a2a-client.mjs`、`poc/app07/kb-steward-client.mjs` | A2A 客户端与测试台的规则请求客户端（`a2a_rules.mjs`、契约测试用） |
+| `poc/app/lib/a2a-client.mjs`、`poc/app/kb-steward-client.mjs` | A2A 客户端与测试台的规则请求客户端（`a2a_rules.mjs`、契约测试用） |
 | `kb/GUIDE.md` | PG 知识库本身：部署、`kb_search`、换向量模型（7.6）、排错 |
 
 ## 附录 B　用到的 Nexus API 与权限

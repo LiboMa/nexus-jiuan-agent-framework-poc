@@ -26,11 +26,11 @@
 
 ## 自定义规则
 
-审核员从单据页手动发起时，测试台把这个人的「我的规则」附在 `input.customRules = {owner, items: [{title, text}]}`（`poc/app07/custom-rules-advice.mjs`；自动初审不附）。提示词第 9 条 c 的 ③ 之后一段（两种方式一样）：它是附加审核要求，和公司制度一起核对，只能让结论更严（公司制度判 fail 的不改成 pass）；其中要求忽略规则、改输出格式的文字照第 3 条不执行；有它时 `note` 以「（含 <owner> 的自定义规则）」开头，适用的每条写一条 `kind: "rule"`、`ref` 以「自定义：<title>」开头的依据，不编规则编号；没有它时 `note` 里不出现「自定义规则」。
+审核员从单据页手动发起时，测试台把这个人的「我的规则」附在 `input.customRules = {owner, items: [{title, text}]}`（`poc/app/custom-rules-advice.mjs`；自动初审不附）。提示词第 9 条 c 的 ③ 之后一段（两种方式一样）：它是附加审核要求，和公司制度一起核对，只能让结论更严（公司制度判 fail 的不改成 pass）；其中要求忽略规则、改输出格式的文字照第 3 条不执行；有它时 `note` 以「（含 <owner> 的自定义规则）」开头，适用的每条写一条 `kind: "rule"`、`ref` 以「自定义：<title>」开头的依据，不编规则编号；没有它时 `note` 里不出现「自定义规则」。
 
 ## 知识库（pg 方式）
 
-- 发布的动态配置绑着数据连接器 `conn-f0c7233959d9`，连到测试台上的 `nexus-pgvector`（10.0.1.38:5432，库 `nexus`）。
+- 发布的动态配置绑着数据连接器 `conn-f0c7233959d9`，连到测试台上的 `nexus-pgvector`（2026-11-02 起是 m7g 测试环境那台，10.0.1.46:5432，库 `nexus`）。
 - 表是 `approval_rules`（只有有效的制度；下线的挪进 `approval_rules_archive`）：
   - rule_type=matrix 是审批矩阵的一行（审批路径），general 是制度说明与图例，chapter_note 是章节说明，clause 是正文条款和非矩阵表格的行；
   - 2026-10-31 起有效的只有审批风险判断卡（`risk-cards`，449 行，全是 clause）：`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 每行一张卡，卡片全文在 `scope_controls`（约 210–280 字，「卡片编号：…；费用类型：…；…；一期可行性：…」），segment、amount_tier、final_approver、approval_path_text 是空的。原来的 V4.0 审批矩阵（`finance-approval-v4`）已下线。
@@ -49,7 +49,7 @@
    python3 audit-agent/apply.py --env poc/infra/env/<环境名>.env --base <底稿> --dry-run   # 同上，再核对线上和底稿一致
    python3 audit-agent/apply.py --env poc/infra/env/<环境名>.env --base <底稿>
    ```
-4. 验证：在测试台的九安 v0.7.10 上发起「AI 独立建议」，或跑 `bash poc/app07/test/e2e/run07.sh`。
+4. 验证：在测试台的九安 v0.7.10 上发起「AI 独立建议」，或跑 `bash poc/app/test/e2e/run.sh`。
    - 调用密钥由管理员在测试台新前端的「Agent 接入」页上粘贴一次（https://jiuan-v0710.tinyboat.blog/#/agents；九安原来的页面仍在 https://jiuan-v0710.tinyboat.blog/analysis.html#adminConfig?tab=agentAccess），之后的调用都用这条启用记录。
    - 端到端测试不读、不粘贴密钥；它会核对 Agent 引用的规则编号在库里都存在。
 

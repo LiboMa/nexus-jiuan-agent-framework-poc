@@ -2,7 +2,7 @@
 subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
 date: 2026-11-02
 status: 交付版 v3（只留新 UI：九安 v0.7.10 测试台；部署分三块；默认 m7g）
-scope: poc/app07、poc/web07、poc/bench、patches/jiuan-v0.7.10、poc/infra、kb、audit-agent、knowledgebase-writer-agent-pg、skills/nexus-ai-operator、docs
+scope: poc/app、poc/web、poc/bench、patches/jiuan-v0.7.10、poc/infra、kb、audit-agent、knowledgebase-writer-agent-pg、skills/nexus-ai-operator、docs
 audience: 应用开发、Agent 开发、运维
 ---
 
@@ -13,13 +13,13 @@ audience: 应用开发、Agent 开发、运维
 1. **每一块只有一条发布路径**：前端只用 `poc/infra/deploy.sh`，知识库只用 `poc/infra/kb.sh`（驱动 `kb/deploy.sh`），审核 Agent 的提示词只用 `audit-agent/apply.py`。不手工改实例上的文件，不手工上传构件。
 2. **先测再发，确认再推**：单元测试 → 部署 → 端到端测试 → 项目负责人确认 → 推送、打标签。开发完、测完不等于可以提交。
 3. **密钥不进构件、不进仓库、不进文档、不进对话**：测试台的启动配置只在本机的 `poc/infra/secrets.env`（0600），由 `deploy.sh` 经加密的构件桶装到实例；Agent 的调用密钥只在「Agent 接入」页粘贴。现在整个 `secrets.env` 都会传上去；改成按白名单生成服务端的文件之前，不用的行别留在文件里（评审 I3，[交接文档](handover.md)第 6.1 节）。
-4. **九安开发包只读**：九安的改动只靠 `patches/jiuan-v0.7.10/` 下的补丁，由 `poc/bench/build-jiuan07.sh` 打进副本；外壳只经九安自己的扩展点（`platformRoutes` 钩子、前门）接入。
+4. **九安开发包只读**：九安的改动只靠 `patches/jiuan-v0.7.10/` 下的补丁，由 `poc/bench/build-jiuan.sh` 打进副本；外壳只经九安自己的扩展点（`platformRoutes` 钩子、前门）接入。
 5. **接口只增不改**：外壳的接口（`/api/analysis/v1/poc/*`）和补丁加的接口，只能加字段、加错误码，不能改含义；要改就加新的，旧的并存一个版本周期。
 6. **Markdown 是文档的唯一来源**：HTML 由 `docs/build-html.sh` 生成；推送前跑 `docs/build-html.sh --check`。
 
 **2026-11-02 起（分支 `feat/pg-kb-steward` 已合进 main）**：本仓库的 `kb/` 和栈模板都是 Cohere Embed v4（连同 `KbBedrockPolicy`），从本仓库跑知识库的 db 阶段、整栈部署都不会再把 Titan 装回去。跑 db 阶段前确认 `kb/deploy.env` 的 `EMBED_MODEL_ID` 是 Cohere v4（缺省就是），否则防混用检查（`kb/GUIDE.md` 7.6）会停下。测试台的日常发布照旧用 `deploy.sh --code-only`。
 
-**2026-11-02 起只留新 UI**：v0.5.3 PoC（`poc/app/`、`build-jiuan.sh`、`skills/agent-access/`、`knowledge-agent/`、`contract/`、v0.5.3 的端到端测试）从代码里拿掉了，下面只写九安 v0.7.10 测试台；机器类型以后用 m7g.xlarge（arm64，模板的默认）。
+**2026-11-02 起只留新 UI**：v0.5.3 PoC（当时的 `poc/app/`、`poc/bench/build-jiuan.sh`，现在这两个名字是 v0.7.10 测试台的；`skills/agent-access/`、`knowledge-agent/`、`contract/`、v0.5.3 的端到端测试）从代码里拿掉了，下面只写九安 v0.7.10 测试台；机器类型以后用 m7g.xlarge（arm64，模板的默认）。
 
 ## 2. 代码托管与版本
 
@@ -32,7 +32,7 @@ audience: 应用开发、Agent 开发、运维
 
 | 在交接仓库里 | 不在交接仓库里 |
 |---|---|
-| `poc/app07/`、`poc/web07/`（除 `dist/`）、`poc/bench/`（除 `node_modules/`）、`patches/` | `.build/`（九安副本，`build-jiuan07.sh` 生成）、`dist/`（交付包和新前端的构建产物） |
+| `poc/app/`、`poc/web/`（除 `dist/`）、`poc/bench/`（除 `node_modules/`）、`patches/` | `.build/`（九安副本，`build-jiuan.sh` 生成）、`dist/`（交付包和新前端的构建产物） |
 | `poc/infra/`：模板、脚本、`bench/`、`lib/`、`test/`、`env/example.env`、`secrets.env.example`、`README.md` | `poc/infra/secrets.env`、`poc/infra/env/*.env`（各环境的配置）、`poc/infra/.state/`（钉住的主机公钥） |
 | `kb/`、`audit-agent/`、`knowledgebase-writer-agent-pg/`、`knowbase-s3vectors-agent/`、`customer-deploy/`、`skills/` | 它们的 `deploy.env`、`.state/`、`.build/`；制度原文（.docx） |
 | `docs/`（含生成的 HTML） | `source/`（九安开发包，另行存放、按版本号引用） |
@@ -57,29 +57,29 @@ audience: 应用开发、Agent 开发、运维
 
 | 块 | 内容 | 工具 | 次序 |
 |---|---|---|---|
-| 前端 | 测试台外壳 `poc/app07`、新前端 `poc/web07`、九安 v0.7.10 副本、九安的 MySQL | `poc/infra/deploy.sh`；测试阶段和 PG 放在同一台机器上，以后由专人部署、可以分批 | PG 之后 |
+| 前端 | 测试台外壳 `poc/app`、新前端 `poc/web`、九安 v0.7.10 副本、九安的 MySQL | `poc/infra/deploy.sh`；测试阶段和 PG 放在同一台机器上，以后由专人部署、可以分批 | PG 之后 |
 | PG 与知识库后端 | PG + pgvector 容器、库内检索 `kb_search`、规则入库；PG 的地址和密码登记进 Nexus（数据连接器、数据库凭证密钥） | `kb/deploy.sh`（测试台上由 `poc/infra/kb.sh` 驱动）；PG 主机经 SSM 或部署人自己的 SSH 密钥（kb/GUIDE.md 第 4 节） | 先部署 |
 | Nexus 上的 Agent 与发布 | 审核 Agent、PG 知识库 Agent 的工具、提示词、发布 | `audit-agent/`、`knowledgebase-writer-agent-pg/`（客户部署件在 `customer-deploy/`）、`skills/nexus-ai-operator` | 和 PG 一起或之后；换 PG 主机不用动它们 |
 
-线上的测试台是一套共用的环境，所以：端到端测试会**重置测试台**（`bench07-reset.sh` 删掉并重建 `jiuan07` 库，单据从假汇联易重新同步；「Agent 接入」的启用记录和 Nexus 连接保留），跑之前通知正在用的人。
+线上的测试台是一套共用的环境，所以：端到端测试会**重置测试台**（`bench-reset.sh` 删掉并重建 `jiuan` 库，单据从假汇联易重新同步；「Agent 接入」的启用记录和 Nexus 连接保留），跑之前通知正在用的人。
 
 ## 4. 每类变更怎么做
 
 | 变更 | 改哪里 | 必跑的测试 | 怎么发布 | 怎么回滚 | 谁确认 |
 |---|---|---|---|---|---|
-| 外壳、新前端 | `poc/app07/`、`poc/web07/` | 新前端 `npm test`、外壳的单元测试（`deploy.sh` 都会先跑）；`run07.sh` 里相关的几条（第 7 节） | `deploy.sh --code-only`：动 AWS 之前先在 `poc/web07` 里 `npm ci`、测试、构建，`dist/` 随构件发出；外壳启动时读一次 `dist/` | 第 6.1 节（构件里带着那一版的 `dist/`） | 应用开发 + 项目负责人 |
-| 九安补丁 | `patches/jiuan-v0.7.10/`（`poc/bench/build-jiuan07.sh` 按文件名顺序打进副本） | 外壳的单元测试（要先构建副本）；`poc/infra/test` 的构建测试；全部端到端测试 | `deploy.sh --code-only`（构件里的九安是 `.build/jiuan07`，带 node_modules） | 第 6.1 节 | 应用开发 + 项目负责人 |
+| 外壳、新前端 | `poc/app/`、`poc/web/` | 新前端 `npm test`、外壳的单元测试（`deploy.sh` 都会先跑）；`run.sh` 里相关的几条（第 7 节） | `deploy.sh --code-only`：动 AWS 之前先在 `poc/web` 里 `npm ci`、测试、构建，`dist/` 随构件发出；外壳启动时读一次 `dist/` | 第 6.1 节（构件里带着那一版的 `dist/`） | 应用开发 + 项目负责人 |
+| 九安补丁 | `patches/jiuan-v0.7.10/`（`poc/bench/build-jiuan.sh` 按文件名顺序打进副本） | 外壳的单元测试（要先构建副本）；`poc/infra/test` 的构建测试；全部端到端测试 | `deploy.sh --code-only`（构件里的九安是 `.build/jiuan`，带 node_modules） | 第 6.1 节 | 应用开发 + 项目负责人 |
 | 部署脚本、测试台脚本 | `poc/infra/*.sh`、`poc/infra/lib/`、`poc/infra/bench/` | `cd poc/infra && node --test "test/**/*.test.mjs"`；健康检查；全部端到端测试 | `deploy.sh --code-only`（`bench/` 随构件发出）；测试台的三项密钥只补不换，实例上已有的只认原值（不一样就在重启前失败，服务照旧跑） | 第 6.1 节 | 运维 + 项目负责人 |
-| 栈参数（Nexus 地址、站点名、知识库的入站网段） | 环境配置 `poc/infra/env/<环境>.env`，或 `aws cloudformation deploy --parameter-overrides …` | 健康检查；`run07.sh` | `deploy.sh`（它把配置里写了的栈参数传上去），再 `--code-only`（按参数重写实例上外壳的配置） | 参数改回去，再部署一次 | 运维 + 项目负责人 |
-| 基础设施模板 | `poc/infra/andon-finance-poc.yaml` | `infra.test.mjs`；`validate-template`；全部端到端测试 | `deploy.sh`（不带 `--code-only`） | CloudFormation 失败会自动回滚；成功但有问题的，用仓库里上一版模板再部署 | 运维 + 项目负责人 |
+| 栈参数（Nexus 地址、站点名、知识库的入站网段） | 环境配置 `poc/infra/env/<环境>.env`，或 `aws cloudformation deploy --parameter-overrides …` | 健康检查；`run.sh` | `deploy.sh`（它把配置里写了的栈参数传上去），再 `--code-only`（按参数重写实例上外壳的配置） | 参数改回去，再部署一次 | 运维 + 项目负责人 |
+| 基础设施模板 | `poc/infra/andon-finance-poc.yaml` | `infra.test.mjs`；`validate-template`；全部端到端测试 | `deploy.sh`（不带 `--code-only`）；改了实例的用户数据（哪怕只是注释）实例会停机再开一次，先 `backup.sh`；只改资源的逻辑编号用 stack refactor，不重建资源 | CloudFormation 失败会自动回滚；成功但有问题的，用仓库里上一版模板再部署 | 运维 + 项目负责人 |
 | 启动配置（口令、测试台密钥） | `poc/infra/secrets.env` | 健康检查；端到端测试 | `deploy.sh --code-only` | 换回旧值（测试台的三项只补不换） | 运维 |
 | Agent 调用密钥、Nexus 连接、审批 Agent | 不在文件里：管理员在新前端「Agent 接入」页操作 | 页面上当场验证（名片 + `tasks/get`） | 启用、换钥匙、停用、设为审批 Agent，不部署、不重启 | 换回上一把密钥；把审批 Agent 指回原来那个 | 管理员 |
-| 审核 Agent 提示词（「九安审核AI」） | `audit-agent/prompt.yaml`，`audit-agent/apply.py` 写到 Nexus 并重存发布的动态配置 | `audit-agent/tests` 的单元测试；`apply.py --dry-run`；`run07.sh`（自动出建议的几条） | 第 6.3 节 | 第 6.3 节 | Agent 开发 + 项目负责人 |
-| PG 知识库 Agent | `knowledgebase-writer-agent-pg/`（工具、提示词） | 它自己的本机测试（它的 README 第 2 节）；`run07.sh` 知识库的几条 | 按它的 README 第 10 节：更新工具代码、重存提示词 | 它的 README 第 17 节 | Agent 开发 + 项目负责人 |
-| 知识库（PG、连接器、规则） | `kb/`、`kb/deploy.env` | `kb.sh verify`；`run07.sh` 知识库的几条 | `bash poc/infra/kb.sh <阶段>`（先 `--dry-run`） | 按 `kb/GUIDE.md`（制度可以下线、恢复；换模型有 `--restore-embeddings`） | 运维 + 项目负责人 |
-| 九安开发包升级 | `source/` 换成新版本，再跑 `poc/bench/build-jiuan07.sh`（补丁要能打上） | 全部单元测试；全部端到端测试 | `deploy.sh --code-only` | 指回旧版本再部署 | 应用开发 + 项目负责人 |
+| 审核 Agent 提示词（「九安审核AI」） | `audit-agent/prompt.yaml`，`audit-agent/apply.py` 写到 Nexus 并重存发布的动态配置 | `audit-agent/tests` 的单元测试；`apply.py --dry-run`；`run.sh`（自动出建议的几条） | 第 6.3 节 | 第 6.3 节 | Agent 开发 + 项目负责人 |
+| PG 知识库 Agent | `knowledgebase-writer-agent-pg/`（工具、提示词） | 它自己的本机测试（它的 README 第 2 节）；`run.sh` 知识库的几条 | 按它的 README 第 10 节：更新工具代码、重存提示词 | 它的 README 第 17 节 | Agent 开发 + 项目负责人 |
+| 知识库（PG、连接器、规则） | `kb/`、`kb/deploy.env` | `kb.sh verify`；`run.sh` 知识库的几条 | `bash poc/infra/kb.sh <阶段>`（先 `--dry-run`） | 按 `kb/GUIDE.md`（制度可以下线、恢复；换模型有 `--restore-embeddings`） | 运维 + 项目负责人 |
+| 九安开发包升级 | `source/` 换成新版本，再跑 `poc/bench/build-jiuan.sh`（补丁要能打上） | 全部单元测试；全部端到端测试 | `deploy.sh --code-only` | 指回旧版本再部署 | 应用开发 + 项目负责人 |
 | Nexus 平台升级 | Nexus 那边 | 全部端到端测试 | — | — | 应用开发 |
-| 换机器（另建一个栈，搬数据） | 新环境的配置 `poc/infra/env/<环境名>.env`；`poc/infra/migrate-data.sh` | `infra.test.mjs`；新栈 `deploy.sh` 的健康检查；`migrate-data.sh --dry-run`，实搬后它自己逐表核对；`kb.sh verify`；`run07.sh` | `deploy.sh`（新栈）→ `kb.sh db` → `migrate-data.sh` → `kb.sh connector`（把 Nexus 指到新 PG，先 `--dry-run`）→ 端到端 → 域名迁移前 `migrate-data.sh --skip-pg` 再同步一次 | 旧栈删掉之前不动：`kb.sh connector` 用旧环境的配置再跑一次，Nexus 就指回旧 PG；域名没迁就不影响用户 | 运维 + 项目负责人 |
+| 换机器（另建一个栈，搬数据） | 新环境的配置 `poc/infra/env/<环境名>.env`；`poc/infra/migrate-data.sh` | `infra.test.mjs`；新栈 `deploy.sh` 的健康检查；`migrate-data.sh --dry-run`，实搬后它自己逐表核对；`kb.sh verify`；`run.sh` | `deploy.sh`（新栈）→ `kb.sh db` → `migrate-data.sh` → `kb.sh connector`（把 Nexus 指到新 PG，先 `--dry-run`）→ 端到端 → 域名迁移前 `migrate-data.sh --skip-pg` 再同步一次 | 旧栈删掉之前不动：`kb.sh connector` 用旧环境的配置再跑一次，Nexus 就指回旧 PG；域名没迁就不影响用户 | 运维 + 项目负责人 |
 | 文档 | `docs/**/*.md` | `docs/build-html.sh --check` | 随代码推送 | 随代码回退 | 改的人 |
 
 ## 5. 发布清单
@@ -90,13 +90,13 @@ audience: 应用开发、Agent 开发、运维
 
 1. **本机检查**
    - `cd poc/infra && node --test "test/**/*.test.mjs"`：0 失败；
-   - `cd poc/web07 && npm ci && npm test`；`bash poc/bench/build-jiuan07.sh && (cd poc/app07 && node --test "test/unit/**/*.test.mjs")`：0 失败；
+   - `cd poc/web && npm ci && npm test`；`bash poc/bench/build-jiuan.sh && (cd poc/app && node --test "test/unit/**/*.test.mjs")`：0 失败；
    - 改了 `kb/` 或 `audit-agent/`：`python3 -B -m unittest discover -s kb/tests`、`python3 -B -m unittest discover -s audit-agent/tests`；
    - `docs/build-html.sh --check`：HTML 都是最新的。
 2. **评审**：合并请求有人看过；涉及接口、密钥、权限的改动，按[交接文档](handover.md)第 6.1 节逐条核对。
-3. **部署**：`DEPLOY_ENV=poc/infra/env/<环境>.env poc/infra/deploy.sh --code-only`（改了模板才去掉 `--code-only`）。脚本先跑 `poc/infra/test`、构建九安副本、构建并测试新前端、跑外壳的单元测试，补上缺的测试台密钥，再打包上传，在实例上（经 SSM 或 SSH）装构件、配置测试台（`bench07-configure.sh`）、重启并做健康检查。
+3. **部署**：`DEPLOY_ENV=poc/infra/env/<环境>.env poc/infra/deploy.sh --code-only`（改了模板才去掉 `--code-only`）。脚本先跑 `poc/infra/test`、构建九安副本、构建并测试新前端、跑外壳的单元测试，补上缺的测试台密钥，再打包上传，在实例上（经 SSM 或 SSH）装构件、配置测试台（`bench-configure.sh`）、重启并做健康检查。
    - 实例上的安装或重启没有成功，脚本就报失败，不做健康检查；健康检查还分不出新旧版本，要靠第 6.1 节回滚。
-4. **端到端测试**：`DEPLOY_ENV=poc/infra/env/<环境>.env [KB_E2E_DOCX=…] bash poc/app07/test/e2e/run07.sh`；只跑一部分见第 7 节。
+4. **端到端测试**：`DEPLOY_ENV=poc/infra/env/<环境>.env [KB_E2E_DOCX=…] bash poc/app/test/e2e/run.sh`；只跑一部分见第 7 节。
 5. **确认**：把端到端测试结果和截图（`evidence/round7/e2e/`）交项目负责人。
 6. **推送与标签**：确认之后再推送，打 `poc-YYYYMMDD-N` 标签，写 `CHANGELOG.md`；交接内容有变化时，用 `make-package.sh --export` 同步到交接仓库。
 
@@ -113,7 +113,7 @@ audience: 应用开发、Agent 开发、运维
 ```bash
 # 在实例上（经 SSH 或 SSM 的会话里，见运维第 1.2 节）
 cd /opt/andon-finance && sudo mv current failed && sudo mv previous current
-sudo systemctl restart andon-jiuan07.service && sleep 5 && systemctl is-active andon-jiuan07.service
+sudo systemctl restart andon-jiuan.service && sleep 5 && systemctl is-active andon-jiuan.service
 curl -fsS http://127.0.0.1:4180/poc/healthz
 sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以后
 ```
@@ -139,7 +139,7 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 1. **先存底稿**：把线上现在的提示词存下来（网页上改过的话尤其要存）。
 2. **改 `prompt.yaml`**，`agentVersion` 的日期和序号加一；更新 `audit-agent/tests/fixtures/` 里的期望文件，跑 `python3 -B -m unittest discover -s audit-agent/tests`。
 3. **先演练再下发**：`python3 audit-agent/apply.py --env poc/infra/env/<环境>.env --base <底稿> --dry-run` 看线上到新版的比对（提示词和动态配置里的工具），确认后去掉 `--dry-run`。`apply.py` 每次都重存发布的动态配置：只改提示词不重存，A2A 调用用的还是旧快照。
-4. **验证**：在测试台上发起一轮 AI 独立建议，或跑 `run07.sh`；量时长要换一张单（同一张单重发会落进 Nexus 上同一段对话，回得很快）。
+4. **验证**：在测试台上发起一轮 AI 独立建议，或跑 `run.sh`；量时长要换一张单（同一张单重发会落进 Nexus 上同一段对话，回得很快）。
 5. **留底**：每次改线上都在 `audit-agent/prompt-history/<日期>/` 留一个目录，和已有的 `2026-10-31/`、`2026-11-01/`、`2026-11-01b/` 一样：`prompt-before-<旧版本>.yaml`（回退用的底稿）、`prompt-after-<新版本>.yaml`、`diff-before-apply.txt`（演练的输出）、`apply-log.txt`（下发的输出）、`README.md`（为什么改、项目负责人怎么定的、线上核对：发布修订号、工具个数、effort、agentVersion、源文件的提交）。和提示词改动一起提交。
 
 **回退**：把 `prompt.yaml` 换回上一版的提交（每个 `prompt-history/<目录>/README.md` 写了是哪个提交），用 `--base` 指向这次的 `prompt-after-*.yaml`（线上现在那份）再下发一次。动态配置里清掉的工具不在本仓库，要恢复只能在 Nexus 网页上重新加；`apply.py` 在 pg 方式下每次都按 `CONFIG_TOOLS`（现在是空的）重写工具清单，加回去以后要先改它。
@@ -149,9 +149,9 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 | 测试 | 跑在哪 | 花费 | 什么时候跑 |
 |---|---|---|---|
 | 部署脚本、模板、测试台脚本：`poc/infra/test/`（夹具在 `test/fixtures/deploy-env`） | 本机；九安副本的构建测试要本机有开发包，没有就跳过那几条 | 免费 | 每次改 `poc/infra/`；`deploy.sh` 每次都先跑 |
-| 新前端 `poc/web07` 的 `npm test`、外壳 `poc/app07/test/unit/` | 本机，假 A2A 网关（`poc/app07/test/unit/helpers/fake-a2a.mjs`） | 免费 | 每次改代码；`deploy.sh` 每次都先跑 |
+| 新前端 `poc/web` 的 `npm test`、外壳 `poc/app/test/unit/` | 本机，假 A2A 网关（`poc/app/test/unit/helpers/fake-a2a.mjs`） | 免费 | 每次改代码；`deploy.sh` 每次都先跑 |
 | 知识库工具 `kb/tests`、审核 Agent 下发脚本 `audit-agent/tests` | 本机 | 免费 | 改了它们；`make-package.sh` 出包前会跑 |
-| `run07.sh`（先 `web07.e2e.mjs`，再 `jiuan07.e2e.mjs`） | 线上测试台；开始前重置 `jiuan07` 库，保留「Agent 接入」的启用记录 | 完整一次约 1–3 美元 | 改了外壳、新前端、补丁、审核 Agent 提示词、知识库。只跑一部分：`E2E07_FILES=<文件>`，再加 node 的 `--test-name-pattern`；`KB_E2E_DOCX=<转好的风险判断卡 .docx>` 时跑知识库上传那条 |
+| `run.sh`（先 `web.e2e.mjs`，再 `api.e2e.mjs`） | 线上测试台；开始前重置 `jiuan` 库，保留「Agent 接入」的启用记录 | 完整一次约 1–3 美元 | 改了外壳、新前端、补丁、审核 Agent 提示词、知识库。只跑一部分：`E2E_FILES=<文件>`，再加 node 的 `--test-name-pattern`；`KB_E2E_DOCX=<转好的风险判断卡 .docx>` 时跑知识库上传那条 |
 
 写测试和跑测试的规矩：
 - **先写会失败的测试**，看着它失败，再写实现；修 bug 也一样，先写能复现的测试。
@@ -166,7 +166,7 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 |---|---|
 | 外壳的接口（`/api/analysis/v1/poc/*`）和补丁加的「Agent 接入」接口 | 只增不改：可以加字段、加错误码、加接口；不能改已有字段和错误码的含义 |
 | 审核 Agent 的 `agentVersion` | `jiuan-audit-ai-kb-YYYY-MM-DD.N`，改了提示词就加一（第 6.3 节） |
-| 知识库的约定 `kb.rules/v1` | 只增不改；测试台的客户端按它校验回复（`poc/app07/kb-steward-client.mjs`） |
+| 知识库的约定 `kb.rules/v1` | 只增不改；测试台的客户端按它校验回复（`poc/app/kb-steward-client.mjs`） |
 | 九安开发包 | 用目录名里的版本号（现在 v0.7.10）；升级时在 `CHANGELOG.md` 写明 |
 
 ## 9. 评审建议、还没做到的规则
@@ -185,7 +185,7 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 ## 10. 九安开发包升级的步骤
 
 1. 新版本解压到 `source/` 下的新目录，老版本保留。
-2. 把 `poc/bench/build-jiuan07.sh` 里的开发包路径和补丁目录（`patches/jiuan-v0.7.10/`）改成新版本，再跑一次；补丁打不上会报错，不留半成品。
+2. 把 `poc/bench/build-jiuan.sh` 里的开发包路径和补丁目录（`patches/jiuan-v0.7.10/`）改成新版本，再跑一次；补丁打不上会报错，不留半成品。
 3. 逐个修补丁，跑 `poc/infra/test` 和外壳的单元测试。
 4. 部署到测试环境（`deploy.sh --code-only`），跑全部端到端测试。
 5. 确认后在 `CHANGELOG.md` 写明九安版本变化；老目录再保留一个发布周期。

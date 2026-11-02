@@ -1,5 +1,34 @@
 # 变更记录
 
+## 2026-11-02（三）：名字去掉「07」；交付指南、新 README
+
+只留新 UI 以后，「07」不再用来区分两套，项目负责人 2026-11-02 定：代码、脚本、服务、实例上的用户、目录和库名都去掉「07」。行为不变。
+
+**改了的名字**
+
+| 哪里 | 原来 | 现在 |
+|---|---|---|
+| 代码目录、脚本 | `poc/app07/`、`poc/web07/`、`poc/bench/build-jiuan07.sh`、`poc/infra/bench/bench07-configure.sh`、`bench07-reset.sh`、`andon-jiuan07.service`、`poc/infra/test/bench07-*.test.mjs` | `poc/app/`、`poc/web/`、`poc/bench/build-jiuan.sh`、`poc/infra/bench/bench-configure.sh`、`bench-reset.sh`、`andon-jiuan.service`、`poc/infra/test/bench-*.test.mjs` |
+| 端到端测试 | `poc/app07/test/e2e/run07.sh`、`web07.e2e.mjs`、`jiuan07.e2e.mjs` | `poc/app/test/e2e/run.sh`、`web.e2e.mjs`、`api.e2e.mjs` |
+| 环境变量 | `POC07_*`、`E2E07_*`、`JIUAN07_*`、`J07_DOMAIN`；环境配置的 `JIUAN07_DOMAIN_NAME` | `POC_*`、`E2E_*`、`JIUAN_*`、`SITE_DOMAIN`；`DOMAIN_NAME` |
+| `secrets.env` | `JIUAN07_MYSQL_APP_PASSWORD`、`JIUAN07_DATA_KEY` | `JIUAN_MYSQL_APP_PASSWORD`、`JIUAN_DATA_KEY`（`deploy.sh` 见到旧名字就原地改名、值不变，不会另生成一把数据密钥） |
+| 栈模板 | 参数 `Jiuan07DomainName`；资源 `Jiuan07Distribution`、`Jiuan07RecordA` / `AAAA`；输出 `Jiuan07Url`、`Jiuan07DistributionId` | `DomainName`；`Distribution`、`SiteRecordA` / `AAAA`；`SiteUrl`、`DistributionId` |
+| 实例上 | 服务 `andon-jiuan07`、用户和组 `jiuan07`、`/var/lib/jiuan07`、`/etc/andon-finance/jiuan07`、库 `jiuan07`、库账号 `jiuan07_app` | `andon-jiuan`、`jiuan`、`/var/lib/jiuan`、`/etc/andon-finance/jiuan`、库 `jiuan`、`jiuan_app` |
+
+`poc/app/`、`poc/bench/build-jiuan.sh`、`bench-configure.sh`、`bench-reset.sh`、`run.sh` 这几个名字 v0.5.3 时用过：下面更早的记录里说拿掉了它们，指的是 v0.5.3 的那一份。
+
+**没改的两个标识**：假汇联易的租户编号 `fake-tenant-jiuan07`（连接编号 `hly-prod-fake-tenant-jiuan07`）和外壳连 Nexus 的 operator 配置名 `jiuan07`。它们已经写进数据：库里各表的外键和「Agent 接入」的启用记录（九安用数据密钥加密，记录里带连接编号）都按它存。改了它们，端到端测试的重置会因为外键对不上而失败，启用记录也要管理员重新粘贴调用密钥。
+
+**旧名字的实例自动改过来**（`poc/infra/bench/bench-configure.sh` 的 legacy-07 段，只在旧名字在、新名字不在时做，数据不动）：停掉、删掉 `andon-jiuan07.service`；`usermod -l` / `groupmod -n` 把用户和组改名（uid 不变）；挪目录、改家目录；MySQL 里新建库 `jiuan`、逐表 `RENAME TABLE` 过去（还有没搬走的表就停下，两边都不删）、删掉空的 `jiuan07`；`RENAME USER` 库账号，再按现在的口令和权限重设。`bench/mysql-install.sh`：v0.5.3 时建的 MySQL 容器（带 `MYSQL_PASSWORD_FILE`，那个文件已经没了，重启后起不来）先删掉容器、数据目录不动，再按现在的参数建。
+
+**栈的改名不重建资源**：逻辑编号用 CloudFormation 的 stack refactor（`create-stack-refactor` → `execute-stack-refactor`）改，分发和两条记录原样保留；再用新模板更新栈。用户数据里改了一行注释，栈更新时实例停机再开了一次。
+
+**`bench-reset.sh`**（端到端测试重置库用）：不管成功失败，退出时都把服务起来；中途失败时「Agent 接入」的启用记录导出留在 `/var/tmp/jiuan-reset.*/enablement.sql`（0600）不删，并说出路径；导出加 `--hex-blob`。
+
+**新文档**：[交付指南](docs/delivery/delivery-guide.md)（从零部署三块、验收、日常变更与回滚、交接、现在的环境），加进文档索引、交付包指南和 `docs/build-html.sh`；根目录的 README.md 重写。其余文档换成新名字。
+
+**环境**（m7g 栈 `andon-finance-m7g`，2026-11-02）：改名前根卷快照 `snap-0d6defa878e57b0b9`。21:17–21:45（UTC+8）站点不可用约 28 分钟：栈更新让实例停机再开，MySQL 容器还是 v0.5.3 时建的那个，重启后找不到已经删掉的口令文件，一直起不来（上面 `mysql-install.sh` 的改动就是为它）。第一次端到端测试因为当时租户编号也改了名，重置写回启用记录时外键对不上而失败，服务停着、启用记录的导出也没留下；当场起了服务，把两个标识改回原值，加固了 `bench-reset.sh`，启用记录从旧栈的库里取回（1 行）。之后端到端 26 条全部通过；`kb.sh verify` 只剩已知的一条。
+
 ## 2026-11-02（二）：只留新 UI，拿掉 v0.5.3 PoC；以后用 m7g
 
 项目负责人 2026-11-02 定：机器类型以后用 **m7g.xlarge**（arm64）；旧的应用不要了。只留新 UI：九安 v0.7.10 测试台 = 新前端 `poc/web07` + 外壳 `poc/app07` + 九安 v0.7.10 副本。九安自己的原页面 `/analysis.html` 留着（它在九安开发包里；新 UI 的「设置」还链到它的后台配置和平台）。部署分三块：前端（`poc/infra/deploy.sh`）、PG 与知识库后端（`kb/`，测试台上由 `poc/infra/kb.sh` 驱动）、Nexus 上的 Agent 与发布（`audit-agent/`、`knowledgebase-writer-agent-pg/`、`skills/nexus-ai-operator`）。

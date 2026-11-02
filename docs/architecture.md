@@ -20,12 +20,12 @@ audience: 应用开发、Agent 开发、运维
 
 ```
 浏览器（管理员 poc-reviewer / 分析员 poc-checker，虚构账号）
-   │ HTTPS  <Jiuan07DomainName>
-CloudFront（一个分发 Jiuan07Distribution；不缓存；转发 Host、Origin、Cookie 与查询串）
+   │ HTTPS  <DomainName>
+CloudFront（一个分发 Distribution；不缓存；转发 Host、Origin、Cookie 与查询串）
    │ HTTP :4180（安全组只放 CloudFront 回源前缀列表 pl-3b927c52）
 EC2（m7g.xlarge；Nexus 同 VPC 公有子网；Amazon Linux 2023，Node 24）
-   └─ systemd 服务 andon-jiuan07（用户 jiuan07，0.0.0.0:4180，屏蔽 IMDS，出网只放行 Nexus）
-         ├─ 外壳 poc/app07：前门 front.mjs（/ 给新前端 web07/dist，口令登录 /poc/login，模拟来单 /poc/intake，健康检查 /poc/healthz）
+   └─ systemd 服务 andon-jiuan（用户 jiuan，0.0.0.0:4180，屏蔽 IMDS，出网只放行 Nexus）
+         ├─ 外壳 poc/app：前门 front.mjs（/ 给新前端 web/dist，口令登录 /poc/login，模拟来单 /poc/intake，健康检查 /poc/healthz）
          │     ├─ 新前端用的接口 /api/analysis/v1/poc/*：复核、工作台、AI 轮次、原件分页、我的规则、知识库
          │     ├─ 「Agent 接入」页的后端：Nexus 发布列表（经 nexus-ai-operator）、测试、调用记录
          │     └─ 进程内的假汇联易（九安的测试环境客户端照常跑，不做真实网络 I/O）
@@ -33,7 +33,7 @@ EC2（m7g.xlarge；Nexus 同 VPC 公有子网；Amazon Linux 2023，Node 24）
                ├─ 单据同步与流水线、读原件、Agent 任务服务（review_advice@1）、调用中间件 nexus-a2a
                ├─ A2A 适配层 providers/nexus-a2a.mjs（契约 src/agent-contract/，jiuan.agent/v1）
                ├─ 「Agent 接入」（启用记录，调用密钥加密存库）
-               └─ MySQL 容器 jiuan-mysql（mysql:8.0，127.0.0.1:3306，库 jiuan07）
+               └─ MySQL 容器 jiuan-mysql（mysql:8.0，127.0.0.1:3306，库 jiuan）
       PG 容器 nexus-pgvector（pgvector/pgvector:pg17，私网 IP:5432，库 nexus，kb_search、Cohere Embed v4）
             │ ① A2A 0.3 message/stream，Bearer <管理员在「Agent 接入」页粘贴的调用密钥>
             │ ② A2A 名片 /a2a/<发布编号>/.well-known/agent-card.json（公开，不带密钥）
@@ -60,15 +60,15 @@ Nexus nxs-beine1013（v0.3.28）
 
 ## 4. 密钥与配置
 
-- **Agent 和 Nexus 的密钥不在任何文件里**：管理员在「Agent 接入」页连接 Nexus（operator 的凭证在 `/var/lib/jiuan07/nexus/`）、粘贴调用密钥启用（加密存进九安的库，页面上只显示指纹）。加、换、停用都不改文件、不部署、不重启。
-- **启动配置**：只在本机的 `poc/infra/secrets.env`（0600），五项：两个虚构账号的口令、MySQL 的 root 口令、`jiuan07_app` 的口令、九安存储的数据密钥（样例 `poc/infra/secrets.env.example`）。`deploy.sh` 经加密的构件桶装到实例的 `/etc/andon-finance/secrets.env`（root 0600），再拆成 `/etc/andon-finance/bench/`、`/etc/andon-finance/jiuan07/` 下的文件给 MySQL 和外壳。
-- **普通配置**（站点名、Nexus 地址、知识库方式与知识库 Agent 的发布）：在环境配置 `poc/infra/env/<环境>.env` 和栈参数里；每次部署按它们重写 `/etc/andon-finance/jiuan07/env`。审批流发给哪个发布不在配置里，由「Agent 接入」页决定。
+- **Agent 和 Nexus 的密钥不在任何文件里**：管理员在「Agent 接入」页连接 Nexus（operator 的凭证在 `/var/lib/jiuan/nexus/`）、粘贴调用密钥启用（加密存进九安的库，页面上只显示指纹）。加、换、停用都不改文件、不部署、不重启。
+- **启动配置**：只在本机的 `poc/infra/secrets.env`（0600），五项：两个虚构账号的口令、MySQL 的 root 口令、`jiuan_app` 的口令、九安存储的数据密钥（样例 `poc/infra/secrets.env.example`）。`deploy.sh` 经加密的构件桶装到实例的 `/etc/andon-finance/secrets.env`（root 0600），再拆成 `/etc/andon-finance/bench/`、`/etc/andon-finance/jiuan/` 下的文件给 MySQL 和外壳。
+- **普通配置**（站点名、Nexus 地址、知识库方式与知识库 Agent 的发布）：在环境配置 `poc/infra/env/<环境>.env` 和栈参数里；每次部署按它们重写 `/etc/andon-finance/jiuan/env`。审批流发给哪个发布不在配置里，由「Agent 接入」页决定。
 
 ## 5. 部署：三块
 
 | 块 | 内容 | 工具 |
 |---|---|---|
-| 前端 | 外壳、新前端、九安 v0.7.10 副本、九安的 MySQL | `poc/infra/deploy.sh`：测试 → 构建（`poc/bench/build-jiuan07.sh`、`poc/web07`）→ 建栈（模板 `poc/infra/andon-finance-poc.yaml`）→ 打包上传 → 实例上（经 SSM 或 SSH）装构件、配置（`bench/bench07-configure.sh`）、重启 → 健康检查 `/poc/healthz` |
+| 前端 | 外壳、新前端、九安 v0.7.10 副本、九安的 MySQL | `poc/infra/deploy.sh`：测试 → 构建（`poc/bench/build-jiuan.sh`、`poc/web`）→ 建栈（模板 `poc/infra/andon-finance-poc.yaml`）→ 打包上传 → 实例上（经 SSM 或 SSH）装构件、配置（`bench/bench-configure.sh`）、重启 → 健康检查 `/poc/healthz` |
 | PG 与知识库后端 | PG + pgvector、`kb_search`、规则入库、Nexus 数据连接器与数据库凭证密钥 | `kb/deploy.sh`，测试台上由 `poc/infra/kb.sh` 驱动；客户用自己的 SSH 密钥先部署这一块 |
 | Nexus 上的 Agent 与发布 | 审核 Agent、PG 知识库 Agent | `audit-agent/apply.py`、`knowledgebase-writer-agent-pg/`（客户部署件 `customer-deploy/`）、`skills/nexus-ai-operator` |
 
@@ -78,22 +78,22 @@ Nexus nxs-beine1013（v0.3.28）
 
 | 路径 | 做什么 |
 |---|---|
-| `poc/app07/server.mjs` | 组合根：照九安 `scripts/start-analysis.mjs` 组装九安副本，换掉配置、汇联易传输、出网，挂上外壳的接口 |
-| `poc/app07/front.mjs` | 前门：`/` 给新前端，口令登录页、模拟来单页；别的请求交给九安 |
-| `poc/app07/nexus-access.mjs`、`agent-tests.mjs`、`agent-calls.mjs`、`agent-routes.mjs`、`envelope-tests.mjs` | 「Agent 接入」页：发布列表、测试、调用记录、审批流只发给审批 Agent、请求信封测试用的契约部分 |
-| `poc/app07/kb-steward-routes.mjs`、`kb-steward-client.mjs`、`kb-docx.mjs` | 知识库页：接口、经 A2A 调知识库 Agent（`kb.rules/v1`）、上传的 .docx |
-| `poc/app07/reviews.mjs`、`dashboard.mjs`、`advice-rounds.mjs`、`evidence-pages.mjs`、`user-scope.mjs` | 新前端用的接口：复核（表在 `jiuan07` 库）、工作台、AI 轮次、原件分页、公司范围 |
-| `poc/app07/custom-rules.mjs`、`custom-rules-advice.mjs` | 我的规则：上传、附进人发起的那一轮 |
-| `poc/app07/fake-hly.mjs`、`fixtures.mjs`、`seed-anchor.mjs`、`intake.mjs`、`originals-first.mjs` | 假汇联易、虚构单据、种子时间锚点、模拟来单、先读原件 |
-| `poc/app07/guard.mjs`、`settings.mjs`、`jiuan.mjs` | 出网守卫、运行设置、九安副本的唯一入口 |
-| `poc/app07/lib/` | `a2a-client.mjs`（A2A 0.3 流式客户端）、`catalog.mjs`（发布与名片）、`cli.mjs`（调 nexus-ai-operator）、`login.mjs`（口令登录）、`http.mjs`（HTTP 小工具） |
-| `poc/web07/` | 新前端（React 19、TypeScript、Vite、Tailwind 4、TanStack Query、Radix，哈希路由） |
+| `poc/app/server.mjs` | 组合根：照九安 `scripts/start-analysis.mjs` 组装九安副本，换掉配置、汇联易传输、出网，挂上外壳的接口 |
+| `poc/app/front.mjs` | 前门：`/` 给新前端，口令登录页、模拟来单页；别的请求交给九安 |
+| `poc/app/nexus-access.mjs`、`agent-tests.mjs`、`agent-calls.mjs`、`agent-routes.mjs`、`envelope-tests.mjs` | 「Agent 接入」页：发布列表、测试、调用记录、审批流只发给审批 Agent、请求信封测试用的契约部分 |
+| `poc/app/kb-steward-routes.mjs`、`kb-steward-client.mjs`、`kb-docx.mjs` | 知识库页：接口、经 A2A 调知识库 Agent（`kb.rules/v1`）、上传的 .docx |
+| `poc/app/reviews.mjs`、`dashboard.mjs`、`advice-rounds.mjs`、`evidence-pages.mjs`、`user-scope.mjs` | 新前端用的接口：复核（表在 `jiuan` 库）、工作台、AI 轮次、原件分页、公司范围 |
+| `poc/app/custom-rules.mjs`、`custom-rules-advice.mjs` | 我的规则：上传、附进人发起的那一轮 |
+| `poc/app/fake-hly.mjs`、`fixtures.mjs`、`seed-anchor.mjs`、`intake.mjs`、`originals-first.mjs` | 假汇联易、虚构单据、种子时间锚点、模拟来单、先读原件 |
+| `poc/app/guard.mjs`、`settings.mjs`、`jiuan.mjs` | 出网守卫、运行设置、九安副本的唯一入口 |
+| `poc/app/lib/` | `a2a-client.mjs`（A2A 0.3 流式客户端）、`catalog.mjs`（发布与名片）、`cli.mjs`（调 nexus-ai-operator）、`login.mjs`（口令登录）、`http.mjs`（HTTP 小工具） |
+| `poc/web/` | 新前端（React 19、TypeScript、Vite、Tailwind 4、TanStack Query、Radix，哈希路由） |
 | `patches/jiuan-v0.7.10/` | 打进九安副本的补丁 0001–0007 |
 
 ## 7. 已知限制
 
 - **源站是明文 HTTP**：CloudFront 到实例这一段（评审 C2，[交接文档](delivery/handover.md)第 6.1 节）。
-- **数据只在这一台实例上**：MySQL、PG、`/var/lib/jiuan07` 都在根卷上；替换前 `backup.sh`，换机器 `migrate-data.sh`。
+- **数据只在这一台实例上**：MySQL、PG、`/var/lib/jiuan` 都在根卷上；替换前 `backup.sh`，换机器 `migrate-data.sh`。
 - **九安上游的 `review_advice@1` 时限是 120 秒**：测试台用补丁放到 180 秒（[开发者快速对接指南](delivery/developer-guide.md)第 4 章）。
 - **健康检查看不出 AI 建议出不来**：调用密钥失效、Nexus 出错时 `/poc/healthz` 照样通（评审 I6）。
 - **这套 Nexus 用的是旧部署模板**：`/a2a` 经前端反代转发，请求体超过 10 MB 会被截断。

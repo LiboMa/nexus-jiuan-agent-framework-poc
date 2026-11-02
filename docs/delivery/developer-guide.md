@@ -155,7 +155,7 @@ Agent 的提示词要写清：
 
 测试台的知识库页不连 PG、不解析文档：每个操作都经 A2A 发给 Nexus 上的 PG 知识库 Agent「知识库文档管家（PG 版）」，约定是 `kb.rules/v1`（`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`）：一行文字说「只调用对应的工具一次，原样返回工具的 JSON」，加一个数据 Part `{ op, … }`。操作和回复的形状见 `knowledgebase-writer-agent-pg/README.md` 第 11 节。
 
-**Agent 在 JSON 前多说一句话。** 让 Agent「只调一次工具、原样返回工具的 JSON」时，模型偶尔会在调工具前先写一句话，A2A 把各段文字拼在一起回来，回复就成了「一句话 + JSON」。测试台的客户端（`poc/app07/kb-steward-client.mjs`）只放过这一种情况：前面是不超过 200 字、不含 `{ }` 的一句话，后面是一个完整的 JSON 对象；收下以后记一行 `POC_KB_AGENT_REPLY_LEADIN <操作> <字数>`，不记内容；别的照样判不合格（`KB_AGENT_REPLY_INVALID`）。九安的代码要解析这类回复时可以照这样做。
+**Agent 在 JSON 前多说一句话。** 让 Agent「只调一次工具、原样返回工具的 JSON」时，模型偶尔会在调工具前先写一句话，A2A 把各段文字拼在一起回来，回复就成了「一句话 + JSON」。测试台的客户端（`poc/app/kb-steward-client.mjs`）只放过这一种情况：前面是不超过 200 字、不含 `{ }` 的一句话，后面是一个完整的 JSON 对象；收下以后记一行 `POC_KB_AGENT_REPLY_LEADIN <操作> <字数>`，不记内容；别的照样判不合格（`KB_AGENT_REPLY_INVALID`）。九安的代码要解析这类回复时可以照这样做。
 
 ## 6. 签发调用密钥，在「Agent 接入」里启用（人做）
 
@@ -225,8 +225,8 @@ read -rs KEY && curl -s -o /dev/null -w '%{http_code}\n' -X POST "$NEXUS/a2a/$PU
 | 测试台加的补丁（Agent 接入、知识库页、我的规则、时限） | 交接仓库的 `patches/jiuan-v0.7.10/` 0001–0007 |
 | 一个查知识库的审核 Agent（`review_advice@1`）和它的历次改动 | 交接仓库的 `audit-agent/prompt.yaml`、`audit-agent/README.md`、`audit-agent/prompt-history/`（每一版改前改后、比对、下发记录） |
 | PG 知识库 Agent 和 `kb.rules/v1` | 交接仓库的 `knowledgebase-writer-agent-pg/README.md`；客户部署件 `customer-deploy/knowledgebase-writer-agent-pg/` |
-| A2A 客户端、知识库客户端的参考写法 | 交接仓库的 `poc/app07/lib/a2a-client.mjs`、`poc/app07/kb-steward-client.mjs` |
-| 假 A2A 网关（测试用） | 交接仓库的 `poc/app07/test/unit/helpers/fake-a2a.mjs` |
+| A2A 客户端、知识库客户端的参考写法 | 交接仓库的 `poc/app/lib/a2a-client.mjs`、`poc/app/kb-steward-client.mjs` |
+| 假 A2A 网关（测试用） | 交接仓库的 `poc/app/test/unit/helpers/fake-a2a.mjs` |
 | 知识库本身（PG、`kb_search`、换向量模型） | 交接仓库的 `kb/GUIDE.md` |
 | nexus-ai-operator | `skills/nexus-ai-operator/`，装法见 [Skills 配置指南](skills-guide.md) |
 

@@ -6,15 +6,15 @@ flowchart TB
     envs["poc/infra/env/&lt;环境&gt;.env<br/>.state/ 钉住的主机公钥"]
     operator["nexus-ai-operator<br/>~/.nexus 凭证（不读不复制）"]
     source["source/ 九安开发包 v0.7.10<br/>只读，不执行"]
-    build[".build/jiuan07<br/>副本 + 补丁 + mysql2"]
+    build[".build/jiuan<br/>副本 + 补丁 + mysql2"]
   end
   subgraph aws["AWS · us-east-1 · 一个栈一台机器"]
     direction LR
     s3["S3 构件桶<br/>releases/current.tgz · archive/（14 天）<br/>secrets/secrets.env"]
-    ec2["EC2（m7g.xlarge）<br/>/opt/andon-finance/current · previous<br/>/etc/andon-finance/secrets.env · bench/ · jiuan07/<br/>/var/lib/jiuan07"]
-    db["MySQL 容器 jiuan-mysql<br/>库 jiuan07"]
+    ec2["EC2（m7g.xlarge）<br/>/opt/andon-finance/current · previous<br/>/etc/andon-finance/secrets.env · bench/ · jiuan/<br/>/var/lib/jiuan"]
+    db["MySQL 容器 jiuan-mysql<br/>库 jiuan"]
     pg["PG 容器 nexus-pgvector<br/>库 nexus"]
-    cf["CloudFront<br/>站点 Jiuan07DomainName"]
+    cf["CloudFront<br/>站点 DomainName"]
   end
   subgraph nx["Nexus nxs-beine1013 · v0.3.28"]
     direction LR

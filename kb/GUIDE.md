@@ -471,7 +471,7 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 
 接口在测试台外壳的 `/api/analysis/v1/poc/kb/*`（只给管理员；会话、来源、CSRF 由九安校验）。同步的操作各是一次 A2A 调用，约 10–20 秒；工具自己失败时，回复里带它的 `error_type`、原因和建议（怎么办见 `knowledgebase-writer-agent-pg/README.md` 第 15 节）。
 
-以下只适用于开发仓库的测试台：部署配置里给知识库方式 `KB_MODE=pg` 和知识库文档管家的发布编号 `KB_PG_PUBLICATION_ID`（`knowledgebase-writer-agent-pg/README.md` 第 9 节），调用密钥由管理员在九安「平台 › Agent 接入」页启用；测试台部署（`poc/infra/deploy.sh`）在测试台主机上建上传目录、写外壳的知识库设置（`POC07_KB_*`），并删掉早先直连 PG 时留下的连库密码文件和解析结果。没给发布编号时页面说「知识库 Agent 还没配置」，没启用调用密钥时说「先在『Agent 接入』页启用知识库 Agent」。
+以下只适用于开发仓库的测试台：部署配置里给知识库方式 `KB_MODE=pg` 和知识库文档管家的发布编号 `KB_PG_PUBLICATION_ID`（`knowledgebase-writer-agent-pg/README.md` 第 9 节），调用密钥由管理员在九安「平台 › Agent 接入」页启用；测试台部署（`poc/infra/deploy.sh`）在测试台主机上建上传目录、写外壳的知识库设置（`POC_KB_*`），并删掉早先直连 PG 时留下的连库密码文件和解析结果。没给发布编号时页面说「知识库 Agent 还没配置」，没启用调用密钥时说「先在『Agent 接入』页启用知识库 Agent」。
 
 ### 7.6 换向量模型（Titan v2 → Cohere v4）：防混用、迁移、回退、回归
 
@@ -487,7 +487,7 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
    ./deploy.sh db --migrate-embeddings
    ```
    一个事务里：新的 `kb_search.sql` → 检查并锁住规则表、归档表（挂着触发器、规则、行级安全、CHECK / 外键约束、表达式索引等会执行代码的附加物就拒绝，9.10）→ 两张表的旧向量备份进 `<表>_titan_backup` → 两张表全部用新模型重算 → `kb_meta` 登记 `cohere.embed-v4:0`、`1024`。任何一步失败（Bedrock 报错、备份表已存在、表上有附加物……）整段回滚，库里还是 Titan。迁移时入库要等它做完。
-3. **对比**：`./deploy.sh regress --questions-dir <题库目录> --label cohere`，再 `./deploy.sh regress --compare ~/Documents/pgkb-regression/titan.json ~/Documents/pgkb-regression/cohere.json`。哪一套题的 `hit5` 变低、题数不同，或已知问题不过，退出码 1，并逐题列出名次的变化（只有题号和名次）。`--compare` 不读配置、不连库。然后 `./deploy.sh verify --e2e`；九安测试台另跑 PG 方式的端到端（`run07.sh`）。
+3. **对比**：`./deploy.sh regress --questions-dir <题库目录> --label cohere`，再 `./deploy.sh regress --compare ~/Documents/pgkb-regression/titan.json ~/Documents/pgkb-regression/cohere.json`。哪一套题的 `hit5` 变低、题数不同，或已知问题不过，退出码 1，并逐题列出名次的变化（只有题号和名次）。`--compare` 不读配置、不连库。然后 `./deploy.sh verify --e2e`；九安测试台另跑 PG 方式的端到端（`run.sh`）。
 4. **回退**（对比或端到端不过）：`EMBED_MODEL_ID` 改回 `amazon.titan-embed-text-v2:0`，`./deploy.sh db --dry-run --restore-embeddings` 看过再 `./deploy.sh db --restore-embeddings`：旧配置的 `kb_search.sql` + 内容没变的行拷回备份里的旧向量、迁移后新增或改过的行用 Titan 重算 + `kb_meta` 改回 Titan，同样一个事务。
 5. **收尾**：验收通过、确认不再回退后，手工删备份表（`DROP TABLE <表>_titan_backup`，以 postgres 在主机上执行）；不删就不能再迁移一次。
 
@@ -495,7 +495,7 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 
 ### 7.7 九安 v0.7.10 测试台的现状（经 PG 知识库 Agent；2026-10-31 起是审批风险判断卡）
 
-2026-10-30 起 PG 的连接全在 Agent 那一侧：页面 → 测试台外壳（`poc/app07/kb-steward-routes.mjs`、`kb-steward-client.mjs`）→ A2A → PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b` → 它的工具 → PG。测试台自己不连库、不解析文档。
+2026-10-30 起 PG 的连接全在 Agent 那一侧：页面 → 测试台外壳（`poc/app/kb-steward-routes.mjs`、`kb-steward-client.mjs`）→ A2A → PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b` → 它的工具 → PG。测试台自己不连库、不解析文档。
 
 - **约定 `kb.rules/v1`**：一行文字 `kb.rules/v1 · <op>：只调用对应的工具一次，原样返回工具的 JSON。` + 数据 Part `{op, …}`，`ingest` 再带 .docx 文件 Part。操作：`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`；`ingest` 限时 5 分钟，其余 2 分钟。Agent 只回工具的 JSON；它偶尔在 JSON 前多写一句话（模型调工具前先说一句，A2A 把各段文字拼在一起），外壳收下不超过 200 字、不含 `{ }` 的一句，记 `POC_KB_AGENT_REPLY_LEADIN <op> <字数>`（不记内容），别的不合格式判 `KB_AGENT_REPLY_INVALID`、不重试。接口的完整约定在开发仓库的 `docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md`。
 - **写进同一套表**：Agent 照旧写 `approval_rules`、`kb_documents`，向量在库里由 `kb_embed()` 生成，所以审核 Agent 经连接器的查法（`kb_search`、按 `rule_id` 取全文）不用改。

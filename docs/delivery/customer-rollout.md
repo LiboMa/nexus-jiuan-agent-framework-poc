@@ -29,7 +29,7 @@ audience: 项目负责人、应用开发、九安团队
 
 | 部分 | 状态 | 离客户部署还差什么 |
 |---|---|---|
-| 测试台（九安 v0.7.10 副本 + 新前端 `poc/web07` + 外壳 `poc/app07` + 本机 MySQL） | 已就绪；2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过 | 不用再动；用来验收补丁和 Agent |
+| 测试台（九安 v0.7.10 副本 + 新前端 `poc/web` + 外壳 `poc/app` + 本机 MySQL） | 已就绪；2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过 | 不用再动；用来验收补丁和 Agent |
 | 九安 v0.7.10 自带的 Agent 接入那一套（契约 `src/agent-contract/`，即 `jiuan.agent/v1`；A2A 适配层 `providers/nexus-a2a.mjs`；Agent 任务服务；「Agent 接入」） | 已在九安的代码里 | — |
 | 测试台补丁 0001–0007（连 Nexus 列发布、测试与调用记录、一个审批 Agent、制度知识库页、我的规则、两处时限） | 测试台上可用 | 九安评审；在真实代码线上重新打一次（前置 2） |
 | 审核 Agent（`review_advice@1`，查 PG 知识库） | 测试台上可用；提示词在 `audit-agent/`，一轮 7–20 秒 | 在生产用的 Nexus 上建发布、下发提示词 |
@@ -112,8 +112,8 @@ audience: 项目负责人、应用开发、九安团队
 | | `audit-agent/`（`apply.py`、`setup.py`、`prompt-history/`） | 审核 Agent 的提示词下发、先演练再下发、每次留底 |
 | | `skills/nexus-ai-operator/` | 编码工具在 Nexus 上建 Agent、发布 |
 | 前端 | `poc/infra/deploy.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh` | 测试阶段的前端部署：测试 → 构建 → 建栈 → 装构件 → 健康检查；经 SSM 或 SSH；换机器搬数据 |
-| | `patches/jiuan-v0.7.10/` + `poc/bench/build-jiuan07.sh` | 补丁 0001–0007，按清单复制开发包、打补丁，打不上就报错，不留半成品 |
-| | `poc/app07/test/e2e/run07.sh` | 端到端验收：站点、账号都从环境配置读；先在我们测试台上跑通 |
+| | `patches/jiuan-v0.7.10/` + `poc/bench/build-jiuan.sh` | 补丁 0001–0007，按清单复制开发包、打补丁，打不上就报错，不留半成品 |
+| | `poc/app/test/e2e/run.sh` | 端到端验收：站点、账号都从环境配置读；先在我们测试台上跑通 |
 
 原来计划、还没做的：在九安真实代码线上试打补丁的脚本、接进九安 Gitea Actions + Docker Compose 流水线的部署检查和配置，等前置 1、2 定了再做。
 

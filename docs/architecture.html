@@ -145,12 +145,12 @@ Agent，两个 Agent 都经数据连接器到 PG</figcaption>
 </figure>
 <h1 id="2-组件">2. 组件</h1>
 <pre><code>浏览器（管理员 poc-reviewer / 分析员 poc-checker，虚构账号）
-   │ HTTPS  &lt;Jiuan07DomainName&gt;
-CloudFront（一个分发 Jiuan07Distribution；不缓存；转发 Host、Origin、Cookie 与查询串）
+   │ HTTPS  &lt;DomainName&gt;
+CloudFront（一个分发 Distribution；不缓存；转发 Host、Origin、Cookie 与查询串）
    │ HTTP :4180（安全组只放 CloudFront 回源前缀列表 pl-3b927c52）
 EC2（m7g.xlarge；Nexus 同 VPC 公有子网；Amazon Linux 2023，Node 24）
-   └─ systemd 服务 andon-jiuan07（用户 jiuan07，0.0.0.0:4180，屏蔽 IMDS，出网只放行 Nexus）
-         ├─ 外壳 poc/app07：前门 front.mjs（/ 给新前端 web07/dist，口令登录 /poc/login，模拟来单 /poc/intake，健康检查 /poc/healthz）
+   └─ systemd 服务 andon-jiuan（用户 jiuan，0.0.0.0:4180，屏蔽 IMDS，出网只放行 Nexus）
+         ├─ 外壳 poc/app：前门 front.mjs（/ 给新前端 web/dist，口令登录 /poc/login，模拟来单 /poc/intake，健康检查 /poc/healthz）
          │     ├─ 新前端用的接口 /api/analysis/v1/poc/*：复核、工作台、AI 轮次、原件分页、我的规则、知识库
          │     ├─ 「Agent 接入」页的后端：Nexus 发布列表（经 nexus-ai-operator）、测试、调用记录
          │     └─ 进程内的假汇联易（九安的测试环境客户端照常跑，不做真实网络 I/O）
@@ -158,7 +158,7 @@ EC2（m7g.xlarge；Nexus 同 VPC 公有子网；Amazon Linux 2023，Node 24）
                ├─ 单据同步与流水线、读原件、Agent 任务服务（review_advice@1）、调用中间件 nexus-a2a
                ├─ A2A 适配层 providers/nexus-a2a.mjs（契约 src/agent-contract/，jiuan.agent/v1）
                ├─ 「Agent 接入」（启用记录，调用密钥加密存库）
-               └─ MySQL 容器 jiuan-mysql（mysql:8.0，127.0.0.1:3306，库 jiuan07）
+               └─ MySQL 容器 jiuan-mysql（mysql:8.0，127.0.0.1:3306，库 jiuan）
       PG 容器 nexus-pgvector（pgvector/pgvector:pg17，私网 IP:5432，库 nexus，kb_search、Cohere Embed v4）
             │ ① A2A 0.3 message/stream，Bearer &lt;管理员在「Agent 接入」页粘贴的调用密钥&gt;
             │ ② A2A 名片 /a2a/&lt;发布编号&gt;/.well-known/agent-card.json（公开，不带密钥）
@@ -204,19 +204,19 @@ alt="接入一个新 Agent 的时序：建好、发布 → 本人签发调用密
 <li><strong>Agent 和 Nexus
 的密钥不在任何文件里</strong>：管理员在「Agent 接入」页连接
 Nexus（operator 的凭证在
-<code>/var/lib/jiuan07/nexus/</code>）、粘贴调用密钥启用（加密存进九安的库，页面上只显示指纹）。加、换、停用都不改文件、不部署、不重启。</li>
+<code>/var/lib/jiuan/nexus/</code>）、粘贴调用密钥启用（加密存进九安的库，页面上只显示指纹）。加、换、停用都不改文件、不部署、不重启。</li>
 <li><strong>启动配置</strong>：只在本机的
 <code>poc/infra/secrets.env</code>（0600），五项：两个虚构账号的口令、MySQL
-的 root 口令、<code>jiuan07_app</code> 的口令、九安存储的数据密钥（样例
+的 root 口令、<code>jiuan_app</code> 的口令、九安存储的数据密钥（样例
 <code>poc/infra/secrets.env.example</code>）。<code>deploy.sh</code>
 经加密的构件桶装到实例的
 <code>/etc/andon-finance/secrets.env</code>（root 0600），再拆成
-<code>/etc/andon-finance/bench/</code>、<code>/etc/andon-finance/jiuan07/</code>
+<code>/etc/andon-finance/bench/</code>、<code>/etc/andon-finance/jiuan/</code>
 下的文件给 MySQL 和外壳。</li>
 <li><strong>普通配置</strong>（站点名、Nexus 地址、知识库方式与知识库
 Agent 的发布）：在环境配置 <code>poc/infra/env/&lt;环境&gt;.env</code>
 和栈参数里；每次部署按它们重写
-<code>/etc/andon-finance/jiuan07/env</code>。审批流发给哪个发布不在配置里，由「Agent
+<code>/etc/andon-finance/jiuan/env</code>。审批流发给哪个发布不在配置里，由「Agent
 接入」页决定。</li>
 </ul>
 <h1 id="5-部署三块">5. 部署：三块</h1>
@@ -234,11 +234,11 @@ Agent 的发布）：在环境配置 <code>poc/infra/env/&lt;环境&gt;.env</cod
 <td>前端</td>
 <td>外壳、新前端、九安 v0.7.10 副本、九安的 MySQL</td>
 <td><code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>：测试 →
-构建（<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>、<code>poc/<wbr>web07</code>）→
+构建（<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>、<code>poc/<wbr>web</code>）→
 建栈（模板
 <code>poc/<wbr>infra/<wbr>andon-<wbr>finance-<wbr>poc.<wbr>yaml</code>）→
 打包上传 → 实例上（经 SSM 或
-SSH）装构件、配置（<code>bench/<wbr>bench07-<wbr>configure.<wbr>sh</code>）、重启
+SSH）装构件、配置（<code>bench/<wbr>bench-<wbr>configure.<wbr>sh</code>）、重启
 → 健康检查 <code>/<wbr>poc/<wbr>healthz</code></td>
 </tr>
 <tr>
@@ -273,52 +273,52 @@ href="../poc/infra/README.md">部署说明</a>。</p>
 </thead>
 <tbody>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>server.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>server.<wbr>mjs</code></td>
 <td>组合根：照九安
 <code>scripts/<wbr>start-<wbr>analysis.<wbr>mjs</code>
 组装九安副本，换掉配置、汇联易传输、出网，挂上外壳的接口</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>front.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>front.<wbr>mjs</code></td>
 <td>前门：<code>/<wbr></code>
 给新前端，口令登录页、模拟来单页；别的请求交给九安</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>nexus-<wbr>access.<wbr>mjs</code>、<code>agent-<wbr>tests.<wbr>mjs</code>、<code>agent-<wbr>calls.<wbr>mjs</code>、<code>agent-<wbr>routes.<wbr>mjs</code>、<code>envelope-<wbr>tests.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>nexus-<wbr>access.<wbr>mjs</code>、<code>agent-<wbr>tests.<wbr>mjs</code>、<code>agent-<wbr>calls.<wbr>mjs</code>、<code>agent-<wbr>routes.<wbr>mjs</code>、<code>envelope-<wbr>tests.<wbr>mjs</code></td>
 <td>「Agent 接入」页：发布列表、测试、调用记录、审批流只发给审批
 Agent、请求信封测试用的契约部分</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>kb-<wbr>steward-<wbr>routes.<wbr>mjs</code>、<code>kb-<wbr>steward-<wbr>client.<wbr>mjs</code>、<code>kb-<wbr>docx.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>kb-<wbr>steward-<wbr>routes.<wbr>mjs</code>、<code>kb-<wbr>steward-<wbr>client.<wbr>mjs</code>、<code>kb-<wbr>docx.<wbr>mjs</code></td>
 <td>知识库页：接口、经 A2A 调知识库
 Agent（<code>kb.<wbr>rules/<wbr>v1</code>）、上传的 .docx</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>reviews.<wbr>mjs</code>、<code>dashboard.<wbr>mjs</code>、<code>advice-<wbr>rounds.<wbr>mjs</code>、<code>evidence-<wbr>pages.<wbr>mjs</code>、<code>user-<wbr>scope.<wbr>mjs</code></td>
-<td>新前端用的接口：复核（表在 <code>jiuan07</code> 库）、工作台、AI
+<td><code>poc/<wbr>app/<wbr>reviews.<wbr>mjs</code>、<code>dashboard.<wbr>mjs</code>、<code>advice-<wbr>rounds.<wbr>mjs</code>、<code>evidence-<wbr>pages.<wbr>mjs</code>、<code>user-<wbr>scope.<wbr>mjs</code></td>
+<td>新前端用的接口：复核（表在 <code>jiuan</code> 库）、工作台、AI
 轮次、原件分页、公司范围</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>custom-<wbr>rules.<wbr>mjs</code>、<code>custom-<wbr>rules-<wbr>advice.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>custom-<wbr>rules.<wbr>mjs</code>、<code>custom-<wbr>rules-<wbr>advice.<wbr>mjs</code></td>
 <td>我的规则：上传、附进人发起的那一轮</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>fake-<wbr>hly.<wbr>mjs</code>、<code>fixtures.<wbr>mjs</code>、<code>seed-<wbr>anchor.<wbr>mjs</code>、<code>intake.<wbr>mjs</code>、<code>originals-<wbr>first.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>fake-<wbr>hly.<wbr>mjs</code>、<code>fixtures.<wbr>mjs</code>、<code>seed-<wbr>anchor.<wbr>mjs</code>、<code>intake.<wbr>mjs</code>、<code>originals-<wbr>first.<wbr>mjs</code></td>
 <td>假汇联易、虚构单据、种子时间锚点、模拟来单、先读原件</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>guard.<wbr>mjs</code>、<code>settings.<wbr>mjs</code>、<code>jiuan.<wbr>mjs</code></td>
+<td><code>poc/<wbr>app/<wbr>guard.<wbr>mjs</code>、<code>settings.<wbr>mjs</code>、<code>jiuan.<wbr>mjs</code></td>
 <td>出网守卫、运行设置、九安副本的唯一入口</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr>lib/<wbr></code></td>
+<td><code>poc/<wbr>app/<wbr>lib/<wbr></code></td>
 <td><code>a2a-<wbr>client.<wbr>mjs</code>（A2A 0.3
 流式客户端）、<code>catalog.<wbr>mjs</code>（发布与名片）、<code>cli.<wbr>mjs</code>（调
 nexus-ai-operator）、<code>login.<wbr>mjs</code>（口令登录）、<code>http.<wbr>mjs</code>（HTTP
 小工具）</td>
 </tr>
 <tr>
-<td><code>poc/<wbr>web07/<wbr></code></td>
+<td><code>poc/<wbr>web/<wbr></code></td>
 <td>新前端（React 19、TypeScript、Vite、Tailwind 4、TanStack
 Query、Radix，哈希路由）</td>
 </tr>
@@ -333,7 +333,7 @@ Query、Radix，哈希路由）</td>
 <ul>
 <li><strong>源站是明文 HTTP</strong>：CloudFront 到实例这一段（评审
 C2，<a href="delivery/handover.html">交接文档</a>第 6.1 节）。</li>
-<li><strong>数据只在这一台实例上</strong>：MySQL、PG、<code>/var/lib/jiuan07</code>
+<li><strong>数据只在这一台实例上</strong>：MySQL、PG、<code>/var/lib/jiuan</code>
 都在根卷上；替换前 <code>backup.sh</code>，换机器
 <code>migrate-data.sh</code>。</li>
 <li><strong>九安上游的 <code>review_advice@1</code> 时限是 120

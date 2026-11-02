@@ -138,7 +138,9 @@ PoC（<code>poc/app/</code>、<code>poc/tools/</code>、<code>knowledge-agent/</
 href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide">https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide</a>
 一致，两边由同一份白名单生成（第 9
 节）。设计稿、实现计划、进度看板、历次评估、评审记录不在包里，在开发仓库。密钥和九安开发包也不在包里，另行交接（第
-5 节）。拿到之后按第 6 节验收，按第 8 节签收。</p>
+5 节）。拿到之后按第 6 节验收，按第 8 节签收。从零部署一整套（先 PG
+与知识库后端，再 Nexus 上的 Agent，再前端）照<a
+href="delivery-guide.html">交付指南</a>。</p>
 <figure>
 <a href="../assets/diagrams/package-contents.svg" class="figure-link"
 target="_blank" rel="noopener"><img
@@ -154,7 +156,7 @@ alt="交付包里有什么：按部署的三块分（前端、PG 与知识库、
 <p>脚本按顺序做这些事，任何一步失败就停下来，不出包：</p>
 <ol type="1">
 <li>跑检查：部署脚本和栈模板的测试（<code>poc/infra/test</code>）；构建九安
-v0.7.10 副本，跑外壳 <code>poc/app07</code>
+v0.7.10 副本，跑外壳 <code>poc/app</code>
 的单元测试；知识库工具的语法检查和单元测试（<code>kb/tests</code>）；两个文档管家的语法检查；审核
 Agent 下发脚本的单元测试（<code>audit-agent/tests</code>）；</li>
 <li><code>docs/build-html.sh --check</code>：图和 HTML 都是最新的；</li>
@@ -201,6 +203,14 @@ alt="四种角色的阅读路线：项目负责人、应用开发、运维 / 值
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>部署的人（我们、九安运维）</td>
+<td><a href="delivery-guide.html">交付指南</a> → 各块自己的说明（<a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a>、<a
+href="../../audit-agent/README.md">审核 Agent 说明</a>、<a
+href="../../poc/infra/README.md">部署说明</a>）</td>
+<td>照交付指南第 4 节部署三块，第 5 节跑端到端验收</td>
+</tr>
 <tr>
 <td>管理员（测试台上的 <code>poc-<wbr>reviewer</code>）</td>
 <td><a href="quick-guide.html">快速上手</a></td>
@@ -262,7 +272,7 @@ href="operations.html">运维</a>第 2.1 节</td>
 <tbody>
 <tr>
 <td><code>docs/<wbr>delivery/<wbr></code></td>
-<td>交付文档（本文、快速上手、开发者快速对接指南、Skills
+<td>交付文档（本文、交付指南、快速上手、开发者快速对接指南、Skills
 配置指南、客户部署路线、交接、部署与迭代、运维），每份有
 <code>.<wbr>md</code> 和
 <code>.<wbr>html</code>；<code>make-<wbr>package.<wbr>sh</code>（打包、导出交接仓库）与
@@ -284,18 +294,18 @@ href="operations.html">运维</a>第 2.1 节</td>
 <td><a href="../architecture.html">架构</a></td>
 </tr>
 <tr>
-<td><code>poc/<wbr>app07/<wbr></code></td>
+<td><code>poc/<wbr>app/<wbr></code></td>
 <td>九安 v0.7.10
 测试台的外壳（组合根、前门、口令登录、假汇联易、出网守卫、「Agent
 接入」页和知识库页的后端、新前端用的接口）；<code>lib/<wbr></code>（A2A
 客户端、名片规整、operator 命令行、口令登录、HTTP
 小工具）；<code>test/<wbr>unit/<wbr></code>
 单元测试、<code>test/<wbr>e2e/<wbr></code>
-端到端测试（<code>run07.<wbr>sh</code>、<code>web07.<wbr>e2e.<wbr>mjs</code>、<code>jiuan07.<wbr>e2e.<wbr>mjs</code>）</td>
+端到端测试（<code>run.<wbr>sh</code>、<code>web.<wbr>e2e.<wbr>mjs</code>、<code>api.<wbr>e2e.<wbr>mjs</code>）</td>
 <td><a href="../../poc/README.md">PoC 说明</a></td>
 </tr>
 <tr>
-<td><code>poc/<wbr>web07/<wbr></code></td>
+<td><code>poc/<wbr>web/<wbr></code></td>
 <td>新前端（React 19 + TypeScript + Vite + Tailwind
 4，哈希路由）：工作台、单据池、知识库、我的规则、Agent
 接入、设置；<code>npm test</code>、<code>npm run build</code>（不带
@@ -304,7 +314,7 @@ href="operations.html">运维</a>第 2.1 节</td>
 </tr>
 <tr>
 <td><code>poc/<wbr>bench/<wbr></code></td>
-<td><code>build-<wbr>jiuan07.<wbr>sh</code>（九安 v0.7.10
+<td><code>build-<wbr>jiuan.<wbr>sh</code>（九安 v0.7.10
 副本：按清单复制，不带
 <code>seeds/<wbr></code>、<code>database/<wbr></code>、<code>tests/<wbr></code>，打
 <code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>）与锁定的依赖清单（<code>mysql2</code>
@@ -416,7 +426,7 @@ Agent、发布</td>
 </table>
 </div>
 <p><strong>特意不放进包的</strong>：<code>node_modules/</code>、<code>.build/</code>（九安副本
-<code>.build/jiuan07/</code>，<code>deploy.sh</code>
+<code>.build/jiuan/</code>，<code>deploy.sh</code>
 每次重建）、<code>dist/</code>（含新前端的构建产物）、<code>archive/</code>（旧证据、旧包）、<code>__pycache__/</code>、<code>.DS_Store</code>；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；客户的制度原文（知识库的来源文档，例如
 <code>docs/sample-docs/</code> 里的
 .docx；导出时还会按文件名再查一遍，查到就不出包）；和这个 PoC
@@ -436,9 +446,9 @@ Agent、发布</td>
 <tr>
 <td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code>（包里有样例
 <code>secrets.<wbr>env.<wbr>example</code>，没有真实的值）</td>
-<td>有两条口令和测试台的三项密钥（<code>BENCH_<wbr>MYSQL_<wbr>ROOT_<wbr>PASSWORD</code>、<code>JIUAN07_<wbr>MYSQL_<wbr>APP_<wbr>PASSWORD</code>、<code>JIUAN07_<wbr>DATA_<wbr>KEY</code>）。Agent
+<td>有两条口令和测试台的三项密钥（<code>BENCH_<wbr>MYSQL_<wbr>ROOT_<wbr>PASSWORD</code>、<code>JIUAN_<wbr>MYSQL_<wbr>APP_<wbr>PASSWORD</code>、<code>JIUAN_<wbr>DATA_<wbr>KEY</code>）。Agent
 的调用密钥不在这里：管理员在「Agent
-接入」页启用，加密存在九安的库里。<strong><code>JIUAN07_<wbr>DATA_<wbr>KEY</code>
+接入」页启用，加密存在九安的库里。<strong><code>JIUAN_<wbr>DATA_<wbr>KEY</code>
 丢了，库里的启用记录就解不开</strong></td>
 <td><strong>当面交接</strong>（不经聊天工具、邮件、网盘）；接手后放回
 <code>poc/<wbr>infra/<wbr></code>，权限 0600</td>
@@ -456,7 +466,7 @@ Agent、发布</td>
 <code>source/<wbr>九安自助审核平台-<wbr>测试环境开发包-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
 <td>第三方代码，按版本号引用；<code>seeds/<wbr></code>、<code>database/<wbr></code>
 含真实数据</td>
-<td>从九安按版本号取，解压到包根目录下的同名路径；<code>build-<wbr>jiuan07.<wbr>sh</code>、外壳的单元测试、<code>deploy.<wbr>sh</code>
+<td>从九安按版本号取，解压到包根目录下的同名路径；<code>build-<wbr>jiuan.<wbr>sh</code>、外壳的单元测试、<code>deploy.<wbr>sh</code>
 都要用到它</td>
 </tr>
 <tr>
@@ -475,9 +485,9 @@ href="skills-guide.html">Skills 配置指南</a>第 3
 不带任何密钥</td>
 </tr>
 <tr>
-<td>测试台上的数据（MySQL 的 <code>jiuan07</code> 库、知识库的
-PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan07/<wbr></code>）</td>
-<td>在线上；单据是虚构的，端到端测试每次都会重建 <code>jiuan07</code>
+<td>测试台上的数据（MySQL 的 <code>jiuan</code> 库、知识库的
+PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan/<wbr></code>）</td>
+<td>在线上；单据是虚构的，端到端测试每次都会重建 <code>jiuan</code>
 库；启用记录里有加密的调用密钥</td>
 <td>留在实例上；<code>backup.<wbr>sh</code> 的根卷快照里有一份；换机器用
 <code>migrate-<wbr>data.<wbr>sh</code>（<a
@@ -527,8 +537,8 @@ href="operations.html">运维</a>第 2.5 节）</td>
 <td>3a</td>
 <td>新前端和外壳</td>
 <td>先放好九安开发包（第 5
-节），<code>cd poc/<wbr>web07 &amp;&amp; npm ci &amp;&amp; npm test &amp;&amp; npm run build</code>，再
-<code>bash poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh &amp;&amp; (cd poc/<wbr>app07 &amp;&amp; node -<wbr>-<wbr>test "test/<wbr>unit/<wbr>**/<wbr>*.<wbr>test.<wbr>mjs")</code>（外壳有一条测试读新前端的构建产物，没构建就跳过）</td>
+节），<code>cd poc/<wbr>web &amp;&amp; npm ci &amp;&amp; npm test &amp;&amp; npm run build</code>，再
+<code>bash poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh &amp;&amp; (cd poc/<wbr>app &amp;&amp; node -<wbr>-<wbr>test "test/<wbr>unit/<wbr>**/<wbr>*.<wbr>test.<wbr>mjs")</code>（外壳有一条测试读新前端的构建产物，没构建就跳过）</td>
 <td>都是 0 失败</td>
 </tr>
 <tr>
@@ -569,12 +579,12 @@ href="handover.html">交接文档</a>第 2.2 节）</td>
 <tr>
 <td>8</td>
 <td>完整端到端测试</td>
-<td><code>KB_<wbr>E2E_<wbr>DOCX=&lt;本机转好的风险判断卡 .<wbr>docx&gt; DEPLOY_<wbr>ENV=poc/<wbr>infra/<wbr>env/<wbr>&lt;环境&gt;.<wbr>env bash poc/<wbr>app07/<wbr>test/<wbr>e2e/<wbr>run07.<wbr>sh</code>（第一次会自动
-<code>npm install</code> Playwright；开始前重置 <code>jiuan07</code>
+<td><code>KB_<wbr>E2E_<wbr>DOCX=&lt;本机转好的风险判断卡 .<wbr>docx&gt; DEPLOY_<wbr>ENV=poc/<wbr>infra/<wbr>env/<wbr>&lt;环境&gt;.<wbr>env bash poc/<wbr>app/<wbr>test/<wbr>e2e/<wbr>run.<wbr>sh</code>（第一次会自动
+<code>npm install</code> Playwright；开始前重置 <code>jiuan</code>
 库，保留「Agent 接入」的启用记录；需要 <code>secrets.<wbr>env</code>
 里的两个口令；约 1–3 美元的 Nexus 调用）</td>
-<td>0 失败。2026-11-02 对 m7g 测试环境完整运行 26 条全部通过（web07
-15、jiuan07 11）；截图交项目负责人</td>
+<td>0 失败。2026-11-02 对 m7g 测试环境完整运行 26 条全部通过（web
+15、jiuan 11）；截图交项目负责人</td>
 </tr>
 <tr>
 <td>9</td>
@@ -589,8 +599,8 @@ href="handover.html">交接文档</a>第 2.2 节）</td>
 <p><strong>已完成</strong></p>
 <ul>
 <li><strong>九安 v0.7.10 测试台</strong>（2026-10-26 封板
-v0.7.10，之后持续更新）：新前端 <code>poc/web07</code>（2026-11-01
-起是首页）、外壳 <code>poc/app07</code>、补丁 0001–0007；单据池自动出 AI
+v0.7.10，之后持续更新）：新前端 <code>poc/web</code>（2026-11-01
+起是首页）、外壳 <code>poc/app</code>、补丁 0001–0007；单据池自动出 AI
 独立建议，一轮上限 180 秒，2026-11-01 改过审核 Agent 的提示词以后一轮
 7–20 秒；人在单据抽屉里采纳或改判，不回写汇联易。</li>
 <li><strong>知识库</strong>：PG + pgvector，整库 Cohere Embed

@@ -95,7 +95,7 @@ python3 scripts/nexus.py whoami
 
 ### 3.5 部署脚本也用到它
 
-测试台「Agent 接入」页连 Nexus、列出发布时，外壳用的是同一个 `nexus.py`（凭证在实例的 `/var/lib/jiuan07/nexus/`）。`deploy.sh` 默认取仓库里的 `skills/nexus-ai-operator/scripts/nexus.py`，打进构件的 `operator/scripts/nexus.py`；要换版本时用环境变量 `NEXUS_OPERATOR_SCRIPT=<路径>/scripts/nexus.py` 指过去。只打包这一个脚本，不带任何凭证。
+测试台「Agent 接入」页连 Nexus、列出发布时，外壳用的是同一个 `nexus.py`（凭证在实例的 `/var/lib/jiuan/nexus/`）。`deploy.sh` 默认取仓库里的 `skills/nexus-ai-operator/scripts/nexus.py`，打进构件的 `operator/scripts/nexus.py`；要换版本时用环境变量 `NEXUS_OPERATOR_SCRIPT=<路径>/scripts/nexus.py` 指过去。只打包这一个脚本，不带任何凭证。
 
 ## 4. 和「Agent 接入」页一起用：四步使用逻辑
 
