@@ -545,14 +545,14 @@ test('Agent 接入 · 测试：对审批 Agent 测一次单据（DGZF-F07-003，
   await adviceDiagnosis([number]);
 });
 
-test(`知识库（${KB_MODE}，只给管理员）：页面说知识库 Agent 就绪，制度清单里有 ${KB_TAG}（有效，${KB_RULES} 条）；「上传制度」弹框打开（截图在选文件之前，不截真实制度）`, { timeout: 5 * 60_000 }, async () => {
+test(`知识库（${KB_MODE}，只给管理员）：页面说知识库 Agent 就绪，制度清单里有 ${KB_TAG}（有效，${KB_RULES} 条）；清单存在测试台的库里，再读不问 Agent；「上传制度」弹框打开（截图在选文件之前，不截真实制度）`, { timeout: 5 * 60_000 }, async () => {
   await ensureSession();
   const mode = (await api('/poc/kb/mode')).json?.data;
   assert.equal(mode?.mode, KB_MODE, `测试台的知识库方式是 ${mode?.mode}，run.sh 按 DEPLOY_ENV 给的是 ${KB_MODE}`);
   assert.equal(mode.configured, true, `测试台没配知识库 Agent 的发布：DEPLOY_ENV 里写 ${KB_PUBLICATION_KEY}，重新配置测试台`);
   assert.equal(mode.ready, true, `知识库 Agent 还没就绪：请到 ${BASE}/#/agents 启用 ${KB_PUBLICATION_ID || KB_PUBLICATION_KEY}（贴调用密钥）`);
   await go('知识库');
-  // 页面先等 Agent 回 describe（约 10–20 秒）：就绪时右上有「上传制度」，否则整页是那句提示
+  // 页面先问 /mode（外壳没存过 describe 时要等 Agent 回，约 10–20 秒）：就绪时右上有「上传制度」，否则整页是那句提示
   const notice = page.getByText(/^(先在『Agent 接入』页启用|.*还没配置$|知识库的状态没有读出来|不认识的知识库方式)/);
   await page.getByRole('button', { name: '上传制度' }).first().or(notice).first().waitFor({ timeout: 3 * 60_000 });
   assert.equal(await notice.count(), 0, `知识库页没有就绪：${await notice.allInnerTexts()}`);
@@ -563,6 +563,14 @@ test(`知识库（${KB_MODE}，只给管理员）：页面说知识库 Agent 就
   await source.first().waitFor({ timeout: 3 * 60_000 });
   await source.getByText('有效', { exact: true }).waitFor();
   await source.getByText(thousands(KB_RULES), { exact: true }).waitFor();
+  // 制度清单存在测试台的库里（poc_kb_cache）：再读一次不问 Agent——读到的时间不变、几秒内回来（问 Agent 一次要 4–10 秒）
+  const first = (await api('/poc/kb/sources')).json?.data;
+  const started = Date.now();
+  const again = (await api('/poc/kb/sources')).json?.data;
+  const tookMs = Date.now() - started;
+  console.log(`制度清单再读一次：${tookMs} 毫秒（从 Agent 读到的时间 ${again?.fetched_at ?? '—'}）`);
+  assert.ok(first?.fetched_at && again?.fetched_at === first.fetched_at, '再读制度清单应来自测试台的库（fetched_at 不变）');
+  assert.ok(tookMs < 3000, `再读制度清单应在 3 秒内（现在 ${tookMs} 毫秒）：不该再问 Agent`);
   // 「上传制度」弹框：选文件之前截图（只有拖放区和说明）
   await page.getByRole('button', { name: '上传制度' }).first().click();
   const dialog = page.getByRole('dialog', { name: '上传制度' });

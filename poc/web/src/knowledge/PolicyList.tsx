@@ -1,5 +1,6 @@
 /**
  * 制度清单（Spec 第 6 节；补丁 0005「制度清单」）：标题、制度标识、版本、条数、状态、时间。以知识库 Agent 返回的为准。
+ * 外壳把清单存在库里（kb-steward-routes.mjs 的缓存），页面写上是什么时候从 Agent 读的；「刷新清单」让外壳重新问 Agent。
  * 「下线」「恢复」只在 describe 的 ops 里有时显示（别的 op 不管，Ruling T6c）；「删除」先在弹框里再确认一次；「查看」开登记和规则编号。
  * 每个操作是一次 A2A 调用（约 10–20 秒），一次一个：进行中清单的按钮和「刷新清单」都不可用。
  */
@@ -63,16 +64,19 @@ export function PolicyList({ agent, ops, onUpload }: { agent: Agent; ops: readon
   useEffect(() => { if (notReady(failure)) void queryClient.invalidateQueries({ queryKey: kbKeys.mode }); }, [failure, queryClient]);
 
   const busy = manage.isPending || sources.isFetching;
-  const list = sources.data ?? [];
+  const list = sources.data?.sources ?? [];
+  // 「刷新清单」：让外壳重新问 Agent（refresh=1）；平时的读取拿外壳存着的那份。没读成时清单照旧留着，错误照 sources.error 显示
+  const reload = () => queryClient.fetchQuery({ queryKey: kbKeys.sources, queryFn: () => fetchSources(agent, { refresh: true }), staleTime: 0, retry: false }).catch(() => {});
+  const fetchedAt = sources.data?.fetchedAt;
   const head = 'whitespace-nowrap border-b border-line px-3 py-[9px] text-left text-12 font-medium text-steel';
   const cell = 'whitespace-nowrap border-b border-line px-3 py-[11px]';
   return (
     <Panel
       title="制度清单" className="mt-[14px]"
-      extra={<>{sources.isSuccess && <span>{list.length} 份</span>}<Button size="sm" icon="refresh" disabled={busy} onClick={() => { setNotice(null); void sources.refetch(); }}>刷新清单</Button></>}
+      extra={<>{sources.isSuccess && <span>{list.length} 份</span>}<Button size="sm" icon="refresh" disabled={busy} onClick={() => { setNotice(null); void reload(); }}>刷新清单</Button></>}
     >
       <p className="m-0 px-4 pt-3 text-12 text-steel">
-        清单以{agent.lead}那边的为准。{can('deactivate') && `「下线」后 AI 审单时用不到这份制度的规则${can('restore') ? '，可以恢复' : ''}；`}「删除」连规则带登记一起删掉，不能恢复。
+        {fetchedAt ? `清单是 ${timeText(fetchedAt)} 从${agent.lead}读来、存在测试台里的：在这一页上传、下线、恢复、删除后会自动重读，别处改过知识库就点「刷新清单」。` : `清单以${agent.lead}那边的为准。`}{can('deactivate') && `「下线」后 AI 审单时用不到这份制度的规则${can('restore') ? '，可以恢复' : ''}；`}「删除」连规则带登记一起删掉，不能恢复。
       </p>
       {busy && sources.data ? <p role="status" className="m-0 px-4 pt-2 text-13 text-wait-ink">{WORKING}</p>
         : notice ? <p role={notice.ok ? 'status' : 'alert'} className={cx('m-0 px-4 pt-2 text-13', notice.ok ? 'text-pass-ink' : 'text-fail-ink')}>{notice.text}</p>

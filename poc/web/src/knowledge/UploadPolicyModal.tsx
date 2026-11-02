@@ -36,7 +36,7 @@ export function UploadPolicyModal({ open, onClose }: { open: boolean; onClose: (
   const mode = useQuery({ queryKey: kbKeys.mode, queryFn: fetchMode, enabled: open && admin, retry: false });
   const agent = readyAgent(mode);
   const sources = useQuery({ queryKey: kbKeys.sources, queryFn: () => fetchSources(agent ?? DEFAULT_AGENT), enabled: open && Boolean(agent), retry: false });
-  const list = sources.data ?? [];
+  const list = sources.data?.sources ?? [];
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [problem, setProblem] = useState<string | null>(null);

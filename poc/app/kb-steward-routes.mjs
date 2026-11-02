@@ -7,12 +7,16 @@
  *   POST …/sources?sourceId=&sourceVersion=&title=        请求体是 .docx 原文（X-File-Name）：校验 → 存 <uploadsDir>/<sha256>.docx（0600）→
  *                                                         记一条上传历史 → 后台 ingest，先回 202 { id, status: 'ingesting' }；同一时间只跑一个
  *   GET  …/uploads、…/uploads/<id>                         上传历史（最近 50 条；<uploadsDir>/history.json，0600），页面轮询到 ingested / skipped / failed
- *   GET  …/sources、…/sources/<id>                         制度清单、一份制度的登记和规则编号
+ *   GET  …/sources、…/sources/<id>[?refresh=1]             制度清单、一份制度的登记和规则编号（回复多一个 fetched_at：外壳从 Agent 读到它的时间）
  *   POST …/sources/<id>/(deactivate|restore|delete)       下线、恢复、硬删除；下线、恢复不在 describe 的 ops 里时回 409 KB_OP_UNSUPPORTED，不调 Agent。
  *                                                         删除成功（Agent 回 success:true）后，这个制度标识已入完（有 finishedAt）的每一条上传历史
  *                                                         记上 removedAt（工作台不再算它；还在入库的那条和之后再传的不带）；下线、恢复不记
  *   GET  …/search?q=&segment=&amount=&k=                  按问题检索（板块、金额可空，空的不传）
  * 同步的操作各一次 A2A 调用（约 10–20 秒），回 { data: 工具的 JSON }：工具自己失败时也是 200，data.success === false，带 error_type / message / suggestion。
+ * 缓存（给了 cache 时，kb-cache.mjs，九安 jiuan 库的 poc_kb_cache）：规则入库之后很少再改，所以 describe、制度清单、每份制度的详情问到一次就存进库，
+ *   之后打开页面直接从库里给，外壳重启也不丢。只有这几种时候才再问 Agent：库里没有；?refresh=1（页面上的「刷新清单」，同时清掉存着的详情）；
+ *   在这里入库、下线、恢复、删除之后（不管结果，清单和这份制度的详情作废）；钥匙被拒、回复不合格（Agent 那边换了钥匙或版本，操作清单作废）。
+ *   只存成功的回复；没启用时不给库里的；同时来的几次共用一次调用；库读写出错就照常问 Agent，记一行 POC_KB_CACHE_UNAVAILABLE。检索不存（每次现问）。
  * 给工作台（dashboard.mjs）的两个函数，都不调 Agent：status() → { mode, configured, ready }（同 /mode，不带 ops），historyList() → 全部上传历史，新的在前。
  * 错误文案里的 Agent 名字按方式。日志只写错误码，不写回复、制度内容和钥匙。
  */
@@ -29,6 +33,9 @@ const AMOUNT = /^\d{1,13}(?:\.\d{1,2})?$/;
 const HISTORY_LIMIT = 200;
 /** 这两个操作 Agent 可以不支持（describe 的 ops 里没有就不调）。 */
 const OPTIONAL_OPS = new Set(['deactivate', 'restore']);
+/** 这两种失败说明 Agent 那边变了（换了钥匙、换了版本）：库里存的操作清单作废（同 kb-steward-client.mjs 的 STALE）。 */
+const STALE = new Set(['KB_AGENT_KEY_REJECTED', 'KB_AGENT_REPLY_INVALID']);
+const DETAIL = 'detail:';
 /** 文案里的 Agent 名字按方式；lead 是放在句首、后面直接接汉字时的写法（「知识库 Agent」后空一格）。 */
 const AGENTS = Object.freeze({
   pg: Object.freeze({ name: '知识库 Agent', lead: '知识库 Agent ' }),
@@ -119,7 +126,7 @@ function outcome(result) {
     ...(typeof result.suggestion === 'string' && result.suggestion ? { suggestion: result.suggestion.slice(0, 500) } : {}) } };
 }
 
-export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 * 1024 * 1024, log = () => {}, now = Date.now }) {
+export function createKbStewardRoutes({ mode, client, uploadsDir, cache = null, maxBytes = 20 * 1024 * 1024, log = () => {}, now = Date.now }) {
   if (!Object.hasOwn(AGENTS, mode)) throw new TypeError(`kb mode must be pg or s3vectors: ${mode}`);
   const MESSAGES = messagesFor(AGENTS[mode]);
   const INTERRUPTED = Object.freeze({ code: 'KB_INGEST_INTERRUPTED',
@@ -127,11 +134,57 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
   const history = createHistory(path.join(uploadsDir, 'history.json'), log);
   let busy = false;
   const iso = ms => new Date(ms).toISOString();
+  const inflight = new Map();   // 缓存的键 → 进行中的那次 Agent 调用
+
+  /** 库读写出错不挡路：记一行，当没有。 */
+  async function quietly(work) {
+    try { return await work(); } catch { log('POC_KB_CACHE_UNAVAILABLE'); return null; }
+  }
+  const forget = (...keys) => (cache ? quietly(() => cache.drop(...keys)) : null);
+  /** 同一个键同时只问 Agent 一次，后来的等它。 */
+  function once(key, work) {
+    if (inflight.has(key)) return inflight.get(key);
+    const run = work().finally(() => inflight.delete(key));
+    inflight.set(key, run);
+    return run;
+  }
+  /** 清单、详情：先看库里（refresh 时不看），没有就问 Agent，成功的存进库；回复带 fetched_at。没启用时不给库里的。 */
+  async function stored(key, load, { refresh = false } = {}) {
+    if (!cache) return load();
+    if (!(await client.ready())) fail('KB_AGENT_NOT_READY', 409);
+    if (!refresh) {
+      const hit = await quietly(() => cache.get(key));
+      if (hit) return { ...hit.body, fetched_at: hit.fetchedAt };
+    }
+    return once(key, async () => {
+      const value = await load();
+      if (value?.success !== true) return value;
+      const at = (await quietly(() => cache.put(key, value))) ?? iso(now());
+      return { ...value, fetched_at: at };
+    });
+  }
+  /** 这个 Agent 支持的操作（describe）：库里有就用库里的。 */
+  async function opsOf() {
+    if (!cache) return (await client.describe()).ops;
+    const hit = await quietly(() => cache.get('describe'));
+    if (Array.isArray(hit?.body?.ops)) return hit.body.ops;
+    return once('describe', async () => {
+      const { protocol, backend, ops } = await client.describe();
+      await quietly(() => cache.put('describe', { protocol, backend, ops: [...ops] }));
+      return ops;
+    });
+  }
 
   async function describeMode() {
     if (!client.configured) return { mode, configured: false, ready: false, ops: [] };
     if (!(await client.ready())) return { mode, configured: true, ready: false, ops: [] };
-    return { mode, configured: true, ready: true, ops: [...(await client.describe()).ops] };
+    return { mode, configured: true, ready: true, ops: [...(await opsOf())] };
+  }
+
+  async function sources(params) {
+    const refresh = params.get('refresh') === '1';
+    if (refresh && cache) await quietly(() => cache.dropPrefix(DETAIL));   // 「刷新清单」：存着的详情也作废，下次看详情再问
+    return stored('list', () => client.request('list', {}), { refresh });
   }
 
   function meta(params) {
@@ -170,8 +223,11 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
     } catch (error) {
       const code = Object.hasOwn(MESSAGES, error?.code) ? error.code : 'KB_UNAVAILABLE';
       log(`POC_KB_INGEST_FAILED ${item.id} ${code}${error?.reason ? ` ${error.reason}` : ''}`);
+      if (STALE.has(code)) await forget('describe');
       patch = { status: 'failed', error: { code, message: MESSAGES[code] } };
     }
+    // 不管结果：库里可能改了（超时的那一轮也可能已经写完），清单和这份制度的详情以 Agent 那边为准
+    await forget('list', `${DETAIL}${input.sourceId}`);
     try {
       const finished = now();
       await history.update(item.id, { ...patch, finishedAt: iso(finished), elapsedMs: finished - started });
@@ -179,10 +235,16 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
     finally { busy = false; }
   }
 
-  /** 一份制度的详情、下线、恢复、删除；下线、恢复先看 describe 的 ops（缓存 5 分钟），不支持就不调。删除成功后在上传历史里记上（写盘失败只记日志，照样回 Agent 的结果）。 */
-  async function manage(op, sourceId) {
-    if (OPTIONAL_OPS.has(op) && !(await client.describe()).ops.includes(op)) fail('KB_OP_UNSUPPORTED', 409);
-    const result = await client.request(op, { source_id: sourceId });
+  /**
+   * 一份制度的详情、下线、恢复、删除；下线、恢复先看 describe 的 ops，不支持就不调。详情存进库（refresh 时重问）；
+   * 下线、恢复、删除之后（不管结果）清单和这份制度的详情作废。删除成功后在上传历史里记上（写盘失败只记日志，照样回 Agent 的结果）。
+   */
+  async function manage(op, sourceId, params) {
+    if (op === 'detail') return stored(`${DETAIL}${sourceId}`, () => client.request('detail', { source_id: sourceId }), { refresh: params.get('refresh') === '1' });
+    if (OPTIONAL_OPS.has(op) && !(await opsOf()).includes(op)) fail('KB_OP_UNSUPPORTED', 409);
+    let result;
+    try { result = await client.request(op, { source_id: sourceId }); }
+    finally { await forget('list', `${DETAIL}${sourceId}`); }
     if (op === 'delete' && result.success === true) {
       try { await history.removed(sourceId, iso(now())); } catch { log('POC_KB_HISTORY_WRITE_FAILED delete'); }
     }
@@ -205,14 +267,14 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
     if (method === 'GET' && route === '/uploads') return async () => [200, { items: history.list().slice(0, 50) }];
     const entry = /^\/uploads\/(\d{1,12})$/.exec(route);
     if (entry && method === 'GET') return async () => [200, history.get(Number(entry[1])) ?? fail('KB_NOT_FOUND', 404)];
-    if (method === 'GET' && route === '/sources') return async () => [200, await client.request('list', {})];
+    if (method === 'GET' && route === '/sources') return async () => [200, await sources(url.searchParams)];
     const one = /^\/sources\/([^/]+)(?:\/(deactivate|restore|delete))?$/.exec(route);
     if (one && ((method === 'GET' && !one[2]) || (method === 'POST' && one[2]))) {
       return async () => {
         let sourceId = '';
         try { sourceId = decodeURIComponent(one[1]); } catch { sourceId = ''; }
         if (!SOURCE_ID.test(sourceId)) fail('KB_REQUEST_INVALID', 400);
-        return [200, await manage(one[2] ?? 'detail', sourceId)];
+        return [200, await manage(one[2] ?? 'detail', sourceId, url.searchParams)];
       };
     }
     if (method === 'GET' && route === '/search') return async () => [200, await search(url.searchParams)];
@@ -253,6 +315,7 @@ export function createKbStewardRoutes({ mode, client, uploadsDir, maxBytes = 20 
       } catch (error) {
         const known = Object.hasOwn(MESSAGES, error?.code);
         const code = known ? error.code : 'KB_UNAVAILABLE';
+        if (STALE.has(code)) await forget('describe');
         if (!known || STATUS[code] >= 500) log(`POC_KB_FAILED ${error?.code || ''}${error?.reason ? ` ${error.reason}` : ''}`.slice(0, 120));
         send(res, known ? (error.status ?? STATUS[code] ?? 503) : 503, { error: { code, message: MESSAGES[code] } });
       }

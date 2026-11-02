@@ -51,6 +51,7 @@ sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初�
 | `POC_KB_AGENT_REPLY_LEADIN <操作> <字数>` | 知识库 Agent 在 JSON 前面多写了一句话（不超过 200 字、不含 `{ }`），外壳照样收下了 | 偶尔有不用管；每次都有，就去看知识库 Agent 的提示词 |
 | `POC_CUSTOM_RULES_TRIMMED <单据> <页数>` | 发起人的「我的规则」太长，这一轮从末尾去掉了几页原件 | 告诉这个人删减规则 |
 | `POC_KB_BACKEND_MISMATCH <方式> <backend>` | 知识库 Agent 说的后端和部署配置的知识库方式对不上 | 核对「Agent 接入」页启用的是哪个知识库 Agent |
+| `POC_KB_CACHE_UNAVAILABLE` | 知识库页的缓存（`poc_kb_cache`）读写出错，这次照常去问了 Agent（页面慢一些，不报错） | 偶尔有不用管；成串的就看 MySQL 容器 `jiuan-mysql` |
 
 ### 1.3 重启与健康检查
 
@@ -153,7 +154,7 @@ python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/sessions/<会
 
 **改审核 Agent 的提示词**：按[部署与迭代规范](deploy-iteration.md)第 6.3 节，每次改线上都在 `audit-agent/prompt-history/` 留底。
 
-**知识库**：测试台经 A2A 调 PG 知识库 Agent（`pub_6ea5f0855dff6c1b`，调用密钥在「Agent 接入」页启用）。部署、核对 PG 本身见 [kb/GUIDE.md](../../kb/GUIDE.md)。
+**知识库**：测试台经 A2A 调 PG 知识库 Agent（`pub_6ea5f0855dff6c1b`，调用密钥在「Agent 接入」页启用）。部署、核对 PG 本身见 [kb/GUIDE.md](../../kb/GUIDE.md)。知识库页的操作清单、制度清单和详情存在 `jiuan` 库的 `poc_kb_cache` 里，打开页面不问 Agent；别处改了知识库（`kb/deploy.sh` 入库、在 Nexus 上直接操作）后，在页面上点「刷新清单」，或清掉这张表：`DELETE FROM poc_kb_cache;`（下次打开页面重新问 Agent）。规则见 [PoC 说明](../../poc/README.md)「知识库」。
 
 ### 2.8 清理 v0.5.3 PoC 留在实例上的东西
 

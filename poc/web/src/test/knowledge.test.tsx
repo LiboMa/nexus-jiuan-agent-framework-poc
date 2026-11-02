@@ -99,6 +99,30 @@ describe('知识库: ready', () => {
     expect(within(await rowOf('fin-approval')).getByText('已下线')).toBeInTheDocument();
   });
 
+  it('the list is kept in the bench: says when it was read from the agent; 「刷新清单」 asks the agent again (refresh=1) and shows the new time', async () => {
+    const { user, bench } = await openKnowledge();
+    await sourcesTable();
+    expect(screen.getByText(/清单是 11-03 09:00 从知识库 Agent 读来、存在测试台里的/)).toBeInTheDocument();
+    expect(bench.find('GET', '/api/analysis/v1/poc/kb/sources').map(call => call.search)).toEqual(['']);
+    await user.click(screen.getByRole('button', { name: '刷新清单' }));
+    expect(await screen.findByText(/清单是 11-03 10:30 从知识库 Agent 读来/)).toBeInTheDocument();
+    expect(bench.find('GET', '/api/analysis/v1/poc/kb/sources').map(call => call.search)).toEqual(['', '?refresh=1']);
+  });
+
+  it('when 「刷新清单」 fails, the list read before stays and the shell message is shown', async () => {
+    let fail = false;
+    const { user } = await openKnowledge({ overrides: {
+      'GET /api/analysis/v1/poc/kb/sources': () => (fail
+        ? { status: 503, body: { error: { code: 'KB_UNAVAILABLE', message: '知识库 Agent 暂时连不上，或没在限定时间内答完：稍后再试。' } } }
+        : { body: { data: { success: true, sources: [], fetched_at: '2026-11-03T01:00:00.000Z' } } }),
+    } });
+    expect(await screen.findByText('规则库里还没有制度')).toBeInTheDocument();
+    fail = true;
+    await user.click(screen.getByRole('button', { name: '刷新清单' }));
+    expect(await screen.findByText('知识库 Agent 暂时连不上，或没在限定时间内答完：稍后再试。')).toBeInTheDocument();
+    expect(screen.getByText('规则库里还没有制度')).toBeInTheDocument();
+  });
+
   it('while one operation runs (10–20 s), every row button and 刷新 is disabled; two clicks in the same tick send one request', async () => {
     const slow = deferred();
     const { bench } = await openKnowledge({ overrides: { 'POST /api/analysis/v1/poc/kb/sources/travel-rules/restore': slow.route } });

@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { ModelError } from '../../lib/a2a-client.mjs';
 import { createKbStewardClient } from '../../kb-steward-client.mjs';
 import { createKbStewardRoutes } from '../../kb-steward-routes.mjs';
+import { createKbCache } from '../../kb-cache.mjs';
+import { fakeKbCachePool } from './helpers/fake-kb-cache-pool.mjs';
 
 // 「公司制度」接口（两种知识库方式共用）：经 A2A 调知识库 Agent（kb.rules/v1）——pg 方式是 PG 知识库 Agent，s3vectors 方式是知识库文档管家。
 // call、credentialFor、markInvalid 都是假的，不出网、不碰真钥匙。
@@ -41,7 +43,7 @@ async function until(check, ms = 3000) {
  * answer(args) 给出知识库 Agent 这一轮回的文字（或抛错），describe(args) 是 describe 那一轮的；key 是「Agent 接入」页里这个发布的钥匙（null = 没启用）；
  * publishId 是部署配置里的发布编号（null = 没配）。state.clock 是客户端的时钟（describe 的缓存按它算），later(ms) 往后拨。
  */
-async function harness({ mode = 's3vectors', answer = () => reply(INGESTED), describe = () => reply(DESCRIBED), key = KEY, publishId = PUB, uploadsDir } = {}) {
+async function harness({ mode = 's3vectors', answer = () => reply(INGESTED), describe = () => reply(DESCRIBED), key = KEY, publishId = PUB, uploadsDir, cache = null } = {}) {
   const dir = uploadsDir ?? await mkdtemp(path.join(tmpdir(), 'kb-steward-'));
   const calls = [], invalid = [], requests = [], lookups = [];
   const state = { key, clock: Date.parse('2026-10-29T08:00:00.000Z') };
@@ -56,7 +58,7 @@ async function harness({ mode = 's3vectors', answer = () => reply(INGESTED), des
     markInvalid: async (id, reason) => { invalid.push([id, reason]); state.key = null; } });
   const spied = { ...client, request: (...args) => { requests.push(args); return client.request(...args); } };
   let clock = Date.parse('2026-10-29T08:00:00.000Z');
-  const routes = createKbStewardRoutes({ mode, client: spied, uploadsDir: dir, log: line => logs.push(line), now: () => (clock += 1500) });
+  const routes = createKbStewardRoutes({ mode, client: spied, uploadsDir: dir, cache, log: line => logs.push(line), now: () => (clock += 1500) });
   const ask = async (method, route, { role = 'admin', body = null, headers = {} } = {}) => {
     const req = Object.assign(Readable.from([body ?? Buffer.alloc(0)]), { method, headers });
     let status = null, payload = null;
@@ -626,4 +628,141 @@ test('server_wiring：外壳两种方式都挂这一套接口（方式和发布�
   for (const file of ['kb-routes.mjs', 'kb-runner.mjs', 'kb-s3v-client.mjs', 'kb-s3v-routes.mjs', 'test/unit/kb-routes.test.mjs']) {
     await assert.rejects(access(path.join(here, file)), { code: 'ENOENT' }, file);
   }
+});
+
+// ---------- 缓存（poc_kb_cache）：describe、制度清单、详情存在库里，页面打开不必每次问 Agent ----------
+const LISTED = { success: true, sources: [{ source_id: 'sample-matrix', title: '仿真办法', source_version: 'V4.0', rules_total: 18, status: 'active' }] };
+const DETAILED = { success: true, source: { source_id: 'sample-matrix', title: '仿真办法', rules_total: 18 }, rule_ids: ['C01-1.1', 'G-01'] };
+const byOp = (extra = {}) => args => {
+  const { op, source_id } = args.data[0];
+  if (extra[op]) return extra[op](args);
+  if (op === 'list') return reply(LISTED);
+  if (op === 'detail') return reply(DETAILED);
+  if (['deactivate', 'restore', 'delete'].includes(op)) return reply({ success: true, source_id, affected: 18 });
+  return reply(INGESTED);
+};
+const cacheOf = (pool, { mode = 's3vectors', at = Date.parse('2026-11-03T01:00:00.000Z') } = {}) => createKbCache({ pool, scope: `${mode}:${PUB}`, now: () => at });
+
+test('cached_list：清单第一次问 Agent、存进库，之后直接从库里给（不再调 Agent），回复带 fetched_at；?refresh=1 重新问 Agent、更新读到的时间、清掉存着的详情', async t => {
+  const pool = fakeKbCachePool();
+  let at = Date.parse('2026-11-03T01:00:00.000Z');
+  const cache = createKbCache({ pool, scope: `s3vectors:${PUB}`, now: () => at });
+  const h = await harness({ answer: byOp(), cache });
+  t.after(h.done);
+  const first = await h.ask('GET', '/sources');
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.payload.data, { ...LISTED, fetched_at: '2026-11-03T01:00:00.000Z' });
+  const second = await h.ask('GET', '/sources');
+  assert.deepEqual(second.payload.data, first.payload.data, '第二次一样，来自库里');
+  assert.equal(await h.ask('GET', '/sources/sample-matrix').then(r => r.payload.data.fetched_at), '2026-11-03T01:00:00.000Z');
+  await h.ask('GET', '/sources/sample-matrix');
+  assert.deepEqual(h.ops().filter(op => op !== 'describe'), ['list', 'detail'], '清单、详情各只问了一次');
+  at = Date.parse('2026-11-03T02:00:00.000Z');
+  const fresh = await h.ask('GET', '/sources?refresh=1');
+  assert.equal(fresh.payload.data.fetched_at, '2026-11-03T02:00:00.000Z');
+  assert.deepEqual(pool.table().map(row => row.cache_key).sort(), ['list'], '刷新清单时存着的详情都清掉（下次看详情再问）');
+  assert.deepEqual(h.ops().filter(op => op !== 'describe'), ['list', 'detail', 'list']);
+});
+
+test('cached_restart：外壳重启（新的一套接口、同一个库）后 /mode 的操作清单和制度清单都从库里给，不问 Agent', async t => {
+  const pool = fakeKbCachePool();
+  const a = await harness({ answer: byOp(), cache: cacheOf(pool) });
+  t.after(a.done);
+  assert.deepEqual((await a.ask('GET', '/mode')).payload.data, { mode: 's3vectors', configured: true, ready: true, ops: ALL_OPS });
+  await a.ask('GET', '/sources');
+  assert.deepEqual(a.ops(), ['describe', 'list']);
+  const b = await harness({ answer: byOp(), cache: cacheOf(pool) });
+  t.after(b.done);
+  assert.deepEqual((await b.ask('GET', '/mode')).payload.data, { mode: 's3vectors', configured: true, ready: true, ops: ALL_OPS });
+  assert.deepEqual((await b.ask('GET', '/sources')).payload.data.sources, LISTED.sources);
+  assert.deepEqual(b.ops(), [], '重启后一次都没问 Agent');
+  // 下线、恢复看的 ops 也从库里来
+  await b.ask('POST', '/sources/sample-matrix/deactivate');
+  assert.deepEqual(b.ops(), ['deactivate']);
+});
+
+test('cached_writes：下线、恢复、删除之后清单和这份制度的详情作废，下次打开重新问 Agent；别的制度的详情不动', async t => {
+  const pool = fakeKbCachePool();
+  const h = await harness({ answer: byOp(), cache: cacheOf(pool) });
+  t.after(h.done);
+  for (const op of ['deactivate', 'restore', 'delete']) {
+    await h.ask('GET', '/sources');
+    await h.ask('GET', '/sources/sample-matrix');
+    await cacheOf(pool).put('detail:other-doc', DETAILED);
+    assert.equal((await h.ask('POST', `/sources/sample-matrix/${op}`)).status, 200);
+    assert.deepEqual(pool.table().map(row => row.cache_key).sort(), ['describe', 'detail:other-doc'], `${op} 之后`);
+  }
+  // 工具自己失败（success:false）也作废：库里到底改没改，以 Agent 那边为准
+  const failing = await harness({ answer: byOp({ deactivate: () => reply({ success: false, error_type: 'not_found', message: '没有这份制度' }) }), cache: cacheOf(pool) });
+  t.after(failing.done);
+  await failing.ask('GET', '/sources');
+  await failing.ask('POST', '/sources/sample-matrix/deactivate');
+  assert.ok(!pool.table().some(row => row.cache_key === 'list'));
+});
+
+test('cached_ingest：入库（不管结果）之后清单和这份制度的详情作废', async t => {
+  const pool = fakeKbCachePool();
+  const h = await harness({ answer: byOp(), cache: cacheOf(pool) });
+  t.after(h.done);
+  await h.ask('GET', '/mode');
+  await h.ask('GET', '/sources');
+  await h.ask('GET', '/sources/sample-matrix');
+  const accepted = await h.upload();
+  assert.equal(accepted.status, 202);
+  await h.settled(accepted.payload.data.id);
+  await until(async () => !pool.table().some(row => row.cache_key === 'list'));
+  assert.deepEqual(pool.table().map(row => row.cache_key).sort(), ['describe']);
+});
+
+test('cached_not_stored：工具失败（success:false）、调用失败的不存，下次还问 Agent；没启用时不拿库里的给', async t => {
+  const pool = fakeKbCachePool();
+  let fails = 2;
+  const h = await harness({ cache: cacheOf(pool), answer: byOp({
+    list: () => (fails-- > 1 ? reply({ success: false, error_type: 'backend_error', message: '库连不上' }) : timeout()) }) });
+  t.after(h.done);
+  assert.equal((await h.ask('GET', '/sources')).payload.data.success, false);
+  assert.equal((await h.ask('GET', '/sources')).status, 503);
+  assert.ok(!pool.table().some(row => row.cache_key === 'list'));
+  await cacheOf(pool).put('list', LISTED);
+  h.state.key = null;
+  const notReady = await h.ask('GET', '/sources');
+  assert.deepEqual([notReady.status, notReady.payload.error.code], [409, 'KB_AGENT_NOT_READY'], '钥匙没了就不给，页面换成那句提示');
+});
+
+test('cached_db_down：库读写出错时照常去问 Agent（页面不报错），日志一行 POC_KB_CACHE_UNAVAILABLE', async t => {
+  const pool = fakeKbCachePool();
+  pool.fail = true;
+  const h = await harness({ answer: byOp(), cache: cacheOf(pool) });
+  t.after(h.done);
+  const listed = await h.ask('GET', '/sources');
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.payload.data.sources, LISTED.sources);
+  assert.match(listed.payload.data.fetched_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal((await h.ask('GET', '/mode')).status, 200);
+  assert.ok(h.logs.includes('POC_KB_CACHE_UNAVAILABLE'));
+});
+
+test('cached_stale：钥匙被拒、回复不合格时库里的操作清单作废（Agent 那边换了钥匙或版本），下次 /mode 重新问', async t => {
+  const pool = fakeKbCachePool();
+  let bad = false;
+  const h = await harness({ cache: cacheOf(pool), answer: byOp({ list: () => (bad ? '好的' : reply(LISTED)) }) });
+  t.after(h.done);
+  await h.ask('GET', '/mode');
+  assert.ok(pool.table().some(row => row.cache_key === 'describe'));
+  bad = true;
+  assert.equal((await h.ask('GET', '/sources')).status, 502);
+  await until(async () => !pool.table().some(row => row.cache_key === 'describe'));
+});
+
+test('cached_single_flight：同时来的几次读清单共用一次 Agent 调用', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const h = await harness({ cache: cacheOf(fakeKbCachePool()), answer: byOp({ list: async () => { await gate; return reply(LISTED); } }) });
+  t.after(h.done);
+  const pending = [h.ask('GET', '/sources'), h.ask('GET', '/sources'), h.ask('GET', '/sources')];
+  await until(() => h.ops().includes('list'));
+  release();
+  const answers = await Promise.all(pending);
+  assert.deepEqual(answers.map(answer => answer.status), [200, 200, 200]);
+  assert.equal(h.ops().filter(op => op === 'list').length, 1);
 });

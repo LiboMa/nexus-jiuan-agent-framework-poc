@@ -28,6 +28,7 @@ import { createAgentTests } from './agent-tests.mjs';
 import { createEnvelopeChecks } from './envelope-tests.mjs';
 import { createKbStewardClient } from './kb-steward-client.mjs';
 import { createKbStewardRoutes } from './kb-steward-routes.mjs';
+import { createKbCache } from './kb-cache.mjs';
 import { createCustomRules, customRulesRoutes, docxToText } from './custom-rules.mjs';
 import { withAdviceActor, withCustomRules } from './custom-rules-advice.mjs';
 import { a2aCall } from './lib/a2a-client.mjs';
@@ -161,10 +162,13 @@ const runtime = { ...anchorRuntime, evidenceService: runtimeRegistry.evidenceSer
 const intake = intakeRoutes({ fake });
 // 「规则库 › 制度知识库 › 公司制度」：测试台不直连 PG，两种方式（POC_KB_MODE）共用一套接口，经 A2A 调 Nexus 上的知识库 Agent 的发布
 // （pg：PG 知识库 Agent；s3vectors：知识库文档管家）。调用密钥取「Agent 接入」页的启用记录，Nexus 不认时标记失效；
-// 部署配置里没有发布编号时页面说「知识库 Agent 还没配置」，启动时记一行 POC_KB_AGENT_NOT_CONFIGURED
+// 部署配置里没有发布编号时页面说「知识库 Agent 还没配置」，启动时记一行 POC_KB_AGENT_NOT_CONFIGURED。
+// 制度清单、详情和操作清单存在 jiuan 库的 poc_kb_cache 里（按方式 + 发布编号分开），页面打开不必每次问 Agent（kb-cache.mjs）
+const kbCache = createKbCache({ pool, scope: `${settings.kb.mode}:${settings.kb.publishId ?? '-'}` });
+await kbCache.start();
 const kb = createKbStewardRoutes({ mode: settings.kb.mode, client: createKbStewardClient({ origin: config.agents.nexusOrigin, publishId: settings.kb.publishId,
   mode: settings.kb.mode, log, credentialFor: id => enablement.credentialFor(id), markInvalid: (id, reason) => enablement.markInvalid(id, reason) }),
-  uploadsDir: settings.kb.uploadsDir, log });
+  uploadsDir: settings.kb.uploadsDir, cache: kbCache, log });
 if (!settings.kb.publishId) log(`POC_KB_AGENT_NOT_CONFIGURED ${settings.kb.mode}`);
 await kb.start();
 const myRules = customRulesRoutes({ rules: customRules, log });

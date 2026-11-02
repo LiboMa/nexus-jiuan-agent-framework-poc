@@ -1,7 +1,8 @@
 /**
  * 知识库页和「上传制度」「检索」弹框要的接口：测试台外壳 /poc/kb/*（poc/app/kb-steward-routes.mjs），规则库由 Nexus 上的知识库 Agent 经 A2A 读写。
- *   GET  /poc/kb/mode                         { mode, configured, ready, ops }（冷启动要等 describe，约 10–20 秒）
- *   GET  /poc/kb/sources · /sources/:id       制度清单、一份制度的登记和规则编号
+ *   GET  /poc/kb/mode                         { mode, configured, ready, ops }（外壳还没存过 describe 时要等它，约 10–20 秒）
+ *   GET  /poc/kb/sources[?refresh=1] · /sources/:id   制度清单、一份制度的登记和规则编号：外壳存在库里，带 fetched_at（从 Agent 读到的时间）；
+ *                                             refresh=1 让外壳重新问 Agent（页面上的「刷新清单」）
  *   POST /poc/kb/sources/:id/(deactivate|restore|delete)
  *   POST /poc/kb/sources?sourceId&sourceVersion&title   请求体是 .docx 原文（X-File-Name）→ 202 { id, status: 'ingesting' }
  *   GET  /poc/kb/uploads · /uploads/:id       上传记录；页面轮询到 ingested / skipped / failed
@@ -68,9 +69,12 @@ async function tool<T>(path: string, agent: Agent, init?: Parameters<typeof api>
 const enc = encodeURIComponent;
 
 export const fetchMode = () => api<KbMode>('/poc/kb/mode');
-export async function fetchSources(agent: Agent): Promise<KbSource[]> {
-  const data = await tool<{ sources?: KbSource[] }>('/poc/kb/sources', agent);
-  return Array.isArray(data?.sources) ? data.sources.filter(source => source && typeof source.source_id === 'string') : [];
+export interface KbSourceList { sources: KbSource[]; fetchedAt: string | null }
+/** refresh：让外壳重新问 Agent；平时拿外壳存着的那份（fetchedAt 是它从 Agent 读到的时间）。 */
+export async function fetchSources(agent: Agent, { refresh = false } = {}): Promise<KbSourceList> {
+  const data = await tool<{ sources?: KbSource[]; fetched_at?: unknown }>(`/poc/kb/sources${refresh ? '?refresh=1' : ''}`, agent);
+  return { sources: Array.isArray(data?.sources) ? data.sources.filter(source => source && typeof source.source_id === 'string') : [],
+    fetchedAt: typeof data?.fetched_at === 'string' ? data.fetched_at : null };
 }
 export const fetchSource = (id: string, agent: Agent) => tool<{ source: KbSource; rule_ids?: string[] }>(`/poc/kb/sources/${enc(id)}`, agent);
 export const manageSource = (id: string, op: KbOp, agent: Agent) => tool<{ source_id: string; affected?: number }>(`/poc/kb/sources/${enc(id)}/${op}`, agent, { method: 'POST' });

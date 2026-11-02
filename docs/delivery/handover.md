@@ -47,7 +47,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 
 | 路径 | 内容 | 谁维护 |
 |---|---|---|
-| `poc/app/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，`front.mjs` 在 `/` 给新前端，口令登录、进程内假汇联易、出网守卫；「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由；知识库页的后端：`kb-steward-routes.mjs` 上传 / 历史 / 制度清单 / 下线 / 检索接口、`kb-steward-client.mjs` 经 A2A 调知识库 Agent（`kb.rules/v1`），2026-10-30 起测试台不直连 PG；新前端用的接口：`reviews.mjs` 复核、`dashboard.mjs` 工作台、`advice-rounds.mjs` AI 轮次、`evidence-pages.mjs` 原件分页）。`lib/`：A2A 客户端、名片规整、operator 命令行、口令登录、HTTP 小工具（2026-11-02 从 `poc/app` 搬来）。`test/unit/` 单元测试，`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） | 应用开发 |
+| `poc/app/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，`front.mjs` 在 `/` 给新前端，口令登录、进程内假汇联易、出网守卫；「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由；知识库页的后端：`kb-steward-routes.mjs` 上传 / 历史 / 制度清单 / 下线 / 检索接口、`kb-cache.mjs` 把知识库页的数据存在 `jiuan` 库的 `poc_kb_cache`、`kb-steward-client.mjs` 经 A2A 调知识库 Agent（`kb.rules/v1`），2026-10-30 起测试台不直连 PG；新前端用的接口：`reviews.mjs` 复核、`dashboard.mjs` 工作台、`advice-rounds.mjs` AI 轮次、`evidence-pages.mjs` 原件分页）。`lib/`：A2A 客户端、名片规整、operator 命令行、口令登录、HTTP 小工具（2026-11-02 从 `poc/app` 搬来）。`test/unit/` 单元测试，`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） | 应用开发 |
 | `poc/web/` | 新前端（React，哈希路由）：`npm ci && npm test && npm run build`；`poc/infra/deploy.sh` 每次都先构建它，`dist/` 随构件发出 | 应用开发 |
 | `poc/bench/` | `build-jiuan.sh`：从九安 v0.7.10 开发包按清单复制 → 按顺序打补丁 → 装上锁定版本的 `mysql2`，输出到 `.build/jiuan/` | 应用开发 |
 | `.build/jiuan/` | 生成物（九安副本 + 补丁 + 依赖）；`deploy.sh` 每次重建，不要手改 | — |

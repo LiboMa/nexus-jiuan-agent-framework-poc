@@ -56,11 +56,15 @@ export interface KbOptions {
 /** 假测试台。overrides 里的路由（「方法 路径」）优先。 */
 export function fakeKb({ role = 'admin', mode = { mode: 'pg', configured: true, ready: true, ops: ALL_OPS }, sources = SOURCES.map(s => ({ ...s })),
   uploads = [] as FakeUpload[], rules = OWN_RULES.map(r => ({ ...r })), overrides = {} as Record<string, FakeRoute> }: KbOptions = {}) {
-  const state = { sources, uploads, rules, nextUpload: 1 + Math.max(0, ...uploads.map(u => u.id)), nextRule: 10 };
+  const state = { sources, uploads, rules, nextUpload: 1 + Math.max(0, ...uploads.map(u => u.id)), nextRule: 10, fetchedAt: '2026-11-03T01:00:00.000Z' };
   const routes: Record<string, FakeRoute> = {
     'GET /api/analysis/v1/session': { body: sessionBody(role) },
     [`GET ${KB}/mode`]: () => ok(mode),
-    [`GET ${KB}/sources`]: () => ok({ success: true, sources: state.sources }),
+    // 外壳把清单存在库里：平时回存着的那份和读到的时间；?refresh=1 是重新问了 Agent
+    [`GET ${KB}/sources`]: call => {
+      if (new URLSearchParams(call.search).get('refresh') === '1') state.fetchedAt = '2026-11-03T02:30:00.000Z';
+      return ok({ success: true, sources: state.sources, fetched_at: state.fetchedAt });
+    },
     [`GET ${KB}/uploads`]: () => ok({ items: [...state.uploads].sort((a, b) => b.id - a.id).slice(0, 50) }),
     [`POST ${KB}/sources`]: call => {
       const params = new URLSearchParams(call.search);

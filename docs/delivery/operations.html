@@ -281,6 +281,13 @@ AWS 凭证有 <code>ec2-instance-connect:OpenTunnel</code>。</p>
 <td>知识库 Agent 说的后端和部署配置的知识库方式对不上</td>
 <td>核对「Agent 接入」页启用的是哪个知识库 Agent</td>
 </tr>
+<tr>
+<td><code>POC_<wbr>KB_<wbr>CACHE_<wbr>UNAVAILABLE</code></td>
+<td>知识库页的缓存（<code>poc_<wbr>kb_<wbr>cache</code>）读写出错，这次照常去问了
+Agent（页面慢一些，不报错）</td>
+<td>偶尔有不用管；成串的就看 MySQL 容器
+<code>jiuan-<wbr>mysql</code></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -530,7 +537,12 @@ href="deploy-iteration.html">部署与迭代规范</a>第 6.3 节，每次改线
 <p><strong>知识库</strong>：测试台经 A2A 调 PG 知识库
 Agent（<code>pub_6ea5f0855dff6c1b</code>，调用密钥在「Agent
 接入」页启用）。部署、核对 PG 本身见 <a
-href="../../kb/GUIDE.md">kb/GUIDE.md</a>。</p>
+href="../../kb/GUIDE.md">kb/GUIDE.md</a>。知识库页的操作清单、制度清单和详情存在
+<code>jiuan</code> 库的 <code>poc_kb_cache</code> 里，打开页面不问
+Agent；别处改了知识库（<code>kb/deploy.sh</code> 入库、在 Nexus
+上直接操作）后，在页面上点「刷新清单」，或清掉这张表：<code>DELETE FROM poc_kb_cache;</code>（下次打开页面重新问
+Agent）。规则见 <a href="../../poc/README.md">PoC
+说明</a>「知识库」。</p>
 <h2 id="28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
 留在实例上的东西</h2>
 <p>新代码部署时（<code>bench/bench-configure.sh</code>）会停掉、删掉
