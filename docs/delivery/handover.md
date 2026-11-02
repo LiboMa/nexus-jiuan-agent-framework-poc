@@ -30,6 +30,19 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | 交付前评审 | 作为 PoC 可以交接维护；上生产前有 2 个 Critical、11 个 Important 要改，见第 6.1 节（I1 已在 2026-10-19 修好） |
 | 代码托管 | **交接仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>：只有交接内容（代码、两个 Skill、契约、交接文档），给客户用；由 `docs/delivery/make-package.sh --export` 从开发目录同步。**开发仓库** <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>：另外还有设计稿、实现计划、进度看板、历次评估和评审记录。两个都是私有仓库。交接仓库的封板标签是 `v0.1`（2026-10-19）、`v0.1.0`（2026-10-21）和 `v0.7.10`（2026-10-26，分支 `release/v0.7.10`，本版）；开发仓库停在 `v0.1` |
 
+**九安 v0.7.10 测试台的状态**（2026-11-02，`main` 在 `3c66885`，都已部署）：
+
+| 项 | 状态 |
+|---|---|
+| 站点与新前端 | <https://jiuan-v0710.tinyboat.blog>。首页 `/` 是新前端 `poc/web07`（React 19、TypeScript、Vite、Tailwind 4、TanStack Query、Radix，哈希路由；守着 CSP `style-src 'self'`，不注入 `<style>`），有自己的登录页；旧的口令页 `/poc/login` 照旧，跳到 `/#access=…`；九安原来的页面在 `/analysis.html`。页面：工作台、单据池（只有对公付款单）和单据抽屉、知识库、我的规则、Agent 接入、设置（一期只链到 `/analysis.html#adminConfig` 和 `#platform`）。说明见 [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
+| 人工复核 | 在单据抽屉里「采纳 AI 建议」或「改判」，只记在测试台（`/poc/reviews`），**不回写汇联易** |
+| 审核 Agent | 「九安审核AI（PoC）」`pub_5c53e70d8dc7ddea` 是「Agent 接入」页上的审批 Agent。线上是 `jiuan-audit-ai-kb-2026-11-01.1`（发布修订号 18），思考强度 `high`（原来 `xhigh`），动态配置里工具 0 个（原来手工加的 15 个已清掉，要恢复只能在 Nexus 网页上重新加）。发布实际跑的模型是 `global.anthropic.claude-sonnet-5`；提示词元数据里写的是 `${AGENT_MODEL}`（环境配置里是 opus-5-5），那只是元数据，两者对不上。一轮 7–20 秒，查库 1–2 次。每次改线上提示词留一个目录在 `audit-agent/prompt-history/` |
+| 时限 | 一轮 AI 独立建议 180 秒（补丁 0006，只改测试台副本的 `review_advice@1`；九安上游的契约还是 120 秒）；调用中间件给 `nexus-a2a` 200 秒（补丁 0007），超时报 `AI_UNAVAILABLE`；外壳给一轮的租约 420 秒 |
+| 知识库 | PG 方式。测试台经 A2A 调 PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b`（`kb.rules/v1`），它的调用密钥由项目负责人在「Agent 接入」页启用；这个 Agent 的代码在另一个会话的分支 `feat/pg-kb-steward`，**还没合进来**。有效的规则是审批风险判断卡 `risk-cards`（449 条）；V4.0 审批矩阵 `finance-approval-v4` 已下线（可恢复，没删）。向量 2026-10-31 起由另一个会话换成 Cohere Embed v4。见第 2.2 节和 [kb/GUIDE.md](../../kb/GUIDE.md) 7.6 |
+| 账号 | 见第 2.4 节 |
+| 测试 | `run07.sh` 端到端：2026-11-01 完整运行 26 条，25 通过，那 1 条（知识库 Agent 回复前多一句话）已修；之后知识库的 4 条、单据池的 6 条单独重跑全部通过。完整跑一次约 1–3 美元的 Nexus 调用 |
+| 未完成 | 第 6 节第 13 条起 |
+
 **页面长这样**（2026-10-17 截自线上，数据都是虚构的）：
 
 ![单据池：两家虚构公司的 8 张单据，卡片上显示审批状态](../assets/screens/documents.png)
@@ -57,10 +70,11 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `poc/app/scripts/build-public.mjs` | 用锚点补丁从九安原前端生成前端副本 | 应用开发 |
 | `poc/bench/` | `build-jiuan.sh`：从九安开发包复制 `code/` → 按顺序打补丁 → 装上锁定版本的 `mysql2` 3.14.3，输出到 `.build/jiuan/` | 应用开发 |
 | `.build/jiuan/` | 生成物（九安副本 + 补丁 + 依赖）；`deploy.sh` 每次重建，不要手改 | — |
-| `poc/app07/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，口令登录、进程内假汇联易、出网守卫，「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由；「规则库 › 制度知识库」页的后端：`kb-routes.mjs` 上传 / 预览 / 入库 / 历史 / 检索接口、`kb-runner.mjs` 调 `kb/lib` 的 Python）；`poc/bench/build-jiuan07.sh` 构建九安 v0.7.10 副本到 `.build/jiuan07/`（生成物，不要手改） | 应用开发 |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0004，按文件名顺序：连 Nexus 列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批 Agent；「规则库」分「审核要点」「制度知识库」两页（`public/kb-page.js`） | 应用开发 |
-| `audit-agent/` | 审核 Agent「九安审核AI」的提示词（v3：信封模式、`review_advice@1`、只读查知识库，第 1 次查询用 `kb_search`）、下发脚本 `apply.py`（写提示词并重存发布的动态配置） | Agent 开发 |
-| `kb/` | 知识库部署工具（原 `pgvector-rules-kb`，2026-10-26 并入）：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对。测试台上用 `poc/infra/kb.sh` 驱动（从栈里取实例和网段）；完整说明在 `kb/GUIDE.md` | 运维、Agent 开发 |
+| `poc/app07/` | 九安 v0.7.10 测试台的外壳（`server.mjs` 组合根，口令登录、进程内假汇联易、出网守卫，「Agent 接入」页的后端：`nexus-access.mjs` 发布列表、`agent-tests.mjs` 测试、`agent-calls.mjs` 调用记录、`agent-routes.mjs` 审批流路由；「规则库 › 制度知识库」页的后端：`kb-steward-routes.mjs` 上传 / 历史 / 制度清单 / 下线 / 检索接口、`kb-steward-client.mjs` 经 A2A 调知识库 Agent（`kb.rules/v1`），2026-10-30 起测试台不再直连 PG；新前端用的接口：`reviews.mjs` 复核、`dashboard.mjs` 工作台、`advice-rounds.mjs` AI 轮次、`evidence-pages.mjs` 原件分页、`front.mjs` 在 `/` 给新前端）；`poc/bench/build-jiuan07.sh` 构建九安 v0.7.10 副本到 `.build/jiuan07/`（生成物，不要手改） | 应用开发 |
+| `poc/web07/` | 九安 v0.7.10 测试台的新前端（React，哈希路由）：`npm ci && npm test && npm run build`；`poc/infra/deploy.sh` 每次都先构建它，`dist/` 随构件发出 | 应用开发 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0007，按文件名顺序：连 Nexus 列发布；「Agent 接入」页；启用即就绪、审批流只调管理员指定的一个审批 Agent；「规则库」分「审核要点」「制度知识库」两页（`public/kb-page.js`）；规则页跟着知识库方式走、「我的规则」；`review_advice@1` 的时限 180 秒；`nexus-a2a` 的时限 200 秒 | 应用开发 |
+| `audit-agent/` | 审核 Agent「九安审核AI」的提示词（v3：信封模式、`review_advice@1`、只读查知识库，第 1 次查询用 `kb_search`）、下发脚本 `apply.py`（写提示词并重存发布的动态配置）；`prompt-history/<日期>/`：每次改线上提示词的改前、改后、比对、下发记录（回退用改前那份） | Agent 开发 |
+| `kb/` | 知识库部署工具（原 `pgvector-rules-kb`，2026-10-26 并入）：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对。测试台上用 `poc/infra/kb.sh` 驱动（从栈里取实例和网段）；完整说明在 `kb/GUIDE.md`。`kb/convert/risk-cards/`：把审批风险判断卡的 HTML 转成可入库的 .docx（只有代码，原页面和转出来的文件不进仓库） | 运维、Agent 开发 |
 | `patches/jiuan-v0.5.3/` | 打进九安副本的补丁，按文件名顺序。现在还没有这个目录，第二份计划写 0001–0006 | 应用开发 |
 | `contract/` | Agent 接入框架的契约：信封、名片要求、错误码、任务目录、审批流接口 | 应用开发、Agent 开发 |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`（升级前备份）、`upgrade-instance.sh`（换实例类型）、`bench-test.sh`（在测试台上跑要 MySQL 的测试）、`bench/`（实例上的 MySQL 安装、配置、重置脚本与 systemd 片段）、`secrets.env`（只在本机，0600） | 运维 |
@@ -87,7 +101,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 | EC2 | `i-01d753d48056fd423`，t3.large（2026-10-19 起是测试台），Amazon Linux 2023，Node 24，systemd 服务 `andon-finance-poc` |
 | MySQL | 实例上的 Docker 容器 `jiuan-mysql`（mysql:8.0，只听 127.0.0.1:3306），数据目录 `/var/lib/jiuan-mysql`，库 `jiuan_analysis`；端到端测试前用 `bench/bench-reset.sh` 重建这个库 |
 | 九安 v0.7.10 | 同一台实例：systemd 服务 `andon-jiuan07`（系统用户 `jiuan07`，只听 127.0.0.1:4181，屏蔽 IMDS），程序 `/opt/andon-finance/current/app07/server.mjs` + 九安副本；PoC 进程按 Host 把 `jiuan-v0710.tinyboat.blog` 的请求转过去（`poc/app/host-proxy.mjs`），安全组不变；第二个 CloudFront 分发。库 `jiuan07`（同一个 `jiuan-mysql` 容器，账号 `jiuan07_app`）；配置与密钥文件 `/etc/andon-finance/jiuan07/`；工作目录 `/var/lib/jiuan07/`（`nexus/` 是「Agent 接入」页连 Nexus 的凭证，`seed-anchor.json` 是种子单据的时间锚点）。端到端测试前 `bench/bench07-reset.sh` 重建 `jiuan07` 库，保留启用记录（含审批 Agent）和 Nexus 连接 |
-| 知识库 | 同一台实例上的 Docker 容器 `nexus-pgvector`（`pgvector/pgvector:pg17`，只绑实例私网 IP 的 5432），库 `nexus`、表 `approval_rules`（102 条，标签 `finance-approval-v4`；制度原文不进仓库）；容器里装了 PL/Python，库内语义检索 `kb_search` 用实例角色调 Bedrock Titan v2（栈里的 `KbBedrockPolicy` 只许这一个模型），另有上传历史 `kb_documents`、检索日志 `kb_search_log`。经 Nexus 的 PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询；PG 端口的入站规则归测试台的栈（`KbAllowedCidr`）。部署与核对：`bash poc/infra/kb.sh <阶段>`，说明见 `kb/GUIDE.md`；九安 v0.7.10 的「规则库 › 制度知识库」页上传、检索 |
+| 知识库 | 同一台实例上的 Docker 容器 `nexus-pgvector`（`pgvector/pgvector:pg17`，只绑实例私网 IP 的 5432），库 `nexus`、表 `approval_rules`（制度原文不进仓库。2026-10-31 起有效的是审批风险判断卡 `risk-cards`，449 条；原来的 102 条 `finance-approval-v4` 已下线，可恢复）；容器里装了 PL/Python，库内语义检索 `kb_search` 用实例角色调 Bedrock 生成向量（原来是 Titan v2，栈里的 `KbBedrockPolicy` 只许这一个模型；2026-10-31 另一个会话把它和 `KbBedrockPolicy` 一起换成了 Cohere Embed v4），另有上传历史 `kb_documents`、检索日志 `kb_search_log`。经 Nexus 的 PostgreSQL 数据连接器接到「九安审核AI」，Agent 只读查询；PG 端口的入站规则归测试台的栈（`KbAllowedCidr`）。部署与核对：`bash poc/infra/kb.sh <阶段>`，说明见 `kb/GUIDE.md`。上传、检索在新前端的「知识库」页（九安原来的「规则库 › 制度知识库」页也行），2026-10-30 起都经 PG 知识库 Agent `pub_6ea5f0855dff6c1b`。**`feat/pg-kb-steward` 合进来之前**：本仓库的 `kb/sql/kb_search.sql` 和栈模板还是 Titan，所以不从本仓库跑知识库的 db 阶段（`poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db`），测试台只用 `deploy.sh --code-only` 部署（整栈部署会把 Bedrock 权限改回去） |
 | 公网 IP | EIP `13.223.152.186`；安全组只放 CloudFront 回源前缀列表 `pl-3b927c52` 访问 4180，不开 22 |
 | 构件桶 | `andon-finance-poc-artifactbucket-786tdeg4dqkb`：`releases/current.tgz`、`releases/archive/<时间>.tgz`、`secrets/secrets.env`（SSE） |
 | CloudFront | `E92MPQ217VIPX`，站点 `andon-finance.tinyboat.blog`，回源 `andon-finance-origin.tinyboat.blog` |
@@ -102,6 +116,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 |---|---|---|
 | 九安审核AI（PoC） | Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea` | 审批建议、草稿核验；审批流在用（栈参数 `AdvisoryPublicationId`）。调用密钥取自账号在「我的 Agent」里对它的启用：先用发起人本人的，再用别的账号的，所以至少要有一个账号启用它 |
 | 九安知识Agent（PoC） | Agent `agent_949d9bc407b9430aae20f26326ef6fca`，发布 `pub_2cc24c29d2e5b2c9` | `describe` / `answer` / `select` / `suggest_rules` / `propose` |
+| 知识库文档管家（PG 版） | 发布 `pub_6ea5f0855dff6c1b` | 九安 v0.7.10 测试台读写知识库都经它（A2A，`kb.rules/v1`：`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`）；调用密钥在「Agent 接入」页启用，它就绪、不进审批流。代码在分支 `feat/pg-kb-steward`（没合进来） |
 
 两个发布都打开了 A2A 和 MCP；PoC 只用 A2A。这套 Nexus 用的是旧部署模板（`/a2a` 经前端反代，请求体上限 10 MB），所以 PoC 把附件合计限在 6 MB。
 
@@ -111,6 +126,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 |---|---|---|
 | `poc-reviewer`（审核员）、`poc-checker`（复核人） | PoC 站点 | 虚构账号，口令在 `secrets.env`；端到端测试也用这两个账号 |
 | `admin`（editor） | Nexus | 发布者账号；审核员在 PoC 上连接的就是它 |
+| 九安 v0.7.10 测试台上的角色 | jiuan-v0710 站点 | `poc-reviewer` 显示为「审核员（虚构）」，角色是管理员（admin），什么都看得到；`poc-checker` 显示为「复核人（虚构）」，角色是分析员（analyst），没有知识库、Agent 接入、设置。九安的 `policy_reviewer` 角色没有分到任何公司，它的单据池和工作台是空的。新接口都按「这个人的公司 ∩ 测试台的公司」过滤 |
 
 ### 2.5 密钥清单
 
@@ -180,7 +196,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 6. [运维与后续迭代](operations.md)：日常操作手册、故障排查、迭代的最佳方式。
 7. [客户部署路线](customer-rollout.md)：从 v0.1.0 到九安上线的五个阶段、部署工具包、第一周做什么。
 8. [开发者工作流](../agent-developer-workflow.md)：一个 Agent 从建好到在前端可用的全过程；接口约定 agent-access-v1 见 `skills/agent-access/references/interface.md`。
-9. 使用说明：[PoC 说明](../../poc/README.md)、[部署说明](../../poc/infra/README.md)、[知识 Agent 说明](../../knowledge-agent/README.md)。
+9. 使用说明：[PoC 说明](../../poc/README.md)、[部署说明](../../poc/infra/README.md)、[知识 Agent 说明](../../knowledge-agent/README.md)、[审核 Agent 说明](../../audit-agent/README.md)、知识库的 [kb/README.md](../../kb/README.md) 与 [kb/GUIDE.md](../../kb/GUIDE.md)。
 
 每份交付文档都有同名的 HTML 版本，由 `docs/build-html.sh` 从 Markdown 生成。
 
@@ -213,6 +229,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 - [ ] 在页面上用审核员走一遍：「我的 Nexus 连接」已连接 →「我的 Agent」里两个 Agent 已启用 → 调用测试 →「重新读能力清单」。不要停用审核员已启用的两个 Agent：审批流和端到端测试都用它们。要练启用和停用，用复核人账号连接自己的 Nexus 来练。
 - [ ] 做一次只改文档的 `deploy.sh --code-only`，看健康检查通过；再按[部署与迭代规范](deploy-iteration.md)练一次回滚。
 - [ ] 跑一次完整的端到端测试（约 0.36 美元；开始前会重建测试台的库），把结果和截图交给项目负责人确认。
+- [ ] 九安 v0.7.10 测试台：用 `poc-reviewer` 登录 <https://jiuan-v0710.tinyboat.blog>，走一遍工作台 → 单据池打开一张单 →「Agent 接入」（审批 Agent 和知识库 Agent 都就绪）。先读第 6 节第 13 条：知识库的 db 阶段现在不能从本仓库跑。
 
 ## 6. 交接时的未完成事项
 
@@ -243,6 +260,18 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
     - 测试台打开九安存储时没带上部署方式，环境里多出的 `MYSQL_URL` 会把它指到别处。
     - 另外：九安左侧导航没有「平台运行」分组（见第 9 条）。
 12. **「九安审核AI」偶发返回不合法的 JSON**（已处理，2026-10-20）：Agent 曾在 JSON 字符串里直接写未转义的英文双引号，九安按规定拒收（`AI_INVALID_RESPONSE`）。现在发给 Agent 的每条请求都带一段输出规则（`nexus/a2a-client.mjs` 的 `buildPrompt`：只输出一个 JSON 对象；字符串里不用英文双引号，引用一律用「」）；端到端测试第 5 项一显示失败就带错误码报出来。改完之后完整端到端测试 15 个全部通过。模型仍可能偶尔不守规则，审批流会自动重试一次；调用测试面板失败时再点一次发送就行。
+
+九安 v0.7.10 测试台的（2026-11-02 记）：
+
+13. **`feat/pg-kb-steward` 合进来之前，只用 `deploy.sh --code-only`，不跑知识库的 db 阶段**：另一个会话 2026-10-31 把 PG 知识库的向量换成了 Cohere Embed v4，连同栈里的 `KbBedrockPolicy`；本仓库的 `kb/sql/kb_search.sql` 和模板还是 Titan。从这里跑 `poc/infra/kb.sh db` / `all` / `ingest`、`kb/deploy.sh db` 会把 Titan 装回去；不带 `--code-only` 的整栈部署会把 Bedrock 权限改回去。PG 知识库 Agent 的代码也在那个分支上。
+14. **九安上游的 `review_advice@1` 时限还是 120 秒**：带知识库查询的真实审核一轮要 15–120 秒，测试台用补丁 0006、0007 放到 180 / 200 秒。建议九安在自己的契约里调高（[开发者快速对接指南](developer-guide.md)第 5.1 节、第 11 章）。
+15. **审核 Agent 的模型对不上**：发布实际跑 `global.anthropic.claude-sonnet-5`，提示词元数据里是 `${AGENT_MODEL}`（环境配置里是 opus-5-5），只是元数据。以哪个为准，等项目负责人定。
+16. **发布上手工加的 15 个工具已清掉**（`s3vectors_*`、`http_request_tool` 等，在名为 `demo` 的配置里）：本仓库没有它们，要恢复只能在 Nexus 网页上重新加。注意 `audit-agent/apply.py` 在 pg 方式下每次下发都按 `CONFIG_TOOLS`（现在是空的）重写工具清单：加回去以后，下次下发前先改 `CONFIG_TOOLS`，否则又会被清掉。
+17. **`kb/deploy.sh verify --e2e` 现在会失败**（另一个会话在用它）：它要规则问答命中 `C03-1.2`，而那份审批矩阵 `finance-approval-v4` 已下线。矩阵重新上线或改掉期望值之前，别把它当成故障。审批矩阵重新上线时，审核 Agent 提示词第 9 条 c ② 也要改（[审核 Agent 说明](../../audit-agent/README.md)「知识库（pg 方式）」）。
+18. **工作台「最常引用的规则」只认 `C…` / `G-…` 编号**：风险判断卡的 `risk-cards-T…` 还不算进去。
+19. **出包的白名单里没有 `poc/web07/`**：`docs/delivery/make-package.sh` 还没有 `copy poc/web07`（也没跑它的测试），出包、导出交接仓库前要补上。
+20. **项目负责人要在自己的浏览器上确认**：「Agent 接入」页的密钥框上，Chrome 还会不会弹「保存密码」。
+21. **S3 Vectors 方式的知识库只有代码，没上线**：它的文档管家用的规则请求说明和 PG 版是同一段，回复前多一句话的问题它也会有；测试台的客户端两种方式都放过这种回复（`POC_KB_AGENT_REPLY_LEADIN`）。
 
 已经解决的（2026-10-20）：
 - **工作流文档按应用现状更新**：Agent 的调用密钥在前端加载，`secrets.env` 只放应用的启动配置；端到端测试只用审核员本人在前端的连接和启用；`deploy.sh` 新建 `secrets.env` 时不再写调用密钥那一行。

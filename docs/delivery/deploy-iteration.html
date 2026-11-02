@@ -118,6 +118,9 @@ v2（加了测试台：九安副本、本机 MySQL）</td></tr>
 <li><a href="#61-应用代码回滚最常用" id="toc-61-应用代码回滚最常用">6.1
 应用代码回滚（最常用）</a></li>
 <li><a href="#62-其他回滚" id="toc-62-其他回滚">6.2 其他回滚</a></li>
+<li><a href="#63-审核-agent-提示词怎么下发怎么留底怎么回退"
+id="toc-63-审核-agent-提示词怎么下发怎么留底怎么回退">6.3 审核 Agent
+提示词：怎么下发、怎么留底、怎么回退</a></li>
 </ul></li>
 <li><a href="#7-测试规范" id="toc-7-测试规范">7. 测试规范</a></li>
 <li><a href="#8-接口与版本号" id="toc-8-接口与版本号">8.
@@ -149,6 +152,17 @@ href="integration.html">并入九安</a>）。</li>
 <code>docs/build-html.sh</code> 生成；推送前跑
 <code>docs/build-html.sh --check</code>。</li>
 </ol>
+<p><strong>现在多一条（2026-11-02 起，到分支
+<code>feat/pg-kb-steward</code>
+合进来为止）</strong>：测试台<strong>只用
+<code>deploy.sh --code-only</code></strong>
+部署，<strong>不从本仓库跑知识库的 db
+阶段</strong>（<code>poc/infra/kb.sh db</code> / <code>all</code> /
+<code>ingest</code>、<code>kb/deploy.sh db</code>）。另一个会话
+2026-10-31 把 PG 知识库的向量换成了 Cohere Embed v4，连同栈里的
+<code>KbBedrockPolicy</code>；本仓库的 <code>kb/sql/kb_search.sql</code>
+会把 Titan 装回去，不带 <code>--code-only</code> 的整栈部署会把 Bedrock
+权限改回去（<a href="handover.html">交接文档</a>第 6 节第 13 条）。</p>
 <h1 id="2-代码托管与版本">2. 代码托管与版本</h1>
 <p>2026-10-19 起有两个私有仓库。交接仓库的封板标签是
 <code>v0.1</code>（2026-10-19）和
@@ -370,6 +384,30 @@ node_modules）；三项测试台密钥只补不换，实例上已有的只认�
 <td>应用开发</td>
 </tr>
 <tr>
+<td>九安 v0.7.10 测试台（外壳、新前端、补丁）</td>
+<td><code>poc/<wbr>app07/<wbr></code>、<code>poc/<wbr>web07/<wbr></code>、<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>（<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan07.<wbr>sh</code>
+打进副本）</td>
+<td>新前端
+<code>npm test</code>、外壳的单元测试（<code>deploy.<wbr>sh</code>
+都会先跑）；<code>run07.<wbr>sh</code> 里相关的几条（第 7 节）</td>
+<td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>：动 AWS
+之前先在 <code>poc/<wbr>web07</code> 里
+<code>npm ci</code>、测试、构建，<code>dist/<wbr></code>
+随构件发出；外壳启动时读一次 <code>dist/<wbr></code></td>
+<td>第 6.1 节（构件里带着那一版的 <code>dist/<wbr></code>）</td>
+<td>应用开发 + 项目负责人</td>
+</tr>
+<tr>
+<td>审核 Agent 提示词（「九安审核AI」）</td>
+<td><code>audit-<wbr>agent/<wbr>prompt.<wbr>yaml</code>，<code>audit-<wbr>agent/<wbr>apply.<wbr>py</code>
+写到 Nexus 并重存发布的动态配置</td>
+<td><code>audit-<wbr>agent/<wbr>tests</code>
+的单元测试；<code>apply.<wbr>py -<wbr>-<wbr>dry-<wbr>run</code>；<code>run07.<wbr>sh</code>（自动出建议的几条）</td>
+<td>第 6.3 节</td>
+<td>第 6.3 节</td>
+<td>Agent 开发 + 项目负责人</td>
+</tr>
+<tr>
 <td>文档</td>
 <td><code>docs/<wbr>**/<wbr>*.<wbr>md</code></td>
 <td><code>docs/<wbr>build-<wbr>html.<wbr>sh -<wbr>-<wbr>check</code></td>
@@ -405,7 +443,8 @@ Success、健康检查 200、端到端测试全部通过）→ 项目负责人�
 <li><strong>评审</strong>：合并请求有人看过；涉及接口、密钥、权限的改动，按<a
 href="handover.html">交接文档</a>第 6.1 节逐条核对。</li>
 <li><strong>部署</strong>：<code>poc/infra/deploy.sh --code-only</code>（改了模板才去掉
-<code>--code-only</code>）。脚本会先跑单元测试、构建九安副本（<code>poc/bench/build-jiuan.sh</code>）、生成前端副本、补上缺的
+<code>--code-only</code>）。脚本会先跑单元测试、构建九安副本（<code>poc/bench/build-jiuan.sh</code>、<code>build-jiuan07.sh</code>）、生成前端副本、构建九安
+v0.7.10 的新前端（<code>poc/web07</code>）并跑外壳的单元测试、补上缺的
 <code>REGISTRY_KEY</code>
 和测试台密钥，再打包上传、让实例拉取、配置测试台（<code>bench-configure.sh</code>）、重启并做健康检查。
 <ul>
@@ -452,6 +491,14 @@ I2）；</li>
 节「密钥」那一行处理；</li>
 <li>回滚后在 <code>CHANGELOG.md</code> 记一笔，下一次正常发布会覆盖
 <code>current.tgz</code>。</li>
+<li>九安 v0.7.10 测试台在同一个构件里（外壳 <code>app07/</code>、副本
+<code>jiuan07/</code>、新前端 <code>web07/dist/</code>）：PoC
+服务重启拉完包以后，再
+<code>systemctl restart andon-jiuan07.service</code>（外壳启动时才读一次新前端的
+<code>dist/</code>），看
+<code>https://jiuan-v0710.tinyboat.blog/poc/healthz</code>；</li>
+<li>回滚代码不动 Nexus 上的东西：审核 Agent 的提示词按第 6.3
+节回退，知识库里的规则在知识库 Agent 那边（下线的制度可以恢复）。</li>
 </ul>
 <h2 id="62-其他回滚">6.2 其他回滚</h2>
 <ul>
@@ -464,6 +511,39 @@ I2）；</li>
 再更新一次；发布跟随最新版本，所以立即生效。</li>
 <li><strong>各账号的数据</strong>（<code>/var/lib/andon-finance/users/</code>）：没有备份；回滚代码不会动它。</li>
 </ul>
+<h2 id="63-审核-agent-提示词怎么下发怎么留底怎么回退">6.3 审核 Agent
+提示词：怎么下发、怎么留底、怎么回退</h2>
+<p>「九安审核AI」的提示词只经 <code>audit-agent/apply.py</code>
+改（细节见 <a
+href="../../audit-agent/README.md"><code>audit-agent/README.md</code></a>「怎么改」）：</p>
+<ol type="1">
+<li><strong>先存底稿</strong>：把线上现在的提示词存下来（网页上改过的话尤其要存）。</li>
+<li><strong>改
+<code>prompt.yaml</code></strong>，<code>agentVersion</code>
+的日期和序号加一；更新 <code>audit-agent/tests/fixtures/</code>
+里的期望文件，跑
+<code>python3 -B -m unittest discover -s audit-agent/tests</code>。</li>
+<li><strong>先演练再下发</strong>：<code>python3 audit-agent/apply.py --env poc/infra/env/&lt;环境&gt;.env --base &lt;底稿&gt; --dry-run</code>
+看线上到新版的比对（提示词和动态配置里的工具），确认后去掉
+<code>--dry-run</code>。<code>apply.py</code>
+每次都重存发布的动态配置：只改提示词不重存，A2A
+调用用的还是旧快照。</li>
+<li><strong>验证</strong>：在测试台上发起一轮 AI 独立建议，或跑
+<code>run07.sh</code>；量时长要换一张单（同一张单重发会落进 Nexus
+上同一段对话，回得很快）。</li>
+<li><strong>留底</strong>：每次改线上都在
+<code>audit-agent/prompt-history/&lt;日期&gt;/</code>
+留一个目录，和已有的
+<code>2026-10-31/</code>、<code>2026-11-01/</code>、<code>2026-11-01b/</code>
+一样：<code>prompt-before-&lt;旧版本&gt;.yaml</code>（回退用的底稿）、<code>prompt-after-&lt;新版本&gt;.yaml</code>、<code>diff-before-apply.txt</code>（演练的输出）、<code>apply-log.txt</code>（下发的输出）、<code>README.md</code>（为什么改、项目负责人怎么定的、线上核对：发布修订号、工具个数、effort、agentVersion、源文件的提交）。和提示词改动一起提交。</li>
+</ol>
+<p><strong>回退</strong>：把 <code>prompt.yaml</code>
+换回上一版的提交（每个
+<code>prompt-history/&lt;目录&gt;/README.md</code> 写了是哪个提交），用
+<code>--base</code> 指向这次的
+<code>prompt-after-*.yaml</code>（线上现在那份）再下发一次。动态配置里清掉的工具不在本仓库，要恢复只能在
+Nexus 网页上重新加；<code>apply.py</code> 在 pg 方式下每次都按
+<code>CONFIG_TOOLS</code>（现在是空的）重写工具清单，加回去以后要先改它。</p>
 <h1 id="7-测试规范">7. 测试规范</h1>
 <div class="table-wrap">
 <table>
@@ -515,6 +595,26 @@ I2）；</li>
 <td>线上</td>
 <td>约 0.06 美元</td>
 <td>改了「我的 Nexus」、命令行、加密存储</td>
+</tr>
+<tr>
+<td>九安 v0.7.10：新前端 <code>poc/<wbr>web07</code> 的
+<code>npm test</code>、外壳 <code>poc/<wbr>app07</code> 的单元测试</td>
+<td>本机</td>
+<td>免费</td>
+<td>每次改代码；<code>deploy.<wbr>sh</code> 每次都先跑</td>
+</tr>
+<tr>
+<td>九安 v0.7.10：<code>run07.<wbr>sh</code>（先
+<code>web07.<wbr>e2e.<wbr>mjs</code>，再
+<code>jiuan07.<wbr>e2e.<wbr>mjs</code>）</td>
+<td>线上（jiuan-v0710）；开始前重置 <code>jiuan07</code> 库，保留「Agent
+接入」的启用记录</td>
+<td>完整一次约 1–3 美元</td>
+<td>改了外壳、新前端、补丁、审核 Agent
+提示词、知识库。只跑一部分：<code>E2E07_<wbr>FILES=&lt;文件&gt;</code>，再加
+node 的
+<code>-<wbr>-<wbr>test-<wbr>name-<wbr>pattern</code>；<code>KB_<wbr>E2E_<wbr>DOCX=&lt;转好的风险判断卡 .<wbr>docx&gt;</code>
+时跑知识库上传那条</td>
 </tr>
 </tbody>
 </table>

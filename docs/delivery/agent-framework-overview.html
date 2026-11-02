@@ -227,7 +227,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Agent 接入框架</span>Agent 接入框架总览</h1>
   <table class="fields">
     <tr><th>日期</th><td>2026-10-19</td></tr>
-    <tr><th>状态</th><td>设计稿 v2，待批准后实施；测试台已就绪，九安补丁还没写<span class="stamp">框架</span></td></tr>
+    <tr><th>状态</th><td>设计稿 v2，待批准后实施；测试台已就绪，九安补丁还没写。2026-11-02 补记了九安 v0.7.10 测试台上已经变了的三处：人工复核怎么记、知识库 Agent 经 A2A 接入、时限<span class="stamp">框架</span></td></tr>
     <tr><th>范围</th><td>九安平台上各类 Agent（业务流程、财务、知识库）经 A2A 接入；契约 <code>jiuan.agent/v1</code>；第一个任务 <code>first_review@1</code>（审批流里的单据初审）</td></tr>
     <tr><th>读者</th><td>九安开发者（含他们的编码工具）、项目负责人、Agent 开发</td></tr>
   </table>
@@ -393,6 +393,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
     </tbody>
   </table></div>
   <p class="quiet">现有的「九安知识Agent」已经按任务组织（describe、answer、select、suggest_rules、propose），迁到信封上只要改一版提示词。</p>
+  <p class="quiet">九安 v0.7.10 测试台上（2026-10-30 起），知识库类已经有一个 Agent 经 A2A 接着：PG 知识库 Agent「知识库文档管家（PG 版）」。它还没套信封 <code>jiuan.agent/v1</code>，用的是自己的 <code>kb.rules/v1</code>：一行文字加一个数据 Part <code>{ op, … }</code>（入库时再带 .docx 文件），操作有 describe、ingest、list、detail、deactivate、restore、delete、check、search，Agent 只回工具的 JSON。它和别的 Agent 一样在「Agent 接入」里启用，就绪、不进审批流；测试台的知识库页上传、检索、下线都经它，测试台自己不连库。</p>
 </section>
 
 <section id="s-bounds" aria-labelledby="h-bounds">
@@ -688,6 +689,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
       <tr><td>长任务到了时限</td><td>进行中；九安稍后用 <code>tasks/get</code> 收结果</td></tr>
     </tbody>
   </table></div>
+  <p class="quiet">九安 v0.7.10 测试台上（2026-11-01）跑的是 <code>review_advice@1</code>（AI 独立建议），人工复核这样记：复核人在单据抽屉里「采纳 AI 建议」或「改判」，改判按方向选原因，选「其他」要写不超过 200 字的备注；复核绑定到这一轮建议，只记在测试台，不回写汇联易；提交后自动打开下一张待复核的单。单据的「历史」里能看到每一轮 AI 建议和每次复核，带复核人的名字。</p>
 </section>
 
 <section id="s-newtask" aria-labelledby="h-newtask">
@@ -759,6 +761,8 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
       <tr><td>10-19</td><td>测试台升到 t3.large，在 EC2 本机起 MySQL；在现在这台实例上原地升级</td></tr>
       <tr><td>10-19</td><td>要做的是框架：各类业务流程、财务、知识库的 Agent 都用这套接口，务必考虑通用性</td></tr>
       <tr><td>10-19</td><td>业务网关层以后再做；先完成 PoC / MVP 和测试台的升级与搭建（测试台当天已完成）</td></tr>
+      <tr><td>10-31</td><td>测试台知识库里有效的规则换成审批风险判断卡（<code>risk-cards</code>，449 条），V4.0 审批矩阵下线（可恢复）；知识库页暂时只给管理员</td></tr>
+      <tr><td>11-01</td><td>测试台上一轮审核在 3 分钟内完成算正常：<code>review_advice@1</code> 的时限 120 → 180 秒（补丁 0006，只改测试台的副本）；调用中间件给 <code>nexus-a2a</code> 的时限放到 200 秒（补丁 0007），让任务自己的时限先到点，超时报 <code>AI_UNAVAILABLE</code>。九安上游契约还是 120 秒；带知识库查询的真实一轮要 15–120 秒，建议九安调高</td></tr>
     </tbody>
   </table></div>
   <h3>要九安拍板的</h3>

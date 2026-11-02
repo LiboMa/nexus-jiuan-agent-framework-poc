@@ -300,6 +300,18 @@ href="../../knowledge-agent/README.md">知识 Agent 说明</a>走。</li>
 <code>--confirm-destructive</code>。</li>
 <li><code>caps</code> 提示接入包旧了时，运行
 <code>python3 scripts/nexus.py skill-update</code>。</li>
+<li>两个容易看漏的地方（2026-11-01 在测试台上碰到）：
+<ul>
+<li><code>GET /api/v2/keys/tools-requiring-key</code> 一次最多回 200
+行，后面的不会出现。查某个工具时加
+<code>search=&lt;工具名&gt;</code>，并看返回里的
+<code>pagination.truncated</code>：是 <code>true</code>
+就说明还有没列出来的。</li>
+<li><code>call</code>
+默认拆掉平台的统一外壳（<code>{"success": true, "data": …}</code>），只打印
+<code>data</code>，外壳上的其他字段就看不到了；要看完整的返回，加
+<code>--raw</code>。</li>
+</ul></li>
 </ul>
 <h2 id="35-部署脚本也用到它">3.5 部署脚本也用到它</h2>
 <p>服务端「我的 Nexus」连接每个账号的 Nexus 时，用的是同一个

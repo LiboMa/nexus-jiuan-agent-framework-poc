@@ -137,6 +137,9 @@ id="toc-24-某个账号连不上或启用失败">2.4
 id="toc-27-测试台mysql-的检查重置备份">2.7 测试台：MySQL
 的检查、重置、备份</a></li>
 <li><a href="#28-销毁" id="toc-28-销毁">2.8 销毁</a></li>
+<li><a href="#29-九安-v0710-测试台jiuan-v0710"
+id="toc-29-九安-v0710-测试台jiuan-v0710">2.9 九安 v0.7.10
+测试台（jiuan-v0710）</a></li>
 </ul></li>
 <li><a href="#3-后续迭代的最佳方式" id="toc-3-后续迭代的最佳方式">3.
 后续迭代的最佳方式</a>
@@ -171,6 +174,12 @@ id="toc-27-测试台mysql-的检查重置备份">2.7 测试台：MySQL
 <td><code>curl -<wbr>fsS https:/<wbr>/<wbr>andon-<wbr>finance.<wbr>tinyboat.<wbr>blog/<wbr>api/<wbr>health</code></td>
 <td>HTTP 200，<code>status</code> 为 <code>ok</code>（刚重启的几秒是
 <code>starting</code>）</td>
+</tr>
+<tr>
+<td>九安 v0.7.10 测试台</td>
+<td><code>curl -<wbr>fsS https:/<wbr>/<wbr>jiuan-<wbr>v0710.<wbr>tinyboat.<wbr>blog/<wbr>poc/<wbr>healthz</code>；页面上看单据池里有没有新的
+AI 建议（第 2.9 节）</td>
+<td>HTTP 200</td>
 </tr>
 <tr>
 <td>MySQL 容器</td>
@@ -506,6 +515,72 @@ MySQL，所以 MySQL 坏了也能用它退回来。</li>
 <pre class="bash"><code>audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认</code></pre>
 <p>销毁前确认：构件桶里没有要留的东西；Nexus 上的调用密钥、API
 密钥已停用。</p>
+<h2 id="29-九安-v0710-测试台jiuan-v0710">2.9 九安 v0.7.10
+测试台（jiuan-v0710）</h2>
+<p>同一台实例上的 systemd 服务 <code>andon-jiuan07</code>，部署、回滚和
+PoC 共用一个构件（<a href="deploy-iteration.html">部署与迭代规范</a>第
+6.1 节）。<strong>现在只用
+<code>deploy.sh --code-only</code>，不从本仓库跑知识库的 db
+阶段</strong>（<a href="deploy-iteration.html">部署与迭代规范</a>第 1
+节末尾）。</p>
+<p><strong>看日志</strong>：<code>sudo journalctl -u andon-jiuan07 -n 200 --no-pager</code>。日志只记错误码和计数，不记回复、制度内容和密钥。要认得的几行：</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>日志</th>
+<th>意思</th>
+<th>要不要管</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POC_<wbr>KB_<wbr>AGENT_<wbr>REPLY_<wbr>LEADIN &lt;操作&gt; &lt;字数&gt;</code></td>
+<td>知识库 Agent 在 JSON 前面多写了一句话（不超过 200 字、不含
+<code>{ }</code>），外壳照样收下了</td>
+<td>偶尔有不用管；每次都有，就去看知识库 Agent 的提示词</td>
+</tr>
+<tr>
+<td><code>POC_<wbr>CUSTOM_<wbr>RULES_<wbr>TRIMMED &lt;单据&gt; &lt;页数&gt;</code></td>
+<td>发起人的「我的规则」太长，这一轮从末尾去掉了几页原件</td>
+<td>告诉这个人删减规则</td>
+</tr>
+<tr>
+<td><code>POC_<wbr>KB_<wbr>BACKEND_<wbr>MISMATCH &lt;方式&gt; &lt;backend&gt;</code></td>
+<td>知识库 Agent 说的后端和部署配置的知识库方式对不上</td>
+<td>核对「Agent 接入」页启用的是哪个知识库 Agent</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>「我的规则」的两个错误码在页面上：上传时单个文件转出的文字就超过九安一次请求的上限（87,442
+字）回
+<code>CUSTOM_RULES_UNSENDABLE</code>；发起一轮时规则加单据放不进一次请求，这一轮在发给
+Nexus 之前就失败，回 <code>CUSTOM_RULES_TOO_LONG</code>。知识库 Agent
+的回复不合格式是 <code>KB_AGENT_REPLY_INVALID</code>（不重试）。</p>
+<p><strong>一轮 AI 建议慢、超时</strong>：一轮的上限是 180 秒，超时报
+<code>AI_UNAVAILABLE</code>；正常是 7–20 秒。先在「Agent
+接入」页的调用记录里看用时和错误码；再到 Nexus 上看这一轮的 A2A 会话，查
+Agent
+到底查了几次库、每次查什么、哪一步慢。会话存在发布者名下，用发布者的账号经
+nexus-ai-operator 只读查：</p>
+<pre class="bash"><code>python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/me/sessions --raw            # 找到这一轮的会话
+python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/sessions/&lt;会话编号&gt;/messages --raw</code></pre>
+<p>2026-11-01
+就是这样查到的：提示词还要求定审批路径，可知识库里没有审批矩阵的行，Agent
+一轮查 11–16 次（SQL
+本身很快）。看记录时注意两点：同一张单一模一样地重发，会落进同一段对话、回得很快，量时长要换一张单；大多数第一次调用会碰到
+Bedrock 的 <code>ValidationException</code>（回放
+reasoningContent），九安的重试会接住，它不是慢的原因。</p>
+<p><strong>改审核 Agent 的提示词</strong>：按<a
+href="deploy-iteration.html">部署与迭代规范</a>第 6.3 节，每次改线上都在
+<code>audit-agent/prompt-history/</code> 留底。</p>
+<p><strong>知识库</strong>：测试台经 A2A 调 PG 知识库
+Agent（<code>pub_6ea5f0855dff6c1b</code>，调用密钥在「Agent
+接入」页启用）；知识库 Agent
+的密钥失效时，知识库页的操作都会失败，在「Agent
+接入」页换钥匙。部署、核对 PG 本身见 <a
+href="../../kb/GUIDE.md">kb/GUIDE.md</a>。</p>
 <h1 id="3-后续迭代的最佳方式">3. 后续迭代的最佳方式</h1>
 <h2 id="31-固定的四步使用逻辑">3.1 固定的四步使用逻辑</h2>
 <p>一切设计都按这条走，这条不会变：</p>

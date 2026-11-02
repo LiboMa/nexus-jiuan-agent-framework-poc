@@ -137,6 +137,9 @@ id="toc-10-第-8-步在审批流里用">10. 第 8 步：在审批流里用</a></
 <li><a href="#13-用编码工具做同样的事可选"
 id="toc-13-用编码工具做同样的事可选">13.
 用编码工具做同样的事（可选）</a></li>
+<li><a href="#14-九安-v0710-测试台agent-接入页2026-11-01-起"
+id="toc-14-九安-v0710-测试台agent-接入页2026-11-01-起">14. 九安 v0.7.10
+测试台：「Agent 接入」页（2026-11-01 起）</a></li>
 </ul>
 </nav>
 <main id="main">
@@ -145,6 +148,12 @@ id="toc-13-用编码工具做同样的事可选">13.
 Agent」页连接、启用、调用测试，最后在审批流里用上它。第一次从头做完大约
 10 分钟。</p>
 <p>全程只在两个网页上操作，<strong>不用改任何文件，不用找运维部署，也不用重启服务</strong>。</p>
+<p>第 1–13 章写的是 v0.5.3 参考环境的「Nexus
+Agent」页（每个账号各自连接、启用）。九安 v0.7.10 测试台（<a
+href="https://jiuan-v0710.tinyboat.blog">https://jiuan-v0710.tinyboat.blog</a>）上是管理员在「<strong>Agent
+接入</strong>」页为整个平台启用，按钮和做法有些不同，见第 14
+章。两把密钥（第 1.2 节）和在 Nexus 网页上做的几步（第 3、4、7
+章）都一样。</p>
 <h1 id="1-开始前">1. 开始前</h1>
 <h2 id="11-你需要准备的">1.1 你需要准备的</h2>
 <div class="table-wrap">
@@ -593,6 +602,78 @@ agent-access，用命令完成第 4–7
 </div>
 <p>怎么装、怎么连，见 <a href="skills-guide.html">Skills 配置指南</a>第
 4 节。</p>
+<h1 id="14-九安-v0710-测试台agent-接入页2026-11-01-起">14. 九安 v0.7.10
+测试台：「Agent 接入」页（2026-11-01 起）</h1>
+<p>测试台的首页 <code>/</code> 是新前端。用管理员账号（参考环境是
+<code>poc-reviewer</code>）登录后，点左侧导航「<strong>平台</strong>」分组下的
+<strong>Agent
+接入</strong>。只有管理员看得到这一页；复核人（<code>poc-checker</code>）的导航里没有它。九安原来的页面还在
+<code>/analysis.html</code>（「后台配置 › Agent
+接入」），两边是同一份启用记录。</p>
+<p>和第 5–11
+章的区别：这里是<strong>管理员为整个平台启用</strong>，不是每个账号各自启用；审批流只调管理员指定的一个「审批
+Agent」。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>要做的</th>
+<th>在页面上怎么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>连接 Nexus</td>
+<td>点「连接 Nexus」，在弹出的对话框里粘贴 API 密钥（第 4
+章那把）。连上后列出你在 Nexus 上开了 A2A
+的发布，和已启用的合在一张表里</td>
+</tr>
+<tr>
+<td>启用</td>
+<td>在那个发布一行点「<strong>启用</strong>」，在对话框里只粘贴这个发布的调用密钥（第
+7 章那把），点「验证并启用」。平台当场向 Nexus
+验证名片和密钥（最长约三分钟），通过后加密保存。之后页面上<strong>只显示密钥的指纹</strong>，不再显示密钥</td>
+</tr>
+<tr>
+<td>列表里没有的发布</td>
+<td>「<strong>手动添加 Agent</strong>」：贴它的 A2A
+地址和调用密钥。Nexus 上刚发布的没出现，点「刷新清单」</td>
+</tr>
+<tr>
+<td>设为审批 Agent</td>
+<td>在一个就绪的 Agent 上点「<strong>设为审批
+Agent</strong>」，对话框里<strong>要写原因</strong>才能确认。这个 Agent
+的名片没有声明审批流的任务（<code>review_<wbr>advice@1</code> 或
+<code>first_<wbr>review@1</code>）时，对话框会先提醒：设了以后单据池的
+AI 独立建议多半出不来，只有确定它能审单时才这样做。同一时间只有一个审批
+Agent，表格上方一行写着审批流现在调谁</td>
+</tr>
+<tr>
+<td>测试</td>
+<td>就绪的 Agent
+上点「<strong>测试</strong>」，三种：文本、请求信封、单据。测试只记进下面的调用记录，不改单据的结论</td>
+</tr>
+<tr>
+<td>重新验证</td>
+<td>点「<strong>重新验证</strong>」：用存着的密钥再向 Nexus
+验一次名片和密钥（九安原来的页面上这个按钮叫「复核」）</td>
+</tr>
+<tr>
+<td>换密钥</td>
+<td>密钥失效的一行点「<strong>换钥匙</strong>」，在对话框里粘贴新的调用密钥</td>
+</tr>
+<tr>
+<td>停用</td>
+<td>点「<strong>停用</strong>」并确认：九安不再调用它，存着的调用密钥一并清除。停用的是审批
+Agent 时审批流暂停，重新启用后自动接上</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>页面下方是调用记录：审批流的每一轮和每次测试一行，「查看反馈」看
+Agent 返回了什么。</p>
+<p>调用密钥只粘贴进对话框里的密码框。Chrome
+在这个框上会不会弹出「保存密码」，还要项目负责人在自己的浏览器上确认；弹出了也不要保存。</p>
 </main>
 </div>
 <footer>本页由 <code>docs/build-html.sh</code> 从 <code>docs/delivery/quick-guide.md</code> 生成。要改内容，改 Markdown 再运行脚本，不要直接改这个文件。</footer>

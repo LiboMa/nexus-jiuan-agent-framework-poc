@@ -63,12 +63,13 @@ open docs/delivery/README.html                                          # 从文
 | `docs/delivery/` | 交付文档（本文、快速上手、Skills 配置指南、客户部署路线、交接、并入九安、部署与迭代、运维、Agent 接入框架、Agent 接口、单据初审契约、调用链、客户规则与 AI 初审），每份有 `.md` 和 `.html`；一页总览 `agent-framework-overview.html`（手写）；`patches/` 参考补丁与生成脚本；`make-package.sh`（打包、导出交接仓库）与 `sanitize.py`（脱敏） | [交付文档索引](README.md) |
 | `docs/assets/` | `diagrams/`：图（`.mmd` 是源，`.svg` 由 `build-html.sh` 生成；`arch-overview.svg` 是手工画的）；`screens/`：线上截图 | 第 7 节 |
 | `docs/`（其余） | 架构文档、开发者工作流、`build-html.sh` 与 `html-kit/` | [架构](../architecture.md) |
-| `poc/app/` | PoC 服务端、测试台组合根（`bench/`、`jiuan-mysql.mjs`）、前端扩展（`public-src/`）、示例附件、单元测试与端到端测试、截图脚本 | [架构](../architecture.md)第 8、11 节 |
+| `poc/app/` | PoC 服务端、测试台组合根（`bench/`、`jiuan-mysql.mjs`）、前端扩展（`public-src/`）、示例附件、单元测试与端到端测试（v0.5.3 的 `run.sh`；九安 v0.7.10 的 `test/e2e/run07.sh`、`web07.e2e.mjs`、`jiuan07.e2e.mjs`）、截图脚本 | [架构](../architecture.md)第 8、11 节 |
 | `poc/bench/` | `build-jiuan.sh`（九安 v0.5.3 副本 + 补丁 + 依赖）、`build-jiuan07.sh`（九安 v0.7.10 副本：按清单复制，不带 `seeds/`、`database/`、`tests/`，打 `patches/jiuan-v0.7.10/`）与锁定的依赖清单（`mysql2` 3.14.3；不带 `node_modules`，构建时 `npm ci --ignore-scripts`） | [交接文档](handover.md)第 2.1 节 |
-| `poc/app07/` | 九安 v0.7.10 测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent 接入」页和「制度知识库」页的后端）与单元测试 | [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent，0004「规则库 › 制度知识库」页（上传、入库预览、历史、检索、检索日志） | [开发者快速对接指南](developer-guide.md)第 7.2 节 |
-| `audit-agent/` | 审核 Agent 的提示词（`prompt.yaml` v3，改前的 `prompt-owner-2026-10-25.yaml` 留作回退）、下发脚本 `apply.py`、说明 | [审核 Agent 说明](../../audit-agent/README.md) |
-| `kb/` | 知识库部署工具（PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对）、单元测试；不带 `deploy.env`、`.state/`、`.build/` 和制度原文（.docx 只带单元测试用的仿真文档 `kb/tests/fixtures/sample-matrix.docx`） | [kb/README.md](../../kb/README.md)、[kb/GUIDE.md](../../kb/GUIDE.md) |
+| `poc/app07/` | 九安 v0.7.10 测试台的外壳（组合根、口令登录、假汇联易、出网守卫、「Agent 接入」页和「制度知识库」页的后端；知识库经 Nexus 上的知识库 Agent 读写（`kb-steward-*.mjs`）；新前端用的复核、工作台、AI 轮次、原件分页接口）与单元测试 | [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
+| `poc/web07/` | 九安 v0.7.10 测试台的新前端（React 19 + TypeScript + Vite + Tailwind 4，哈希路由）：工作台、单据池、知识库、我的规则、Agent 接入、设置；`npm test`、`npm run build`（不带 `node_modules/`、`dist/`）。**`make-package.sh` 的白名单里还没有这一行**，出包、导出前要先补上 | [PoC 说明](../../poc/README.md)「九安 v0.7.10」 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent，0004「规则库 › 制度知识库」页（上传、入库预览、历史、检索、检索日志），0005 规则页跟着知识库方式走、「我的规则」，0006 `review_advice@1` 的时限 120 → 180 秒（只改测试台的副本），0007 调用中间件给 `nexus-a2a` 的时限 200 秒 | [开发者快速对接指南](developer-guide.md)第 7.2 节 |
+| `audit-agent/` | 审核 Agent 的提示词（`prompt.yaml` v3，改前的 `prompt-owner-2026-10-25.yaml` 留作回退）、下发脚本 `apply.py`、说明；`prompt-history/`：每次改线上提示词留一个目录（`2026-10-31/`、`2026-11-01/`、`2026-11-01b/`），里面是改前、改后、比对和下发记录 | [审核 Agent 说明](../../audit-agent/README.md) |
+| `kb/` | 知识库部署工具（PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对）、单元测试；`convert/risk-cards/`：把「审批风险判断卡」的 HTML 转成可入库的 .docx 和整理表的脚本（只有代码，见它的 `README.md`）。不带 `deploy.env`、`.state/`、`.build/` 和制度原文（.docx 只带单元测试用的仿真文档 `kb/tests/fixtures/sample-matrix.docx`；风险判断卡的 HTML 原页面和转出来的文件都不带） | [kb/README.md](../../kb/README.md)、[kb/GUIDE.md](../../kb/GUIDE.md) |
 | `poc/infra/` | CloudFormation 模板、`deploy.sh`、`destroy.sh`、`backup.sh`、`upgrade-instance.sh`、`bench-test.sh`、`bench/`（实例上的 MySQL 脚本与 systemd 片段）、部署说明（**不含 `secrets.env`**） | [部署与迭代规范](deploy-iteration.md)、[运维](operations.md)第 2.7 节 |
 | `poc/tools/`、`poc/README.md` | 示例附件生成脚本；PoC 使用说明 | [PoC 说明](../../poc/README.md) |
 | `skills/nexus-ai-operator/` | Nexus 一侧的 Skill（1.1.0，不带任何密钥）：在 Nexus 上建 Agent、发布 | [Skills 配置指南](skills-guide.md)第 3 节 |
@@ -101,6 +102,7 @@ open docs/delivery/README.html                                          # 从文
 | 2 | 文档能打开 | 浏览器打开 `docs/delivery/README.html`，点进每一份 | 每份都有图、表、目录；图能点开看原尺寸 |
 | 3 | 单元测试 | 先放好九安开发包（第 5 节），再 `cd poc/app && node --test "test/unit/**/*.test.mjs"` | 275 个：264 通过、11 个要 MySQL 的跳过、0 失败（没有九安开发包时有一部分会失败，因为它们要导入九安的代码） |
 | 3a | 要 MySQL 的单元测试 | `poc/infra/bench-test.sh`（在测试台上跑，只用 `jiuan_bench_test` 库） | 11 个全部通过 |
+| 3b | 九安 v0.7.10 的新前端和外壳 | 先 `cd poc/web07 && npm ci && npm test && npm run build`，再 `bash poc/bench/build-jiuan07.sh && (cd poc/app07 && node --test "test/unit/**/*.test.mjs")`（外壳有一条测试读新前端的构建产物，没构建就跳过） | 都是 0 失败 |
 | 4 | Skill 与命令行测试 | `python3 -m unittest discover -s skills/agent-access/tests` | 13 个全部通过 |
 | 4a | 两个 Skill 能装上 | 按 [Skills 配置指南](skills-guide.md)第 3、4 节装进自己的编码工具，各用一把 API 密钥连接 | `nexus.py whoami` 是自己；`agent_access.py status` 显示 Nexus 已连接 |
 | 5 | 文档是最新的 | `docs/build-html.sh --check`（需要 pandoc、mmdc、Chrome） | 「图和 HTML 都是最新的」 |
@@ -108,6 +110,7 @@ open docs/delivery/README.html                                          # 从文
 | 7 | 线上可用 | `curl -fsS https://andon-finance.tinyboat.blog/api/health` | HTTP 200；`database` 是 `ok`，`source` 是 `poc-bench` |
 | 8 | 页面走一遍 | 审核员登录 → Agent 页 → 调用测试（知识 Agent，`answer`） | 返回带引用的回答 |
 | 9 | 完整端到端测试 | `poc/app/test/e2e/run.sh`（第一次会自动 `npm install` Playwright；开始前会重建测试台的库，约 0.36 美元；需要 `secrets.env` 里的两个口令；调用密钥用审核员在页面上启用的） | 0 失败；跳过的只有按设计跳过的那一个（不停用本人启用的知识 Agent）；截图交项目负责人 |
+| 9a | 九安 v0.7.10 端到端测试 | `KB_E2E_DOCX=<本机转好的风险判断卡 .docx> DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/app/test/e2e/run07.sh`（开始前重置测试台的库，保留「Agent 接入」的启用记录；约 1–3 美元的 Nexus 调用） | 0 失败。2026-11-01 的完整运行 26 条里 25 通过，那 1 条（知识库 Agent 回复前多一句话）已修；之后知识库的 4 条、单据池的 6 条单独重跑全部通过 |
 | 10 | 未完成事项知情 | 读[交接文档](handover.md)第 6 节 | 每一条都有负责人和时间 |
 
 
@@ -142,8 +145,8 @@ open docs/delivery/README.html                                          # 从文
 | 测试台（MySQL、三项测试台密钥、升级前快照） | | | | |
 | `secrets.env`（当面） | | | | |
 | AWS 与 Nexus 权限 | | | | |
-| 验收清单第 1–8 项（含 3a、4a） | | | | |
-| 验收清单第 9 项（完整端到端测试） | | | | |
+| 验收清单第 1–8 项（含 3a、3b、4a） | | | | |
+| 验收清单第 9、9a 项（完整端到端测试） | | | | |
 | 未完成事项（第 7 节）的负责人与时间 | | | | |
 
 ## 9. 以后怎么更新这个包和交接仓库

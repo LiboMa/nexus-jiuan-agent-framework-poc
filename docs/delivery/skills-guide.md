@@ -88,6 +88,9 @@ python3 scripts/nexus.py whoami
 - 建 Agent、改提示词、建发布并打开 A2A：按[开发者工作流](../agent-developer-workflow.md)和[知识 Agent 说明](../../knowledge-agent/README.md)走。
 - **确认规则**：写操作要你明确同意这一个具体操作才加 `--yes`；删除、发布、对外分享这类高风险操作要单独说明后果，才加 `--confirm-destructive`。
 - `caps` 提示接入包旧了时，运行 `python3 scripts/nexus.py skill-update`。
+- 两个容易看漏的地方（2026-11-01 在测试台上碰到）：
+  - `GET /api/v2/keys/tools-requiring-key` 一次最多回 200 行，后面的不会出现。查某个工具时加 `search=<工具名>`，并看返回里的 `pagination.truncated`：是 `true` 就说明还有没列出来的。
+  - `call` 默认拆掉平台的统一外壳（`{"success": true, "data": …}`），只打印 `data`，外壳上的其他字段就看不到了；要看完整的返回，加 `--raw`。
 
 ### 3.5 部署脚本也用到它
 

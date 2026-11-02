@@ -15,6 +15,7 @@ audience: 运维、值班、应用开发、Agent 开发
 | 看什么 | 怎么看 | 正常的样子 |
 |---|---|---|
 | 站点是否在线 | `curl -fsS https://andon-finance.tinyboat.blog/api/health` | HTTP 200，`status` 为 `ok`（刚重启的几秒是 `starting`） |
+| 九安 v0.7.10 测试台 | `curl -fsS https://jiuan-v0710.tinyboat.blog/poc/healthz`；页面上看单据池里有没有新的 AI 建议（第 2.9 节） | HTTP 200 |
 | MySQL 容器 | 经 SSM：`docker ps`（`jiuan-mysql` 是 Up）；健康检查 `/api/health` 每次都问一次库（`SELECT 1`，3 秒超时），`database` 是 `ok`、`source` 是 `poc-bench` | 容器 Up；`database: ok`。库断了健康检查回 503，`database` 是 `unavailable` |
 | 服务日志 | 第 1.2 节 | 有 `andon-finance-poc listening on …`；没有成串的 `APP_ERROR` / `APPROVAL_ERROR` |
 | 审批流能不能出建议 | 单据池顶上点一次「模拟来单」，看新卡片上出现「AI 初审：…」和「待人工复核」 | 健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（评审 I6，[交接文档](handover.md)第 6.1 节） |
@@ -157,6 +158,33 @@ audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认
 ```
 
 销毁前确认：构件桶里没有要留的东西；Nexus 上的调用密钥、API 密钥已停用。
+
+### 2.9 九安 v0.7.10 测试台（jiuan-v0710）
+
+同一台实例上的 systemd 服务 `andon-jiuan07`，部署、回滚和 PoC 共用一个构件（[部署与迭代规范](deploy-iteration.md)第 6.1 节）。**现在只用 `deploy.sh --code-only`，不从本仓库跑知识库的 db 阶段**（[部署与迭代规范](deploy-iteration.md)第 1 节末尾）。
+
+**看日志**：`sudo journalctl -u andon-jiuan07 -n 200 --no-pager`。日志只记错误码和计数，不记回复、制度内容和密钥。要认得的几行：
+
+| 日志 | 意思 | 要不要管 |
+|---|---|---|
+| `POC_KB_AGENT_REPLY_LEADIN <操作> <字数>` | 知识库 Agent 在 JSON 前面多写了一句话（不超过 200 字、不含 `{ }`），外壳照样收下了 | 偶尔有不用管；每次都有，就去看知识库 Agent 的提示词 |
+| `POC_CUSTOM_RULES_TRIMMED <单据> <页数>` | 发起人的「我的规则」太长，这一轮从末尾去掉了几页原件 | 告诉这个人删减规则 |
+| `POC_KB_BACKEND_MISMATCH <方式> <backend>` | 知识库 Agent 说的后端和部署配置的知识库方式对不上 | 核对「Agent 接入」页启用的是哪个知识库 Agent |
+
+「我的规则」的两个错误码在页面上：上传时单个文件转出的文字就超过九安一次请求的上限（87,442 字）回 `CUSTOM_RULES_UNSENDABLE`；发起一轮时规则加单据放不进一次请求，这一轮在发给 Nexus 之前就失败，回 `CUSTOM_RULES_TOO_LONG`。知识库 Agent 的回复不合格式是 `KB_AGENT_REPLY_INVALID`（不重试）。
+
+**一轮 AI 建议慢、超时**：一轮的上限是 180 秒，超时报 `AI_UNAVAILABLE`；正常是 7–20 秒。先在「Agent 接入」页的调用记录里看用时和错误码；再到 Nexus 上看这一轮的 A2A 会话，查 Agent 到底查了几次库、每次查什么、哪一步慢。会话存在发布者名下，用发布者的账号经 nexus-ai-operator 只读查：
+
+```bash
+python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/me/sessions --raw            # 找到这一轮的会话
+python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/sessions/<会话编号>/messages --raw
+```
+
+2026-11-01 就是这样查到的：提示词还要求定审批路径，可知识库里没有审批矩阵的行，Agent 一轮查 11–16 次（SQL 本身很快）。看记录时注意两点：同一张单一模一样地重发，会落进同一段对话、回得很快，量时长要换一张单；大多数第一次调用会碰到 Bedrock 的 `ValidationException`（回放 reasoningContent），九安的重试会接住，它不是慢的原因。
+
+**改审核 Agent 的提示词**：按[部署与迭代规范](deploy-iteration.md)第 6.3 节，每次改线上都在 `audit-agent/prompt-history/` 留底。
+
+**知识库**：测试台经 A2A 调 PG 知识库 Agent（`pub_6ea5f0855dff6c1b`，调用密钥在「Agent 接入」页启用）；知识库 Agent 的密钥失效时，知识库页的操作都会失败，在「Agent 接入」页换钥匙。部署、核对 PG 本身见 [kb/GUIDE.md](../../kb/GUIDE.md)。
 
 ## 3. 后续迭代的最佳方式
 
