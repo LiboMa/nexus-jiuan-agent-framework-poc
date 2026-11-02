@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = ROOT / "poc/app/test/fixtures/deploy-env"
+FIXTURES = ROOT / "poc/infra/test/fixtures/deploy-env"
 sys.path.insert(0, str(ROOT / "audit-agent"))
 
 import deploy_env  # noqa: E402

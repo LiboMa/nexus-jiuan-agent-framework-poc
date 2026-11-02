@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PAGE_CSP } from '../../../app/http.mjs';
+import { PAGE_CSP } from '../../lib/http.mjs';
 import { createFrontDoor, MARKER_COOKIE } from '../../front.mjs';
 import { intakeRoutes } from '../../intake.mjs';
 

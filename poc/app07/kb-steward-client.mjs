@@ -13,7 +13,7 @@
  * 时 markInvalid 一次后抛 KB_AGENT_KEY_REJECTED；之后 credentialFor 回 null，不会反复重试。别的调用失败（超时、404、5xx）抛 KB_UNAVAILABLE。
  * 抛出的错误只带错误码（reason 是 A2A 的错误码或校验没过的那一项），不带回复的内容和钥匙。
  */
-import { a2aCall, keyRejected, unwrapJson } from '../app/nexus/a2a-client.mjs';
+import { a2aCall, keyRejected, unwrapJson } from './lib/a2a-client.mjs';
 import { DOCX } from './kb-docx.mjs';
 
 const PROTOCOL = 'kb.rules/v1';

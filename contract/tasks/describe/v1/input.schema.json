@@ -1,8 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:jiuan:agent:v1:task:describe:1:input",
-  "title": "describe v1 输入",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {}
-}

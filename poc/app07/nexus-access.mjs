@@ -10,7 +10,7 @@
  * 连接经 nexus-ai-operator 命令行（和 PoC 的「我的 Nexus 连接」同一做法）：API 密钥只经环境变量交给 login，CLI 自己保存、续期、轮换。
  * 错误码都用 AGENT_ 开头：九安的前端只把这类错误的服务端说明原样显示。
  */
-import { publicationView } from '../app/nexus/catalog.mjs';
+import { publicationView } from './lib/catalog.mjs';
 
 const BASE = '/api/analysis/v1/platform/agent-access';
 const API_KEY = /^nxc_[A-Za-z0-9_-]{16,200}$/;

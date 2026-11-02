@@ -8,6 +8,10 @@
 #   ssh_wait [次数]                 等到能登录（每 10 秒一次，缺省 60 次）
 #   remote_root <脚本>              以 root 跑一段脚本：先写进远端的 mktemp 文件再 sudo bash 它（stdin 不留给脚本，免得脚本里的命令吃掉后面的行），
 #                                   远端的标准输出、标准错误原样回来，返回远端的退出码
+#   ssm_root <实例> <脚本> [超时秒] [区域]  经 SSM（AWS-RunShellScript）以 root 跑一段脚本：同样先写进远端的临时文件；回标准输出，
+#                                   没成功就把标准错误的最后几行打到本机的标准错误、返回 1
+#   ssm_wait_online <实例>          等实例的 SSM Agent 上线（最多 10 分钟）
+#   run_root <实例> <脚本> [超时秒]  按 remote_mode 选：经 SSH（remote_root，先要 ssh_setup）或经 SSM（ssm_root）
 # SSH_VIA=eice：不直连弹性 IP，经栈里的 EC2 Instance Connect 端点（ProxyCommand 是 aws ec2-instance-connect open-tunnel，走 AWS API 的 HTTPS），
 #   本机网络连不到实例的地址段时用；SSH_PROXY_COMMAND 是给 kb（PG_SSH_PROXY_COMMAND）和别的脚本用的同一条命令。
 # 登录用户是 ec2-user（Amazon Linux 2023）。不打印私钥，不把它拷到别处。
@@ -92,3 +96,40 @@ ssh_wait() {
 remote_root() {
   ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'f=$(mktemp /tmp/andon-op.XXXXXX) && cat > "$f" && sudo -n bash "$f" </dev/null; rc=$?; rm -f "$f"; exit $rc' <<< "$1"
 }
+
+ssm_root() {
+  local instance="$1" script="$2" timeout="${3:-600}" region="${4:-${REGION:-${AWS_REGION:-us-east-1}}}" payload id status=""
+  payload="$(printf '%s' "$script" | gzip -9 | base64 | tr -d '\n')"
+  id="$(aws ssm send-command --region "$region" --instance-ids "$instance" --document-name AWS-RunShellScript --timeout-seconds 120 \
+    --comment "${STACK:-andon-finance}: root script" \
+    --parameters "$(python3 -I -c 'import json,sys; print(json.dumps({"commands": ["f=$(mktemp /tmp/andon-op.XXXXXX); echo %s | base64 -d | gunzip > \"$f\" && bash \"$f\"; rc=$?; rm -f \"$f\"; exit $rc" % sys.argv[1]], "executionTimeout": [sys.argv[2]]}))' "$payload" "$timeout")" \
+    --query Command.CommandId --output text)" || return 1
+  for _ in $(seq 1 $(( timeout / 5 + 12 ))); do
+    sleep 5
+    status="$(aws ssm get-command-invocation --region "$region" --command-id "$id" --instance-id "$instance" --query Status --output text 2>/dev/null || true)"
+    case "$status" in Pending|InProgress|Delayed|"") continue ;; *) break ;; esac
+  done
+  aws ssm get-command-invocation --region "$region" --command-id "$id" --instance-id "$instance" --query StandardOutputContent --output text 2>/dev/null || true
+  if [[ "$status" != Success ]]; then
+    aws ssm get-command-invocation --region "$region" --command-id "$id" --instance-id "$instance" --query StandardErrorContent --output text 2>/dev/null | tail -20 >&2 || true
+    echo "实例 $instance 上经 SSM 的命令没有成功（${status:-没有结果}）" >&2
+    return 1
+  fi
+}
+
+ssm_wait_online() {
+  local status="" region="${REGION:-${AWS_REGION:-us-east-1}}"
+  for _ in $(seq 1 60); do
+    status="$(aws ssm describe-instance-information --region "$region" --filters "Key=InstanceIds,Values=$1" \
+      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"
+    [[ "$status" == Online ]] && return 0
+    sleep 10
+  done
+  echo "实例 $1 的 SSM Agent 没有上线" >&2
+  return 1
+}
+
+run_root() {
+  if [[ "$(remote_mode)" == ssh ]]; then remote_root "$2"; else ssm_root "$1" "$2" "${3:-600}"; fi
+}
+

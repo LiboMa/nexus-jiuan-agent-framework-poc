@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# 部署时配置测试台上的九安 v0.7.10（deploy.sh 经 SSM 调用，root 运行；在 PoC 服务重启之前，因为 PoC 要读这里写的转发设置）：
-#   1. 系统用户 jiuan07，不进 andon 组（读不到 PoC 的 secrets.env）；工作目录 /var/lib/jiuan07（含「我的规则」的 custom-rules/）；
+# 部署时配置测试台上的九安 v0.7.10（deploy.sh 经 SSM 或 SSH 调用，root 运行；在重启服务之前）：
+#   0. 以前的 v0.5.3 PoC（andon-finance-poc 服务，它占着 4180、按 Host 把这个站点转给 4181）实例上还有就停掉、删掉单元；
+#   1. 系统用户 jiuan07（读不到 /etc/andon-finance/secrets.env，那个文件只有 root 能读）；工作目录 /var/lib/jiuan07（含「我的规则」的 custom-rules/）；
 #   2. /etc/andon-finance/jiuan07/：从 secrets.env 取库密码、数据密钥和两个账号的口令写成文件（root:jiuan07 0640），
 #      实例上已有的库密码和数据密钥只认原值；虚构的汇联易凭据（假汇联易不校验）；服务的 env 文件；
-#   3. MySQL：在 jiuan-mysql 里建库 jiuan07 和只能看这个库的账号 jiuan07_app（密码只经标准输入进容器）；
+#   3. MySQL：装好或确认容器 jiuan-mysql（mysql-install.sh），在里面建库 jiuan07 和只能看这个库的账号 jiuan07_app（密码只经标准输入进容器）；
 #   4. /etc/hosts 堵掉九安代码里写死的外部地址（整段带标记，可以整段删）；
-#   5. systemd 单元 andon-jiuan07.service；PoC 服务按 Host 转发的设置（jiuan07-forward.env + 补充配置）。
+#   5. systemd 单元 andon-jiuan07.service：外壳直接听 0.0.0.0:4180（安全组只放 CloudFront 回源）。
 # 用法：bench07-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<知识库 Agent 发布编号>]]。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
 #   kb 方式：pg（缺省，PG 知识库 Agent）或 s3vectors（知识库文档管家，读写 S3 Vectors）。两种方式「制度知识库」页都经 Nexus 上的这个 Agent（A2A），
 #   测试台不直连 PG；发布编号可以不给（页面说「知识库 Agent 还没配置」），给了就要是 pub_ 加 16 位十六进制。Agent 的调用密钥在「Agent 接入」页上启用，不经过这里。
@@ -17,6 +18,16 @@ DOMAIN="${1:-}"; NEXUS="${2:-}"; KB_MODE="${3:-pg}"; KB_PUBLICATION="${4:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECRETS=/etc/andon-finance/secrets.env
 DIR=/etc/andon-finance/jiuan07
+
+# >>> legacy-poc
+# v0.5.3 PoC 拿掉之前的实例：先停掉它（它占着 4180），删掉单元、补充配置和转发设置；它的数据另行清理（docs/delivery/operations.md）
+if [[ -f /etc/systemd/system/andon-finance-poc.service ]]; then
+  systemctl disable --now andon-finance-poc.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/andon-finance-poc.service
+fi
+rm -rf /etc/systemd/system/andon-finance-poc.service.d
+rm -f /etc/andon-finance/jiuan07-forward.env
+# <<< legacy-poc
 
 id jiuan07 >/dev/null 2>&1 || useradd --system --home-dir /var/lib/jiuan07 --create-home --shell /sbin/nologin jiuan07
 install -d -o jiuan07 -g jiuan07 -m 0700 /var/lib/jiuan07 /var/lib/jiuan07/nexus /var/lib/jiuan07/custom-rules
@@ -61,8 +72,8 @@ KB_LINES=""
 
 cat > "$DIR/env.new" <<ENV
 POC07_ORIGIN=https://$DOMAIN
-POC07_PORT=4181
-POC07_BIND=127.0.0.1
+POC07_PORT=4180
+POC07_BIND=0.0.0.0
 POC07_SECRETS_DIR=$DIR
 NEXUS_ORIGIN=$NEXUS
 JIUAN07_DIR=/opt/andon-finance/current/jiuan07
@@ -76,6 +87,7 @@ ENV
 chown root:jiuan07 "$DIR/env.new"; chmod 0640 "$DIR/env.new"; mv "$DIR/env.new" "$DIR/env"
 
 # >>> jiuan07-database
+bash "$HERE/mysql-install.sh"
 for attempt in $(seq 1 60); do
   docker exec jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysqladmin ping -uroot --silent' >/dev/null 2>&1 && break
   [[ "$attempt" == 60 ]] && { echo "MySQL 没有就绪（jiuan-mysql）" >&2; exit 1; }
@@ -103,14 +115,6 @@ sed -i '/^# >>> jiuan07-blackhole/,/^# <<< jiuan07-blackhole/d' /etc/hosts
 # <<< jiuan07-hosts
 
 install -m 0644 "$HERE/andon-jiuan07.service" /etc/systemd/system/andon-jiuan07.service
-cat > /etc/andon-finance/jiuan07-forward.env <<ENV
-POC_FORWARD_HOST=$DOMAIN
-POC_FORWARD_PORT=4181
-ENV
-chmod 0644 /etc/andon-finance/jiuan07-forward.env
-install -d -m 0755 /etc/systemd/system/andon-finance-poc.service.d
-printf '%s\n' '# bench07-configure.sh 写入：PoC 进程把九安 v0.7.10 站点的请求转给本机 4181（poc/app/host-proxy.mjs）' '[Service]' \
-  'EnvironmentFile=-/etc/andon-finance/jiuan07-forward.env' > /etc/systemd/system/andon-finance-poc.service.d/jiuan07-forward.conf
 systemctl daemon-reload
 systemctl enable andon-jiuan07.service >/dev/null 2>&1
 echo "JIUAN07_CONFIGURED $DOMAIN"

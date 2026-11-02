@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 换实例类型，只允许「停机再开」，不允许替换实例（替换会丢掉账号目录和 MySQL 数据）：
 #   建变更集（只改 InstanceType，其余参数沿用）→ 实例要被替换就删掉变更集并退出 → 打印变更 → 输入栈名确认 → 执行 → 健康检查。
-# 用法：upgrade-instance.sh <t3.small|t3.medium|t3.large>。先跑 backup.sh。会停机几分钟。
+# 用法：upgrade-instance.sh <m7g.large|m7g.xlarge|t3.small|t3.medium|t3.large>（同一种架构之间换：arm64 的 m7g 之间、x86 的 t3 之间）。先跑 backup.sh。会停机几分钟。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/deploy-env.sh"
@@ -9,8 +9,13 @@ load_deploy_env
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 TYPE="${1:-}"
-case "$TYPE" in t3.small|t3.medium|t3.large) ;; *) echo "用法：upgrade-instance.sh <t3.small|t3.medium|t3.large>" >&2; exit 2 ;; esac
+case "$TYPE" in m7g.large|m7g.xlarge|t3.small|t3.medium|t3.large) ;; *) echo "用法：upgrade-instance.sh <m7g.large|m7g.xlarge|t3.small|t3.medium|t3.large>" >&2; exit 2 ;; esac
 output() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+# AMI 不换：新类型要和它同一种架构（arm64 的 m7g 之间、x86 的 t3 之间），不然停机再开后起不来
+IMAGE="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Parameters[?ParameterKey=='ImageId'].ParameterValue" --output text)"
+IMAGE_ARCH="$(aws ec2 describe-images --region "$REGION" --image-ids "$IMAGE" --query 'Images[0].Architecture' --output text)"
+TYPE_ARCH="$(aws ec2 describe-instance-types --region "$REGION" --instance-types "$TYPE" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures' --output text | grep -qw arm64 && echo arm64 || echo x86_64)"
+[[ "$IMAGE_ARCH" == "$TYPE_ARCH" ]] || { echo "栈 $STACK 的 AMI 是 ${IMAGE_ARCH}，${TYPE} 是 ${TYPE_ARCH}：不能就地换，另建一个栈" >&2; exit 2; }
 NAME="instance-type-$(date -u +%Y%m%d%H%M%S)"
 PARAMS=()
 for key in $(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Parameters[].ParameterKey' --output text); do
@@ -46,9 +51,9 @@ aws cloudformation execute-change-set --region "$REGION" --stack-name "$STACK" -
 aws cloudformation wait stack-update-complete --region "$REGION" --stack-name "$STACK"
 INSTANCE="$(output InstanceId)"
 echo "实例 ${INSTANCE} 现在是：$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE" --query 'Reservations[0].Instances[0].InstanceType' --output text)"
-SITE="$(output SiteUrl)"
+SITE="$(output Jiuan07Url)"
 for attempt in $(seq 1 36); do
-  if curl -fsS "$SITE/api/health" >/dev/null 2>&1; then echo "健康检查通过：$SITE"; exit 0; fi
+  if curl -fsS "$SITE/poc/healthz" >/dev/null 2>&1; then echo "健康检查通过：$SITE"; exit 0; fi
   sleep 10
 done
 echo "健康检查没有通过" >&2

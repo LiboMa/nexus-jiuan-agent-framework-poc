@@ -5,7 +5,7 @@
  *                                                读完详情后自动发起 AI 独立建议。每个账号每分钟最多 5 次。
  * 九安只替 /platform 下的写请求读请求体（analysis-server.mjs 的 requestBody），这里的请求体自己读。
  */
-import { fail, onlyFields, readJson, sendError, sendJson } from '../app/http.mjs';
+import { fail, onlyFields, readJson, sendError, sendJson } from './lib/http.mjs';
 
 const BASE = '/api/analysis/v1/poc/intake';
 

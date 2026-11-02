@@ -272,8 +272,8 @@ ssh_run() {
   case "$rc" in
     0) return 0 ;;
     124) warn "SSH 命令在 $PG_SSH_HOST 上超时（${to} 秒，$(basename "$file")）" ;;
-    255) warn "SSH 连不上 $PG_SSH_USER@$PG_SSH_HOST:$PG_SSH_PORT（$(basename "$file")）：地址、安全组、私钥、主机公钥" ;;
-    *) warn "SSH 命令在 $PG_SSH_HOST 上退出码 $rc（$(basename "$file")）" ;;
+    255) warn "SSH 连不上 $PG_SSH_USER@$PG_SSH_HOST:${PG_SSH_PORT}（$(basename "$file")）：地址、安全组、私钥、主机公钥" ;;
+    *) warn "SSH 命令在 $PG_SSH_HOST 上退出码 ${rc}（$(basename "$file")）" ;;
   esac
   return 1
 }
@@ -294,7 +294,7 @@ host_reachable() {
   if [ "$PG_HOST_TRANSPORT" = ssh ]; then
     local f="$PKG_DIR/.build/host-ping.sh" out
     mkdir -p "$PKG_DIR/.build"; printf 'echo "ssh-ok $(uname -m)"\n' > "$f"
-    out="$(ssh_run "$f" 30 | tail -1)" || { echo "SSH 不通（$PG_SSH_USER@$PG_SSH_HOST:$PG_SSH_PORT）"; return 1; }
+    out="$(ssh_run "$f" 30 | tail -1)" || { echo "SSH 不通（$PG_SSH_USER@$PG_SSH_HOST:${PG_SSH_PORT}）"; return 1; }
     case "$out" in ssh-ok*) echo "SSH 可登录、可 sudo（${out#ssh-ok }）"; return 0 ;; *) echo "SSH 输出不对：$out"; return 1 ;; esac
   fi
   local ping; ping="$(aws_cli ssm describe-instance-information --filters "Key=InstanceIds,Values=$TGT_ID" --query 'InstanceInformationList[0].[PingStatus,PlatformType]' --output text)"
@@ -322,7 +322,7 @@ pf_start() {
     done
     cat "$logf" >&2
     pf_stop
-    die "SSH 端口转发没有建立（127.0.0.1:$lport → $rhost:$rport 经 $PG_SSH_HOST）"
+    die "SSH 端口转发没有建立（127.0.0.1:$lport → $rhost:$rport 经 ${PG_SSH_HOST}）"
   fi
   # 直接后台运行 aws（不能用 aws_cli 函数：那样 $! 是子 shell 的 PID，结束它会让 aws 与 session-manager-plugin 成为孤儿进程）
   aws --region "$AWS_REGION" ssm start-session --target "$inst" --document-name AWS-StartPortForwardingSessionToRemoteHost \

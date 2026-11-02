@@ -9,7 +9,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PAGE_CSP, clientIp, fail, onlyFields, readJson, sendError, sendJson } from '../app/http.mjs';
+import { PAGE_CSP, clientIp, fail, onlyFields, readJson, sendError, sendJson } from './lib/http.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const MARKER_COOKIE = 'poc07_signed_in';

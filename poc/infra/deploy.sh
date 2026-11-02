@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# 部署或更新 andon-finance PoC（us-east-1，栈 andon-finance-poc）。
-#   infra/deploy.sh             单元测试 → 生成前端副本 → 建栈或更新栈 → 生成口令（只在没有时）→ 打包上传 → 让 EC2 拉取并重启 → 健康检查
-#   infra/deploy.sh --code-only 跳过建栈，只打包上传、重启、健康检查
-# 测试台：构件里的九安是构建出来的副本（poc/bench/build-jiuan.sh：开发包 + 补丁 + mysql2）；重启前在实例上配置测试台（bench/bench-configure.sh）。
-#   九安 v0.7.10 测试台的新前端（poc/web07，React）：动 AWS 资源之前 npm ci、跑测试、构建，dist/ 放进构件的 web07/dist（外壳的前门在 / 给它）。
+# 部署或更新九安 v0.7.10 测试台（新前端 poc/web07 + 外壳 poc/app07 + 九安副本；栈的模板 andon-finance-poc.yaml）。
+#   infra/deploy.sh             测试 → 构建 → 建栈或更新栈 → 生成密钥（只补没有的）→ 打包上传 → 实例上装构件、配置测试台、重启 → 健康检查
+#   infra/deploy.sh --code-only 跳过建栈，只打包上传、装、重启、健康检查
+# 动 AWS 资源之前：跑 poc/infra/test 的测试，构建九安 v0.7.10 副本（poc/bench/build-jiuan07.sh：按清单复制 + 补丁 + mysql2），
+#   新前端 npm ci、测试、构建（dist/ 放进构件的 web07/dist，外壳的前门在 / 给它），再跑外壳的单元测试。
+# 实例上（root）：装 secrets.env（root 0600）→ 解开新构件 → bench/bench07-configure.sh（MySQL、jiuan07 用户和服务；以前的 v0.5.3 PoC 服务还在就停掉删掉）
+#   → 换上新构件（/opt/andon-finance/current，上一版留在 previous）→ 重启 andon-jiuan07。哪一步失败都不往下走、不做健康检查。
 #   KB_ALLOWED_CIDR=<私网段> deploy.sh  建栈时一起放行知识库的 PG 端口（栈已在时用 infra/kb.sh sg）；知识库本身用 infra/kb.sh 部署，见 kb/README.md
-#   POC_STORE=memory|mysql 决定服务用内存存储还是本机 MySQL（默认 mysql；回到内存存储：POC_STORE=memory deploy.sh --code-only）。
-#   KB_MODE=pg|s3vectors（一般写在 DEPLOY_ENV 的配置文件里）决定九安 v0.7.10「制度知识库」走哪种方式（默认 pg）；两种方式都经 Nexus 上的知识库 Agent，
+#   KB_MODE=pg|s3vectors（一般写在 DEPLOY_ENV 的配置文件里）决定「知识库」页走哪种方式（默认 pg）；两种方式都经 Nexus 上的知识库 Agent，
 #   测试台不直连 PG。方式和当前方式的知识库 Agent 发布（pg：KB_PG_PUBLICATION_ID，可以不给；s3vectors：KB_S3V_PUBLICATION_ID，必须给）交给 bench/bench07-configure.sh。
-#   环境配置写了 SSH_KEY_FILE（和 SSH_KEY_NAME、SSH_ALLOWED_CIDR）：实例经 SSH 管理，等实例上线、装构件和重启都经 SSH（ec2-user + sudo），不用 SSM；
-#   主机公钥第一次从实例的控制台输出里取来钉住（lib/remote.sh）。建栈时按 INSTANCE_TYPE 的架构（x86_64 / arm64，如 m7g）取 AMI。
-# 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶、执行 SSM Run Command 或读实例的控制台输出）。应用的启动配置（口令、REGISTRY_KEY、测试台密钥）只在 infra/secrets.env，不打印；Agent 的调用密钥不经过这里，用户在前端启用。
+#   环境配置写了 SSH_KEY_FILE（和 SSH_KEY_NAME、SSH_ALLOWED_CIDR 或 SSH_VIA=eice）：实例经 SSH 管理，等实例上线、装构件和重启都经 SSH（ec2-user + sudo），不用 SSM；
+#   主机公钥第一次从实例的控制台输出里取来钉住（lib/remote.sh）。建栈时按 INSTANCE_TYPE 的架构（arm64 的 m7g，或 x86_64 的 t3）取 AMI。
+# 需要本机的 AWS 凭证（能建 CloudFormation 栈、写构件桶，执行 SSM Run Command 或读实例的控制台输出）。口令和测试台密钥只在 infra/secrets.env，不打印；
+# Agent 的调用密钥不经过这里，管理员在新前端的「Agent 接入」页启用。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -21,19 +23,15 @@ REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/secrets.env"
 POC_DIR="$(cd "$HERE/.." && pwd)"
-APP_DIR="$POC_DIR/app"
-JIUAN_CODE_DIR="${JIUAN_CODE_DIR:-$POC_DIR/../source/审核平台-测试环境开发包-v0.5.3/code}"
 OPERATOR_SCRIPT="${NEXUS_OPERATOR_SCRIPT:-$POC_DIR/../skills/nexus-ai-operator/scripts/nexus.py}"
 CODE_ONLY=false
 [[ "${1:-}" == "--code-only" ]] && CODE_ONLY=true
-POC_STORE="${POC_STORE:-mysql}"
-[[ "$POC_STORE" == "memory" || "$POC_STORE" == "mysql" ]] || { echo "POC_STORE 只能是 memory 或 mysql" >&2; exit 2; }
 # 这两项原样拼进实例上以 root 跑的命令：先核对格式，不合格就在动任何 AWS 资源之前停下
 [[ "${KB_MODE:-pg}" == "pg" || "${KB_MODE:-pg}" == "s3vectors" ]] || { echo "KB_MODE 只能是 pg 或 s3vectors" >&2; exit 2; }
 [[ -z "${KB_S3V_PUBLICATION_ID:-}" || "$KB_S3V_PUBLICATION_ID" =~ ^pub_[0-9a-f]{16}$ ]] || { echo "KB_S3V_PUBLICATION_ID 应是文档管家的发布编号（pub_ 加 16 位十六进制）" >&2; exit 2; }
 [[ "${KB_MODE:-pg}" == "pg" || -n "${KB_S3V_PUBLICATION_ID:-}" ]] || { echo "KB_MODE=s3vectors 时要给 KB_S3V_PUBLICATION_ID（知识库文档管家的发布）" >&2; exit 2; }
 [[ -z "${KB_PG_PUBLICATION_ID:-}" || "$KB_PG_PUBLICATION_ID" =~ ^pub_[0-9a-f]{16}$ ]] || { echo "KB_PG_PUBLICATION_ID 应是 PG 知识库 Agent 的发布编号（pub_ 加 16 位十六进制）" >&2; exit 2; }
-# 「制度知识库」页经哪个知识库 Agent：pg 方式取 KB_PG_PUBLICATION_ID（没给时页面说「知识库 Agent 还没配置」），s3vectors 方式取 KB_S3V_PUBLICATION_ID
+# 「知识库」页经哪个知识库 Agent：pg 方式取 KB_PG_PUBLICATION_ID（没给时页面说「知识库 Agent 还没配置」），s3vectors 方式取 KB_S3V_PUBLICATION_ID
 KB_PUBLICATION="${KB_PG_PUBLICATION_ID:-}"
 [[ "${KB_MODE:-pg}" == "pg" ]] || KB_PUBLICATION="$KB_S3V_PUBLICATION_ID"
 REMOTE="$(remote_mode)"
@@ -45,35 +43,28 @@ output() {
   aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" \
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
-# 单元测试不看部署的环境：DEPLOY_ENV 和环境配置能写的键（load_deploy_env 把读到的 export 了，shell 里也可能有同名的）都不传给 node --test
-unit_tests() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && node --test "test/unit/**/*.test.mjs"); }
+# 测试不看部署的环境：DEPLOY_ENV 和环境配置能写的键（load_deploy_env 把读到的 export 了，shell 里也可能有同名的）都不传给 node --test
+node_tests() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && node --test "$2"); }
 # 新前端：按锁文件装依赖、跑它的测试、构建出 dist/；和单元测试一样不看部署的环境，哪一步失败部署就停
 web_build() { (unset -v DEPLOY_ENV "${DEPLOY_ENV_KEYS[@]}"; cd "$1" && npm ci && npm test && npm run build); }
 
 say "检查工具与账号"
 for tool in node npm aws rsync tar curl openssl; do command -v "$tool" >/dev/null || { echo "缺少 $tool" >&2; exit 1; }; done
 aws sts get-caller-identity --query Account --output text
-[[ -f "$JIUAN_CODE_DIR/analysis-server.mjs" ]] || { echo "找不到九安开发包：$JIUAN_CODE_DIR" >&2; exit 1; }
 [[ -f "$OPERATOR_SCRIPT" ]] || { echo "找不到 nexus-ai-operator：$OPERATOR_SCRIPT" >&2; exit 1; }
 
-say "单元测试"
-unit_tests "$APP_DIR"
+say "基础设施和部署脚本的测试（poc/infra/test）"
+node_tests "$HERE" "test/**/*.test.mjs"
 
-say "生成前端副本"
-(cd "$APP_DIR" && node scripts/build-public.mjs)
-
-say "构建九安副本（开发包 + 补丁 + mysql2）"
-"$POC_DIR/bench/build-jiuan.sh"
-
-say "构建九安 v0.7.10 副本（按清单复制 + mysql2）"
+say "构建九安 v0.7.10 副本（按清单复制 + 补丁 + mysql2）"
 "$POC_DIR/bench/build-jiuan07.sh"
 
-say "构建九安 v0.7.10 测试台的新前端（poc/web07：npm ci、测试、构建）"
+say "构建新前端（poc/web07：npm ci、测试、构建）"
 web_build "$POC_DIR/web07"
 
 # 前门对真实构建产物（poc/web07/dist）的那条测试要测这次构建、要发出去的那份：所以在 web_build 之后跑
 say "跑测试台外壳的单元测试"
-unit_tests "$POC_DIR/app07"
+node_tests "$POC_DIR/app07" "test/unit/**/*.test.mjs"
 
 if ! $CODE_ONLY; then
   say "建栈或更新栈 ${STACK}（第一次建 CloudFront 约需 5–15 分钟）"
@@ -81,10 +72,10 @@ if ! $CODE_ONLY; then
   args=(--region "$REGION" --stack-name "$STACK" --template-file "$HERE/andon-finance-poc.yaml" --capabilities CAPABILITY_IAM
     --no-fail-on-empty-changeset --tags project=andon-finance-poc)
   overrides=()
-  # 实例类型的架构：x86_64（t3）或 arm64（m7g）；AMI 要和它一致
+  # 实例类型的架构：arm64（m7g）或 x86_64（t3）；AMI 要和它一致
   type_arch() { aws ec2 describe-instance-types --region "$REGION" --instance-types "$1" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures' --output text | grep -qw arm64 && echo arm64 || echo x86_64; }
   if ! aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then
-    ARCH="$(type_arch "${INSTANCE_TYPE:-t3.small}")"
+    ARCH="$(type_arch "${INSTANCE_TYPE:-m7g.xlarge}")"
     AMI="$(aws ssm get-parameter --region "$REGION" --name "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-$ARCH" --query Parameter.Value --output text)"
     overrides+=("ImageId=$AMI")
   elif [[ -n "${INSTANCE_TYPE:-}" ]]; then
@@ -105,7 +96,7 @@ fi
 
 BUCKET="$(output ArtifactBucketName)"
 INSTANCE="$(output InstanceId)"
-SITE="$(output SiteUrl)"
+SITE="$(output Jiuan07Url)"
 
 param() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query "Stacks[0].Parameters[?ParameterKey=='$1'].ParameterValue" --output text; }
 
@@ -113,21 +104,16 @@ say "密钥配置文件 $SECRETS"
 if [[ ! -f "$SECRETS" ]]; then
   install -m 600 /dev/null "$SECRETS"   # 先建成 0600，再写入
   cat >> "$SECRETS" <<SECRETSFILE
-# andon-finance PoC 的启动配置（口令、REGISTRY_KEY、测试台密钥）。只放在本机和实例上，不进构件、不进文档、不贴进对话。改完运行 infra/deploy.sh --code-only。Agent 的调用密钥不放这里，在前端「Nexus Agent」页启用。
+# 九安 v0.7.10 测试台的启动配置（两个账号的口令、MySQL 和九安存储的密钥）。只放在本机和实例上，不进构件、不进文档、不贴进对话。
+# 改完运行 infra/deploy.sh --code-only。Agent 的调用密钥不放这里，在新前端的「Agent 接入」页启用。
 REVIEWER_PASSWORD=$(openssl rand -base64 18)
 CHECKER_PASSWORD=$(openssl rand -base64 18)
-# 加密各用户调用密钥的密钥（32 字节 base64）。换掉它，所有用户都要重新启用 Agent。
-REGISTRY_KEY=$(openssl rand -base64 32)
 SECRETSFILE
-  echo "已生成 ${SECRETS}：两条随机口令和 REGISTRY_KEY（测试台的三项密钥接着补上）。Agent 的调用密钥不放这里，在前端「Nexus Agent」页启用"
-fi
-if ! grep -q '^REGISTRY_KEY=' "$SECRETS"; then
-  printf '%s\n' '# 加密各用户调用密钥的密钥（32 字节 base64）。换掉它，所有用户都要重新启用 Agent。' "REGISTRY_KEY=$(openssl rand -base64 32)" >> "$SECRETS"
-  echo "已在 ${SECRETS} 里补上 REGISTRY_KEY"
+  echo "已生成 ${SECRETS}：两个账号的随机口令（测试台的三项密钥接着补上）"
 fi
 # >>> bench-secrets
-# 测试台（MySQL 与九安存储）的三项密钥：缺了才补，已有的永远不改。换了 BENCH_DATA_KEY，九安的库就打不开了。
-for name in BENCH_MYSQL_ROOT_PASSWORD BENCH_MYSQL_APP_PASSWORD BENCH_DATA_KEY JIUAN07_MYSQL_APP_PASSWORD JIUAN07_DATA_KEY; do
+# 测试台（MySQL 与九安存储）的三项密钥：缺了才补，已有的永远不改。换了 JIUAN07_DATA_KEY，九安的库就打不开了。
+for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN07_MYSQL_APP_PASSWORD JIUAN07_DATA_KEY; do
   grep -q "^${name}=" "$SECRETS" && continue
   if [[ "$name" == *_DATA_KEY ]]; then value="$(openssl rand -base64 32)"; else value="$(openssl rand -hex 16)"; fi
   printf '%s\n' "# 测试台：只补不换（${name}）" "${name}=${value}" >> "$SECRETS"
@@ -139,12 +125,9 @@ chmod 600 "$SECRETS"
 say "打包并上传构件"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/release/app" "$STAGE/release/jiuan" "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/web07/dist" "$STAGE/release/jiuan07"
-rsync -a --exclude test --exclude node_modules --exclude .DS_Store "$APP_DIR/" "$STAGE/release/app/"
-# 九安取构建出来的副本：已经不含 tests、deploy，带着锁定版本的 node_modules（mysql2）。
-rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan/" "$STAGE/release/jiuan/"
+mkdir -p "$STAGE/release/operator/scripts" "$STAGE/release/bench" "$STAGE/release/app07" "$STAGE/release/web07/dist" "$STAGE/release/jiuan07"
 rsync -a --exclude .DS_Store "$HERE/bench/" "$STAGE/release/bench/"
-# 九安 v0.7.10：测试台外壳（不带测试和冒烟脚本）和按清单复制的副本（不含 seeds、database、tests、deploy、scripts）
+# 测试台外壳（不带测试和冒烟脚本）和按清单复制的九安副本（不含 seeds、database、tests、deploy、scripts，带锁定版本的 node_modules）
 rsync -a --exclude test --exclude scripts --exclude node_modules --exclude .DS_Store "$POC_DIR/app07/" "$STAGE/release/app07/"
 rsync -a --exclude .DS_Store "$POC_DIR/../.build/jiuan07/" "$STAGE/release/jiuan07/"
 # 新前端只带构建产物（外壳的 front.mjs 默认找 app07/../web07/dist）
@@ -160,62 +143,42 @@ if [[ "$REMOTE" == ssh ]]; then
   say "等实例经 SSH 能登录（$(output ElasticIp)）"
   ssh_setup "$(output ElasticIp)" "$INSTANCE" && ssh_wait 60 || exit 1
 else
-say "等 EC2 的 SSM Agent 上线"
-status=""
-for attempt in $(seq 1 60); do
-  status="$(aws ssm describe-instance-information --region "$REGION" --filters "Key=InstanceIds,Values=$INSTANCE" \
-    --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"
-  [[ "$status" == "Online" ]] && break
-  sleep 10
-done
-[[ "$status" == "Online" ]] || { echo "SSM Agent 没有上线，请检查实例 $INSTANCE" >&2; exit 1; }
+  say "等 EC2 的 SSM Agent 上线"
+  ssm_wait_online "$INSTANCE" || exit 1
 fi
 
-say "按栈参数重写实例配置，让 EC2 拉取新构件并重启服务"
-# 用户数据只在首次启动时写 /etc/andon-finance/env；改了栈参数（如 AdvisoryPublicationId、NexusOrigin、AppPort）之后，靠这里同步到实例。
-# 变量清单必须与模板用户数据里的一致（infra.test.mjs 会核对）。
-ENV_FILE="$(cat <<ENVFILE
-POC_ORIGIN=https://$(param DomainName)
-POC_PORT=$(param AppPort)
-POC_BIND=0.0.0.0
-POC_BUCKET=$BUCKET
-AWS_REGION=$REGION
-POC_SECRETS_FILE=/etc/andon-finance/secrets.env
-NEXUS_ORIGIN=$(param NexusOrigin)
-NEXUS_ADVISORY_PUBLICATION=$(param AdvisoryPublicationId)
-NEXUS_HOME=/var/lib/andon-finance/nexus
-NEXUS_OPERATOR=/opt/andon-finance/current/operator/scripts/nexus.py
-JIUAN_CODE_DIR=/opt/andon-finance/current/jiuan
-POC_PUBLIC_DIR=/opt/andon-finance/current/app/public
-ENVFILE
-)"
-ENV_B64="$(printf '%s\n' "$ENV_FILE" | base64 | tr -d '\n')"
-# 九安 v0.7.10 的站点：栈还没更新到有这个参数时（先跑了 --code-only）用模板的默认值
+say "实例上装构件、配置测试台、重启"
+# 站点名：栈还没更新到有这个参数时用模板的默认值
 J07_DOMAIN="$(param Jiuan07DomainName)"
 [[ -n "$J07_DOMAIN" && "$J07_DOMAIN" != None ]] || J07_DOMAIN=jiuan-v0710.tinyboat.blog
-# 先装密钥配置文件（root:andon 0640），再写 env，最后重启；任何一步失败都不重启。
-INSTALL="aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors && chown root:andon /etc/andon-finance/secrets.env.new && chmod 0640 /etc/andon-finance/secrets.env.new && mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env && echo $ENV_B64 | base64 -d > /etc/andon-finance/env && chmod 0644 /etc/andon-finance/env && rm -rf /var/tmp/andon-bench-config && mkdir -p /var/tmp/andon-bench-config && aws s3 cp s3://$BUCKET/releases/current.tgz /var/tmp/andon-bench-config/release.tgz --region $REGION --only-show-errors && tar -xzf /var/tmp/andon-bench-config/release.tgz -C /var/tmp/andon-bench-config ./bench && bash /var/tmp/andon-bench-config/bench/bench-configure.sh $POC_STORE && bash /var/tmp/andon-bench-config/bench/bench07-configure.sh $J07_DOMAIN $(param NexusOrigin) '${KB_MODE:-pg}' '$KB_PUBLICATION' && systemctl restart andon-finance-poc.service && systemctl restart andon-jiuan07.service"
-if [[ "$REMOTE" == ssh ]]; then
-  # 经 SSH：一段 set -e 的脚本，安装或重启哪一步失败都不往下走，也不做健康检查
-  remote_root "$(printf 'set -euo pipefail\n%s\nsleep 5\nsystemctl is-active andon-finance-poc.service\nsystemctl is-active andon-jiuan07.service\n' "$INSTALL")" \
-    || { echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; }
-else
-COMMANDS="$(printf '{"commands":["%s","sleep 5","systemctl is-active andon-finance-poc.service","systemctl is-active andon-jiuan07.service"]}' "$INSTALL")"
-COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --comment 'andon-finance-poc deploy' \
-  --parameters "$COMMANDS" --query Command.CommandId --output text)"
-aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" || true
-aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query '[Status,StandardOutputContent,StandardErrorContent]' --output text
-# SSM 没成功就停在这里，不再报「健康检查通过」（评审 I1）。
-[[ "$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query Status --output text)" == "Success" ]] \
-  || { echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; }
-fi
+# >>> install
+INSTALL="$(cat <<SH
+set -euo pipefail
+work="\$(mktemp -d /var/tmp/andon-release.XXXXXX)"; trap 'rm -rf "\$work"' EXIT
+# 先装密钥配置文件（只有 root 能读；bench07-configure.sh 从它取出各项写给 jiuan07）
+aws s3 cp s3://$BUCKET/secrets/secrets.env /etc/andon-finance/secrets.env.new --region $REGION --only-show-errors
+chown root:root /etc/andon-finance/secrets.env.new; chmod 0600 /etc/andon-finance/secrets.env.new
+mv /etc/andon-finance/secrets.env.new /etc/andon-finance/secrets.env
+aws s3 cp s3://$BUCKET/releases/current.tgz "\$work/release.tgz" --region $REGION --only-show-errors
+mkdir "\$work/release"
+tar -xzf "\$work/release.tgz" -C "\$work/release" --no-same-owner
+chmod -R a+rX,go-w "\$work/release"
+bash "\$work/release/bench/bench07-configure.sh" $J07_DOMAIN $(param NexusOrigin) '${KB_MODE:-pg}' '$KB_PUBLICATION'
+rm -rf /opt/andon-finance/previous
+if [ -d /opt/andon-finance/current ]; then mv /opt/andon-finance/current /opt/andon-finance/previous; fi
+mv "\$work/release" /opt/andon-finance/current
+systemctl restart andon-jiuan07.service
+sleep 5
+systemctl is-active andon-jiuan07.service
+SH
+)"
+# <<< install
+run_root "$INSTANCE" "$INSTALL" 900 || { echo "实例上的安装或重启没有成功（见上面的输出），不做健康检查" >&2; exit 1; }
 
 if [[ "$REMOTE" == ssh ]]; then LOGS="ssh -i $SSH_KEY_FILE $SSH_TARGET"; else LOGS="aws ssm start-session --region $REGION --target ${INSTANCE}"; fi
-say "健康检查 $SITE/api/health 和 https://$J07_DOMAIN/poc/healthz"
+say "健康检查 $SITE/poc/healthz"
 healthy() { for attempt in $(seq 1 36); do curl -fsS "$1" >/dev/null 2>&1 && return 0; sleep 10; done; return 1; }
-healthy "$SITE/api/health" || { echo "PoC 健康检查没有通过。查看日志：${LOGS}，然后 sudo journalctl -u andon-finance-poc -n 200" >&2; exit 1; }
+# 第一次建 CloudFront 分发后，DNS 生效要几分钟
+healthy "$SITE/poc/healthz" || { echo "健康检查没有通过。查看日志：${LOGS}，然后 sudo journalctl -u andon-jiuan07 -n 200" >&2; exit 1; }
 echo "健康检查通过：$SITE"
-# v0.7.10 经 PoC 进程按 Host 转发；第一次建它的 CloudFront 分发后，DNS 生效要几分钟
-healthy "https://$J07_DOMAIN/poc/healthz" || { echo "九安 v0.7.10 健康检查没有通过。查看日志：${LOGS}，然后 sudo journalctl -u andon-jiuan07 -n 200" >&2; exit 1; }
-echo "健康检查通过：https://${J07_DOMAIN}（九安 v0.7.10）"
-echo "两个账号的口令在 ${SECRETS}（REVIEWER_PASSWORD / CHECKER_PASSWORD），两个站点相同"
+echo "两个账号的口令在 ${SECRETS}（REVIEWER_PASSWORD / CHECKER_PASSWORD）"

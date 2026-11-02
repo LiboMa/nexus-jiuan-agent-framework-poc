@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
-# 在实例上装好测试台的 MySQL（可以重复运行）：Docker → 容器 jiuan-mysql（mysql:8.0，只听 127.0.0.1:3306，参数照九安的 compose.test.yaml）
-# → 等它就绪。以 root 运行（bench-configure.sh 在 mysql 模式下调用；服务的 systemd 补充配置由 bench-configure.sh 装）。
-# 密码只经文件传给容器（*_FILE，目录只读挂进容器），不出现在命令行和日志里。
+# 在实例上装好测试台的 MySQL（可以重复运行；bench07-configure.sh 调用，root 运行）：
+#   1. 从 /etc/andon-finance/secrets.env 取 BENCH_MYSQL_ROOT_PASSWORD，写成 /etc/andon-finance/bench/mysql_root_password（root 0600）；
+#      实例上已有的值只认原值（库是按它建的，换了就连不上），不一样就失败，什么都不写；
+#   2. Docker → 容器 jiuan-mysql（mysql:8.0，只听 127.0.0.1:3306，参数照九安的 compose.test.yaml）→ 等它就绪。
+# 九安 v0.7.10 的库 jiuan07 和它的账号由 bench07-configure.sh 建。密码只经文件传给容器（*_FILE，目录只读挂进容器），不出现在命令行和日志里。
 set -euo pipefail
-SECRETS=/etc/andon-finance/bench
-for file in mysql_root_password mysql_app_password; do
-  [[ -s "$SECRETS/$file" ]] || { echo "缺少 $SECRETS/$file" >&2; exit 1; }
-done
+SECRETS=/etc/andon-finance/secrets.env
+DIR=/etc/andon-finance/bench
+KEY=BENCH_MYSQL_ROOT_PASSWORD
+value="$(sed -n "s/^${KEY}=//p" "$SECRETS" | head -1)"
+[[ -n "$value" ]] || { echo "secrets.env 里缺少 ${KEY}" >&2; exit 1; }
+install -d -o root -g root -m 0700 "$DIR"
+if [[ -f "$DIR/mysql_root_password" && "$(cat "$DIR/mysql_root_password")" != "$value" ]]; then
+  echo "实例上的 mysql_root_password 和 secrets.env 里的 BENCH_MYSQL_ROOT_PASSWORD 不一样，拒绝替换：MySQL 是按原来的值建的" >&2
+  exit 1
+fi
+( umask 077; printf '%s' "$value" > "$DIR/mysql_root_password.new" )
+chown root:root "$DIR/mysql_root_password.new"; chmod 0600 "$DIR/mysql_root_password.new"
+mv "$DIR/mysql_root_password.new" "$DIR/mysql_root_password"
 if ! command -v docker >/dev/null 2>&1; then
   for attempt in 1 2 3; do dnf install -y docker && break; sleep 10; done
 fi
@@ -16,12 +27,9 @@ if ! docker inspect jiuan-mysql >/dev/null 2>&1; then
   docker run -d --name jiuan-mysql --restart unless-stopped \
     -p 127.0.0.1:3306:3306 \
     -v /var/lib/jiuan-mysql:/var/lib/mysql \
-    -v "$SECRETS":/run/bench-secrets:ro \
+    -v "$DIR":/run/bench-secrets:ro \
     -e TZ=Asia/Shanghai \
     -e MYSQL_ROOT_PASSWORD_FILE=/run/bench-secrets/mysql_root_password \
-    -e MYSQL_DATABASE=jiuan_analysis \
-    -e MYSQL_USER=jiuan_app \
-    -e MYSQL_PASSWORD_FILE=/run/bench-secrets/mysql_app_password \
     mysql:8.0 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --skip-log-bin >/dev/null
 fi
 docker start jiuan-mysql >/dev/null

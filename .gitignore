@@ -19,7 +19,6 @@ source/
 # 生成物与依赖
 .build/
 node_modules/
-poc/app/public/
 dist/
 __pycache__/
 *.pyc

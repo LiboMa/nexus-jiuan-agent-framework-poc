@@ -37,7 +37,7 @@ param() { clean "$(aws cloudformation describe-stacks --region "$REGION" --stack
 usage() { sed -n '2,13p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; }
 
 write_config() {
-  [[ -f "$SETTINGS" ]] || die "找不到 ${SETTINGS}：先 cp $HERE/kb.env.example $SETTINGS && chmod 600 $SETTINGS，再按注释改（不进仓库）"
+  [[ -f "$SETTINGS" ]] || die "找不到 ${SETTINGS}：先 cp $HERE/kb.env.example $SETTINGS && chmod 600 ${SETTINGS}，再按注释改（不进仓库）"
   grep -Eq '^[[:space:]]*(export[[:space:]]+)?NEXUS_ADMIN_PASSWORD=' "$SETTINGS" \
     && die "$SETTINGS 里不能写 NEXUS_ADMIN_PASSWORD（明文密码）：改用 NEXUS_ADMIN_PASSWORD_FILE / NEXUS_ADMIN_PASSWORD_SSM，或运行时的环境变量"
   local instance cidr port nexus

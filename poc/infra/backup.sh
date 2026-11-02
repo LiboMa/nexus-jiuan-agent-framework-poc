@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# 升级测试台之前的备份（需要本机 AWS 凭证）：
-#   1. 根卷快照（标签 andon-finance-poc-backup），等它完成；
-#   2. 经 SSM 在实例上把账号目录（users、nexus）打包到 /root/andon-backup-<时间>.tgz（0600）。
-# 恢复：用快照建卷替换根卷；或者把打包文件解回 /var/lib/andon-finance（属主 andon:andon，目录 0700、文件 0600）。
+# 升级测试台之前的备份（需要本机 AWS 凭证）：根卷快照（标签 andon-finance-poc-backup），等它完成。
+# 根卷上有 MySQL 和 PG 的数据目录、九安 v0.7.10 的状态目录 /var/lib/jiuan07，所以一个快照就够；不登实例（经 SSM 或 SSH 都不用）。
+# 恢复：用快照建卷替换根卷。只搬数据到另一台机器用 migrate-data.sh。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/deploy-env.sh"
@@ -22,13 +21,4 @@ for attempt in 1 2 3; do
   if aws ec2 wait snapshot-completed --region "$REGION" --snapshot-ids "$SNAPSHOT" 2>/dev/null; then done_wait=true; break; fi
 done
 $done_wait || { echo "快照 ${SNAPSHOT} 还没完成，先不要升级" >&2; exit 1; }
-echo "快照完成：${SNAPSHOT}"
-ARCHIVE="/root/andon-backup-${STAMP}.tgz"
-COMMANDS="$(printf '{"commands":["umask 077 && tar -czf /root/andon-backup-%s.tgz -C /var/lib/andon-finance users nexus && ls -l /root/andon-backup-%s.tgz"]}' "$STAMP" "$STAMP")"
-COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --comment 'andon-finance-poc backup' \
-  --parameters "$COMMANDS" --query Command.CommandId --output text)"
-aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" || true
-aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query '[Status,StandardOutputContent,StandardErrorContent]' --output text
-[[ "$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE" --query Status --output text)" == "Success" ]] \
-  || { echo "实例上的打包没有成功" >&2; exit 1; }
-echo "备份完成：快照 ${SNAPSHOT}；实例上 ${ARCHIVE}"
+echo "备份完成：快照 ${SNAPSHOT}"

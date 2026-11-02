@@ -31,8 +31,9 @@ if [[ -n "$EXPORT" ]]; then
 fi
 
 if $CHECKS; then
-  say "单元测试与命令行测试"
-  (cd "$ROOT/poc/app" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "单元测试通过"
+  say "单元测试"
+  # 部署脚本、栈模板、测试台脚本（poc/infra/test；九安 v0.7.10 副本的构建测试要本机有开发包，没有就跳过那几条）
+  (cd "$ROOT/poc/infra" && node --test "test/**/*.test.mjs" >/dev/null) && echo "部署脚本和栈模板的测试通过"
   # 九安 v0.7.10 测试台的外壳：先构建九安副本（打补丁），外壳的测试要用到副本里的契约
   bash "$ROOT/poc/bench/build-jiuan07.sh" >/dev/null && (cd "$ROOT/poc/app07" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "九安 v0.7.10 外壳的单元测试通过"
   # 知识库工具：脚本语法与 Python 编译检查（它的部署和验证要线上环境，见 kb/GUIDE.md）
@@ -48,11 +49,8 @@ if $CHECKS; then
   for f in "$PGA"/scripts/*.sh; do bash -n "$f"; done
   python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$PGA"/{tools,scripts,probe,tests}/*.py && for f in "$PGA"/scripts/*.mjs "$PGA"/tests/*.mjs; do node --check "$f"; done && echo "文档管家（PG 版）的语法检查通过"
   (cd "$ROOT" && python3 -B -m unittest discover -s audit-agent/tests >/dev/null 2>&1) && echo "审核 Agent 下发脚本的单元测试通过"
-  (cd "$ROOT" && python3 -B -m unittest discover -s skills/agent-access/tests >/dev/null 2>&1) && echo "命令行测试通过"
   say "图和 HTML 是不是最新的"
   "$ROOT/docs/build-html.sh" --check
-  say "参考补丁"
-  "$ROOT/docs/delivery/patches/make-reference-patch.sh"
 fi
 
 say "按白名单暂存"
@@ -73,7 +71,6 @@ copy README.md
 copy VERSION
 copy CHANGELOG.md
 copy docs "${NOT_HANDOVER[@]}"
-copy poc/app --exclude /app/public
 copy poc/app07
 copy poc/web07 --exclude /web07/dist
 copy poc/bench
@@ -95,11 +92,8 @@ copy customer-deploy
 # 两个文档管家的提示词共用片段在 kb/prompt（render.py 从包旁边的 ../kb/prompt 读），随上面的 kb 出包；少了就渲染不出提示词
 [[ -f "$stage/kb/prompt/kb_rules_v1.zh.md" ]] || { echo "暂存目录里没有 kb/prompt/kb_rules_v1.zh.md（文档管家的提示词共用片段）" >&2; exit 1; }
 copy poc/infra --exclude secrets.env --exclude kb.env --include /infra/env/example.env --exclude '/infra/env/*.env' --exclude /infra/.state --exclude design-jiuan-nexus-integrate.md
-copy poc/tools
 copy poc/README.md
 copy skills
-copy knowledge-agent
-copy contract
 [[ -n "$EXPORT" ]] || copy evidence
 cat > "$stage/.gitignore" <<'EOF'
 # 密钥：只在本机，当面交接；样例 secrets.env.example 进仓库
@@ -126,7 +120,6 @@ source/
 # 生成物与依赖
 .build/
 node_modules/
-poc/app/public/
 dist/
 __pycache__/
 *.pyc

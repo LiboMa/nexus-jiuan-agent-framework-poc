@@ -18,7 +18,7 @@
  * 表 poc_review_decisions 在九安的 jiuan07 库里（端到端测试的重置删库重建，随之清空），start() 时建；created_at 存 UTC 的 DATETIME(3)。
  * 每次复核成功后调 onReviewed(review)（外壳用它清工作台的缓存，F3）；它出错只记日志，不影响这次复核。
  */
-import { readJson } from '../app/http.mjs';
+import { readJson } from './lib/http.mjs';
 
 const BASE = '/api/analysis/v1/poc/reviews';
 const LATEST = `${BASE}/latest`;

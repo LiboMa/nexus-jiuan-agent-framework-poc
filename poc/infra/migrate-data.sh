@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 把测试台的数据从一个环境搬到另一个环境（换机器用）：
-#   MySQL 的三个库（v0.5.3 测试台的 jiuan_bench_test、jiuan_analysis，九安 v0.7.10 的 jiuan07）、
+#   MySQL 里九安 v0.7.10 的库 jiuan07（单据、AI 建议、复核、「Agent 接入」的启用记录……）、
 #   知识库的 PG 库 nexus（规则、上传历史、检索日志、向量模型登记……整库）、
-#   实例上的状态目录 /var/lib/andon-finance（各账号、PoC 的 Nexus 登录）和 /var/lib/jiuan07（「我的规则」、上传暂存、种子单据的时间锚点、Nexus 登录）。
+#   实例上的状态目录 /var/lib/jiuan07（「我的规则」、上传暂存、种子单据的时间锚点、Nexus 登录）。
 # 用法：
 #   FROM_ENV=poc/infra/env/<旧环境>.env DEPLOY_ENV=poc/infra/env/<新环境>.env bash poc/infra/migrate-data.sh [--dry-run] [--skip-pg]
 #   --dry-run  只读：两边核对一遍、列出要搬什么、新环境上要换掉什么，什么都不改
@@ -10,8 +10,8 @@
 # 旧环境经 SSM，只读（导出、打包、加密、上传；旧实例上的服务和库都不停、不改）。新环境经 SSH（它的配置要写 SSH_KEY_FILE）。
 # 新环境要先部署好（deploy.sh：容器 jiuan-mysql 在）；不加 --skip-pg 时还要先跑过知识库的 db 阶段（kb.sh db：容器 nexus-pgvector 在、装了 PL/Python）。
 # 两边实例上的 /etc/andon-finance/secrets.env 要是同一份（同一个本机 secrets.env 部署的）：九安的库和 Agent 接入记录是用里面的密钥加密的，不同就停。
-# 新环境上：停两个服务 → 换掉三个 MySQL 库 →（不加 --skip-pg 时）删掉 PG 库 nexus、从导出重建 → 换掉两个状态目录（顶层的点文件不动）→
-#   逐表数行数（PG 的规则表另比整表的 md5；起服务之前数）→ 起服务 → 等两个服务的健康检查 → 和旧环境导出前一刻数的比，对不上就报错。
+# 新环境上：停服务 → 换掉 MySQL 的库 jiuan07 →（不加 --skip-pg 时）删掉 PG 库 nexus、从导出重建 → 换掉状态目录（顶层的点文件不动）→
+#   逐表数行数（PG 的规则表另比整表的 md5；起服务之前数）→ 起服务 → 等健康检查 → 和旧环境导出前一刻数的比，对不上就报错。
 # 加密：旧实例上随机生成 AES-256 密钥加密整包，这个密钥用本机这次运行的一次性 RSA 公钥加密后回给本机（SSM 的命令历史里只有密文）。
 #   整包经预签名 URL（15 分钟有效）放进新环境的构件桶 migration/ 下，新实例取下来校验 sha256、解密；搬完就删。
 # 不打印任何密码、密钥和数据内容。
@@ -28,13 +28,13 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=true ;;
     --skip-pg) SKIP_PG=true ;;
     --print-scripts) PRINT_SCRIPTS=true ;;
-    *) echo "不认识的参数：$arg（只有 --dry-run、--skip-pg）" >&2; exit 2 ;;
+    *) echo "不认识的参数：${arg}（只有 --dry-run、--skip-pg）" >&2; exit 2 ;;
   esac
 done
-MYSQL_DBS="jiuan_bench_test jiuan_analysis jiuan07"
+MYSQL_DBS="jiuan07"
 PG_FLAG="$($SKIP_PG && echo 0 || echo 1)"
 
-# 两边都用的一段：逐表数行数（MySQL 三个库、PG 库 nexus 的 public 表、PG 规则表整表的 md5、两个状态目录的文件数和字节数），一行一项，tab 分隔。
+# 两边都用的一段：逐表数行数（MySQL 的库、PG 库 nexus 的 public 表、PG 规则表整表的 md5、状态目录的文件数和字节数），一行一项，tab 分隔。
 # 以 root 在实例上跑；PG 那段在 COUNT_PG=1 时才数
 COUNTS="$(cat <<'SH'
 mysql_q() { docker exec -i jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" exec mysql -uroot -N -B'; }
@@ -50,7 +50,7 @@ if [ "${COUNT_PG:-1}" = 1 ]; then
     echo "SELECT 'pg.approval_rules.md5', md5(string_agg(t::text, '|' ORDER BY t::text)) FROM approval_rules t" | pg_q
   fi
 fi
-for d in /var/lib/andon-finance /var/lib/jiuan07; do
+for d in /var/lib/jiuan07; do
   printf 'files.%s\t%s\t%s\n' "$d" "$(find "$d" -mindepth 1 -not -path '*/.*' -type f | wc -l)" "$(find "$d" -mindepth 1 -not -path '*/.*' -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')"
 done
 SH
@@ -68,7 +68,7 @@ counts > "$w/counts.txt"
 # 一致的快照：InnoDB 用 --single-transaction；PG 的 pg_dump 本身就在一个快照里
 docker exec jiuan-mysql sh -c "MYSQL_PWD=\"\$(cat /run/bench-secrets/mysql_root_password)\" exec mysqldump -uroot --single-transaction --routines --triggers --events --add-drop-database --set-gtid-purged=OFF --databases $MYSQL_DBS" > "$w/b/mysql.sql"
 $SKIP_PG || docker exec nexus-pgvector pg_dump -U postgres -Fc nexus > "$w/b/nexus.pgdump"
-tar -C /var/lib -cf "$w/b/files.tar" --exclude 'andon-finance/.*' --exclude 'jiuan07/.*' andon-finance jiuan07
+tar -C /var/lib -cf "$w/b/files.tar" --exclude 'jiuan07/.*' jiuan07
 openssl rand -hex 32 > "$w/k"
 tar -C "$w/b" -czf - . | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass "file:$w/k" -out "$w/bundle.bin"
 curl -fsS -X PUT -T "$w/bundle.bin" "$PUT_URL"
@@ -87,22 +87,20 @@ curl -fsS -o "$w/bundle.bin" "$GET_URL"
 [ "$(sha256sum "$w/bundle.bin" | cut -c1-64)" = "$SHA" ] || { echo "下载的整包 sha256 对不上" >&2; exit 1; }
 printf '%s\n' "$KEY" > "$w/k"
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "file:$w/k" -in "$w/bundle.bin" | tar -xzf - -C "$w/b"
-systemctl stop andon-finance-poc.service andon-jiuan07.service
+systemctl stop andon-jiuan07.service
 docker exec -i jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" exec mysql -uroot' < "$w/b/mysql.sql"
 if ! $SKIP_PG; then
   docker exec nexus-pgvector psql -X -q -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS nexus WITH (FORCE)' -c 'CREATE DATABASE nexus OWNER nexus'
   docker exec -i nexus-pgvector pg_restore -U postgres -d nexus --exit-on-error < "$w/b/nexus.pgdump"
 fi
-for d in andon-finance jiuan07; do find "/var/lib/$d" -mindepth 1 -maxdepth 1 -not -name '.*' -exec rm -rf {} +; done
+find /var/lib/jiuan07 -mindepth 1 -maxdepth 1 -not -name '.*' -exec rm -rf {} +
 tar -C /var/lib -xpf "$w/b/files.tar"
 # 起服务之前数：服务一起来，九安每分钟的同步就会往批次、运行记录表里写
 counts > "$w/counts.txt"
-systemctl start andon-jiuan07.service andon-finance-poc.service
-# PoC 只认自己的站点名（Host 不对回 403），按实例上的 POC_ORIGIN 带上
-poc_host="$(. /etc/andon-finance/env && printf '%s' "${POC_ORIGIN#https://}")"
+systemctl start andon-jiuan07.service
 for i in $(seq 1 60); do
-  [ "$(curl -fsS http://127.0.0.1:4181/poc/healthz 2>/dev/null)" = ok ] && curl -fsS -H "Host: $poc_host" http://127.0.0.1:4180/api/health >/dev/null 2>&1 && break
-  [ "$i" = 60 ] && { echo "两个服务 3 分钟内没有都就绪：journalctl -u andon-jiuan07 / -u andon-finance-poc" >&2; exit 1; }
+  [ "$(curl -fsS http://127.0.0.1:4180/poc/healthz 2>/dev/null)" = ok ] && break
+  [ "$i" = 60 ] && { echo "服务 3 分钟内没有就绪：journalctl -u andon-jiuan07" >&2; exit 1; }
   sleep 3
 done
 echo IMPORT_OK
@@ -150,26 +148,10 @@ cleanup() {
 trap cleanup EXIT
 
 
-# ssm_root <实例> <脚本> <超时秒>：以 root 在旧实例上跑（经 SSM），回标准输出；不成功就停
-ssm_root() {
-  local payload id status=""
-  payload="$(printf '%s' "$2" | gzip -9 | base64 | tr -d '\n')"
-  id="$(aws ssm send-command --region "$SRC_REGION" --instance-ids "$1" --document-name AWS-RunShellScript --timeout-seconds 120 --comment 'andon-finance migrate-data (read-only export)' \
-    --parameters "$(python3 -I -c 'import json,sys; print(json.dumps({"commands": ["f=$(mktemp /tmp/andon-migrate.XXXXXX); echo %s | base64 -d | gunzip > \"$f\" && bash \"$f\"; rc=$?; rm -f \"$f\"; exit $rc" % sys.argv[1]], "executionTimeout": [sys.argv[2]]}))' "$payload" "$3")" \
-    --query Command.CommandId --output text)"
-  for _ in $(seq 1 $(( $3 / 5 + 12 ))); do
-    sleep 5
-    status="$(aws ssm get-command-invocation --region "$SRC_REGION" --command-id "$id" --instance-id "$1" --query Status --output text 2>/dev/null || true)"
-    case "$status" in Pending|InProgress|Delayed|"") continue ;; *) break ;; esac
-  done
-  if [[ "$status" != Success ]]; then
-    aws ssm get-command-invocation --region "$SRC_REGION" --command-id "$id" --instance-id "$1" --query StandardErrorContent --output text 2>/dev/null | tail -20 >&2 || true
-    echo "旧实例 $1 上的命令没有成功（$status）" >&2; exit 1
-  fi
-  aws ssm get-command-invocation --region "$SRC_REGION" --command-id "$id" --instance-id "$1" --query StandardOutputContent --output text
-}
+# 旧实例上以 root 跑（经 SSM，lib/remote.sh 的 ssm_root），回标准输出；不成功就停
+src_root() { ssm_root "$SRC_INSTANCE" "$1" "$2" "$SRC_REGION" || { echo "旧实例 $SRC_INSTANCE 上的命令没有成功" >&2; exit 1; }; }
 
-say "旧环境 $SRC_STACK（$SRC_INSTANCE，经 SSM）→ 新环境 $STACK（$TGT_INSTANCE，$TGT_IP，经 SSH）$($SKIP_PG && echo '；PG 不动')"
+say "旧环境 ${SRC_STACK}（${SRC_INSTANCE}，经 SSM）→ 新环境 ${STACK}（${TGT_INSTANCE}，${TGT_IP}，经 SSH）$($SKIP_PG && echo '；PG 不动')"
 ssh_setup "$TGT_IP" "$TGT_INSTANCE" && ssh_wait 6 || exit 1
 
 say "核对两边"
@@ -185,7 +167,7 @@ SH
 )"
 # 第一行是 secrets.env 的 sha256（只比两边是否相同），后面是 COUNTS 的行
 check_script() { printf 'MYSQL_DBS=%q\nCOUNT_PG=%s\nset -euo pipefail\n%s\nsha256sum /etc/andon-finance/secrets.env | cut -c1-64\n%s\n' "$MYSQL_DBS" "$1" "$2" "$COUNTS"; }
-src_check="$(ssm_root "$SRC_INSTANCE" "$(check_script "$PG_FLAG" '')" 120)"
+src_check="$(src_root "$(check_script "$PG_FLAG" '')" 120)"
 tgt_check="$(remote_root "$(check_script "$PG_FLAG" "$TGT_READY")")" || exit 1
 [[ "$(head -1 <<< "$src_check")" == "$(head -1 <<< "$tgt_check")" ]] \
   || { echo "两边的 /etc/andon-finance/secrets.env 不是同一份：九安的库和 Agent 接入记录解不开。用同一个本机 secrets.env 部署新环境（deploy.sh --code-only）再来" >&2; exit 1; }
@@ -211,7 +193,7 @@ import boto3, sys
 from botocore.config import Config
 s3 = boto3.client("s3", region_name=sys.argv[1], config=Config(signature_version="s3v4"))
 print(s3.generate_presigned_url("put_object", Params={"Bucket": sys.argv[2], "Key": sys.argv[3]}, ExpiresIn=900))' "$REGION" "$TGT_BUCKET" "$OBJECT")"
-exported="$(ssm_root "$SRC_INSTANCE" "$(export_script "$PUB_B64" "$PUT_URL")" 600)"
+exported="$(src_root "$(export_script "$PUB_B64" "$PUT_URL")" 600)"
 SHA="$(sed -n 's/^BUNDLE_SHA256 //p' <<< "$exported")"; BYTES="$(sed -n 's/^BUNDLE_BYTES //p' <<< "$exported")"
 sed -n 's/^SEALED_KEY //p' <<< "$exported" | base64 -d > "$WORK/key.sealed"
 [[ "$SHA" =~ ^[0-9a-f]{64}$ && -s "$WORK/key.sealed" ]] || { echo "旧实例的导出没有回来完整的结果" >&2; exit 1; }

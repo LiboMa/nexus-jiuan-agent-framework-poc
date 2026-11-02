@@ -6,7 +6,7 @@ import { access, chmod, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/pro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ModelError } from '../../../app/nexus/a2a-client.mjs';
+import { ModelError } from '../../lib/a2a-client.mjs';
 import { createKbStewardClient } from '../../kb-steward-client.mjs';
 import { createKbStewardRoutes } from '../../kb-steward-routes.mjs';
 

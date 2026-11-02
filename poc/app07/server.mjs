@@ -10,14 +10,14 @@
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { createPasswordLogin } from '../app/login.mjs';
-import { sendError } from '../app/http.mjs';
+import { createPasswordLogin } from './lib/login.mjs';
+import { sendError } from './lib/http.mjs';
 import { readSettings, jiuanConfig } from './settings.mjs';
 import { installOutboundGuard } from './guard.mjs';
 import { createFrontDoor } from './front.mjs';
 import { intakeRoutes } from './intake.mjs';
 import { nexusAccessRoutes } from './nexus-access.mjs';
-import { createOperatorCli } from '../app/nexus/cli.mjs';
+import { createOperatorCli } from './lib/cli.mjs';
 import { agentCallRoutes } from './agent-calls.mjs';
 import { adviceRoundsRoutes, currentAdviceReader, documentRoundsReader, everyDocument } from './advice-rounds.mjs';
 import { createReviews, reviewsRoutes } from './reviews.mjs';
@@ -30,8 +30,8 @@ import { createKbStewardClient } from './kb-steward-client.mjs';
 import { createKbStewardRoutes } from './kb-steward-routes.mjs';
 import { createCustomRules, customRulesRoutes, docxToText } from './custom-rules.mjs';
 import { withAdviceActor, withCustomRules } from './custom-rules-advice.mjs';
-import { a2aCall } from '../app/nexus/a2a-client.mjs';
-import { fetchAgentCard } from '../app/nexus/catalog.mjs';
+import { a2aCall } from './lib/a2a-client.mjs';
+import { fetchAgentCard } from './lib/catalog.mjs';
 import { COMPANIES, CONNECTION_ID, FILES, TENANT_ID } from './fixtures.mjs';
 import { createFakeHuilianyi } from './fake-hly.mjs';
 import { withOriginalsFirst } from './originals-first.mjs';

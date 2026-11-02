@@ -15,7 +15,7 @@
  * - 约定里的操作经测试台的客户端 createKbStewardClient（poc/app07/kb-steward-client.mjs）发，与九安「制度知识库」页同一条路：
  *   同样的文字与数据 Part、同样的时限（ingest 5 分钟，其余 2 分钟），回复按它的 SHAPES / failedShape 校验；describe 走它的 describe()。
  * - preview 是 PG 版独有的、不在测试台的 SHAPES 里；约定之外的 op（用来验证 Agent 回 invalid_parameter）也一样：
- *   都直接用 poc/app/nexus/a2a-client.mjs 的 a2aCall 发同样格式的请求，只查回复是一个带 success 的 JSON 对象。
+ *   都直接用 poc/app07/lib/a2a-client.mjs 的 a2aCall 发同样格式的请求，只查回复是一个带 success 的 JSON 对象。
  * - 附件的 MIME 按扩展名定（.docx / .xlsx / .pdf / .md）：测试台只发 .docx，这里四种都能发。
  * 输出：stdout 一行工具的 JSON（去掉模型偶尔加的 ```json 围栏，其余原样）；测试台认的操作、校验没过的原因写到 stderr。
  * 退出码：0 工具回 success=true；1 工具回 success=false（JSON 照样打印）；2 用法或配置不对；3 调用失败或回复没过校验。
@@ -23,7 +23,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { a2aCall, keyRejected, unwrapJson } from '../../poc/app/nexus/a2a-client.mjs';
+import { a2aCall, keyRejected, unwrapJson } from '../../poc/app07/lib/a2a-client.mjs';
 import { createKbStewardClient } from '../../poc/app07/kb-steward-client.mjs';
 
 const PKG = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
