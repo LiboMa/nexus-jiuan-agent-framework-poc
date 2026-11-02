@@ -157,11 +157,16 @@ alt="交付包里有什么：按部署的三块分（前端、PG 与知识库、
 <ol type="1">
 <li>跑检查：部署脚本和栈模板的测试（<code>poc/infra/test</code>）；构建九安
 v0.7.10 副本，跑外壳 <code>poc/app</code>
-的单元测试；知识库工具的语法检查和单元测试（<code>kb/tests</code>）；两个文档管家的语法检查；审核
-Agent 下发脚本的单元测试（<code>audit-agent/tests</code>）；</li>
+的单元测试；知识库工具的语法检查和单元测试（<code>kb/tests</code>，在 uv
+的临时环境里装上 openpyxl、pdfplumber
+等再跑）；两个文档管家的语法检查；审核 Agent
+下发脚本的单元测试（<code>audit-agent/tests</code>）；</li>
 <li><code>docs/build-html.sh --check</code>：图和 HTML 都是最新的；</li>
 <li>按白名单把文件拷到暂存目录（第 4
-节），排除生成物、依赖、杂物和密钥；出包前用
+节），排除生成物、依赖、杂物和密钥；只带进了 git 的文件（白名单目录里没
+<code>git add</code>
+过的草稿、笔记不带，列出文件名；<code>evidence/</code>
+除外，它只进交付包）；出包前用
 <code>customer-deploy/knowledgebase-writer-agent-pg/release/SHA256SUMS</code>
 核对两个 zip；</li>
 <li><strong>脱敏</strong>：<code>docs/delivery/sanitize.py</code>

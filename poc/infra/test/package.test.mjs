@@ -46,6 +46,7 @@ async function plant(t, file) {
   t.after(() => rm(top, { recursive: true, force: true }));
 }
 
+// 探针都没提交进 git，所以 tests/fixtures 里的那个也不带（只带提交过的文件）；这里核对的是白名单的排除规则
 test('make-package.sh --export：带上文档管家（knowbase-s3vectors-agent），不带它的 deploy.env、.state、.build、build/out、__pycache__ 和 .docx（tests/fixtures 的仿真文档除外）', async t => {
   const pkg = fileURLToPath(new URL('../../../knowbase-s3vectors-agent/', import.meta.url));
   for (const probe of ['deploy.env', '.state/package-test-probe', '.build/package-test-probe', 'build/out/package-test-probe',
@@ -54,16 +55,41 @@ test('make-package.sh --export：带上文档管家（knowbase-s3vectors-agent�
   }
   const out = await exportTo(t);
   const dir = path.join(out, 'knowbase-s3vectors-agent');
-  for (const keep of ['GUIDE.zh.md', 'deploy.env.example', '.gitignore', 'tools/s3vectors_kb_tools.py', 'tests/local_test.py', 'tests/fixtures/package-test-probe.docx']) {
+  for (const keep of ['GUIDE.zh.md', 'deploy.env.example', '.gitignore', 'tools/s3vectors_kb_tools.py', 'tests/local_test.py']) {
     assert.ok(await exists(path.join(dir, keep)), `应该有 knowbase-s3vectors-agent/${keep}`);
   }
-  for (const drop of ['deploy.env', '.state', '.build', 'build/out']) {
+  for (const drop of ['deploy.env', '.state', '.build', 'build/out', 'tests/fixtures/package-test-probe.docx']) {
     assert.equal(await exists(path.join(dir, drop)), false, `不应该有 knowbase-s3vectors-agent/${drop}`);
   }
   const { stdout } = await run('find', [dir, '(', '-name', '__pycache__', '-o', '-name', '*.docx', ')', '!', '-path', path.join(dir, 'tests/fixtures/*.docx')]);
   assert.equal(stdout, '', '只有 tests/fixtures 里能有 .docx，哪里都不能有 __pycache__');
   const ignore = await readFile(path.join(out, '.gitignore'), 'utf8');
   for (const line of ['knowbase-s3vectors-agent/deploy.env', 'knowbase-s3vectors-agent/.state/']) assert.ok(ignore.split('\n').includes(line), `.gitignore 要挡住 ${line}`);
+});
+
+test('make-package.sh --export：只带提交进 git 的文件：白名单目录里没提交的（草稿、本机的笔记）不带，并列出名字', async t => {
+  const repo = fileURLToPath(new URL('../../../', import.meta.url));
+  const drafts = ['docs/package-test-draft.md', 'kb/package-test-draft.txt', 'poc/infra/package-test-草稿.md'];
+  for (const draft of drafts) await plant(t, path.join(repo, draft));
+  const out = await mkdtemp(path.join(tmpdir(), 'guide-repo-'));
+  t.after(() => rm(out, { recursive: true, force: true }));
+  const { stdout } = await run('bash', [SCRIPT, '--skip-checks', '--export', out], { maxBuffer: 16 * 1024 * 1024 });
+  for (const draft of drafts) {
+    assert.equal(await exists(path.join(out, draft)), false, `没提交的 ${draft} 不该带上`);
+    assert.ok(stdout.includes(draft), `要列出没带上的 ${draft}`);
+  }
+  for (const keep of ['docs/delivery/delivery-guide.md', 'kb/deploy.sh', 'poc/infra/deploy.sh']) assert.ok(await exists(path.join(out, keep)), `应该有 ${keep}`);
+});
+
+test('make-package.sh 的检查：哪一项没过就停下、不出包（不能写成「… && echo 通过」，那样没过也接着出包）；知识库工具的单元测试装上依赖再跑；PACKAGE-INFO 只写真跑了的检查', async () => {
+  const script = await readFile(SCRIPT, 'utf8');
+  const checks = script.slice(script.indexOf('if $CHECKS; then'), script.indexOf('say "按白名单暂存"'));
+  assert.ok(checks.length > 200, '要有检查段');
+  assert.doesNotMatch(checks, /&&\s*echo\b/, '「… && echo」在 set -e 下失败了也不停');
+  assert.match(checks, /uv run [\s\S]*?--with openpyxl[\s\S]*?--with pdfplumber[\s\S]*?unittest discover -s kb\/tests/);
+  for (const label of ['部署脚本和栈模板的测试', '九安 v0.7.10 外壳的单元测试', '知识库工具的单元测试', '审核 Agent 下发脚本的单元测试']) assert.ok(checks.includes(label), `要检查：${label}`);
+  const info = script.split('\n').find(line => line.includes('echo "检查：'));
+  assert.doesNotMatch(info, /参考补丁|命令行测试/, 'v0.5.3 的检查已经没有了');
 });
 
 const EXAMPLES = { i: 'i-0123456789abcdef0', vpc: 'vpc-0123456789abcdef0', snap: 'snap-0123456789abcdef0', vol: 'vol-0123456789abcdef0', sg: 'sg-0123456789abcdef0' };

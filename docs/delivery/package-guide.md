@@ -25,9 +25,9 @@ docs/delivery/make-package.sh
 
 脚本按顺序做这些事，任何一步失败就停下来，不出包：
 
-1. 跑检查：部署脚本和栈模板的测试（`poc/infra/test`）；构建九安 v0.7.10 副本，跑外壳 `poc/app` 的单元测试；知识库工具的语法检查和单元测试（`kb/tests`）；两个文档管家的语法检查；审核 Agent 下发脚本的单元测试（`audit-agent/tests`）；
+1. 跑检查：部署脚本和栈模板的测试（`poc/infra/test`）；构建九安 v0.7.10 副本，跑外壳 `poc/app` 的单元测试；知识库工具的语法检查和单元测试（`kb/tests`，在 uv 的临时环境里装上 openpyxl、pdfplumber 等再跑）；两个文档管家的语法检查；审核 Agent 下发脚本的单元测试（`audit-agent/tests`）；
 2. `docs/build-html.sh --check`：图和 HTML 都是最新的；
-3. 按白名单把文件拷到暂存目录（第 4 节），排除生成物、依赖、杂物和密钥；出包前用 `customer-deploy/knowledgebase-writer-agent-pg/release/SHA256SUMS` 核对两个 zip；
+3. 按白名单把文件拷到暂存目录（第 4 节），排除生成物、依赖、杂物和密钥；只带进了 git 的文件（白名单目录里没 `git add` 过的草稿、笔记不带，列出文件名；`evidence/` 除外，它只进交付包）；出包前用 `customer-deploy/knowledgebase-writer-agent-pg/release/SHA256SUMS` 核对两个 zip；
 4. **脱敏**：`docs/delivery/sanitize.py` 按对照表 `sanitize.conf`（只在开发目录）把 AWS 账号和 EC2 的标识换成 AWS 文档的示例值，再按格式补一遍；还留着对照表里的真实值就停下；
 5. **密钥检查**：暂存目录里不能有 `secrets.env`，不能有像 `nxa_` / `nxc_` / `nxp_` / `afp_` 密钥、AWS 访问密钥或私钥的字符串，也不能出现本机 `secrets.env` 里任何一个真实的值（只报文件名，不打印值）；制度原文（.docx）也不能出包；
 6. 写 `MANIFEST.txt`（每个文件的 sha256）；

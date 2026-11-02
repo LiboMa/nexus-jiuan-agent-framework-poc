@@ -32,23 +32,37 @@ fi
 
 if $CHECKS; then
   say "单元测试"
+  # 哪一项没过就停下、不出包。别用 && 把「通过」接在检查后面：在 set -e 下那样没过也会接着出包。输出不打印，没过时去对应目录手动跑一遍看原因
+  stop() { echo "${1}没过，不出包" >&2; exit 1; }
   # 部署脚本、栈模板、测试台脚本（poc/infra/test；九安 v0.7.10 副本的构建测试要本机有开发包，没有就跳过那几条）
-  (cd "$ROOT/poc/infra" && node --test "test/**/*.test.mjs" >/dev/null) && echo "部署脚本和栈模板的测试通过"
+  (cd "$ROOT/poc/infra" && node --test "test/**/*.test.mjs" >/dev/null) || stop "部署脚本和栈模板的测试"
+  echo "部署脚本和栈模板的测试通过"
   # 九安 v0.7.10 测试台的外壳：先构建九安副本（打补丁），外壳的测试要用到副本里的契约
-  bash "$ROOT/poc/bench/build-jiuan.sh" >/dev/null && (cd "$ROOT/poc/app" && node --test "test/unit/**/*.test.mjs" >/dev/null) && echo "九安 v0.7.10 外壳的单元测试通过"
+  bash "$ROOT/poc/bench/build-jiuan.sh" >/dev/null || stop "九安 v0.7.10 副本的构建"
+  (cd "$ROOT/poc/app" && node --test "test/unit/**/*.test.mjs" >/dev/null) || stop "九安 v0.7.10 外壳的单元测试"
+  echo "九安 v0.7.10 外壳的单元测试通过"
   # 知识库工具：脚本语法与 Python 编译检查（它的部署和验证要线上环境，见 kb/GUIDE.md）
-  for f in "$ROOT"/kb/deploy.sh "$ROOT"/kb/lib/common.sh "$ROOT"/kb/host/*.sh "$ROOT"/poc/infra/kb.sh; do bash -n "$f"; done
-  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$ROOT"/kb/lib/*.py && echo "知识库工具的语法检查通过"
-  (cd "$ROOT" && python3 -B -m unittest discover -s kb/tests >/dev/null 2>&1) && echo "知识库工具的单元测试通过"
+  for f in "$ROOT"/kb/deploy.sh "$ROOT"/kb/lib/common.sh "$ROOT"/kb/host/*.sh "$ROOT"/poc/infra/kb.sh; do bash -n "$f" || stop "知识库工具的语法检查（${f}）"; done
+  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$ROOT"/kb/lib/*.py || stop "知识库工具的语法检查"
+  echo "知识库工具的语法检查通过"
+  # 单元测试要 openpyxl、pdfplumber 等，在 uv 的临时环境里跑（要连真 PG 的几条没设 PG 就跳过）
+  (cd "$ROOT" && uv run --quiet --no-project --python 3.12 --with 'psycopg[binary]' --with pyyaml --with cryptography --with boto3 --with openpyxl --with pdfplumber --with reportlab \
+    python -B -m unittest discover -s kb/tests >/dev/null 2>&1) || stop "知识库工具的单元测试"
+  echo "知识库工具的单元测试通过"
   # 文档管家（S3 Vectors 版）：脚本语法与 Python 编译检查（它的本地测试要 boto3 等依赖，见 knowbase-s3vectors-agent/GUIDE.zh.md）
   S3V="$ROOT/knowbase-s3vectors-agent"
-  for f in "$S3V"/infra/*.sh "$S3V"/scripts/*.sh; do bash -n "$f"; done
-  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$S3V"/{tools,scripts,frontend,tests,build}/*.py && node --check "$S3V"/frontend/*.mjs && echo "文档管家的语法检查通过"
+  for f in "$S3V"/infra/*.sh "$S3V"/scripts/*.sh; do bash -n "$f" || stop "文档管家的语法检查（${f}）"; done
+  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$S3V"/{tools,scripts,frontend,tests,build}/*.py || stop "文档管家的语法检查"
+  for f in "$S3V"/frontend/*.mjs; do node --check "$f" || stop "文档管家的语法检查（${f}）"; done
+  echo "文档管家的语法检查通过"
   # 文档管家（PG 版）：脚本语法、Python 编译与 Node 语法检查（它的本地测试要 PGlite 等依赖，见 knowledgebase-writer-agent-pg/README.md）
   PGA="$ROOT/knowledgebase-writer-agent-pg"
-  for f in "$PGA"/scripts/*.sh; do bash -n "$f"; done
-  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$PGA"/{tools,scripts,probe,tests}/*.py && for f in "$PGA"/scripts/*.mjs "$PGA"/tests/*.mjs; do node --check "$f"; done && echo "文档管家（PG 版）的语法检查通过"
-  (cd "$ROOT" && python3 -B -m unittest discover -s audit-agent/tests >/dev/null 2>&1) && echo "审核 Agent 下发脚本的单元测试通过"
+  for f in "$PGA"/scripts/*.sh; do bash -n "$f" || stop "文档管家（PG 版）的语法检查（${f}）"; done
+  python3 -B -c 'import ast,sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' "$PGA"/{tools,scripts,probe,tests}/*.py || stop "文档管家（PG 版）的语法检查"
+  for f in "$PGA"/scripts/*.mjs "$PGA"/tests/*.mjs; do node --check "$f" || stop "文档管家（PG 版）的语法检查（${f}）"; done
+  echo "文档管家（PG 版）的语法检查通过"
+  (cd "$ROOT" && python3 -B -m unittest discover -s audit-agent/tests >/dev/null 2>&1) || stop "审核 Agent 下发脚本的单元测试"
+  echo "审核 Agent 下发脚本的单元测试通过"
   say "图和 HTML 是不是最新的"
   "$ROOT/docs/build-html.sh" --check
 fi
@@ -126,6 +140,17 @@ __pycache__/
 .DS_Store
 EOF
 
+# 只带进了 git 的文件（提交过或 git add 过）：白名单目录里没进 git 的（草稿、本机的笔记）从暂存目录拿掉，列出名字。
+# evidence/ 本来就不进 git、只进交付包；.gitignore 是上面写的。
+tracked="$work/tracked.txt"; untracked="$work/untracked.txt"
+git -C "$ROOT" -c core.quotePath=false ls-files | LC_ALL=C sort > "$tracked"
+(cd "$stage" && find . -type f ! -path './evidence/*' ! -path './.gitignore' | sed 's|^\./||' | LC_ALL=C sort) | LC_ALL=C comm -23 - "$tracked" > "$untracked"
+if [[ -s "$untracked" ]]; then
+  echo "没进 git（没有 git add 过），不带："
+  while IFS= read -r file; do echo "  $file"; rm -f "$stage/$file"; done < "$untracked"
+  find "$stage" -mindepth 1 -type d -empty -delete
+fi
+
 say "脱敏：AWS 账户与 EC2 的标识换成 AWS 文档的示例值"
 python3 -B "$HERE/sanitize.py" "$stage" "$HERE/sanitize.conf"
 
@@ -160,7 +185,7 @@ say "清单与打包"
 {
   echo "交付包：${NAME}（${VERSION_NAME}）"
   echo "生成时间：$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "检查：$($CHECKS && echo '单元测试、命令行测试、图和 HTML、参考补丁都通过' || echo '跳过了测试与文档检查（--skip-checks）')；密钥检查通过"
+  echo "检查：$($CHECKS && echo '单元测试（部署脚本与栈模板、外壳、知识库工具、审核 Agent）、语法检查、图和 HTML 都通过' || echo '跳过了测试与文档检查（--skip-checks）')；密钥检查通过"
   echo "校验：shasum -a 256 -c MANIFEST.txt --quiet"
   echo "说明：docs/delivery/package-guide.md（HTML 版 package-guide.html）"
 } > "$stage/PACKAGE-INFO.txt"
