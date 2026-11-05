@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-11-05（二）：架构文档加上 pgvector 的介绍
+
+[架构与技术评估](docs/architecture.md)新增第 6 节「知识库内部：pgvector 长什么样、怎么工作」（原来的第 6–10 节顺延成 7–11）：向量和余弦距离的原理、pgvector 提供的类型、运算符和两种索引、HNSW 怎么找最近邻，以及测试台库里的实际样子（PG 17.11、pgvector 0.8.7、规则表 449 行 × 1024 维、HNSW 索引 3.6 MB）、向量怎么在库里生成（`kb_embed` → PL/Python → Bedrock Cohere Embed v4，带缓存和限流）、`kb_search` 怎么排序。在测试台上用 `EXPLAIN ANALYZE` 确认：`kb_search` 先按关键词命中数排，所以不走 HNSW 索引，而是整表 449 行打分、4 毫秒，结果是精确的；检索日志 14 天 198 次，中位 69 毫秒，主要花在把问题变成向量。新图 `pgvector-search`。
+
 ## 2026-11-05：文档整理：架构与技术评估、工作流、新的快速上手；删去历史文档
 
 项目负责人 2026-11-05 定：对整体的项目、方案、架构、工作流做一份技术层的分析，写进新版文档；过期的文档一律删去，现行的更新到最新。代码不变。
@@ -17,7 +21,7 @@
 **对着代码核对时改正的**（旧文档里就有的错，一起改了）
 - **先部署 PG 的命令照原样跑不通**：交付指南 4.1、客户部署路线阶段 1、`kb/GUIDE.md` 第 4 节都写 `./deploy.sh all`，可 `all` 里的 `ingest` 要一份规则 .docx、`agent` 要改审核 Agent 的提示词，而 PG 先于 Agent 部署时审核 Agent 还不存在（缺省的 `AGENT_PATCH_PROMPT=true` 让预检停在「Nexus 里找不到 Agent」）。改成：`deploy.env` 写 `AGENT_PATCH_PROMPT=false`，只跑数据层 `preflight,db,network,egress,connector`；规则等 PG 知识库 Agent 部署好后从知识库页上传。
 - **两套 Nexus 不是一套**：交接文档、运维说线上 Nexus AI `d3u3hj2us186y.cloudfront.net` 是 `nxs-beine1013` 的「实际地址」，不对（PG 知识库 Agent 的名片在 `nxs-beine1013` 上有、在 `d3u3…` 上是 404）。测试台用 `nxs-beine1013`，生产用 `d3u3…`，两边的发布和密钥不通用。快速上手第 4 节按这个写。
-- 单据池里 AI 的结论在「AI 建议」一栏，「最近审核」是时间和人；状态用页面上的说法（审核中、已采纳、已改判、AI 建议已更新）。知识库页只收 .docx。启用时验密钥超过 60 秒页面会报超时（CloudFront 等源站最多 60 秒），记进了架构与技术评估第 9.2 节第 15 条。知识库页要部署配置里有 `KB_PG_PUBLICATION_ID`。
+- 单据池里 AI 的结论在「AI 建议」一栏，「最近审核」是时间和人；状态用页面上的说法（审核中、已采纳、已改判、AI 建议已更新）。知识库页只收 .docx。启用时验密钥超过 60 秒页面会报超时（CloudFront 等源站最多 60 秒），记进了架构与技术评估第 10.2 节第 15 条。知识库页要部署配置里有 `KB_PG_PUBLICATION_ID`。
 
 ## 2026-11-03：知识库页的数据存在库里，打开页面不再每次问 Agent
 

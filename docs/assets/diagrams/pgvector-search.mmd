@@ -1,0 +1,33 @@
+flowchart TD
+  subgraph ingest["入库：一条规则变成一行"]
+    direction TB
+    rule["规则全文 content<br/>（一张风险判断卡约 210–280 字）"]
+    batch["kb_embed_batch(texts, 'search_document')"]
+    vec["vector(1024)<br/>[0.0132, -0.0418, 0.0075, …]"]
+    row[("approval_rules 一行<br/>rule_id · content · embedding<br/>+ HNSW 索引（余弦）")]
+    rule --> batch --> vec --> row
+  end
+  subgraph impl["库里唯一调模型的地方"]
+    direction TB
+    cache["kb_embed_cache 向量缓存<br/>键 sha256(模型｜维度｜用途｜文本)<br/>命中就直接用"]
+    bedrock["Bedrock · Cohere Embed v4<br/>PL/Python 用实例角色签名<br/>一次至多 96 条"]
+    cache -- 没命中 --> bedrock
+  end
+  subgraph search["检索：kb_search(问题, k)"]
+    direction TB
+    ask["问题（审核 Agent 传的是关键词）"]
+    qv["kb_embed(问题, 'search_query') → q"]
+    terms["拆词：空格、标点隔开，2–20 字，至多 8 个"]
+    rank["逐行打分（整表，449 行约 4 ms）<br/>① 命中的词数 多→少<br/>② 正文条款排在矩阵行后面<br/>③ 余弦距离 embedding <=> q 近→远"]
+    top["前 k 行 + score（1 − 距离）+ keyword_hits<br/>记一行 kb_search_log"]
+    ask --> qv --> rank
+    ask --> terms --> rank
+    rank --> top
+  end
+  batch -.-> cache
+  qv -.-> cache
+  row -.-> rank
+  class rule,ask jiuan
+  class batch,vec,qv,terms,rank,top poc
+  class row,cache nexus
+  class bedrock nexus

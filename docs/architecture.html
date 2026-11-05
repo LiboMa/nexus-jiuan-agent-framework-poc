@@ -117,25 +117,50 @@ nxs-beine1013 上的两个发布、audit-nexus 仓库的全部代码</td></tr>
 数据放在哪、谁读谁写</a></li>
 <li><a href="#5-三条主要的调用链" id="toc-5-三条主要的调用链">5.
 三条主要的调用链</a></li>
-<li><a href="#6-安全" id="toc-6-安全">6. 安全</a></li>
-<li><a href="#7-部署架构" id="toc-7-部署架构">7. 部署架构</a></li>
-<li><a href="#8-现状规模测试和实测数字"
-id="toc-8-现状规模测试和实测数字">8. 现状：规模、测试和实测数字</a></li>
-<li><a href="#9-技术评估" id="toc-9-技术评估">9. 技术评估</a>
+<li><a href="#6-知识库内部pgvector-长什么样怎么工作"
+id="toc-6-知识库内部pgvector-长什么样怎么工作">6. 知识库内部：pgvector
+长什么样、怎么工作</a>
 <ul>
-<li><a href="#91-做得好的" id="toc-91-做得好的">9.1 做得好的</a></li>
-<li><a href="#92-风险与技术债" id="toc-92-风险与技术债">9.2
+<li><a href="#61-一句话" id="toc-61-一句话">6.1 一句话</a></li>
+<li><a href="#62-原理向量和距离" id="toc-62-原理向量和距离">6.2
+原理：向量和距离</a></li>
+<li><a href="#63-pgvector-提供了什么"
+id="toc-63-pgvector-提供了什么">6.3 pgvector 提供了什么</a></li>
+<li><a href="#64-hnsw-怎么快速找到最近的"
+id="toc-64-hnsw-怎么快速找到最近的">6.4 HNSW 怎么快速找到最近的</a></li>
+<li><a href="#65-我们库里长什么样2026-11-05-在测试台上查的"
+id="toc-65-我们库里长什么样2026-11-05-在测试台上查的">6.5
+我们库里长什么样（2026-11-05 在测试台上查的）</a></li>
+<li><a href="#66-向量在库里生成" id="toc-66-向量在库里生成">6.6
+向量在库里生成</a></li>
+<li><a href="#67-检索怎么排kb_search"
+id="toc-67-检索怎么排kb_search">6.7
+检索怎么排：<code>kb_search</code></a></li>
+<li><a href="#68-安全和防混用" id="toc-68-安全和防混用">6.8
+安全和防混用</a></li>
+<li><a href="#69-规模变大以后" id="toc-69-规模变大以后">6.9
+规模变大以后</a></li>
+</ul></li>
+<li><a href="#7-安全" id="toc-7-安全">7. 安全</a></li>
+<li><a href="#8-部署架构" id="toc-8-部署架构">8. 部署架构</a></li>
+<li><a href="#9-现状规模测试和实测数字"
+id="toc-9-现状规模测试和实测数字">9. 现状：规模、测试和实测数字</a></li>
+<li><a href="#10-技术评估" id="toc-10-技术评估">10. 技术评估</a>
+<ul>
+<li><a href="#101-做得好的" id="toc-101-做得好的">10.1 做得好的</a></li>
+<li><a href="#102-风险与技术债" id="toc-102-风险与技术债">10.2
 风险与技术债</a></li>
-<li><a href="#93-建议的路线" id="toc-93-建议的路线">9.3
+<li><a href="#103-建议的路线" id="toc-103-建议的路线">10.3
 建议的路线</a></li>
 </ul></li>
-<li><a href="#10-代码地图" id="toc-10-代码地图">10. 代码地图</a></li>
+<li><a href="#11-代码地图" id="toc-11-代码地图">11. 代码地图</a></li>
 </ul>
 </nav>
 <main id="main">
-<p>这份文档讲三件事：系统由哪几块组成、为什么这样搭（第 1–7
-节），以及这套方案现在的技术状况：哪里做得好、风险和欠账在哪、上生产前该改什么（第
-8–9 节）。一张单据、一次部署、一次变更具体怎么走，见<a
+<p>这份文档讲三件事：系统由哪几块组成、为什么这样搭（第 1–8 节，第 6
+节专讲知识库内部的
+pgvector），以及这套方案现在的技术状况：哪里做得好、风险和欠账在哪、上生产前该改什么（第
+9–10 节）。一张单据、一次部署、一次变更具体怎么走，见<a
 href="workflows.html">工作流</a>；第一次上手见<a
 href="delivery/quick-guide.html">快速上手</a>。</p>
 <h1 id="1-一句话">1. 一句话</h1>
@@ -432,7 +457,242 @@ Sandbox VM 里连 PG → 向量由 PG 里的 <code>kb_embed</code> 调 Bedrock
 <code>tasks/get</code>，通过就加密存库）→ 设为审批 Agent →
 测试（文本、请求信封、单据）→ 调用记录。</li>
 </ol>
-<h1 id="6-安全">6. 安全</h1>
+<h1 id="6-知识库内部pgvector-长什么样怎么工作">6. 知识库内部：pgvector
+长什么样、怎么工作</h1>
+<h2 id="61-一句话">6.1 一句话</h2>
+<p>pgvector 是 PostgreSQL 的一个扩展：给表加一种 <code>vector(n)</code>
+列，能存「一段文字的意思」变成的一串数；再加上比较两串数有多近的运算符，和按「近」快速查找的索引。我们把每条规则的全文变成
+1024 个数存在它旁边，审核 Agent 问一个问题时，把问题也变成 1024
+个数，找出意思最近的那几条规则。规则、向量、检索函数都在同一个 PG
+库里，Agent 只要会写 SQL。</p>
+<h2 id="62-原理向量和距离">6.2 原理：向量和距离</h2>
+<ul>
+<li><strong>向量</strong>（embedding）：一个向量模型把一段文字读一遍，输出固定长度的一串小数。我们用
+Bedrock 上的 <strong>Cohere Embed v4</strong>，长度
+1024。模型训练时让意思相近的文字得到方向相近的向量，所以「差旅住宿超标」和「出差酒店超过标准」虽然字面不同，向量会靠得很近。</li>
+<li><strong>距离</strong>：两条向量越近，意思越像。我们用<strong>余弦距离</strong>：只看方向、不看长短，0
+是方向完全相同，1 是不相关，2 是完全相反。<code>kb_search</code> 回的
+<code>score</code> 是 1 − 距离，也就是余弦相似度，越接近 1 越像。</li>
+<li><strong>两种用途</strong>：Cohere v4
+区分「被检索的文档」和「拿去检索的问题」：入库时规则用
+<code>search_document</code>，检索时问题用
+<code>search_query</code>，两种向量配对着比，效果比混用好。</li>
+<li><strong>只能同一个模型比</strong>：不同模型的向量不在同一个坐标系里，拿
+Cohere 的问题向量去比 Titan
+的规则向量没有意义。所以一个库只能有一种模型的向量（6.8
+节的防混用检查）。</li>
+</ul>
+<h2 id="63-pgvector-提供了什么">6.3 pgvector 提供了什么</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>东西</th>
+<th>是什么</th>
+<th>我们用了吗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vector(n)</code> 类型</td>
+<td>n 维单精度浮点数组，每维 4 字节；文字写法是
+<code>'[0.<wbr>0132,<wbr>-<wbr>0.<wbr>0418,<wbr>…]'</code></td>
+<td>用：<code>approval_<wbr>rules.<wbr>embedding vector(1024)</code>，一条约
+4 KB</td>
+</tr>
+<tr>
+<td><code>&lt;=&gt;</code> 运算符</td>
+<td>余弦距离</td>
+<td>用：<code>kb_<wbr>search</code> 按它排</td>
+</tr>
+<tr>
+<td><code>&lt;-<wbr>&gt;</code>、<code>&lt;#&gt;</code>、<code>&lt;+&gt;</code></td>
+<td>欧氏距离、负内积、曼哈顿距离</td>
+<td>没用</td>
+</tr>
+<tr>
+<td>HNSW 索引</td>
+<td>分层的图，近似最近邻，查得快、建得慢、占内存多</td>
+<td>建了：<code>approval_<wbr>rules_<wbr>embedding_<wbr>hnsw</code>（<code>vector_<wbr>cosine_<wbr>ops</code>）</td>
+</tr>
+<tr>
+<td>IVFFlat 索引</td>
+<td>先把向量聚成若干桶，只在最近的几个桶里找；建得快，召回率靠参数</td>
+<td>没用</td>
+</tr>
+<tr>
+<td><code>halfvec</code>、<code>sparsevec</code>、<code>bit</code></td>
+<td>半精度、稀疏、二值向量（省空间）</td>
+<td>没用（规模用不着）</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="64-hnsw-怎么快速找到最近的">6.4 HNSW 怎么快速找到最近的</h2>
+<p>暴力找最近邻要把问题和每一行都比一遍：100 万行就要算 100
+万次。HNSW（Hierarchical Navigable Small
+World）把所有向量连成一张多层的图：</p>
+<ul>
+<li><strong>最下层</strong>有全部的点，每个点和自己附近的若干个点连着边（参数
+<code>m</code>，缺省 16）；</li>
+<li><strong>越往上层点越少</strong>，边跨得越远，像高速公路；</li>
+<li><strong>查找</strong>时从最上层的入口点出发，每一步都走向离问题更近的邻居，走不动了就下一层接着走，到最下层时在一个候选集里（<code>hnsw.ef_search</code>，缺省
+40）挑出最近的 k 个；</li>
+<li><strong>建索引</strong>时每插入一个点，都用同样的办法找到它的邻居、连上边（<code>ef_construction</code>，缺省
+64，越大建得越慢、图越好）。</li>
+</ul>
+<p>它是<strong>近似</strong>的：可能漏掉真正最近的那一个，换来的是百万行也能在毫秒级回答。只有
+<code>ORDER BY embedding &lt;=&gt; 问题向量 LIMIT k</code>
+这种「只按距离排」的查询才用得上它。</p>
+<h2 id="65-我们库里长什么样2026-11-05-在测试台上查的">6.5
+我们库里长什么样（2026-11-05 在测试台上查的）</h2>
+<ul>
+<li><p><strong>版本</strong>：PostgreSQL 17.11、pgvector
+0.8.7、PL/Python（<code>plpython3u</code>），容器镜像
+<code>pgvector/pgvector:pg17</code>，库 <code>nexus</code>。</p></li>
+<li><p><strong>登记的向量模型</strong>（表
+<code>kb_meta</code>）：<code>embed_model = cohere.embed-v4:0</code>、<code>embed_dim = 1024</code>、<code>switched_at = 2026-10-30T14:12:37Z</code>。</p></li>
+<li><p><strong>规则表 <code>approval_rules</code></strong>：449
+行，全部有向量，全是
+<code>clause</code>（审批风险判断卡，一张卡一行）。表 1
+MB，加上长文本和索引 7.2 MB，其中 HNSW 索引 3.6 MB。下线的制度挪进
+<code>approval_rules_archive</code>（现在 102
+行，原来的审批矩阵）。</p></li>
+<li><p><strong>主要的列</strong>：</p>
+<ul>
+<li><code>rule_id</code>（主键，例如
+<code>risk-cards-T1.73</code>）、<code>rule_type</code>（matrix /
+general / chapter_note / clause）；</li>
+<li><code>content</code>：拼好的可检索全文，关键词匹配和向量都按它；</li>
+<li><code>embedding vector(1024)</code>：<code>content</code>
+的向量；</li>
+<li>审批矩阵才有的结构化列：<code>segment</code>（板块）、<code>amount_tier</code>（金额档）、<code>approval_path</code>
+/ <code>approval_path_text</code>、<code>final_approver</code>；</li>
+<li>卡片全文在 <code>scope_controls</code>；</li>
+<li>来源：<code>source_tag</code>（制度标识，例如
+<code>risk-cards</code>）、<code>source_doc</code>、<code>source_version</code>、<code>ingested_at</code>；</li>
+<li><code>record_sha256</code>：除向量外全部列的哈希。内容没变就不重算向量。</li>
+</ul></li>
+<li><p><strong>一行大概是这样</strong>（虚构的示例，不是真实制度）：</p>
+<pre><code>rule_id        risk-cards-T0.0
+rule_type      clause
+source_tag     risk-cards
+content        卡片编号：示例-00；费用类型：办公用品采购；风险点：……；核对要点：……；一期可行性：……
+embedding      [0.0132,-0.0418,0.0075, …]（1024 个数）
+record_sha256  3f9c…（内容没变就不重算向量）</code></pre></li>
+<li><p><strong>索引</strong>：主键、<code>(chapter_no, seq_no)</code>、<code>source_tag</code>
+三个普通 B-tree 索引，加上一个
+HNSW：<code>CREATE INDEX … USING hnsw (embedding vector_cosine_ops)</code>。</p></li>
+<li><p><strong>旁边的表</strong>：</p>
+<ul>
+<li><code>kb_embed_cache</code>：向量缓存，727 条，按来源分：入库
+473、换模型 102、检索 152；</li>
+<li><code>kb_search_log</code>：每次检索一行，只追加；</li>
+<li><code>kb_documents</code>：上传登记。</li>
+</ul></li>
+</ul>
+<h2 id="66-向量在库里生成">6.6 向量在库里生成</h2>
+<figure>
+<a href="assets/diagrams/pgvector-search.svg" class="figure-link"
+target="_blank" rel="noopener"><img
+src="assets/diagrams/pgvector-search.svg" loading="lazy"
+alt="入库时规则全文经 kb_embed_batch 变成 1024 维向量存进 approval_rules（带 HNSW 索引）；检索时问题经 kb_embed 变成向量，同时拆词，逐行按命中词数、条款排后、余弦距离打分，取前 k 行并记日志；两条路都先查 kb_embed_cache，没命中才调 Bedrock 的 Cohere Embed v4" /></a>
+<figcaption>入库时规则全文经 kb_embed_batch 变成 1024 维向量存进
+approval_rules（带 HNSW 索引）；检索时问题经 kb_embed
+变成向量，同时拆词，逐行按命中词数、条款排后、余弦距离打分，取前 k
+行并记日志；两条路都先查 kb_embed_cache，没命中才调 Bedrock 的 Cohere
+Embed v4</figcaption>
+</figure>
+<p>向量不在 Agent 里算，也不在测试台里算，而是 PG 自己算：</p>
+<ol type="1">
+<li><strong>入口</strong>：入库调
+<code>kb_embed_batch(texts, 'search_document')</code>（一次至多 2000
+条），检索调 <code>kb_embed(问题, 'search_query')</code>。</li>
+<li><strong>先查缓存</strong>：键是
+<code>sha256(模型|维度|用途|文本)</code>。同一段文字、同一个模型只算一次，所以同一份制度再传一遍不会再调模型。</li>
+<li><strong>没命中才调模型</strong>：唯一调 Bedrock 的是
+<code>kb_embed_impl</code>，一个 PL/Python 函数。
+<ul>
+<li>它经 IMDSv2 拿实例角色的凭证，自己做 SigV4 签名，直接 HTTPS 调
+<code>InvokeModel</code>。容器里的 botocore 太旧，没有 bedrock-runtime
+的定义。</li>
+<li>请求是 Cohere 的格式：<code>texts</code>（一次至多 96
+条）、<code>input_type</code>、<code>embedding_types: ["float"]</code>、<code>output_dimension: 1024</code>、<code>truncate: "END"</code>。</li>
+<li>超时 20 秒，失败退避重试。</li>
+</ul></li>
+<li><strong>限流</strong>：真去调模型的，单条每分钟至多 300
+个，批量每分钟至多 2000 个，两个上限分开数。所以入库一份大文档挤不掉审核
+Agent 的检索。</li>
+</ol>
+<p>这样做的好处是只有一个地方调向量模型，入库和检索一定用同一个模型、同一种用途配对；审核
+Agent 只要会写 SQL，不用会调模型。</p>
+<h2 id="67-检索怎么排kb_search">6.7
+检索怎么排：<code>kb_search</code></h2>
+<p>审核 Agent 经数据连接器发
+<code>SELECT … FROM kb_search('&lt;关键词&gt;', 5)</code>。函数里依次：</p>
+<ol type="1">
+<li>问题不能为空、不超过 2000 字；整库每分钟至多 60 次检索。</li>
+<li>把问题变成向量 q（<code>search_query</code>）。</li>
+<li>把问题按空格、标点拆成词：2–20 字，至多 8 个。</li>
+<li>逐行打分、排序：
+<ul>
+<li>第一键：这行的 <code>content</code> 里出现了几个词，多的在前；</li>
+<li>第二键：词数一样时，矩阵行、制度说明排在正文条款前面；</li>
+<li>第三键：余弦距离 <code>embedding &lt;=&gt; q</code>，近的在前。</li>
+<li>先看关键词，是因为审核 Agent
+传的是从单据里拆出来的费用、付款类型名称，字面对上的行最可靠；语义负责在字面一样多的行里挑最像的，以及整句问话没有可匹配的词时兜底。</li>
+</ul></li>
+<li>取前 k 行，回规则编号、结构化列、<code>score</code>（1 −
+距离）、<code>keyword_hits</code>，再以超级用户记一行检索日志（谁查的、问了什么、命中了哪些、用了多久）。</li>
+</ol>
+<p><strong>它没有用 HNSW
+索引，这是有意的</strong>：排序的第一键是关键词命中数，不是距离，HNSW
+帮不上，PG 就把整表扫一遍、逐行打分、取前 k。在测试台上
+<code>EXPLAIN ANALYZE</code> 看到：顺序扫描 449 行、top-N
+排序，<strong>4
+毫秒</strong>。结果是精确的，不会因为近似漏掉。只按距离排的查询（<code>ORDER BY embedding &lt;=&gt; q LIMIT 5</code>）则走
+<code>Index Scan using approval_rules_embedding_hnsw</code>，那个索引给以后的规模留着。</p>
+<p><strong>一次检索花多久</strong>（检索日志，最近 14 天 198 次，审核
+Agent 180 次、知识库页 6 次、核对 12 次）：中位 69 毫秒，九成 443
+毫秒，最长 526 毫秒。排序只占 4
+毫秒，其余主要花在把问题变成向量：缓存命中几乎不花时间，没命中要调一次
+Bedrock，几百毫秒。审核 Agent 一轮 9.5
+秒里，检索只占很小一块，时间主要花在模型推理上（第 9 节的实测）。</p>
+<h2 id="68-安全和防混用">6.8 安全和防混用</h2>
+<ul>
+<li><strong>只有超级用户能建调模型的函数</strong>：<code>plpython3u</code>
+是不受信语言。连接器用的应用账号只能执行
+<code>kb_embed</code>、<code>kb_embed_batch</code>、<code>kb_search</code>
+这几个包装，碰不到 <code>kb_embed_impl</code>
+本身。缓存、检索日志、<code>kb_meta</code>
+归超级用户，应用账号只能读或碰不到；检索日志只能经
+<code>kb_log_search</code> 追加，应用账号删不掉。</li>
+<li><strong>防混用</strong>：<code>kb_meta</code>
+登记库里向量的模型和维度。<code>kb/deploy.sh</code> 的 <code>db</code>
+阶段先读它，和配置的 <code>EMBED_MODEL_ID</code>
+不同就停。换模型要显式加
+<code>--migrate-embeddings</code>：用新模型把规则表和归档表的全部向量重算，在一个事务里换掉
+<code>kb_search</code> 并登记新模型。回退同理（<a
+href="../kb/GUIDE.md">kb/GUIDE.md</a> 7.6）。2026-10-30 从 Titan v2 换到
+Cohere v4 就是这样做的。</li>
+<li><strong>错误里不带账号和 ARN</strong>：调模型出错时，回给 Agent
+和页面的消息里去掉 ARN 和 12 位账号。</li>
+</ul>
+<h2 id="69-规模变大以后">6.9 规模变大以后</h2>
+<p>现在 449 行，整表打分 4
+毫秒，比走索引还准，不用改。规则到几万、几十万行时，整表打分会跟着行数变慢，那时：</p>
+<ol type="1">
+<li><strong>两段式</strong>：先用 HNSW
+按距离取前几百个候选（<code>ORDER BY embedding &lt;=&gt; q LIMIT 200</code>），再在候选里按关键词命中数重排；</li>
+<li><strong>关键词部分换成全文索引</strong>：<code>tsvector</code>
+加中文分词，或者 <code>pg_trgm</code>，代替逐行
+<code>position()</code>；</li>
+<li><strong>调参</strong>：<code>hnsw.ef_search</code>
+调大能提高召回，代价是变慢；</li>
+<li><strong>省空间</strong>：向量多到放不进内存时，考虑
+<code>halfvec</code>（半精度，减半）。</li>
+</ol>
+<h1 id="7-安全">7. 安全</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -481,7 +741,7 @@ IP 时走 EC2 Instance Connect 端点，仍是 SSH</td>
 </tbody>
 </table>
 </div>
-<h1 id="7-部署架构">7. 部署架构</h1>
+<h1 id="8-部署架构">8. 部署架构</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -520,7 +780,7 @@ href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.ne
 <p>换机器、迁域名用 <code>poc/infra/migrate-data.sh</code>（2026-11-02
 从 t3.large 搬到 m7g.xlarge 时实际走过一遍）。每块怎么部署见<a
 href="delivery/delivery-guide.html">交付指南</a>。</p>
-<h1 id="8-现状规模测试和实测数字">8. 现状：规模、测试和实测数字</h1>
+<h1 id="9-现状规模测试和实测数字">9. 现状：规模、测试和实测数字</h1>
 <p><strong>代码规模</strong>（行数，不含锁文件、生成物和二进制）：</p>
 <div class="table-wrap">
 <table>
@@ -637,8 +897,8 @@ href="delivery/delivery-guide.html">交付指南</a>。</p>
 </tbody>
 </table>
 </div>
-<h1 id="9-技术评估">9. 技术评估</h1>
-<h2 id="91-做得好的">9.1 做得好的</h2>
+<h1 id="10-技术评估">10. 技术评估</h1>
+<h2 id="101-做得好的">10.1 做得好的</h2>
 <ol type="1">
 <li><strong>对九安的侵入最小、可重放</strong>：只有 7
 个补丁，都是针对开发包的明确改动，打不上就停。契约文件只改了一处：补丁
@@ -662,7 +922,7 @@ Agent），哪一项没过就不出包；新前端的测试在 <code>deploy.sh</
 从零在 m7g
 上建栈、搬数据、迁域名、改名，都靠脚本完成，事后端到端全过。</li>
 </ol>
-<h2 id="92-风险与技术债">9.2 风险与技术债</h2>
+<h2 id="102-风险与技术债">10.2 风险与技术债</h2>
 <div class="table-wrap">
 <table>
 <thead>
@@ -822,7 +1082,7 @@ Actions）跑单元测试和文档检查；部署仍由人触发</td>
 </tbody>
 </table>
 </div>
-<h2 id="93-建议的路线">9.3 建议的路线</h2>
+<h2 id="103-建议的路线">10.3 建议的路线</h2>
 <ol type="1">
 <li><strong>上生产前</strong>（挡路的）：第 1、2、3 条；生产 Nexus
 上的两个发布单独签发调用密钥；开发测试期间用过的密钥统一清理（<a
@@ -832,7 +1092,7 @@ href="delivery/handover.html">交接文档</a>第 2.5 节）。</li>
 错误码）、单次时长、人工改判率（工作台上有）。</li>
 <li><strong>之后</strong>：第 7–11、15 条，主要是可运维性和成本。</li>
 </ol>
-<h1 id="10-代码地图">10. 代码地图</h1>
+<h1 id="11-代码地图">11. 代码地图</h1>
 <div class="table-wrap">
 <table>
 <thead>

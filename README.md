@@ -20,7 +20,7 @@
 | 部署的人（我们、九安运维） | [交付指南](docs/delivery/delivery-guide.md) → 各块自己的说明（下表） |
 | 管理员（在页面上接 Agent） | [快速上手](docs/delivery/quick-guide.md)第 4 节 |
 | 九安的开发、Agent 开发 | [开发者快速对接指南](docs/delivery/developer-guide.md)、[Skills 配置指南](docs/delivery/skills-guide.md)、[架构与技术评估](docs/architecture.md)、[工作流](docs/workflows.md) |
-| 项目负责人 | [架构与技术评估](docs/architecture.md)第 9 节（风险与上生产前要改的）、[客户部署路线](docs/delivery/customer-rollout.md)、[交付包指南](docs/delivery/package-guide.md) |
+| 项目负责人 | [架构与技术评估](docs/architecture.md)第 10 节（风险与上生产前要改的）、[客户部署路线](docs/delivery/customer-rollout.md)、[交付包指南](docs/delivery/package-guide.md) |
 | 接手维护、值班 | [交接文档](docs/delivery/handover.md)、[运维与后续迭代](docs/delivery/operations.md)、[部署与迭代规范](docs/delivery/deploy-iteration.md) |
 
 全部交付文档的索引：浏览器打开 `docs/delivery/README.html`。这个版本改了什么：[CHANGELOG.md](CHANGELOG.md)。
