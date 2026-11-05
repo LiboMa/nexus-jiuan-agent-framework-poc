@@ -291,13 +291,19 @@ href="../../kb/GUIDE.md">kb/GUIDE.md</a> 2.4）。</p></li>
 复制，0600）：<code>PG_HOST_MODE=existing</code>、<code>PG_HOST_INSTANCE_ID</code>、<code>PG_HOST_TRANSPORT=ssh</code>、<code>PG_SSH_HOST</code>、<code>PG_SSH_KEY</code>（连不到主机地址时加
 <code>PG_SSH_PROXY_COMMAND</code>）、<code>NEXUS_URL</code>
 和管理员密码来源；<code>EMBED_MODEL_ID</code> 不写就是 Cohere
-v4。</p></li>
-<li><p>照 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4 节：</p>
+v4。<strong>再写 <code>AGENT_PATCH_PROMPT=false</code></strong>：PG 先于
+Agent 部署时审核 Agent 还不存在（缺省的 <code>true</code>
+会让预检停在「Nexus 里找不到 Agent」），它的提示词由 4.2 的
+<code>audit-agent/apply.py</code> 管。</p></li>
+<li><p>只跑数据层这几个阶段（不跑 <code>all</code>：<code>all</code>
+里的 <code>ingest</code> 要一份规则 .docx，<code>agent</code> 会改审核
+Agent 的提示词；规则在 4.3 之后从知识库页上传）：</p>
 <pre class="bash"><code>cd kb
-./deploy.sh preflight          # 只读预检：工具、AWS、Nexus 登录、PG 主机（SSH 能登录、能 sudo）
-./deploy.sh all --dry-run      # 只读：每个阶段会改什么（~ 行）
-./deploy.sh all                # db 装 Docker、起容器、建 kb_search；connector 把私网地址和密码登记进 Nexus
-./deploy.sh verify             # [db] [ingest] [search] [network] [egress] [connector] [agent] 逐层核对</code></pre></li>
+./deploy.sh preflight,db,network,egress,connector --dry-run   # 只读：预检，再看每个阶段会改什么（~ 行）
+./deploy.sh preflight,db,network,egress,connector             # db 装 Docker、起容器、建 kb_search；network 开 PG 端口；egress 放行 Sandbox 出站；connector 把私网地址和密码登记进 Nexus
+./deploy.sh verify                                             # 逐层核对；规则还没上传时 [ingest] 报「规则表不存在」是预期的，上传后再跑一次</code></pre>
+<p>create 模式（工具替你建专用主机）在最前面加
+<code>host</code>。</p></li>
 </ol>
 <p><strong>测试台</strong>（PG 和前端在同一台实例上，栈先建好；kb
 的设置在 <code>poc/infra/kb.env</code>）：</p>
@@ -369,7 +375,7 @@ IP（2026-11-02 m7g 环境的弹性 IP 在
 SSH + 自己的密钥，不用 SSM。</p></li>
 <li><p><strong>在页面上接好 Agent</strong>（管理员
 <code>poc-reviewer</code>，口令在 <code>secrets.env</code>；<a
-href="quick-guide.html">快速上手</a>第 3–9 步）：</p>
+href="quick-guide.html">快速上手</a>第 4 节）：</p>
 <ul>
 <li>「Agent 接入」页：连接 Nexus（贴管理员自己的 Nexus API 密钥）→
 两个发布各贴一次调用密钥启用 → 审核 Agent「设为审批 Agent」（要写原因）→
@@ -601,8 +607,12 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <td><a href="operations.html">运维与后续迭代</a></td>
 </tr>
 <tr>
-<td>管理员在「Agent 接入」页接 Agent</td>
+<td>第一次接触、管理员在「Agent 接入」页接 Agent</td>
 <td><a href="quick-guide.html">快速上手</a></td>
+</tr>
+<tr>
+<td>每件事按什么顺序做（审核、知识库、变更、部署、交接）</td>
+<td><a href="../workflows.html">工作流</a></td>
 </tr>
 <tr>
 <td>九安开发者接 Nexus 上的 Agent（契约、时限、提示词）</td>
@@ -613,8 +623,8 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <td><a href="skills-guide.html">Skills 配置指南</a></td>
 </tr>
 <tr>
-<td>架构与调用链</td>
-<td><a href="../architecture.html">架构</a></td>
+<td>架构、风险与技术债</td>
+<td><a href="../architecture.html">架构与技术评估</a></td>
 </tr>
 </tbody>
 </table>

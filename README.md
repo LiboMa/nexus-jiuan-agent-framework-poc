@@ -6,7 +6,9 @@
 
 - **新前端**（首页 `/`）：工作台、单据池（抽屉里看 AI 建议、原件、单据信息、历史，采纳或改判）、知识库、我的规则、Agent 接入、设置。九安原来的页面在 `/analysis.html`。
 - **AI 独立建议**：单据池里的单据读完原件后，九安经 A2A 调管理员指定的审批 Agent「九安审核AI」（`review_advice@1`）；它经 Nexus 的数据连接器只读查 PG 知识库（库内语义检索 `kb_search`，Cohere Embed v4）。
-- **知识库**：经 Nexus 上的「知识库文档管家（PG 版）」读写（`kb.rules/v1`）；有效的规则是审批风险判断卡（449 条）。
+- **知识库**：经 Nexus 上的「知识库文档管家（PG 版）」读写（[`kb.rules/v1`](docs/kb-rules-v1.md)）；有效的规则是审批风险判断卡（449 条）。页面数据存在测试台的库里，打开不必每次问 Agent。
+
+系统怎么搭、为什么这样搭、风险在哪：[架构与技术评估](docs/architecture.md)；每件事按什么顺序做：[工作流](docs/workflows.md)。
 
 ## 从哪里开始
 
@@ -14,10 +16,11 @@
 
 | 你是 | 先读 |
 |---|---|
+| 第一次接触 | [快速上手](docs/delivery/quick-guide.md)：是什么、10 分钟走一遍、按角色从哪开始 |
 | 部署的人（我们、九安运维） | [交付指南](docs/delivery/delivery-guide.md) → 各块自己的说明（下表） |
-| 管理员（在页面上接 Agent） | [快速上手](docs/delivery/quick-guide.md) |
-| 九安的开发、Agent 开发 | [开发者快速对接指南](docs/delivery/developer-guide.md)、[Skills 配置指南](docs/delivery/skills-guide.md)、[架构](docs/architecture.md) |
-| 项目负责人 | [客户部署路线](docs/delivery/customer-rollout.md)、[交付包指南](docs/delivery/package-guide.md) |
+| 管理员（在页面上接 Agent） | [快速上手](docs/delivery/quick-guide.md)第 4 节 |
+| 九安的开发、Agent 开发 | [开发者快速对接指南](docs/delivery/developer-guide.md)、[Skills 配置指南](docs/delivery/skills-guide.md)、[架构与技术评估](docs/architecture.md)、[工作流](docs/workflows.md) |
+| 项目负责人 | [架构与技术评估](docs/architecture.md)第 9 节（风险与上生产前要改的）、[客户部署路线](docs/delivery/customer-rollout.md)、[交付包指南](docs/delivery/package-guide.md) |
 | 接手维护、值班 | [交接文档](docs/delivery/handover.md)、[运维与后续迭代](docs/delivery/operations.md)、[部署与迭代规范](docs/delivery/deploy-iteration.md) |
 
 全部交付文档的索引：浏览器打开 `docs/delivery/README.html`。这个版本改了什么：[CHANGELOG.md](CHANGELOG.md)。
@@ -55,8 +58,7 @@
 | `customer-deploy/knowledgebase-writer-agent-pg/` | PG 知识库 Agent 的客户部署交付件（1.0.1）：部署指南、部署手册、发布 zip |
 | `knowbase-s3vectors-agent/` | S3 Vectors 方式的知识库 Agent（备用的另一种知识库方式；现有环境用 PG） |
 | `skills/nexus-ai-operator/` | 编码工具在 Nexus 上建 Agent、发布用的 Skill（1.1.0） |
-| `docs/` | 交付文档（Markdown 是源，`docs/build-html.sh` 生成 HTML）、图；`docs/delivery/make-package.sh` 出交付包 |
-| `tools/progress/` | 项目进度页（`docs/progress.html`）的生成工具 |
+| `docs/` | [架构与技术评估](docs/architecture.md)、[工作流](docs/workflows.md)、[`kb.rules/v1` 约定](docs/kb-rules-v1.md)；`delivery/` 交付文档；Markdown 是源，`docs/build-html.sh` 生成 HTML 和图；`docs/delivery/make-package.sh` 出交付包 |
 
 ## 测试
 

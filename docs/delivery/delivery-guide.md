@@ -62,16 +62,17 @@ cp poc/infra/env/example.env poc/infra/env/<环境名>.env && chmod 600 poc/infr
 **客户环境**（独立的 PG 主机，用自己的 SSH 密钥）：
 
 1. 起一台主机：带自己的密钥对；安全组对部署人的地址开 22、对 Nexus 的私网段开 PG 端口；实例角色许调 `EMBED_MODEL_ID`（Cohere v4 的推理配置文件和它路由到的三个区域，[kb/GUIDE.md](../../kb/GUIDE.md) 2.4）。
-2. 填 `kb/deploy.env`（从 `deploy.env.example` 复制，0600）：`PG_HOST_MODE=existing`、`PG_HOST_INSTANCE_ID`、`PG_HOST_TRANSPORT=ssh`、`PG_SSH_HOST`、`PG_SSH_KEY`（连不到主机地址时加 `PG_SSH_PROXY_COMMAND`）、`NEXUS_URL` 和管理员密码来源；`EMBED_MODEL_ID` 不写就是 Cohere v4。
-3. 照 [kb/GUIDE.md](../../kb/GUIDE.md) 第 4 节：
+2. 填 `kb/deploy.env`（从 `deploy.env.example` 复制，0600）：`PG_HOST_MODE=existing`、`PG_HOST_INSTANCE_ID`、`PG_HOST_TRANSPORT=ssh`、`PG_SSH_HOST`、`PG_SSH_KEY`（连不到主机地址时加 `PG_SSH_PROXY_COMMAND`）、`NEXUS_URL` 和管理员密码来源；`EMBED_MODEL_ID` 不写就是 Cohere v4。**再写 `AGENT_PATCH_PROMPT=false`**：PG 先于 Agent 部署时审核 Agent 还不存在（缺省的 `true` 会让预检停在「Nexus 里找不到 Agent」），它的提示词由 4.2 的 `audit-agent/apply.py` 管。
+3. 只跑数据层这几个阶段（不跑 `all`：`all` 里的 `ingest` 要一份规则 .docx，`agent` 会改审核 Agent 的提示词；规则在 4.3 之后从知识库页上传）：
 
    ```bash
    cd kb
-   ./deploy.sh preflight          # 只读预检：工具、AWS、Nexus 登录、PG 主机（SSH 能登录、能 sudo）
-   ./deploy.sh all --dry-run      # 只读：每个阶段会改什么（~ 行）
-   ./deploy.sh all                # db 装 Docker、起容器、建 kb_search；connector 把私网地址和密码登记进 Nexus
-   ./deploy.sh verify             # [db] [ingest] [search] [network] [egress] [connector] [agent] 逐层核对
+   ./deploy.sh preflight,db,network,egress,connector --dry-run   # 只读：预检，再看每个阶段会改什么（~ 行）
+   ./deploy.sh preflight,db,network,egress,connector             # db 装 Docker、起容器、建 kb_search；network 开 PG 端口；egress 放行 Sandbox 出站；connector 把私网地址和密码登记进 Nexus
+   ./deploy.sh verify                                             # 逐层核对；规则还没上传时 [ingest] 报「规则表不存在」是预期的，上传后再跑一次
    ```
+
+   create 模式（工具替你建专用主机）在最前面加 `host`。
 
 **测试台**（PG 和前端在同一台实例上，栈先建好；kb 的设置在 `poc/infra/kb.env`）：
 
@@ -116,7 +117,7 @@ DEPLOY_ENV=… bash poc/infra/kb.sh verify
 
    动 AWS 之前先跑 `poc/infra/test` 的测试、构建九安副本（`poc/bench/build-jiuan.sh`）、新前端 `npm ci` → 测试 → 构建、外壳的单元测试，哪一步不过就停。实例上（root，经 SSM 或 SSH）：装 `secrets.env`（只有 root 能读）→ 解开新构件 → `bench/bench-configure.sh`（MySQL 容器、库 `jiuan` 和账号 `jiuan_app`、系统用户 `jiuan`、服务 `andon-jiuan`、`/etc/hosts` 堵掉九安写死的外部地址）→ 换上新构件（上一版留在 `previous`）→ 重启 → 查 `https://<站点>/poc/healthz`。
 2. **经 SSH 管理**：主机公钥第一次从实例的控制台输出里取来钉住（`poc/infra/.state/`），之后严格核对；本机网络连不到弹性 IP（2026-11-02 m7g 环境的弹性 IP 在 `184.192.0.0/12`，公司网络到不了）时 `SSH_VIA=eice`，栈另建一个 EC2 Instance Connect 端点，还是 SSH + 自己的密钥，不用 SSM。
-3. **在页面上接好 Agent**（管理员 `poc-reviewer`，口令在 `secrets.env`；[快速上手](quick-guide.md)第 3–9 步）：
+3. **在页面上接好 Agent**（管理员 `poc-reviewer`，口令在 `secrets.env`；[快速上手](quick-guide.md)第 4 节）：
    - 「Agent 接入」页：连接 Nexus（贴管理员自己的 Nexus API 密钥）→ 两个发布各贴一次调用密钥启用 → 审核 Agent「设为审批 Agent」（要写原因）→ 文本、请求信封、单据三种测试。
    - 「知识库」页：显示知识库 Agent 就绪；上传 4.1 转好的风险判断卡 .docx。
 
@@ -187,7 +188,8 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判�
 | 九安怎么走到上线（阶段、前置、风险） | [客户部署路线](customer-rollout.md) |
 | 每类变更怎么改、怎么测、怎么发、怎么退 | [部署与迭代规范](deploy-iteration.md) |
 | 日常运维、看日志、排障 | [运维与后续迭代](operations.md) |
-| 管理员在「Agent 接入」页接 Agent | [快速上手](quick-guide.md) |
+| 第一次接触、管理员在「Agent 接入」页接 Agent | [快速上手](quick-guide.md) |
+| 每件事按什么顺序做（审核、知识库、变更、部署、交接） | [工作流](../workflows.md) |
 | 九安开发者接 Nexus 上的 Agent（契约、时限、提示词） | [开发者快速对接指南](developer-guide.md) |
 | 编码工具里装 nexus-ai-operator | [Skills 配置指南](skills-guide.md) |
-| 架构与调用链 | [架构](../architecture.md) |
+| 架构、风险与技术债 | [架构与技术评估](../architecture.md) |

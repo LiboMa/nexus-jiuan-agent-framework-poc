@@ -354,11 +354,13 @@ href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.ne
 <ol type="1">
 <li>九安起一台主机（自己的密钥对；安全组对部署人的地址开 22、对 Nexus
 的私网段开 PG 端口）。</li>
-<li>照 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4
-节：<code>preflight</code> → <code>all --dry-run</code> →
-<code>all</code>（<code>db</code> 装
+<li>照<a href="delivery-guide.html">交付指南</a>
+4.1：<code>deploy.env</code> 写
+<code>AGENT_PATCH_PROMPT=false</code>，只跑数据层
+<code>preflight,db,network,egress,connector</code>（先
+<code>--dry-run</code>）：<code>db</code> 装
 Docker、起容器；<code>connector</code> 把私网地址和密码登记进
-Nexus）。</li>
+Nexus。规则等阶段 2 的 PG 知识库 Agent 部署好后再入库。</li>
 <li>规则入库：用客户自己的制度文档（制度原文不进我们的仓库）。</li>
 <li>向量模型用 Cohere Embed v4（缺省）；跑 <code>db</code> 前确认
 <code>EMBED_MODEL_ID</code>（<a href="../../kb/GUIDE.md">kb/GUIDE.md</a>

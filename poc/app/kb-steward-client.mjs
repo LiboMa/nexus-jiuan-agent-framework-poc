@@ -1,6 +1,6 @@
 /**
  * 「公司制度」经 A2A 调知识库 Agent 的发布（两种知识库方式共用一套）：pg 方式是 PG 知识库 Agent（约定见
- * docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md），s3vectors 方式是知识库文档管家（它提示词的「规则请求」一节）。约定 kb.rules/v1：
+ * docs/kb-rules-v1.md），s3vectors 方式是知识库文档管家（它提示词的「规则请求」一节）。约定 kb.rules/v1：
  *   文字 `kb.rules/v1 · <op>：只调用对应的工具一次，原样返回工具的 JSON。` + 数据 Part `{ op, …input }`（+ ingest 的 .docx 文件 Part）。
  *   op：describe（这个 Agent 支持哪些操作）、ingest、list、detail、deactivate、restore、delete、check、search；ingest 限时 5 分钟，其余 2 分钟。
  *   Agent 只回工具的 JSON：这里去掉偶尔的 ```json 围栏后 JSON.parse，按 op 校验形态；不合格抛 KB_AGENT_REPLY_INVALID，不重试。

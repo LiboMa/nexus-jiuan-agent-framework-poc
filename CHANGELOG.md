@@ -1,5 +1,24 @@
 # 变更记录
 
+## 2026-11-05：文档整理：架构与技术评估、工作流、新的快速上手；删去历史文档
+
+项目负责人 2026-11-05 定：对整体的项目、方案、架构、工作流做一份技术层的分析，写进新版文档；过期的文档一律删去，现行的更新到最新。代码不变。
+
+**新写、重写的**（都有 Markdown 和 HTML）
+- [`docs/architecture.md`](docs/architecture.md)「架构与技术评估」：设计原则、运行时组成、数据放在哪、三条调用链、安全、部署架构、规模与实测数字（审核 Agent 改提示词后一轮中位 9.5 秒、约 0.04 美元；PG 知识库 Agent 一次 8 秒、约 0.04 美元），以及技术评估：做得好的、16 条风险与技术债（按优先级）、上生产前的路线。
+- [`docs/workflows.md`](docs/workflows.md)「工作流」（新）：一张单从进来到复核、接入 Agent、知识库（入库、读清单的缓存、检索、审核 Agent 查库、换内容时要一起做的）、开发与变更、改提示词、部署三块、换机器迁域名、出包交接、日常运维，最后是瓶颈与改进。新图 `review-advice-flow`、`kb-flows`、`dev-workflow`。
+- [`docs/delivery/quick-guide.md`](docs/delivery/quick-guide.md)「快速上手」：从只给管理员改成整个项目的入门：是什么、按角色从哪开始、10 分钟走一遍、管理员接 Agent 的八步（第 4 节）、从零部署的最短路径、日常维护、常见问题。
+- `kb.rules/v1` 接口约定从 `docs/specs/` 挪到 [`docs/kb-rules-v1.md`](docs/kb-rules-v1.md)（还在用，进交接仓库和交付包了），按现状更新（Cohere Embed v4、四种格式、缓存）。
+
+**删去的**（都在 git 历史里）：10 月的几轮可行性评估和取舍（`docs/assessment.md`、`feasibility-round2`、`compromise-round3.md`、`poc-a2a-round4.md`、`replication-feasibility.md`、`agent-discovery-registration.html`）；`docs/plans/`、`docs/specs/` 里的全部设计稿和实现计划；v0.5.3 时的进度看板（`progress.json`、`tools/progress/`、`docs/progress.html`）；`RULES_PLAN.md`；用不到的图和截图（`arch-overview.svg`、`flow-enable`、`skills-split`、`agents-page.png`）。没进 git 的草稿（`docs/tech-stack.md`、`frontend-deisgn.md`、`docs/plans` 与 `docs/specs` 下 10-24 的几份、`RULES_PLAN.md` 里没提交的笔记）挪进本机的 `archive/docs-drafts-2026-11-05/`，不进 git、不进交付包。
+
+**现行文档跟着改的**：交付文档索引、根目录 README、交接文档（第 6 节只留没做完的 18 条，重新编号；已解决的和 v0.5.3 时期的记录删去）、运维第 2.8 节（v0.5.3 留下的东西已清完，只留一段说明）、交付包指南、交付指南的文档地图；`make-package.sh` 的「不交接」清单只留 `docs/specs`、`docs/plans`、`docs/superpowers` 和脱敏对照表。代码里还有 31 处注释写着「Spec 第 N 节」，指的是已删去的前端设计稿（在 git 历史里）。
+
+**对着代码核对时改正的**（旧文档里就有的错，一起改了）
+- **先部署 PG 的命令照原样跑不通**：交付指南 4.1、客户部署路线阶段 1、`kb/GUIDE.md` 第 4 节都写 `./deploy.sh all`，可 `all` 里的 `ingest` 要一份规则 .docx、`agent` 要改审核 Agent 的提示词，而 PG 先于 Agent 部署时审核 Agent 还不存在（缺省的 `AGENT_PATCH_PROMPT=true` 让预检停在「Nexus 里找不到 Agent」）。改成：`deploy.env` 写 `AGENT_PATCH_PROMPT=false`，只跑数据层 `preflight,db,network,egress,connector`；规则等 PG 知识库 Agent 部署好后从知识库页上传。
+- **两套 Nexus 不是一套**：交接文档、运维说线上 Nexus AI `d3u3hj2us186y.cloudfront.net` 是 `nxs-beine1013` 的「实际地址」，不对（PG 知识库 Agent 的名片在 `nxs-beine1013` 上有、在 `d3u3…` 上是 404）。测试台用 `nxs-beine1013`，生产用 `d3u3…`，两边的发布和密钥不通用。快速上手第 4 节按这个写。
+- 单据池里 AI 的结论在「AI 建议」一栏，「最近审核」是时间和人；状态用页面上的说法（审核中、已采纳、已改判、AI 建议已更新）。知识库页只收 .docx。启用时验密钥超过 60 秒页面会报超时（CloudFront 等源站最多 60 秒），记进了架构与技术评估第 9.2 节第 15 条。知识库页要部署配置里有 `KB_PG_PUBLICATION_ID`。
+
 ## 2026-11-03：知识库页的数据存在库里，打开页面不再每次问 Agent
 
 **原因**（线上量的）：知识库页一打开要连着问 PG 知识库 Agent 两次：先问支持哪些操作（describe），再读制度清单。每次是 Nexus 上整轮模型（Sonnet 4.6 读约 11 KB 的提示词 → 调一次工具 → 把工具的 JSON 照抄回来），4–10 秒、约 0.03 美元；沙箱拿 VM 只要 0.01–0.1 秒。第一次打开 19 秒才出清单，5 分钟内再开也要 10 秒（describe 缓存 5 分钟，清单每次现问）。

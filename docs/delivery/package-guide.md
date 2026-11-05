@@ -11,7 +11,7 @@ audience: 项目负责人、接手的应用开发、运维、Agent 开发
 
 ## 1. 一句话
 
-交付包是一个压缩包，加一个校验文件：**Finance-Audit-Nexus-PoC v0.7.10**，九安 × Nexus PoC 的交接内容：九安 v0.7.10 测试台的全部代码（新前端、外壳、九安副本的构建脚本和补丁、部署脚本）、知识库工具、Nexus 上两个 Agent 的提示词与工具、nexus-ai-operator Skill、测试、交接文档（Markdown 和 HTML）、图，再加上测试证据 `evidence/`。2026-11-02 起不再带 v0.5.3 PoC（`poc/app/`、`poc/tools/`、`knowledge-agent/`、`contract/`、`skills/agent-access/`、v0.5.3 的参考补丁），见[变更记录](../../CHANGELOG.md)。除了 `evidence/`，包里的内容和交接仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide> 一致，两边由同一份白名单生成（第 9 节）。设计稿、实现计划、进度看板、历次评估、评审记录不在包里，在开发仓库。密钥和九安开发包也不在包里，另行交接（第 5 节）。拿到之后按第 6 节验收，按第 8 节签收。从零部署一整套（先 PG 与知识库后端，再 Nexus 上的 Agent，再前端）照[交付指南](delivery-guide.md)。
+交付包是一个压缩包，加一个校验文件：**Finance-Audit-Nexus-PoC v0.7.10**，九安 × Nexus PoC 的交接内容：九安 v0.7.10 测试台的全部代码（新前端、外壳、九安副本的构建脚本和补丁、部署脚本）、知识库工具、Nexus 上两个 Agent 的提示词与工具、nexus-ai-operator Skill、测试、交接文档（Markdown 和 HTML）、图，再加上测试证据 `evidence/`。2026-11-02 起不再带 v0.5.3 PoC（`poc/app/`、`poc/tools/`、`knowledge-agent/`、`contract/`、`skills/agent-access/`、v0.5.3 的参考补丁），见[变更记录](../../CHANGELOG.md)。除了 `evidence/`，包里的内容和交接仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide> 一致，两边由同一份白名单生成（第 9 节）。2026-11-05 起，历史的设计稿、实现计划、进度看板、历次评估都从仓库里删了（在 git 历史里）；以后再写的设计稿和计划放 `docs/specs/`、`docs/plans/`，不进包。密钥和九安开发包也不在包里，另行交接（第 5 节）。拿到之后按第 6 节验收，按第 8 节签收。从零部署一整套（先 PG 与知识库后端，再 Nexus 上的 Agent，再前端）照[交付指南](delivery-guide.md)。
 
 ![交付包里有什么：按部署的三块分（前端、PG 与知识库、Nexus 上的 Agent），加上文档与证据；不在包里的另行交接](../assets/diagrams/package-contents.svg)
 
@@ -60,9 +60,9 @@ open docs/delivery/README.html                                           # 从�
 
 | 目录 | 内容 | 看哪份文档 |
 |---|---|---|
-| `docs/delivery/` | 交付文档（本文、交付指南、快速上手、开发者快速对接指南、Skills 配置指南、客户部署路线、交接、部署与迭代、运维），每份有 `.md` 和 `.html`；`make-package.sh`（打包、导出交接仓库）与 `sanitize.py`（脱敏） | [交付文档索引](README.md) |
-| `docs/assets/` | `diagrams/`：图（`.mmd` 是源，`.svg` 由 `build-html.sh` 生成；`arch-overview.svg` 是 v0.5.3 时手工画的，交付文档不再用）；`screens/`：截图 | 第 7 节 |
-| `docs/`（其余） | 架构文档、`build-html.sh` 与 `html-kit/` | [架构](../architecture.md) |
+| `docs/delivery/` | 交付文档（本文、快速上手、交付指南、开发者快速对接指南、Skills 配置指南、客户部署路线、交接、部署与迭代、运维），每份有 `.md` 和 `.html`；`make-package.sh`（打包、导出交接仓库）与 `sanitize.py`（脱敏） | [交付文档索引](README.md) |
+| `docs/assets/` | `diagrams/`：图（`.mmd` 是源，`.svg` 由 `build-html.sh` 生成）；`screens/`：截图 | 第 7 节 |
+| `docs/`（其余） | [架构与技术评估](../architecture.md)、[工作流](../workflows.md)、[`kb.rules/v1` 约定](../kb-rules-v1.md)（每份有 `.md` 和 `.html`）、`build-html.sh` 与 `html-kit/` | 这三份 |
 | `poc/app/` | 九安 v0.7.10 测试台的外壳（组合根、前门、口令登录、假汇联易、出网守卫、「Agent 接入」页和知识库页的后端、新前端用的接口）；`lib/`（A2A 客户端、名片规整、operator 命令行、口令登录、HTTP 小工具）；`test/unit/` 单元测试、`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） | [PoC 说明](../../poc/README.md) |
 | `poc/web/` | 新前端（React 19 + TypeScript + Vite + Tailwind 4，哈希路由）：工作台、单据池、知识库、我的规则、Agent 接入、设置；`npm test`、`npm run build`（不带 `node_modules/`、`dist/`） | [PoC 说明](../../poc/README.md) |
 | `poc/bench/` | `build-jiuan.sh`（九安 v0.7.10 副本：按清单复制，不带 `seeds/`、`database/`、`tests/`，打 `patches/jiuan-v0.7.10/`）与锁定的依赖清单（`mysql2` 3.14.3；不带 `node_modules`，构建时 `npm ci --ignore-scripts`） | [交接文档](handover.md)第 2.1 节 |
@@ -79,7 +79,7 @@ open docs/delivery/README.html                                           # 从�
 | `evidence/` | 各轮的测试证据与截图；`evidence/round7/e2e/` 是九安 v0.7.10 端到端测试的截图；`evidence/e2e/last-run.jsonl` 是最近一次端到端测试的结果 | — |
 | `MANIFEST.txt`、`PACKAGE-INFO.txt` | 每个文件的 sha256；生成时间与检查结果 | 第 2 节 |
 
-**特意不放进包的**：`node_modules/`、`.build/`（九安副本 `.build/jiuan/`，`deploy.sh` 每次重建）、`dist/`（含新前端的构建产物）、`archive/`（旧证据、旧包）、`__pycache__/`、`.DS_Store`；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；客户的制度原文（知识库的来源文档，例如 `docs/sample-docs/` 里的 .docx；导出时还会按文件名再查一遍，查到就不出包）；和这个 PoC 无关或已过时的 `get_passwd.sh`、`poc/a2a-entry/`（第四轮的旧验证，不再部署）、`poc/infra/design-jiuan-nexus-integrate.md`（原始笔记）。这些都还留在维护人的电脑上。
+**特意不放进包的**：`node_modules/`、`.build/`（九安副本 `.build/jiuan/`，`deploy.sh` 每次重建）、`dist/`（含新前端的构建产物）、`archive/`（旧证据、旧包）、`__pycache__/`、`.DS_Store`；以后再写的设计稿和实现计划（`docs/specs/`、`docs/plans/`）；客户的制度原文（知识库的来源文档，例如 `docs/sample-docs/` 里的 .docx；导出时还会按文件名再查一遍，查到就不出包）；和这个 PoC 无关或已过时的 `get_passwd.sh`、`poc/a2a-entry/`（第四轮的旧验证，不再部署）、`poc/infra/design-jiuan-nexus-integrate.md`（原始笔记）。这些都还留在维护人的电脑上。
 
 ## 5. 不在包里、另行交接的
 

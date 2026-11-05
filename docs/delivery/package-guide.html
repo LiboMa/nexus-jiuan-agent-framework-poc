@@ -136,8 +136,10 @@ PoC（<code>poc/app/</code>、<code>poc/tools/</code>、<code>knowledge-agent/</
 的参考补丁），见<a href="../../CHANGELOG.md">变更记录</a>。除了
 <code>evidence/</code>，包里的内容和交接仓库 <a
 href="https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide">https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide</a>
-一致，两边由同一份白名单生成（第 9
-节）。设计稿、实现计划、进度看板、历次评估、评审记录不在包里，在开发仓库。密钥和九安开发包也不在包里，另行交接（第
+一致，两边由同一份白名单生成（第 9 节）。2026-11-05
+起，历史的设计稿、实现计划、进度看板、历次评估都从仓库里删了（在 git
+历史里）；以后再写的设计稿和计划放
+<code>docs/specs/</code>、<code>docs/plans/</code>，不进包。密钥和九安开发包也不在包里，另行交接（第
 5 节）。拿到之后按第 6 节验收，按第 8 节签收。从零部署一整套（先 PG
 与知识库后端，再 Nexus 上的 Agent，再前端）照<a
 href="delivery-guide.html">交付指南</a>。</p>
@@ -277,7 +279,7 @@ href="operations.html">运维</a>第 2.1 节</td>
 <tbody>
 <tr>
 <td><code>docs/<wbr>delivery/<wbr></code></td>
-<td>交付文档（本文、交付指南、快速上手、开发者快速对接指南、Skills
+<td>交付文档（本文、快速上手、交付指南、开发者快速对接指南、Skills
 配置指南、客户部署路线、交接、部署与迭代、运维），每份有
 <code>.<wbr>md</code> 和
 <code>.<wbr>html</code>；<code>make-<wbr>package.<wbr>sh</code>（打包、导出交接仓库）与
@@ -288,15 +290,18 @@ href="operations.html">运维</a>第 2.1 节</td>
 <td><code>docs/<wbr>assets/<wbr></code></td>
 <td><code>diagrams/<wbr></code>：图（<code>.<wbr>mmd</code>
 是源，<code>.<wbr>svg</code> 由 <code>build-<wbr>html.<wbr>sh</code>
-生成；<code>arch-<wbr>overview.<wbr>svg</code> 是 v0.5.3
-时手工画的，交付文档不再用）；<code>screens/<wbr></code>：截图</td>
+生成）；<code>screens/<wbr></code>：截图</td>
 <td>第 7 节</td>
 </tr>
 <tr>
 <td><code>docs/<wbr></code>（其余）</td>
-<td>架构文档、<code>build-<wbr>html.<wbr>sh</code> 与
+<td><a href="../architecture.html">架构与技术评估</a>、<a
+href="../workflows.html">工作流</a>、<a
+href="../kb-rules-v1.html"><code>kb.<wbr>rules/<wbr>v1</code>
+约定</a>（每份有 <code>.<wbr>md</code> 和
+<code>.<wbr>html</code>）、<code>build-<wbr>html.<wbr>sh</code> 与
 <code>html-<wbr>kit/<wbr></code></td>
-<td><a href="../architecture.html">架构</a></td>
+<td>这三份</td>
 </tr>
 <tr>
 <td><code>poc/<wbr>app/<wbr></code></td>
@@ -432,7 +437,7 @@ Agent、发布</td>
 </div>
 <p><strong>特意不放进包的</strong>：<code>node_modules/</code>、<code>.build/</code>（九安副本
 <code>.build/jiuan/</code>，<code>deploy.sh</code>
-每次重建）、<code>dist/</code>（含新前端的构建产物）、<code>archive/</code>（旧证据、旧包）、<code>__pycache__/</code>、<code>.DS_Store</code>；设计稿、实现计划、进度看板、历次评估、评审记录（在开发仓库）；客户的制度原文（知识库的来源文档，例如
+每次重建）、<code>dist/</code>（含新前端的构建产物）、<code>archive/</code>（旧证据、旧包）、<code>__pycache__/</code>、<code>.DS_Store</code>；以后再写的设计稿和实现计划（<code>docs/specs/</code>、<code>docs/plans/</code>）；客户的制度原文（知识库的来源文档，例如
 <code>docs/sample-docs/</code> 里的
 .docx；导出时还会按文件名再查一遍，查到就不出包）；和这个 PoC
 无关或已过时的

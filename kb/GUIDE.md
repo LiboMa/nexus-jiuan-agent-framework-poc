@@ -238,7 +238,7 @@ vi deploy.env                     # 至少填：NEXUS_URL、管理员密码来�
 
 只跑部分阶段：`./deploy.sh db,network`；查看状态：`./deploy.sh status`；轮换数据库密码：`./deploy.sh rotate-db-password`（10.3）。
 
-**用自己的 SSH 密钥部署（PG 先于前端）。** 部署分三块：PG 与知识库后端（本工具）、前端（测试台或九安自己的前端，另有人部署）、Nexus 上的 Agent 与发布。客户一般先部署 PG：自己起一台 EC2（带自己的密钥对，安全组对部署人的地址开 22、对 Nexus 的私网段开 `PG_PORT`），然后在 `deploy.env` 里写 `PG_HOST_MODE=existing`、`PG_HOST_INSTANCE_ID`、`PG_HOST_TRANSPORT=ssh`、`PG_SSH_HOST`、`PG_SSH_KEY`（最好再给核对过的 `PG_SSH_KNOWN_HOSTS`），照上面的顺序跑（本机连不到主机地址时再给 `PG_SSH_PROXY_COMMAND`：跳板机，或 EC2 Instance Connect 端点）。`db` 阶段在主机上装 Docker、起容器；`connector` 阶段把这台主机的私网地址和密码登记进 Nexus（数据连接器和数据库凭证密钥），审核 Agent 和 PG 知识库 Agent 都经它连库。前端以后再分批接上来，不用动这里。create 模式建的专用主机没有公网地址，只经 SSM。
+**用自己的 SSH 密钥部署（PG 先于前端）。** 部署分三块：PG 与知识库后端（本工具）、前端（测试台或九安自己的前端，另有人部署）、Nexus 上的 Agent 与发布。客户一般先部署 PG：自己起一台 EC2（带自己的密钥对，安全组对部署人的地址开 22、对 Nexus 的私网段开 `PG_PORT`），然后在 `deploy.env` 里写 `PG_HOST_MODE=existing`、`PG_HOST_INSTANCE_ID`、`PG_HOST_TRANSPORT=ssh`、`PG_SSH_HOST`、`PG_SSH_KEY`（最好再给核对过的 `PG_SSH_KNOWN_HOSTS`；本机连不到主机地址时再给 `PG_SSH_PROXY_COMMAND`：跳板机，或 EC2 Instance Connect 端点）。PG 先于审核 Agent 部署时，再写 `AGENT_PATCH_PROMPT=false`（否则预检停在「Nexus 里找不到 Agent」），并且只跑数据层：`./deploy.sh preflight,db,network,egress,connector --dry-run`，再去掉 `--dry-run`，然后 `verify`（规则还没入库时 `[ingest]` 报「规则表不存在」是预期的）。规则以后经 PG 知识库 Agent 入库，或者给 `RULES_DOCX` 再跑 `ingest`。`db` 阶段在主机上装 Docker、起容器；`connector` 阶段把这台主机的私网地址和密码登记进 Nexus（数据连接器和数据库凭证密钥），审核 Agent 和 PG 知识库 Agent 都经它连库。前端以后再分批接上来，不用动这里。create 模式建的专用主机没有公网地址，只经 SSM。
 
 ---
 
@@ -497,7 +497,7 @@ python3 -I lib/parse_rules.py .build/try/input.docx .build/try/rules.json
 
 2026-10-30 起 PG 的连接全在 Agent 那一侧：页面 → 测试台外壳（`poc/app/kb-steward-routes.mjs`、`kb-steward-client.mjs`）→ A2A → PG 知识库 Agent「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b` → 它的工具 → PG。测试台自己不连库、不解析文档。
 
-- **约定 `kb.rules/v1`**：一行文字 `kb.rules/v1 · <op>：只调用对应的工具一次，原样返回工具的 JSON。` + 数据 Part `{op, …}`，`ingest` 再带 .docx 文件 Part。操作：`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`；`ingest` 限时 5 分钟，其余 2 分钟。Agent 只回工具的 JSON；它偶尔在 JSON 前多写一句话（模型调工具前先说一句，A2A 把各段文字拼在一起），外壳收下不超过 200 字、不含 `{ }` 的一句，记 `POC_KB_AGENT_REPLY_LEADIN <op> <字数>`（不记内容），别的不合格式判 `KB_AGENT_REPLY_INVALID`、不重试。接口的完整约定在开发仓库的 `docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md`。
+- **约定 `kb.rules/v1`**：一行文字 `kb.rules/v1 · <op>：只调用对应的工具一次，原样返回工具的 JSON。` + 数据 Part `{op, …}`，`ingest` 再带 .docx 文件 Part。操作：`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`；`ingest` 限时 5 分钟，其余 2 分钟。Agent 只回工具的 JSON；它偶尔在 JSON 前多写一句话（模型调工具前先说一句，A2A 把各段文字拼在一起），外壳收下不超过 200 字、不含 `{ }` 的一句，记 `POC_KB_AGENT_REPLY_LEADIN <op> <字数>`（不记内容），别的不合格式判 `KB_AGENT_REPLY_INVALID`、不重试。接口的完整约定在开发仓库的 `docs/kb-rules-v1.md`。
 - **写进同一套表**：Agent 照旧写 `approval_rules`、`kb_documents`，向量在库里由 `kb_embed()` 生成，所以审核 Agent 经连接器的查法（`kb_search`、按 `rule_id` 取全文）不用改。
 - **启用**：这个发布的调用密钥由项目负责人在测试台「Agent 接入」页启用（就绪、不进审批流）；部署配置的 `KB_PG_PUBLICATION_ID` 指向它。
 - **代码**：PG 知识库 Agent 在 [`../knowledgebase-writer-agent-pg/`](../knowledgebase-writer-agent-pg/README.md)（2026-11-02 从分支 `feat/pg-kb-steward` 合进来），它的解析器是本目录的 `lib/kb_parse.py`、`lib/clauses.py`、`lib/doc_blocks.py`；做法见 7.5。

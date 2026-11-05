@@ -1,0 +1,24 @@
+flowchart TD
+  src["制度原文<br/>审批风险判断卡 HTML"]
+  conv["kb/convert/risk-cards<br/>转成可入库的 .docx"]
+  page["新前端「知识库」页<br/>（只给管理员）"]
+  shell["测试台外壳<br/>kb-steward-routes"]
+  cache[("poc_kb_cache<br/>jiuan 库")]
+  kba["PG 知识库 Agent<br/>（Nexus · kb.rules/v1）"]
+  tools["它的工具<br/>Sandbox VM · 密钥 pg_kb"]
+  pg[("PG nexus 库<br/>approval_rules · kb_search")]
+  bed["Bedrock<br/>Cohere Embed v4"]
+  audit["审核 Agent<br/>（Nexus）"]
+  src --> conv --> page
+  page -- 上传 / 下线 / 恢复 / 删除 / 检索 --> shell
+  page -- 看清单、详情 --> shell
+  shell -- 读：先看这里 --> cache
+  shell -- 没存过、刷新、写操作 --> kba
+  kba --> tools --> pg
+  pg -- kb_embed 生成向量 --> bed
+  audit -- 数据连接器 · 只读 SQL --> pg
+  class src,conv jiuan
+  class page,shell poc
+  class cache poc
+  class kba,tools,audit nexus
+  class pg,bed nexus

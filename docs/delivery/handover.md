@@ -3,7 +3,7 @@ subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
 date: 2026-11-02
 status: 只留新 UI：九安 v0.7.10 测试台（新前端 + 外壳 + 九安副本）；v0.5.3 PoC 2026-11-02 从代码里拿掉
 stamp: 交接
-scope: jiuan-v0710.tinyboat.blog（九安 v0.7.10 测试台，栈 andon-finance-m7g）、nxs-beine1013.tinyboat.blog（Nexus；线上 Nexus AI 的实际地址是 d3u3hj2us186y.cloudfront.net）、本机 audit-nexus/ 目录
+scope: jiuan-v0710.tinyboat.blog（九安 v0.7.10 测试台，栈 andon-finance-m7g）、nxs-beine1013.tinyboat.blog（测试台用的 Nexus；生产用的线上 Nexus AI 是另一套，d3u3hj2us186y.cloudfront.net）、本机 audit-nexus/ 目录
 audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 ---
 
@@ -13,7 +13,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 
 **是什么**：九安自助审核平台 v0.7.10 的原服务端跑在一台 EC2 上（测试台）。跑的是九安开发包的副本（`.build/jiuan`，开发包 + 补丁 0001–0007，`source/` 不动），用九安自己的运行时：MySQL 存储、平台存储、连接器、调用中间件、流水线运行器、Agent 任务服务；不接真汇联易和钉钉（汇联易是进程内的假的），单据是虚构的，存在实例本机的 MySQL 8.0 里。前面是我们的新前端 `poc/web` 和外壳 `poc/app`（口令登录、出网守卫、新前端用的接口）。AI 能力都在 Nexus 上：管理员在「Agent 接入」页启用 Agent、指定一个审批 Agent，单据池里的对公付款单自动出 AI 独立建议，人在单据抽屉里采纳或改判；知识库经 Nexus 上的 PG 知识库 Agent 读写。
 
-2026-11-02 起只留这一套（新 UI）：原来并排的 v0.5.3 PoC（PoC 服务端，当时在 `poc/app/`、「Nexus Agent」页、知识 Agent、命令行 Skill agent-access、Agent 接入框架的契约 `contract/`）已从代码里拿掉，服务器上的也会删（第 2.2 节、第 6 节第 24 条）。机器类型以后用 m7g.xlarge（arm64）。
+2026-11-02 起只留这一套（新 UI）：原来并排的 v0.5.3 PoC（PoC 服务端，当时在 `poc/app/`、「Nexus Agent」页、知识 Agent、命令行 Skill agent-access、Agent 接入框架的契约 `contract/`）已从代码里拿掉，服务器上的也会删（第 2.2 节、第 6 节第 14 条）。机器类型以后用 m7g.xlarge（arm64）。
 
 ![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
 
@@ -79,7 +79,7 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 
 | 栈 | 机器 | 站点 | 管理通道 | 现状 |
 |---|---|---|---|---|
-| `andon-finance-m7g`（现在的测试台） | `i-0b390d835dd9838d0`，一台 m7g.xlarge（arm64），前端、MySQL、知识库的 PG 都在上面 | `jiuan-v0710.tinyboat.blog`（2026-11-02 19:13–19:18（UTC+8）从旧栈迁过来；之前的临时站点 `jiuan-v0710-m7g` 已经不用） | 不用 SSM，经 SSH（密钥对 `key-malibo-sa`）+ 栈里的 EC2 Instance Connect 端点 | 2026-11-02 16:59（UTC+8）起 Nexus 的 PG 连接器和数据库凭证密钥指向它的 PG；v0.5.3 留下的数据已清（第 6 节第 22–24 条） |
+| `andon-finance-m7g`（现在的测试台） | `i-0b390d835dd9838d0`，一台 m7g.xlarge（arm64），前端、MySQL、知识库的 PG 都在上面 | `jiuan-v0710.tinyboat.blog`（2026-11-02 19:13–19:18（UTC+8）从旧栈迁过来；之前的临时站点 `jiuan-v0710-m7g` 已经不用） | 不用 SSM，经 SSH（密钥对 `key-malibo-sa`）+ 栈里的 EC2 Instance Connect 端点 | 2026-11-02 16:59（UTC+8）起 Nexus 的 PG 连接器和数据库凭证密钥指向它的 PG；v0.5.3 留下的数据已清（第 6 节第 13、14 条） |
 | `andon-finance-poc`（旧栈，等删） | `i-01d753d48056fd423`，t3.large（x86），EIP `13.223.152.186` | `jiuan-v0710-old.tinyboat.blog`（迁域名时改的名字）、`andon-finance.tinyboat.blog`，都没人用 | 只走 SSM | 还是旧版本（v0.5.3 PoC 在前、按 Host 把 v0.7.10 转过去）；它上面的 PG 没删、不再有新写入。根卷快照 `snap-05180f1a83a6edada`（2026-11-02，删栈后留着）。构件桶 `andon-finance-poc-artifactbucket-786tdeg4dqkb`，CloudFront `E92MPQ217VIPX` |
 
 **域名迁移（2026-11-02 19:13–19:18（UTC+8），站点停了约 5 分钟）**：先用 `migrate-data.sh --skip-pg` 从旧机器最后同步一次 `jiuan07` 库和状态目录（73 项逐表一致；当时还叫这个名字，第 2.7 节）；旧栈用它原来的模板（`--use-previous-template`）只把 `Jiuan07DomainName` 改成 `jiuan-v0710-old.tinyboat.blog`，腾出别名；m7g 栈的环境配置改成 `JIUAN07_DOMAIN_NAME=jiuan-v0710.tinyboat.blog`（现在叫 `DOMAIN_NAME`）再跑 `deploy.sh`。迁完只做了不改数据的检查：首页、登录、单据池 5 张、工作台、知识库 449 条就绪、`/analysis.html`。迁域名的那几分钟里查过 DNS 的机器，最多 15 分钟内（区的否定缓存 900 秒）可能只拿到 IPv6 地址、连不上；macOS 上 `sudo killall -HUP mDNSResponder` 清缓存。旧栈项目负责人定「先留几天再删」：删的时候 `DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/destroy.sh`。
@@ -99,13 +99,13 @@ AWS 账号 533267047935，区域 us-east-1。交接仓库和交付包里，本�
 
 ### 2.3 Nexus
 
-<https://nxs-beine1013.tinyboat.blog>，v0.3.28。（线上 Nexus AI 的实际地址：<https://d3u3hj2us186y.cloudfront.net/>）
+<https://nxs-beine1013.tinyboat.blog>，v0.3.28，测试台用这一套。生产用的线上 Nexus AI 是另一套（<https://d3u3hj2us186y.cloudfront.net/>，[客户部署路线](customer-rollout.md)前置 3）：两边的发布、密钥不通用。
 
 | 对象 | 编号 | 用途 |
 |---|---|---|
 | 九安审核AI（PoC） | Agent `agent_56d44dd9350f4a568bca387319e12ae4`，发布 `pub_5c53e70d8dc7ddea` | 审批 Agent：单据池的 AI 独立建议（`review_advice@1`）都发给它；由管理员在「Agent 接入」页启用、「设为审批 Agent」 |
 | 知识库文档管家（PG 版） | 发布 `pub_6ea5f0855dff6c1b` | 九安 v0.7.10 测试台读写知识库都经它（A2A，`kb.rules/v1`：`describe`、`ingest`、`list`、`detail`、`deactivate`、`restore`、`delete`、`check`、`search`）；调用密钥在「Agent 接入」页启用，它就绪、不进审批流。代码在 `knowledgebase-writer-agent-pg/`（2026-11-02 合进 main） |
-| PG 数据连接器与数据库凭证密钥 | 连接器 `pgvector-andon`（`conn-f0c7233959d9`），密钥 `key-a015b93ad361` | 两个 Agent 到 PG 的路（第 6 节第 23 条） |
+| PG 数据连接器与数据库凭证密钥 | 连接器 `pgvector-andon`（`conn-f0c7233959d9`），密钥 `key-a015b93ad361` | 两个 Agent 到 PG 的路（第 6 节第 13 条） |
 | 九安知识Agent（PoC） | Agent `agent_949d9bc407b9430aae20f26326ef6fca`，发布 `pub_2cc24c29d2e5b2c9` | v0.5.3 PoC 用的；2026-11-02 起代码里不再用（提示词 `knowledge-agent/` 已拿掉），Nexus 上的 Agent 和发布没动 |
 
 这套 Nexus 用的是旧部署模板（`/a2a` 经前端反代，请求体上限 10 MB）。
@@ -172,8 +172,9 @@ v0.5.3 PoC 的那几样（各账号的 Nexus 连接和启用、旧的共享 CLI 
 ## 3. 文档索引（推荐阅读顺序）
 
 1. 本文。部署一整套照[交付指南](delivery-guide.md)（三块的顺序、命令、验收、回滚）。
-2. [架构](../architecture.md)：测试台跑着的样子、每一块做什么、调用链、三块部署。
-3. [快速上手](quick-guide.md)：给管理员，一步步在「Agent 接入」页接上 Nexus 上的 Agent。
+2. [架构与技术评估](../architecture.md)：系统由哪几块组成、为什么这样搭、数据放在哪；风险与技术债、上生产前要改的。
+   [工作流](../workflows.md)：单据审核、接入 Agent、知识库、变更、部署、换机器、出包交接、运维各按什么顺序做。
+3. [快速上手](quick-guide.md)：第一次接触的人从这里开始；管理员接 Nexus 上的 Agent 在它的第 4 节。
    [开发者快速对接指南](developer-guide.md)：给九安的开发，在 v0.7.10 上写、接一个 Agent；时限、知识库、提示词的教训。
    [Skills 配置指南](skills-guide.md)：在编码工具里装好、连好 nexus-ai-operator。
 4. [部署与迭代规范](deploy-iteration.md)：每类变更怎么改、怎么测、怎么发、怎么回滚。
@@ -216,64 +217,30 @@ v0.5.3 PoC 的那几样（各账号的 Nexus 连接和启用、旧的共享 CLI 
 
 ## 6. 交接时的未完成事项
 
-按紧急程度排列。第 1–12 条是 v0.5.3 PoC 时期记的，2026-11-02 起只适用于新 UI 的那部分还留着，其余标了「随 v0.5.3 PoC 拿掉」。
+按紧急程度排列，都是现在还没做完的（已经解决的、v0.5.3 时期的记录 2026-11-05 删去，见 git 历史）。技术上的风险和建议另见[架构与技术评估](../architecture.md)第 9 节。
 
-1. **构件和健康检查还不带提交号**（评审 C1 的后一半）：代码已经进了私有仓库，但 `deploy.sh` 的归档包名和健康检查 `/poc/healthz` 里还没有提交号，线上跑的是哪个提交要靠时间对。见[部署与迭代规范](deploy-iteration.md)第 2 节。
+1. **构件和健康检查还不带提交号**（评审 C1 的后一半）：`deploy.sh` 的归档包名和健康检查 `/poc/healthz` 里还没有提交号，线上跑的是哪个提交要靠时间对。见[部署与迭代规范](deploy-iteration.md)第 2 节。
 2. **CloudFront 到源站是明文 HTTP**（评审 C2）：登录口令、会话、管理员粘贴的密钥在这一段上没有加密。测试台只有虚构数据，开发测试阶段可以接受；上生产前必须改成 HTTPS。
-3. ~~部署脚本还剩一个缺口（评审 I2）：服务崩溃循环会覆盖实例上的 `previous`~~：2026-11-02 起不再有：实例启动时不再从构件桶拉包，`previous` 只在部署时换（旧栈删掉之前，它上面还是旧的样子）。
-4. **值班看不到问题**（评审 I6）：健康检查只看服务是否就绪；调用密钥失效、Nexus 调用失败都不会让它变红。每天在单据池看一眼有没有新的 AI 建议（或模拟来单一张）。
-5. **上生产前要做的密钥事项**（开发测试阶段不用动）：「Agent 接入」页连 Nexus 用的 API 密钥改成只读档位（评审 I4）；统一清理 operator 的 API 密钥 `claude_code` 和 `secrets.env` 里不再用的几行。v0.5.3「我的 Nexus」用 `builder` 档位连接、旧的共享 CLI 连接 `jiuan-audit-host` 这两项随 v0.5.3 PoC 拿掉。
-6. **上生产前必须改的**：见第 6.1 节。
-7. ~~初审 MVP（第二份计划：在 v0.5.3 上写九安补丁 0001–0006）~~：随 v0.5.3 PoC 拿掉。九安 v0.7.10 自己已经带了 Agent 接入的那一套（契约 `src/agent-contract/`、A2A 适配层、Agent 任务服务、「Agent 接入」），测试台在它上面打补丁 0001–0007。
-8. ~~审批记录还在内存里~~：随 v0.5.3 PoC 拿掉。v0.7.10 的单据、AI 建议的各轮和启用记录都在 MySQL 的 `jiuan` 库里。
-9. **测试台的数据只在这一台实例上**：MySQL、PG 和 `/var/lib/jiuan` 都在根卷上，实例被替换前先跑 `poc/infra/backup.sh`（根卷快照）；换机器用 `migrate-data.sh`（[运维](operations.md)第 2.5 节）。（v0.5.3 九安导航里缺「平台运行」分组的那半条随它拿掉。）
-10. ~~业务网关层以后再做（多轮会话、延后结果、分区与串联、租户级任务、按次配额）~~：随 Agent 接入框架的设计稿一起拿掉。
-11. **测试台评审的 Minor**：那 12 条大多是 v0.5.3 测试台的（它的 `bench-reset.sh`、`run.sh`、`build-jiuan.sh`、内存模式、种子单据），随它拿掉。还适用的两条：换型脚本只检查实例这一个资源；`backup.sh` 默认第一块卷是根卷。
-12. **「九安审核AI」偶发返回不合法的 JSON**（v0.5.3 时 2026-10-20 在请求里加输出规则处理过，那段代码随 v0.5.3 PoC 拿掉）：v0.7.10 里九安的 A2A 适配层按契约检查回答，不合格就在同一段对话里要求修正一次，还不行报 `AI_INVALID_RESPONSE`。
-
-九安 v0.7.10 测试台的（2026-11-02 记）：
-
-13. **（已解决，2026-11-02）分支 `feat/pg-kb-steward` 已合进 main**：PG 知识库 Agent（`knowledgebase-writer-agent-pg/`）、整库 Cohere Embed v4 的 `kb/`（防混用、迁移、回退，`kb/GUIDE.md` 7.6）和栈模板里的 `KbBedrockPolicy` 都在本仓库了。之前「只用 `--code-only`、不跑知识库 db 阶段」的限制取消；跑 db 阶段前确认 `kb/deploy.env` 的 `EMBED_MODEL_ID` 是 Cohere v4（缺省就是）。
-14. **九安上游的 `review_advice@1` 时限还是 120 秒**：带知识库查询的真实审核一轮要 15–120 秒，测试台用补丁 0006、0007 放到 180 / 200 秒。建议九安在自己的契约里调高（[开发者快速对接指南](developer-guide.md)第 4 节、第 7 节）。
-15. **审核 Agent 的模型对不上**：发布实际跑 `global.anthropic.claude-sonnet-5`，提示词元数据里是 `${AGENT_MODEL}`（环境配置里是 opus-5-5），只是元数据。以哪个为准，等项目负责人定。
-16. **发布上手工加的 15 个工具已清掉**（`s3vectors_*`、`http_request_tool` 等，在名为 `demo` 的配置里）：本仓库没有它们，要恢复只能在 Nexus 网页上重新加。注意 `audit-agent/apply.py` 在 pg 方式下每次下发都按 `CONFIG_TOOLS`（现在是空的）重写工具清单：加回去以后，下次下发前先改 `CONFIG_TOOLS`，否则又会被清掉。
-17. **`kb/deploy.sh verify --e2e` 现在会失败**（另一个会话在用它）：它要规则问答命中 `C03-1.2`，而那份审批矩阵 `finance-approval-v4` 已下线。矩阵重新上线或改掉期望值之前，别把它当成故障。审批矩阵重新上线时，审核 Agent 提示词第 9 条 c ② 也要改（[审核 Agent 说明](../../audit-agent/README.md)「知识库（pg 方式）」）。
-18. ~~工作台「最常引用的规则」只认 `C…` / `G-…` 编号~~：2026-11-02 已解决，风险判断卡的 `risk-cards-T…` 等条款编号也算，旁边显示依据里跟着的说明。
-19. ~~出包的白名单里没有 `poc/web/`~~：2026-11-02 已补上（`copy poc/web`，不带 `dist/`）。
-20. **项目负责人要在自己的浏览器上确认**：「Agent 接入」页的密钥框上，Chrome 还会不会弹「保存密码」。
-21. **S3 Vectors 方式的知识库只有代码，没上线**：它的文档管家用的规则请求说明和 PG 版是同一段，回复前多一句话的问题它也会有；测试台的客户端两种方式都放过这种回复（`POC_KB_AGENT_REPLY_LEADIN`）。
-22. ~~m7g 测试环境还没接正式域名~~：2026-11-02 19:13–19:18（UTC+8）已迁（第 2.2 节）。原来写的是：栈 `andon-finance-m7g`，一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点管理（公司网络连不到它的弹性 IP 所在的 `184.192.0.0/12`），临时站点 `jiuan-v0710-m7g.tinyboat.blog`。数据 2026-11-02 从线上那台搬过来（`migrate-data.sh`，199 项逐表一致）。**计划 2026-11-02** 把 `jiuan-v0710.tinyboat.blog` 迁过来、再删旧栈：迁之前用 `migrate-data.sh --skip-pg` 从旧机器再同步一次 `jiuan` 库和状态目录（新机器上跑过的端到端测试会重置它的 `jiuan` 库）。
-23. **Nexus 已经指到新机器的 PG**（2026-11-02 16:59，UTC+8）：数据库凭证密钥 `key-a015b93ad361`（名字还叫 `pgvector-10.0.1.38`）和连接器 `pgvector-andon`（`conn-f0c7233959d9`）的主机改成 `10.0.1.46`，审核 Agent 和 PG 知识库 Agent 都跟着走，旧测试台也在用新 PG。旧实例上的 PG 没删、不再有新写入；要切回去：`DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/kb.sh connector`（先 `--dry-run`）。删旧栈之后就切不回去了。
-24. **旧栈 `andon-finance-poc` 还没删**（2026-11-02 记）：域名已经迁走，项目负责人定「先留几天再删」；删之前的根卷快照是 `snap-05180f1a83a6edada`。删的时候 `DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/destroy.sh`（要输入栈名确认；删完第 23 条的「切回旧 PG」就没有了）。m7g 实例上 v0.5.3 留下的数据（MySQL 库 `jiuan_bench_test`、`jiuan_analysis` 和 v0.5.3 的账号 `jiuan_app`（现在的 `jiuan_app` 是当晚由 `jiuan07_app` 改名来的）、`/var/lib/andon-finance/`、旧的配置和密钥文件、`andon` 用户和组）2026-11-02 已经按[运维](operations.md)第 2.8 节清掉。
-
-下面三段是 v0.5.3 PoC 时期的记录，留作历史；里面提到的 v0.5.3 的 `poc/app/`、`agent-access`、`bench-reset.sh`、`REGISTRY_KEY`、内存存储等 2026-11-02 都已拿掉（现在的 `poc/app/`、`bench-reset.sh` 是 v0.7.10 测试台的，当晚去掉「07」后才叫这个名字）。
-
-已经解决的（2026-10-20）：
-- **工作流文档按应用现状更新**：Agent 的调用密钥在前端加载，`secrets.env` 只放应用的启动配置；端到端测试只用审核员本人在前端的连接和启用；`deploy.sh` 新建 `secrets.env` 时不再写调用密钥那一行。
-- **Agent 输出不合法 JSON**（第 6 节第 12 条）：请求里加了输出规则，完整端到端测试 15 个全部通过。
-- **交接仓库**：<https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>，只有交接内容；AWS 账号与 EC2 标识已脱敏；有 `secrets.env.example`。
-
-已经解决的（2026-10-19）：
-- **测试台升级**：升级前备份（根卷快照 `snap-03051c671bc2738a0`，实例上打包了账号目录）→ 停机换型到 t3.large → 先按内存存储部署、装好 MySQL → 在测试台上跑要 MySQL 的测试（11/11，4 次故意改坏代码都被抓住）→ 切到 MySQL → 端到端测试 15 通过、0 失败、1 按设计跳过。各账号的连接与启用都没变。记录在 `evidence/bench/2026-10-19-upgrade.md`。
-- **部署能看出安装失败**（评审 I1）：`deploy.sh` 检查 SSM 的执行结果，不是 `Success` 就报失败。
-- **测试台的最终评审**（3 个 Important，每个都先写了会失败的测试再修；2026-10-19 已部署，SSM 结果 Success，健康检查 `database: ok`）：
-  - 实例上已有的测试台密钥只认原值：`secrets.env` 被重新生成或改过时，部署在重启前就失败，服务照旧跑；`BENCH_DATA_KEY` 格式不对也不写；
-  - 健康检查真的去查库：库断了 `/api/health` 回 503，`database` 是 `unavailable`；
-  - 回到内存存储不碰 MySQL：MySQL 坏了也能用 `POC_STORE=memory deploy.sh --code-only` 退回来。
-- **端到端测试不再重启服务**：开始前用 `bench/bench-reset.sh` 重建测试台的库（重建失败才退回重启）。
-- **Agent 接入框架**：设计稿 v2 与契约文件（`contract/`），按通用框架设计，以后的财务、知识库等各类 Agent 都用同一套信封和任务目录。
-- **应用自己的 Skill**：`skills/agent-access/` 打包成可以安装的 Skill（`SKILL.md`、`README.md`、`references/`），有测试检查它和命令行脚本一致；两个 Skill 的配置写进 [Skills 配置指南](skills-guide.md)。
-- **代码进 Git**（评审 C1 的前一半）：交接仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide>（只有交接内容；标签 `v0.1`，2026-10-21 起 `v0.1.0`），开发仓库 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc>（标签 `v0.1`）。
-- **整理**：第 2–4 轮的原始接口返回、10-17 和 10-18 的旧包、建 Agent 时的调用记录、测试台升级的执行记录移进 `archive/`（不进交付包，引用它们的历史文档已改链接）。
-
-已经解决的（2026-10-18）：
-- **审批流的调用密钥**：改为从系统里读：先用发起人在 Agent 页启用的那把，没有再用别的账号启用的，最后才用 `secrets.env` 兜底（这个兜底 2026-10-20 起也不用了：调用密钥一律在前端加载）；Nexus 回 401 时只把用到的那一把标记失效。线上验证：`secrets.env` 里那把 Nexus 已不认，审批流照样走通。
-- **完整端到端测试**：14 通过、0 失败、1 按设计跳过。
-- **被端到端测试删掉的知识 Agent 启用**：已由本人重新启用；测试也改成了只用、不动本人启用的项。
+3. **值班看不到问题**（评审 I6）：健康检查只看服务是否就绪；调用密钥失效、Nexus 调用失败都不会让它变红。每天在单据池看一眼有没有新的 AI 建议（或模拟来单一张）。
+4. **测试台的数据只在这一台实例上**：MySQL、PG 和 `/var/lib/jiuan` 都在根卷上，实例被替换前先跑 `poc/infra/backup.sh`（根卷快照）；换机器用 `migrate-data.sh`（[运维](operations.md)第 2.5 节）。
+5. **九安上游的 `review_advice@1` 时限还是 120 秒**：测试台用补丁 0006、0007 放到 180 / 200 秒；2026-11-01 改过提示词以后一轮九成在 15 秒内。建议九安在自己的契约里调高（[开发者快速对接指南](developer-guide.md)第 4 节、第 7 节）。
+6. **审核 Agent 的数据连接器账号有写权限**：提示词只让它做 SELECT，但上生产前要换成只读账号再绑给连接器（[审核 Agent 说明](../../audit-agent/README.md)「知识库（pg 方式）」）。
+7. **上生产前要做的密钥事项**（开发测试阶段不用动）：「Agent 接入」页连 Nexus 用的 API 密钥改成只读档位（评审 I4）；统一清理 operator 的 API 密钥 `claude_code`；`secrets.env` 里不再用的五行（`NEXUS_API_KEY`、`E2E_KNOWLEDGE_A2A_KEY`、`REGISTRY_KEY`、`BENCH_MYSQL_APP_PASSWORD`、`BENCH_DATA_KEY`）可以删。
+8. **审核 Agent 的模型对不上**：发布实际跑 `global.anthropic.claude-sonnet-5`，提示词元数据里是 `${AGENT_MODEL}`（环境配置里是 opus-5-5），只是元数据。以哪个为准，等项目负责人定。
+9. **发布上手工加的 15 个工具已清掉**（`s3vectors_*`、`http_request_tool` 等，在名为 `demo` 的配置里）：本仓库没有它们，要恢复只能在 Nexus 网页上重新加。`audit-agent/apply.py` 在 pg 方式下每次下发都按 `CONFIG_TOOLS`（现在是空的）重写工具清单：加回去以后，下次下发前先改 `CONFIG_TOOLS`，否则又会被清掉。
+10. **`kb/deploy.sh verify --e2e` 现在会失败**：它要规则问答命中 `C03-1.2`，而那份审批矩阵 `finance-approval-v4` 已下线。矩阵重新上线或改掉期望值之前，别把它当成故障。审批矩阵重新上线时，审核 Agent 提示词第 9 条 c ② 也要改（[审核 Agent 说明](../../audit-agent/README.md)「知识库（pg 方式）」）。
+11. **项目负责人要在自己的浏览器上确认**：「Agent 接入」页的密钥框上，Chrome 还会不会弹「保存密码」。
+12. **S3 Vectors 方式的知识库只有代码，没上线**：约 8,000 行。定下来不用就从仓库拿掉；要用就补上部署和端到端。
+13. **旧 PG 还在**：2026-11-02 16:59（UTC+8）起 Nexus 的数据库凭证密钥 `key-a015b93ad361`（名字还叫 `pgvector-10.0.1.38`）和连接器 `pgvector-andon`（`conn-f0c7233959d9`，名字里也还带着旧地址）指向 m7g 那台的 `10.0.1.46`。旧实例上的 PG 没删、不再有新写入；要切回去：`DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/kb.sh connector`（先 `--dry-run`）。删旧栈之后就切不回去了。
+14. **旧栈 `andon-finance-poc` 还没删**：域名已经迁走，项目负责人定「先留几天再删」；删之前的根卷快照是 `snap-05180f1a83a6edada`。删的时候 `DEPLOY_ENV=poc/infra/env/beine1013.env bash poc/infra/destroy.sh`（要输入栈名确认；删完第 13 条的「切回旧 PG」就没有了）。它上面还是改名之前的名字，`migrate-data.sh` 不能再从它搬数据。
+15. **客户部署件 1.0.1 里还写着旧路径**：`customer-deploy/knowledgebase-writer-agent-pg/` 的部署指南和打包脚本里引用 `poc/app07/…`。它是从交付仓库 `nexus-customer-deploy` 原样收进来的，要在那边改完再出 1.0.2。
+16. **交接仓库是公开仓库**：2026-11-03 公司的代码安全工具把 <https://github.com/LiboMa/nexus-jiuan-agent-framework-poc-guide> 判为未批准的公开仓库、拦下推送（之后手动推送）。确认审批状态；不该公开就改成私有或换到批准的位置。
+17. **测试台评审还适用的两条 Minor**：换型脚本只检查实例这一个资源；`backup.sh` 默认第一块卷是根卷。
+18. **上生产前必须改的**：见第 6.1 节。
 
 ### 6.1 上生产前必须改的
 
-来自 2026-10-17 的交付前代码评审（评审记录在开发仓库），编号沿用评审里的；2026-11-02 按新 UI 重新核对过：
+来自 2026-10-17 的交付前代码评审（评审记录 2026-11-05 删去，见 git 历史），编号沿用评审里的；2026-11-02 按新 UI 重新核对过：
 
 | 编号 | 问题 | 现在 |
 |---|---|---|

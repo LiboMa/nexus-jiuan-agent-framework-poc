@@ -70,7 +70,7 @@ audience: 项目负责人、应用开发、九安团队
 进入阶段 2 的门槛：`kb/deploy.sh verify` 通过；规则入库的条数对得上。
 
 1. 九安起一台主机（自己的密钥对；安全组对部署人的地址开 22、对 Nexus 的私网段开 PG 端口）。
-2. 照 [kb/GUIDE.md](../../kb/GUIDE.md) 第 4 节：`preflight` → `all --dry-run` → `all`（`db` 装 Docker、起容器；`connector` 把私网地址和密码登记进 Nexus）。
+2. 照[交付指南](delivery-guide.md) 4.1：`deploy.env` 写 `AGENT_PATCH_PROMPT=false`，只跑数据层 `preflight,db,network,egress,connector`（先 `--dry-run`）：`db` 装 Docker、起容器；`connector` 把私网地址和密码登记进 Nexus。规则等阶段 2 的 PG 知识库 Agent 部署好后再入库。
 3. 规则入库：用客户自己的制度文档（制度原文不进我们的仓库）。
 4. 向量模型用 Cohere Embed v4（缺省）；跑 `db` 前确认 `EMBED_MODEL_ID`（[kb/GUIDE.md](../../kb/GUIDE.md) 7.6）。
 

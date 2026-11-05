@@ -73,10 +73,9 @@ trap 'rm -rf "$work"' EXIT
 stage="$work/$NAME"
 mkdir -p "$stage"
 EXCLUDES=(--exclude .DS_Store --exclude node_modules --exclude __pycache__ --exclude '*.tmp' --exclude '.gallery.html')
-# 设计、过程和评审记录：只在开发仓库，不进交接仓库，也不进交付包
-NOT_HANDOVER=(--exclude /docs/specs --exclude /docs/plans --exclude /docs/progress.html --exclude /docs/assessment.md --exclude '/docs/feasibility-round2.*'
-  --exclude /docs/compromise-round3.md --exclude /docs/poc-a2a-round4.md --exclude /docs/replication-feasibility.md
-  --exclude /docs/agent-discovery-registration.html --exclude '/docs/delivery/code-review-*' --exclude '/docs/assets/diagrams/review-quadrant.*'
+# 设计稿、实现计划（以后再写的也放这几个目录）和脱敏对照表：只在开发仓库，不进交接仓库，也不进交付包。
+# 2026-11-05 起历史的评估、设计稿、计划和进度看板都从仓库里删了（见 git 历史）
+NOT_HANDOVER=(--exclude /docs/specs --exclude /docs/plans --exclude /docs/superpowers
   --exclude /docs/delivery/sanitize.conf
   # 客户的制度原文（知识库的来源文档）只在本机和测试台的知识库里，不进交接仓库和交付包
   --exclude /docs/sample-docs)

@@ -2,7 +2,7 @@
 subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
 date: 2026-11-02
 status: 交付版 v3（只留新 UI：九安 v0.7.10 测试台；一台机器一个服务 andon-jiuan）
-scope: 九安 v0.7.10 测试台（栈 andon-finance-m7g；旧栈 andon-finance-poc 等删）与 Nexus nxs-beine1013（线上 Nexus AI 的实际地址：d3u3hj2us186y.cloudfront.net）
+scope: 九安 v0.7.10 测试台（栈 andon-finance-m7g；旧栈 andon-finance-poc 等删）与测试台用的 Nexus nxs-beine1013（生产用的线上 Nexus AI 是另一套：d3u3hj2us186y.cloudfront.net）
 audience: 运维、值班、应用开发、Agent 开发
 ---
 
@@ -156,35 +156,9 @@ python3 skills/nexus-ai-operator/scripts/nexus.py call GET /api/v2/sessions/<会
 
 **知识库**：测试台经 A2A 调 PG 知识库 Agent（`pub_6ea5f0855dff6c1b`，调用密钥在「Agent 接入」页启用）。部署、核对 PG 本身见 [kb/GUIDE.md](../../kb/GUIDE.md)。知识库页的操作清单、制度清单和详情存在 `jiuan` 库的 `poc_kb_cache` 里，打开页面不问 Agent；别处改了知识库（`kb/deploy.sh` 入库、在 Nexus 上直接操作）后，在页面上点「刷新清单」，或清掉这张表：`DELETE FROM poc_kb_cache;`（下次打开页面重新问 Agent）。规则见 [PoC 说明](../../poc/README.md)「知识库」。
 
-### 2.8 清理 v0.5.3 PoC 留在实例上的东西
+### 2.8 v0.5.3 PoC 留下的东西
 
-新代码部署时（`bench/bench-configure.sh`）会停掉、删掉 v0.5.3 PoC 的服务单元 `andon-finance-poc.service`、它的补充配置和转发设置；它的数据不动，要另外清。旧栈 `andon-finance-poc` 整个删掉时（[交接文档](handover.md)第 6 节第 24 条）一起没，不用单独清。m7g 实例上 2026-11-02 从旧机器搬来的那一份、和按旧模板建栈时留下的，新代码都不再用：
-
-| 东西 | 在哪 |
-|---|---|
-| v0.5.3 的两个库、应用账号 | MySQL 容器 `jiuan-mysql` 里的库 `jiuan_analysis`、`jiuan_bench_test`，账号 `jiuan_app` |
-| 各账号的 Nexus 连接与启用（调用密钥用旧的 `REGISTRY_KEY` 加密）、旧的共享 CLI 连接 | `/var/lib/andon-finance/`（系统用户 `andon` 的家目录） |
-| v0.5.3 的配置与密钥文件 | `/etc/andon-finance/env`、`/etc/andon-finance/bench.env`、`/etc/andon-finance/bench/mysql_app_password`、`/etc/andon-finance/bench/analysis_data_key` |
-| 启动时拉包的脚本 | `/usr/local/bin/andon-finance-fetch` |
-
-**不要动**：`/etc/andon-finance/secrets.env`、`/etc/andon-finance/bench/mysql_root_password`、`/etc/andon-finance/jiuan/`、`/var/lib/jiuan/`、MySQL 的 `jiuan` 库、`/opt/andon-finance/`。
-
-2026-11-02 已在 m7g 实例上照下面清过一次（另外删了 `andon` 用户和组）。以后在别的实例上要清，做法（项目负责人当场同意后再动手；先 `poc/infra/backup.sh` 做根卷快照）：
-
-```bash
-# 在实例上（第 1.2 节的会话里）
-sudo docker exec -i jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysql -uroot' <<'SQL'
-DROP DATABASE IF EXISTS `jiuan_analysis`;
-DROP DATABASE IF EXISTS `jiuan_bench_test`;
-DROP USER IF EXISTS 'jiuan_app'@'%';
-SQL
-sudo rm -f /etc/andon-finance/env /etc/andon-finance/bench.env /etc/andon-finance/bench/mysql_app_password /etc/andon-finance/bench/analysis_data_key /usr/local/bin/andon-finance-fetch
-sudo rm -rf /var/lib/andon-finance
-id andon >/dev/null 2>&1 && sudo userdel andon
-curl -fsS http://127.0.0.1:4180/poc/healthz                 # 测试台照常
-```
-
-清完在[交接文档](handover.md)第 6 节第 24 条记一笔。
+2026-11-02 已在 m7g 实例上清完（MySQL 库 `jiuan_analysis`、`jiuan_bench_test` 和 v0.5.3 的应用账号、`/var/lib/andon-finance/`、旧的配置和密钥文件、启动时拉包的脚本、`andon` 用户和组）。新代码部署时 `bench/bench-configure.sh` 还会停掉、删掉 v0.5.3 的服务单元和它的转发设置。旧栈 `andon-finance-poc` 上还是旧的，整个删栈时一起没（[交接文档](handover.md)第 6 节第 14 条）。当时的清理命令见 git 历史。
 
 ### 2.9 销毁
 
@@ -192,7 +166,7 @@ curl -fsS http://127.0.0.1:4180/poc/healthz                 # 测试台照常
 DEPLOY_ENV=poc/infra/env/<环境>.env audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认
 ```
 
-销毁前确认：构件桶里没有要留的东西；数据要留的先 `backup.sh` 或 `migrate-data.sh` 搬走；Nexus 的 PG 连接器和数据库凭证密钥没有指着这台的 PG（[交接文档](handover.md)第 6 节第 23 条）；用不着的调用密钥、API 密钥在 Nexus 上停用。
+销毁前确认：构件桶里没有要留的东西；数据要留的先 `backup.sh` 或 `migrate-data.sh` 搬走；Nexus 的 PG 连接器和数据库凭证密钥没有指着这台的 PG（[交接文档](handover.md)第 6 节第 13 条）；用不着的调用密钥、API 密钥在 Nexus 上停用。
 
 ## 3. 后续迭代的最佳方式
 

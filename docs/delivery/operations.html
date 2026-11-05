@@ -99,9 +99,9 @@ v0.7.10</span>运维与后续迭代</h1>
     <tr><th scope="row">状态</th><td>交付版 v3（只留新 UI：九安 v0.7.10
 测试台；一台机器一个服务 andon-jiuan）</td></tr>
     <tr><th scope="row">范围</th><td>九安 v0.7.10 测试台（栈
-andon-finance-m7g；旧栈 andon-finance-poc 等删）与 Nexus
-nxs-beine1013（线上 Nexus AI
-的实际地址：d3u3hj2us186y.cloudfront.net）</td></tr>
+andon-finance-m7g；旧栈 andon-finance-poc 等删）与测试台用的 Nexus
+nxs-beine1013（生产用的线上 Nexus AI
+是另一套：d3u3hj2us186y.cloudfront.net）</td></tr>
     <tr><th scope="row">读者</th><td>运维、值班、应用开发、Agent
 开发</td></tr>
   </table>
@@ -136,9 +136,8 @@ id="toc-26-测试台mysql-的检查重置备份">2.6 测试台：MySQL
 的检查、重置、备份</a></li>
 <li><a href="#27-ai-建议出不来慢" id="toc-27-ai-建议出不来慢">2.7 AI
 建议出不来、慢</a></li>
-<li><a href="#28-清理-v053-poc-留在实例上的东西"
-id="toc-28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
-留在实例上的东西</a></li>
+<li><a href="#28-v053-poc-留下的东西"
+id="toc-28-v053-poc-留下的东西">2.8 v0.5.3 PoC 留下的东西</a></li>
 <li><a href="#29-销毁" id="toc-29-销毁">2.9 销毁</a></li>
 </ul></li>
 <li><a href="#3-后续迭代的最佳方式" id="toc-3-后续迭代的最佳方式">3.
@@ -543,69 +542,21 @@ Agent；别处改了知识库（<code>kb/deploy.sh</code> 入库、在 Nexus
 上直接操作）后，在页面上点「刷新清单」，或清掉这张表：<code>DELETE FROM poc_kb_cache;</code>（下次打开页面重新问
 Agent）。规则见 <a href="../../poc/README.md">PoC
 说明</a>「知识库」。</p>
-<h2 id="28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
-留在实例上的东西</h2>
-<p>新代码部署时（<code>bench/bench-configure.sh</code>）会停掉、删掉
-v0.5.3 PoC 的服务单元
-<code>andon-finance-poc.service</code>、它的补充配置和转发设置；它的数据不动，要另外清。旧栈
-<code>andon-finance-poc</code> 整个删掉时（<a
-href="handover.html">交接文档</a>第 6 节第 24
-条）一起没，不用单独清。m7g 实例上 2026-11-02
-从旧机器搬来的那一份、和按旧模板建栈时留下的，新代码都不再用：</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>东西</th>
-<th>在哪</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>v0.5.3 的两个库、应用账号</td>
-<td>MySQL 容器 <code>jiuan-<wbr>mysql</code> 里的库
-<code>jiuan_<wbr>analysis</code>、<code>jiuan_<wbr>bench_<wbr>test</code>，账号
-<code>jiuan_<wbr>app</code></td>
-</tr>
-<tr>
-<td>各账号的 Nexus 连接与启用（调用密钥用旧的
-<code>REGISTRY_<wbr>KEY</code> 加密）、旧的共享 CLI 连接</td>
-<td><code>/<wbr>var/<wbr>lib/<wbr>andon-<wbr>finance/<wbr></code>（系统用户
-<code>andon</code> 的家目录）</td>
-</tr>
-<tr>
-<td>v0.5.3 的配置与密钥文件</td>
-<td><code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>env</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench.<wbr>env</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench/<wbr>mysql_<wbr>app_<wbr>password</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench/<wbr>analysis_<wbr>data_<wbr>key</code></td>
-</tr>
-<tr>
-<td>启动时拉包的脚本</td>
-<td><code>/<wbr>usr/<wbr>local/<wbr>bin/<wbr>andon-<wbr>finance-<wbr>fetch</code></td>
-</tr>
-</tbody>
-</table>
-</div>
-<p><strong>不要动</strong>：<code>/etc/andon-finance/secrets.env</code>、<code>/etc/andon-finance/bench/mysql_root_password</code>、<code>/etc/andon-finance/jiuan/</code>、<code>/var/lib/jiuan/</code>、MySQL
-的 <code>jiuan</code> 库、<code>/opt/andon-finance/</code>。</p>
-<p>2026-11-02 已在 m7g 实例上照下面清过一次（另外删了 <code>andon</code>
-用户和组）。以后在别的实例上要清，做法（项目负责人当场同意后再动手；先
-<code>poc/infra/backup.sh</code> 做根卷快照）：</p>
-<pre class="bash"><code># 在实例上（第 1.2 节的会话里）
-sudo docker exec -i jiuan-mysql sh -c &#39;MYSQL_PWD=&quot;$(cat /run/bench-secrets/mysql_root_password)&quot; mysql -uroot&#39; &lt;&lt;&#39;SQL&#39;
-DROP DATABASE IF EXISTS `jiuan_analysis`;
-DROP DATABASE IF EXISTS `jiuan_bench_test`;
-DROP USER IF EXISTS &#39;jiuan_app&#39;@&#39;%&#39;;
-SQL
-sudo rm -f /etc/andon-finance/env /etc/andon-finance/bench.env /etc/andon-finance/bench/mysql_app_password /etc/andon-finance/bench/analysis_data_key /usr/local/bin/andon-finance-fetch
-sudo rm -rf /var/lib/andon-finance
-id andon &gt;/dev/null 2&gt;&amp;1 &amp;&amp; sudo userdel andon
-curl -fsS http://127.0.0.1:4180/poc/healthz                 # 测试台照常</code></pre>
-<p>清完在<a href="handover.html">交接文档</a>第 6 节第 24 条记一笔。</p>
+<h2 id="28-v053-poc-留下的东西">2.8 v0.5.3 PoC 留下的东西</h2>
+<p>2026-11-02 已在 m7g 实例上清完（MySQL 库
+<code>jiuan_analysis</code>、<code>jiuan_bench_test</code> 和 v0.5.3
+的应用账号、<code>/var/lib/andon-finance/</code>、旧的配置和密钥文件、启动时拉包的脚本、<code>andon</code>
+用户和组）。新代码部署时 <code>bench/bench-configure.sh</code>
+还会停掉、删掉 v0.5.3 的服务单元和它的转发设置。旧栈
+<code>andon-finance-poc</code> 上还是旧的，整个删栈时一起没（<a
+href="handover.html">交接文档</a>第 6 节第 14 条）。当时的清理命令见 git
+历史。</p>
 <h2 id="29-销毁">2.9 销毁</h2>
 <pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境&gt;.env audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认</code></pre>
 <p>销毁前确认：构件桶里没有要留的东西；数据要留的先
 <code>backup.sh</code> 或 <code>migrate-data.sh</code> 搬走；Nexus 的 PG
 连接器和数据库凭证密钥没有指着这台的 PG（<a
-href="handover.html">交接文档</a>第 6 节第 23
+href="handover.html">交接文档</a>第 6 节第 13
 条）；用不着的调用密钥、API 密钥在 Nexus 上停用。</p>
 <h1 id="3-后续迭代的最佳方式">3. 后续迭代的最佳方式</h1>
 <h2 id="31-固定的四步使用逻辑">3.1 固定的四步使用逻辑</h2>

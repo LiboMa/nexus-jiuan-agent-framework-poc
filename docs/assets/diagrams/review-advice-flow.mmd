@@ -1,0 +1,22 @@
+sequenceDiagram
+  participant H as 假汇联易<br/>（外壳进程内）
+  participant J as 九安 v0.7.10<br/>同步 · 流水线 · 任务服务
+  participant S as 测试台外壳
+  participant A as 审核 Agent<br/>（Nexus）
+  participant P as PG 知识库
+  actor R as 审核员
+  J->>H: 每分钟同步一次
+  H-->>J: 新单据（对公付款单）
+  J->>S: 流水线跑到「AI 独立建议」这一步（外壳包着它）
+  S->>S: 先读原件：下载、抽页文字<br/>（九安流水线里这两步是暂停的）
+  S->>J: 交回九安原来的这一步
+  J->>J: 组装 review_advice@1 请求信封<br/>（人发起时附上「我的规则」）
+  J->>A: A2A message/stream<br/>只发给「Agent 接入」页指定的审批 Agent
+  A->>P: 经数据连接器只读查：kb_search，再按关键词补查（至多 3 次）
+  P-->>A: 规则行（风险判断卡）
+  A-->>J: 结果信封：建议通过 / 不建议通过 + 依据
+  J->>J: 按契约检查；不合格在同一段对话里要求修正一次
+  Note over J,A: 一轮上限 180 秒，现在一般 7–20 秒，约 0.04 美元
+  R->>S: 单据池抽屉：看 AI 建议、原件
+  R->>S: 采纳 AI 建议 / 改判（选原因）
+  S-->>R: 记在测试台，不回写汇联易
