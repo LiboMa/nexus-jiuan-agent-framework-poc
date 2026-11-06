@@ -1,0 +1,299 @@
+补丁 0013 的测试。
+- 改成连 PG：report-detail-projection、report-detail-queue 的集成测试（PG_TEST_URL、createPgPool、migratePg、隔离端口 5434、清库 DROP SCHEMA）；
+  测试自己的 SQL：JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[0]')) → (source_entity_id::jsonb->>0)；information_schema 的大写列名 → 小写加引号别名；反引号 → 双引号。
+- report-detail-queue.test（假库）：认 PG 的 advisory 锁（pg_try_advisory_lock 回 true/false）；看「哪个池拿了哪把锁」改成按锁键认；
+  「锁名里带 DATABASE()」改成「worker 锁的键 = worker 锁名的键」（advisory 锁本来就按库分开）。
+- report-detail-queue.integration 里「来源回到旧版本时重新排队」那条用到平台进度（pipeline-progress），等补丁 0014。
+
+diff --git a/tests/report-detail-projection.integration.test.mjs b/tests/report-detail-projection.integration.test.mjs
+index 7558c3d..2cc9f3c 100644
+--- a/tests/report-detail-projection.integration.test.mjs
++++ b/tests/report-detail-projection.integration.test.mjs
+@@ -1,13 +1,13 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { analysisDetailVersion, completeReportDetail, encryptReportDetail, projectionInputDigest } from '../src/report-detail-queue.mjs';
+ import { isRetryableProjectionError, projectStoredDetails, resetProjectionFailures } from '../src/report-detail-projection.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ test('classifies mysql2 connection, rollback, transient, data, constraint, crypto and unknown errors', () => {
+   assert.equal(isRetryableProjectionError({ fatal: true }), true);
+@@ -23,13 +23,8 @@ test('classifies mysql2 connection, rollback, transient, data, constraint, crypt
+ });
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ const detail = {
+@@ -44,15 +39,15 @@ const detail = {
+ };
+ 
+ test('projectStoredDetails replaces one detail version idempotently and keeps PII out of plaintext columns', { skip: skipReason }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307);
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434);
+   assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   const key = Buffer.alloc(32, 29);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'projection-integration' });
+   try {
+     await reset(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await analysisStore.migrate();
+     await analysisStore.upsertPage({ scope: { tenantId: 'tenant-projection', companyId: 'company-projection' }, reports: [{ tenantId: 'tenant-projection', docCompanyOID: 'company-projection', expenseReportOID: 'projection-document', businessCode: 'EXP-PROJECTION-1', formName: '差旅报销单', amount: '12.34', lastModifyDate: '2026-06-22T00:00:00Z' }] });
+     const [[document]] = await pool.query('SELECT document_id,source_version FROM audit_documents WHERE document_id IS NOT NULL LIMIT 1');
+@@ -79,8 +74,8 @@ test('projectStoredDetails replaces one detail version idempotently and keeps PI
+     const sensitiveValues = ['receiptOwner', 'idCardNo', 'billingNo', 'draweeNo', 'payeeNo', 'title', 'payee']
+       .map(key => detail.expenseReportInvoices[0].invoiceView.receiptList[0][key]);
+     for (const table of ['audit_report_projection', 'audit_expense_lines', 'audit_expense_receipts', 'audit_expense_subsidies', 'audit_travel_applications', 'audit_report_projection_gaps', 'audit_report_projection_status']) {
+-      const [columns] = await pool.query(`SELECT COLUMN_NAME FROM information_schema.columns WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? ORDER BY ORDINAL_POSITION`, [table]);
+-      const [rows] = await pool.query(`SELECT * FROM \`${table}\``);
++      const [columns] = await pool.query(`SELECT column_name AS "COLUMN_NAME" FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? ORDER BY ordinal_position`, [table]);
++      const [rows] = await pool.query(`SELECT * FROM "${table}"`);
+       for (const row of rows) {
+         for (const column of columns.map(item => item.COLUMN_NAME)) {
+           if (column.endsWith('_ciphertext')) continue;
+@@ -101,7 +96,7 @@ async function snapshotProjectionTables(pool) {
+   const tables = ['audit_report_projection', 'audit_expense_lines', 'audit_expense_receipts', 'audit_expense_subsidies', 'audit_travel_applications', 'audit_report_projection_gaps', 'audit_report_projection_status'];
+   const snapshot = {};
+   for (const table of tables) {
+-    const [rows] = await pool.query(`SELECT * FROM \`${table}\` ORDER BY document_id,content_version`);
++    const [rows] = await pool.query(`SELECT * FROM "${table}" ORDER BY document_id,content_version`);
+     snapshot[table] = rows;
+   }
+   return JSON.parse(JSON.stringify(snapshot, (_, value) => Buffer.isBuffer(value) ? value.toString('base64') : value));
+@@ -109,7 +104,7 @@ async function snapshotProjectionTables(pool) {
+ 
+ // Kills N6/N6b, N7 and the head-decryption mutant: SQL counts and metadata reads stay bounded.
+ test('analysis store exposes exact-version detail summaries in one list query and head without decrypting', { skip: skipReason }, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   const key = Buffer.alloc(32, 73);
+   let queryCount = 0;
+   const countedPool = {
+@@ -121,7 +116,7 @@ test('analysis store exposes exact-version detail summaries in one list query an
+   };
+   const store = await openMySqlAnalysisStore({ pool: countedPool, key, connectionId: 'projection-summary-integration' });
+   try {
+-    await reset(pool); await migrateMySql(pool); await store.migrate();
++    await reset(pool); await migratePg(pool); await store.migrate();
+     const reports = [0, 1, 2].map(index => ({ tenantId: 'tenant-summary', docCompanyOID: 'company-summary', expenseReportOID: `summary-document-${index}`,
+       businessCode: `EXP-SUMMARY-${index}`, formName: '差旅报销单', amount: '12.34', lastModifyDate: `2026-06-${String(10 + index).padStart(2, '0')}T00:00:00Z` }));
+     await store.upsertPage({ scope: { tenantId: 'tenant-summary', companyId: 'company-summary' }, reports });
+@@ -175,7 +170,7 @@ test('analysis store exposes exact-version detail summaries in one list query an
+ // Kills the status/projection JOIN and count-subquery version-binding mutants.
+ test('binds projection status and receipt counts to the requested document version', { skip: skipReason }, async () => {
+   const key = Buffer.alloc(32, 75);
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   const store = await openMySqlAnalysisStore({ pool, key, connectionId: 'projection-version-binding' });
+   const receipt = detail.expenseReportInvoices[0].invoiceView.receiptList[0];
+   const detailV1 = { ...detail, businessCode: 'EXP-VERSION-1', expenseReportInvoices: [{ invoiceView: {
+@@ -193,7 +188,7 @@ test('binds projection status and receipt counts to the requested document versi
+     ]);
+   };
+   try {
+-    await reset(pool); await migrateMySql(pool); await store.migrate();
++    await reset(pool); await migratePg(pool); await store.migrate();
+     await store.upsertPage({ scope: { tenantId: 'tenant-version-binding', companyId: 'company-version-binding' }, reports: [{
+       tenantId: 'tenant-version-binding', docCompanyOID: 'company-version-binding', expenseReportOID: 'version-binding',
+       businessCode: 'EXP-VERSION-1', formName: detail.formName, amount: '12.34', lastModifyDate: '2026-06-20T00:00:00Z',
+@@ -238,10 +233,10 @@ test('detail summaries count only non-empty check results for the exact content
+       { ...detail.expenseReportInvoices[0].invoiceView.receiptList[0], billingNo: 'BILLING-CHECKED', checkResult: 'R_0000' },
+     ],
+   } }] };
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   const store = await openMySqlAnalysisStore({ pool, key, connectionId: 'projection-check-result-count' });
+   try {
+-    await reset(pool); await migrateMySql(pool); await store.migrate();
++    await reset(pool); await migratePg(pool); await store.migrate();
+     await store.upsertPage({ scope: { tenantId: 'tenant-check-result-count', companyId: 'company-check-result-count' }, reports: [{
+       tenantId: 'tenant-check-result-count', docCompanyOID: 'company-check-result-count', expenseReportOID: 'check-result-count',
+       businessCode: 'EXP-CHECK-RESULT', formName: '差旅报销单', amount: '12.34', lastModifyDate: '2026-06-22T00:00:00Z',
+@@ -259,12 +254,12 @@ test('detail summaries count only non-empty check results for the exact content
+ });
+ 
+ test('advances past the limit and projects every queued detail', { skip: skipReason }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const config = parsePgUrl(mysqlTestUrl);
++  const pool = createPgPool({ url: mysqlTestUrl });
+   const key = Buffer.alloc(32, 31);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'projection-limit' });
+   try {
+-    await reset(pool); await migrateMySql(pool); await analysisStore.migrate();
++    await reset(pool); await migratePg(pool); await analysisStore.migrate();
+     const reports = Array.from({ length: 4 }, (_, index) => ({ tenantId: 'tenant-limit', docCompanyOID: 'company-limit', expenseReportOID: `projection-limit-${index}`, businessCode: `EXP-LIMIT-${index}`, formName: '差旅报销单', amount: '1.00', lastModifyDate: `2026-06-${String(10 + index).padStart(2, '0')}T00:00:00Z` }));
+     await analysisStore.upsertPage({ scope: { tenantId: 'tenant-limit', companyId: 'company-limit' }, reports });
+     const [documents] = await pool.query('SELECT document_id FROM audit_documents ORDER BY document_id');
+@@ -285,11 +280,11 @@ test('advances past the limit and projects every queued detail', { skip: skipRea
+ });
+ 
+ test('isolates a malformed detail and records its projection failure', { skip: skipReason }, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   const key = Buffer.alloc(32, 37);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'projection-failure' });
+   try {
+-    await reset(pool); await migrateMySql(pool); await analysisStore.migrate();
++    await reset(pool); await migratePg(pool); await analysisStore.migrate();
+     await analysisStore.upsertPage({ scope: { tenantId: 'tenant-failure', companyId: 'company-failure' }, reports: [
+       { tenantId: 'tenant-failure', docCompanyOID: 'company-failure', expenseReportOID: 'projection-good', businessCode: 'EXP-GOOD', formName: '差旅报销单', amount: '1.00', lastModifyDate: '2026-06-10T00:00:00Z' },
+       { tenantId: 'tenant-failure', docCompanyOID: 'company-failure', expenseReportOID: 'projection-bad', businessCode: 'EXP-BAD', formName: '差旅报销单', amount: '1.00', lastModifyDate: '2026-06-11T00:00:00Z' },
+@@ -407,11 +402,11 @@ test('stops with locked lost when the lock connection disconnects and does not w
+ });
+ 
+ async function seedProjectionFixture({ suffix, key, payload = detail }) {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   let analysisStore = null;
+   try {
+     analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: `projection-${suffix}` });
+-    await reset(pool); await migrateMySql(pool); await analysisStore.migrate();
++    await reset(pool); await migratePg(pool); await analysisStore.migrate();
+     await analysisStore.upsertPage({ scope: { tenantId: `tenant-${suffix}`, companyId: `company-${suffix}` }, reports: [{
+       tenantId: `tenant-${suffix}`, docCompanyOID: `company-${suffix}`, expenseReportOID: `projection-${suffix}`,
+       businessCode: payload.businessCode, formName: payload.formName, amount: '12.34', lastModifyDate: '2026-06-22T00:00:00Z',
+diff --git a/tests/report-detail-queue.integration.test.mjs b/tests/report-detail-queue.integration.test.mjs
+index 0c74684..69da2fa 100644
+--- a/tests/report-detail-queue.integration.test.mjs
++++ b/tests/report-detail-queue.integration.test.mjs
+@@ -1,22 +1,17 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { claimReportDetail, enqueueReportDetails, reportDetailProgress, runReportDetailWorker } from '../src/report-detail-queue.mjs';
+ import { createPipelineProgress } from '../src/platform/pipeline-progress.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ const raw = (id = 'report-queue-1') => ({
+@@ -36,14 +31,14 @@ const raw = (id = 'report-queue-1') => ({
+ const fixedNow = '2020-01-01T00:00:00.000Z';
+ 
+ async function fixture() {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 8 });
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 8 });
+   let analysisStore = null;
+   try {
+     await reset(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     const key = Buffer.alloc(32, 42);
+     analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'queue-integration' });
+     await analysisStore.migrate();
+@@ -238,7 +233,7 @@ test('real MySQL schedules one retry and continues to the next report', { skip:
+     };
+     await enqueueReportDetails({ pool: fixtureValue.pool, analysisStore: retryStore, batchId: 'detail-batch-retry-in-place', connectionId: 'queue-integration', now: fixedNow });
+     await fixtureValue.pool.query(`UPDATE audit_sync_items SET created_at='2020-01-01 00:00:00.500000'
+-      WHERE entity_type=? AND JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[0]'))=?`, ['report_detail', secondId]);
++      WHERE entity_type=? AND (source_entity_id::jsonb->>0)=?`, ['report_detail', secondId]);
+ 
+     let clock = Date.parse(fixedNow);
+     let firstAttempts = 0;
+@@ -485,8 +480,8 @@ test('real MySQL claims an expired retry before a newer queued item', { skip: sk
+     const candidates = await fixtureValue.analysisStore.listDetailCandidates({ formNameIncludes: null });
+     const retryId = candidates.find(item => item.number === retrySource.businessCode).id;
+     const freshId = candidates.find(item => item.number === fixtureValue.source.businessCode).id;
+-    await fixtureValue.pool.query('UPDATE audit_sync_items SET next_retry_at=? WHERE entity_type=? AND JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,\'$[0]\'))=?', ['2019-12-31 23:59:00', 'report_detail', retryId]);
+-    await fixtureValue.pool.query('UPDATE audit_sync_items SET created_at=? WHERE entity_type=? AND JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,\'$[0]\'))=?', ['2020-01-01 00:00:10', 'report_detail', freshId]);
++    await fixtureValue.pool.query('UPDATE audit_sync_items SET next_retry_at=? WHERE entity_type=? AND (source_entity_id::jsonb->>0)=?', ['2019-12-31 23:59:00', 'report_detail', retryId]);
++    await fixtureValue.pool.query('UPDATE audit_sync_items SET created_at=? WHERE entity_type=? AND (source_entity_id::jsonb->>0)=?', ['2020-01-01 00:00:10', 'report_detail', freshId]);
+     const claimed = await claimReportDetail({ pool: fixtureValue.pool, workerId: 'retry-order-worker', now: fixedNow });
+     assert.equal(claimed.document_id, retryId);
+   } finally {
+diff --git a/tests/report-detail-queue.test.mjs b/tests/report-detail-queue.test.mjs
+index e0b85c4..6f4a5a4 100644
+--- a/tests/report-detail-queue.test.mjs
++++ b/tests/report-detail-queue.test.mjs
+@@ -8,8 +8,10 @@ import {
+   decryptReportDetail,
+   enqueueReportDetails,
+   reportDetailProgress,
++  REPORT_DETAIL_QUEUE_LOCK_NAME,
+   runReportDetailWorker,
+ } from '../src/report-detail-queue.mjs';
++import { namedLockKey } from '../src/pg-database.mjs';
+ import { SUPPORTED_PROJECTION_FORM, supportsProjection } from '../src/report-detail-projection.mjs';
+ import { main as runReportDetailCli } from '../scripts/process-report-detail-queue.mjs';
+ 
+@@ -273,10 +275,12 @@ test('report detail CLI holds its gateway and worker locks on the lock pool and
+     console.log = originalLog;
+   }
+   assert.equal(result.exitCode, 0);
+-  const locks = pool => pool.calls.filter(call => /GET_LOCK/.test(call.sql)).map(call => call.sql);
++  // A lock taken: MySQL's GET_LOCK named it in the SQL; a PostgreSQL advisory lock carries the name's key as its parameter
++  const locks = pool => pool.calls.filter(call => /GET_LOCK|pg_(try_)?advisory_lock\(/.test(call.sql))
++    .map(call => (call.sql.includes('platform-gateway') ? 'gateway' : call.params[0] === namedLockKey(REPORT_DETAIL_QUEUE_LOCK_NAME) ? 'worker' : call.sql));
+   assert.deepEqual(locks(requestPool), []);
+-  assert.equal(locks(lockPool).filter(sql => sql.includes('platform-gateway')).length, 1);
+-  assert.equal(locks(lockPool).filter(sql => !sql.includes('platform-gateway')).length, 1);
++  assert.equal(locks(lockPool).filter(lock => lock === 'gateway').length, 1);
++  assert.equal(locks(lockPool).filter(lock => lock !== 'gateway').length, 1);
+   assert.deepEqual(ended.sort(), ['lock', 'request']);
+ });
+ 
+@@ -326,7 +330,8 @@ test('worker schedules a retry after one transient failure and does not retry th
+   } };
+   const result = await runReportDetailWorker({ pool, client, key, limit: 1, now: () => nowValues[Math.min(nowIndex, nowValues.length - 1)], sleep: async () => { nowIndex = Math.min(nowIndex + 1, nowValues.length - 1); }, minIntervalMs: 1500 });
+   assert.equal(result.succeeded, 0);
+-  assert.match(pool.calls.find(call => call.sql.includes('GET_LOCK')).sql, /DATABASE\(\)/u);
++  // The worker lock is per database: MySQL put DATABASE() in its name; a PostgreSQL advisory lock is per database by itself
++  assert.equal(pool.calls.find(call => /pg_try_advisory_lock\(/.test(call.sql)).params[0], namedLockKey(REPORT_DETAIL_QUEUE_LOCK_NAME));
+   assert.equal(calls.length, 1);
+   assert.equal(pool.retrySchedules.length, 1);
+   assert.equal(pool.details.has('r-1'), false);
+@@ -473,6 +478,8 @@ class FakeQueuePool {
+     this.calls.push({ sql, params });
+     if (sql.includes('GET_LOCK')) return [[{ acquired: this.lock ? 1 : 0 }]];
+     if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
++    if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: this.lock }]];
++    if (sql.includes('pg_advisory_unlock(')) return [[{ released: true }]];
+     if (sql.includes("SET status='queued'") && sql.includes('WHERE sync_item_id=?')) {
+       const row = this.items.find(item => item.sync_item_id === (sql.includes('next_retry_at=NULL') ? params[0] : params[3]));
+       if (row) {
