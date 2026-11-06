@@ -1,0 +1,110 @@
+补丁 0015：审核要素（src/element-store.mjs、src/element-registry.mjs）和规则扫描（src/scan/scan-engine.mjs、src/scan/scan-context.mjs）改成 PostgreSQL；
+单据检索的查询在补丁 0011 里已改（ILIKE，不分大小写）；适配层补一个错误码。
+改了哪几类写法：
+- DATE_FORMAT(d,'%Y-%m-%d') → to_char(d,'YYYY-MM-DD')。
+- 事件排序 FIELD(event, …) → COALESCE(array_position(ARRAY[…]::text[], event::text), 0)（FIELD 找不到给 0、排最前；array_position 给 NULL，补成 0）。
+- 先 SET TRANSACTION ISOLATION LEVEL 再 START TRANSACTION（MySQL：对下一个事务生效；PG 在事务外只给一条警告）→ 一句 START TRANSACTION ISOLATION LEVEL READ COMMITTED。
+- INSERT IGNORE → ON CONFLICT DO NOTHING；反引号的列名 `event` → "event"。
+- 可空列升序排序 NULLS FIRST（同 MySQL）。
+- 适配层：违反 CHECK（SQLSTATE 23514）→ ER_CHECK_CONSTRAINT_VIOLATED / 3819，和别的错误码一样照 mysql2 的样子给。
+另查过：这些模块在事务里接住错误的地方都会再抛出去（PG 里一条语句出错整个事务就作废，MySQL 不会；接住了接着写的地方没有）。
+
+diff --git a/src/element-store.mjs b/src/element-store.mjs
+index 284cc61..fa2e138 100644
+--- a/src/element-store.mjs
++++ b/src/element-store.mjs
+@@ -60,7 +60,7 @@ const ERRORS = Object.freeze({
+ const VERSION_COLUMNS = `version_id, connection_id, tenant_id, company_id, family_kind, scope, family_id, family_version, change_type,
+   definition_format, kind, document_type, definition_hash, definition_ciphertext, status, base_version_id, draft_revision,
+   submitter_account_id, submitter_principal, submitted_at, confirmer_account_id, confirmer_principal, confirmed_at,
+-  DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_from, DATE_FORMAT(ended_on, '%Y-%m-%d') AS ended_on, status_changed_at, activation_mode`;
++  to_char(effective_from, 'YYYY-MM-DD') AS effective_from, to_char(ended_on, 'YYYY-MM-DD') AS ended_on, status_changed_at, activation_mode`;
+ /** Every statement that may change a frozen version: lifecycle columns only, never content. */
+ const VERSION_UPDATES = Object.freeze({
+   status: 'UPDATE element_family_versions SET status = ?, status_changed_at = ? WHERE connection_id = ? AND family_id = ? AND version_id = ? AND status = ?',
+@@ -433,8 +433,7 @@ export function createElementStore({ pool, key, connectionId, clock, probe } = {
+         // it if the family is new); READ COMMITTED keeps the other locking reads
+         // free of gap locks, so first writes to two new families cannot
+         // deadlock on a shared index gap.
+-        await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+-        await client.query('START TRANSACTION');
++        await client.query('START TRANSACTION ISOLATION LEVEL READ COMMITTED');
+         const result = await callback(client);
+         await client.query('COMMIT');
+         return result;
+@@ -587,7 +586,7 @@ export function createElementStore({ pool, key, connectionId, clock, probe } = {
+   const history = async familyId => {
+     const rows = await versionRows(familyId);
+     const [events] = await query(`SELECT * FROM element_family_events WHERE connection_id = ? AND family_id = ?
+-      ORDER BY at, FIELD(event, ${EVENT_ORDER.map(() => '?').join(', ')}), event_id`, [connection, familyId, ...EVENT_ORDER]);
++      ORDER BY at, COALESCE(array_position(ARRAY[${EVENT_ORDER.map(() => '?').join(', ')}]::text[], event::text), 0), event_id`, [connection, familyId, ...EVENT_ORDER]);
+     return {
+       versions: rows.map(decodeVersion),
+       events: events.map(row => {
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+index 606b947..83a5143 100644
+--- a/src/pg-database.mjs
++++ b/src/pg-database.mjs
+@@ -180,6 +180,7 @@ const SQLSTATE_TO_MYSQL = Object.freeze({
+   '55P03': ['ER_LOCK_WAIT_TIMEOUT', 1205],
+   '42P01': ['ER_NO_SUCH_TABLE', 1146],
+   42703: ['ER_BAD_FIELD_ERROR', 1054],
++  23514: ['ER_CHECK_CONSTRAINT_VIOLATED', 3819],
+   57014: ['PROTOCOL_SEQUENCE_TIMEOUT', undefined],
+   '57P01': ['PROTOCOL_CONNECTION_LOST', undefined],
+   '57P02': ['PROTOCOL_CONNECTION_LOST', undefined],
+diff --git a/src/scan/scan-context.mjs b/src/scan/scan-context.mjs
+index 536f8cf..92c12c3 100644
+--- a/src/scan/scan-context.mjs
++++ b/src/scan/scan-context.mjs
+@@ -92,14 +92,14 @@ export function createScanContext({ pool, connectionId, asOf, decrypt } = {}) {
+     let rows = [];
+     try {
+       const result = await pool.query(`SELECT event_id,node_name,category,occurred_at FROM audit_approval_events
+-        WHERE source_connection_id=? AND document_id=? ORDER BY occurred_at,event_id`, [connectionId, documentId]);
++        WHERE source_connection_id=? AND document_id=? ORDER BY occurred_at NULLS FIRST,event_id`, [connectionId, documentId]);
+       rows = Array.isArray(result) ? result[0] || [] : [];
+     } catch {
+       // Fall through to the normalized event table for older snapshots.
+     }
+     if (!rows.length) {
+       const fallback = await pool.query(`SELECT id,node_type,category,at FROM analysis_events
+-        WHERE connection_id=? AND document_id=? ORDER BY at,id`, [connectionId, documentId]);
++        WHERE connection_id=? AND document_id=? ORDER BY at NULLS FIRST,id`, [connectionId, documentId]);
+       rows = (Array.isArray(fallback) ? fallback[0] || [] : []).map(row => ({ event_id: row.id, node_name: row.node_type, category: row.category, occurred_at: row.at }));
+     }
+     return rows.map(row => ({ id: row.event_id, eventId: row.event_id, nodeName: row.node_name, category: row.category, at: timestamp(row.occurred_at) }));
+diff --git a/src/scan/scan-engine.mjs b/src/scan/scan-engine.mjs
+index 557ee4f..aa0f646 100644
+--- a/src/scan/scan-engine.mjs
++++ b/src/scan/scan-engine.mjs
+@@ -133,23 +133,23 @@ async function writeRuleLedger({ pool, connectionId, rule, hits, runId, asOf, en
+           first_run_id,last_run_id,first_seen_at,last_seen_at,still_present,status,evidence_sha256,payload_ciphertext)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'open',?,?)`,
+         [id, connectionId, rule.id, rule.version, rule.rejectCode, rule.disposition, rule.detectionLayer, rule.decisionLayer, hit.documentIds[0], hit.documentIds.length, runId, runId, asOf, asOf, evidenceSha256, payload]);
+-        await client.query('INSERT IGNORE INTO audit_suspicion_events(event_id,suspicion_id,run_id,`event`,actor,at) VALUES (?,?,?,?,?,?)', [eventId(id, runId, 'created', evidenceSha256), id, runId, 'created', 'system:scan', asOf]);
+-        for (const documentId of hit.documentIds) await client.query('INSERT IGNORE INTO audit_suspicion_documents(suspicion_id,document_id) VALUES (?,?)', [id, documentId]);
++        await client.query('INSERT INTO audit_suspicion_events(event_id,suspicion_id,run_id,"event",actor,at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING', [eventId(id, runId, 'created', evidenceSha256), id, runId, 'created', 'system:scan', asOf]);
++        for (const documentId of hit.documentIds) await client.query('INSERT INTO audit_suspicion_documents(suspicion_id,document_id) VALUES (?,?) ON CONFLICT DO NOTHING', [id, documentId]);
+         created += 1;
+         continue;
+       }
+-      if (!old.still_present) await client.query('INSERT IGNORE INTO audit_suspicion_events(event_id,suspicion_id,run_id,`event`,actor,at) VALUES (?,?,?,?,?,?)', [eventId(id, runId, 'hit_again', evidenceSha256), id, runId, 'hit_again', 'system:scan', asOf]);
+-      if (String(old.evidence_sha256) !== evidenceSha256) await client.query('INSERT IGNORE INTO audit_suspicion_events(event_id,suspicion_id,run_id,`event`,actor,at) VALUES (?,?,?,?,?,?)', [eventId(id, runId, 'evidence_changed', evidenceSha256), id, runId, 'evidence_changed', 'system:scan', asOf]);
++      if (!old.still_present) await client.query('INSERT INTO audit_suspicion_events(event_id,suspicion_id,run_id,"event",actor,at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING', [eventId(id, runId, 'hit_again', evidenceSha256), id, runId, 'hit_again', 'system:scan', asOf]);
++      if (String(old.evidence_sha256) !== evidenceSha256) await client.query('INSERT INTO audit_suspicion_events(event_id,suspicion_id,run_id,"event",actor,at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING', [eventId(id, runId, 'evidence_changed', evidenceSha256), id, runId, 'evidence_changed', 'system:scan', asOf]);
+       await client.query(`UPDATE audit_suspicions SET rule_version=?,reject_code=?,disposition=?,detection_layer=?,decision_layer=?,primary_document_id=?,document_count=?,last_run_id=?,last_seen_at=?,still_present=1,evidence_sha256=?,payload_ciphertext=? WHERE suspicion_id=? AND connection_id=?`,
+         [rule.version, rule.rejectCode, rule.disposition, rule.detectionLayer, rule.decisionLayer, hit.documentIds[0], hit.documentIds.length, runId, asOf, evidenceSha256, payload, id, connectionId]);
+       await client.query('DELETE FROM audit_suspicion_documents WHERE suspicion_id=?', [id]);
+-      for (const documentId of hit.documentIds) await client.query('INSERT IGNORE INTO audit_suspicion_documents(suspicion_id,document_id) VALUES (?,?)', [id, documentId]);
++      for (const documentId of hit.documentIds) await client.query('INSERT INTO audit_suspicion_documents(suspicion_id,document_id) VALUES (?,?) ON CONFLICT DO NOTHING', [id, documentId]);
+     }
+     for (const row of existingRows || []) {
+       const id = String(row.suspicion_id);
+       if (Boolean(row.still_present) && !present.has(id)) {
+         await client.query('UPDATE audit_suspicions SET still_present=0,last_run_id=? WHERE suspicion_id=? AND connection_id=?', [runId, id, connectionId]);
+-        await client.query('INSERT IGNORE INTO audit_suspicion_events(event_id,suspicion_id,run_id,`event`,actor,at) VALUES (?,?,?,?,?,?)', [eventId(id, runId, 'no_longer_hit'), id, runId, 'no_longer_hit', 'system:scan', asOf]);
++        await client.query('INSERT INTO audit_suspicion_events(event_id,suspicion_id,run_id,"event",actor,at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING', [eventId(id, runId, 'no_longer_hit'), id, runId, 'no_longer_hit', 'system:scan', asOf]);
+         noLongerHit += 1;
+       }
+     }

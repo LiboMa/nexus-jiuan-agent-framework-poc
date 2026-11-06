@@ -1,5 +1,9 @@
 [
   "tests/document-search.integration.test.mjs#P3 v18 snapshots backfill in batches, resume rollback-era writes, and are idempotent",
   "tests/document-search.integration.test.mjs#P9 v19 is additive and an image knowing only v18 starts on the upgraded database",
-  "tests/mysql-database.test.mjs#real MySQL applies v1-to-latest migrations twice without SQL errors"
+  "tests/mysql-database.test.mjs#real MySQL applies v1-to-latest migrations twice without SQL errors",
+  "tests/element-directive.integration.test.mjs#B2-I2 v16 reads back without drift, v14 no longer expects the replaced checks, and an older program refuses the database",
+  "tests/element-directive.integration.test.mjs#B2-I4 a database at v15 (where B1 leaves it) reads back clean and upgrades to v16",
+  "tests/element-store.integration.test.mjs#element store on real MySQL > A3 v14 is additive: an older program starts against v14, and fails once the declaration is removed",
+  "tests/element-store.integration.test.mjs#element store on real MySQL > A2 v14 reads back with zero drift and repeated migration is idempotent"
 ]
