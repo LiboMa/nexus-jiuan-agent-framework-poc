@@ -359,9 +359,11 @@ advisory 锁，0010 PG 的基线表结构（版本
 单据详情读取队列和详情投影，0014
 平台层（运行记录和设置、数据页、运行锁、调用网关等），0015
 审核要素和规则扫描，0016 审批回写、SAP 付款申请的存储和快照刷新，0017
-PostgreSQL 是唯一的引擎、MySQL 的模块和 mysql2
-依赖去掉。<code>tests/<wbr></code> 下是九安测试的改动，只有
-<code>-<wbr>-<wbr>with-<wbr>tests</code> 才打</td>
+PostgreSQL 是唯一的引擎、MySQL 的模块和 mysql2 依赖去掉，0018
+评审后补的两处（等锁有时限 50 秒；事务里有语句出错后的 COMMIT
+报错、不当成提交成功）。<code>tests/<wbr></code>
+下是九安测试的改动，只有 <code>-<wbr>-<wbr>with-<wbr>tests</code>
+才打</td>
 <td><a href="developer-guide.html">开发者快速对接指南</a></td>
 </tr>
 <tr>
@@ -636,7 +638,7 @@ href="handover.html">交接文档</a>第 2.2 节）</td>
 <ul>
 <li><strong>九安 v0.7.10 测试台</strong>（2026-10-26 封板
 v0.7.10，之后持续更新）：新前端 <code>poc/web</code>（2026-11-01
-起是首页）、外壳 <code>poc/app</code>、补丁 0001–0017；单据池自动出 AI
+起是首页）、外壳 <code>poc/app</code>、补丁 0001–0018；单据池自动出 AI
 独立建议，一轮上限 180 秒，2026-11-01 改过审核 Agent 的提示词以后一轮
 7–20 秒；人在单据抽屉里采纳或改判，不回写汇联易。</li>
 <li><strong>知识库</strong>：PG + pgvector，整库 Cohere Embed
@@ -650,7 +652,7 @@ m7g.xlarge（arm64）；换机器有 <code>migrate-data.sh</code>。2026-11-02
 <li><strong>只留新 UI</strong>（2026-11-02）：v0.5.3 PoC
 的代码、文档和测试都拿掉了；交付包的检查和白名单跟着改。</li>
 <li><strong>九安的库换成 PostgreSQL</strong>（2026-11-06，补丁
-0008–0017）：测试台的库在容器 <code>jiuan-pg</code> 里，72 张表、104,538
+0008–0018）：测试台的库在容器 <code>jiuan-pg</code> 里，72 张表、104,538
 行逐表核对一致搬过来，停站约 2 分 10 秒；切换前的 MySQL
 停着、留着做回退。九安自带的测试在真 PG 上 2475
 条过，换库前过的都还过。</li>

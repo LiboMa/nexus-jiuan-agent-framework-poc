@@ -146,7 +146,7 @@ id="toc-27-名字去掉了072026-11-02">2.7
 <p><strong>是什么</strong>：九安自助审核平台 v0.7.10 的原服务端跑在一台
 EC2
 上（测试台）。跑的是九安开发包的副本（<code>.build/jiuan</code>，开发包
-+ 补丁 0001–0017，<code>source/</code>
++ 补丁 0001–0018，<code>source/</code>
 不动），用九安自己的运行时：分析存储（2026-11-06 起
 PostgreSQL）、平台存储、连接器、调用中间件、流水线运行器、Agent
 任务服务；不接真汇联易和钉钉（汇联易是进程内的假的），单据是虚构的，存在实例本机的
@@ -382,11 +382,11 @@ MySQL → PostgreSQL 搬迁工具（2026-11-06 用过，测试在
 </tr>
 <tr>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
-<td>打进九安 v0.7.10 副本的补丁 0001–0017，按文件名顺序：连 Nexus
+<td>打进九安 v0.7.10 副本的补丁 0001–0018，按文件名顺序：连 Nexus
 列发布；「Agent
 接入」页（手动添加、测试、调用记录）；启用即就绪、审批流只调管理员指定的一个审批
 Agent；「规则库」分「审核要点」「制度知识库」两页（<code>public/<wbr>kb-<wbr>page.<wbr>js</code>）；规则页跟着知识库方式走、「我的规则」；<code>review_<wbr>advice@1</code>
-的时限 180 秒；<code>nexus-<wbr>a2a</code> 的时限 200 秒；0008–0017
+的时限 180 秒；<code>nexus-<wbr>a2a</code> 的时限 200 秒；0008–0018
 把数据层换成 PostgreSQL（2026-11-06，表下面一个一行）。测试的改动在
 <code>tests/<wbr></code> 子目录，只有
 <code>-<wbr>-<wbr>with-<wbr>tests</code> 才打</td>
@@ -490,7 +490,7 @@ HTML。设计稿、实现计划、进度看板、历次评估和评审记录只�
 </tbody>
 </table>
 </div>
-<p>补丁 0008–0017（2026-11-06 换
+<p>补丁 0008–0018（2026-11-06 换
 PostgreSQL；每个补丁开头有一段中文说明）：</p>
 <ul>
 <li>0008 <code>src/pg-database.mjs</code>：和原来 mysql2
@@ -508,6 +508,9 @@ mysql2；<code>?</code> → <code>$n</code>；时间按 UTC
 <li>0015 审核要素和规则扫描。</li>
 <li>0016 审批回写、SAP 付款申请的存储和快照刷新。</li>
 <li>0017 PostgreSQL 是唯一的引擎，MySQL 的模块和 mysql2 依赖去掉。</li>
+<li>0018 评审后补的两处：等锁有时限（每个会话 <code>lock_timeout</code>
+50 秒，同 InnoDB），事务里有语句出错后的 COMMIT 不再当成提交成功（报
+<code>ER_TRANSACTION_ROLLED_BACK</code>）。</li>
 </ul>
 <p>2026-11-02 拿掉的（找它们的去看<a
 href="../../CHANGELOG.md">变更记录</a>）：当时的
@@ -1211,6 +1214,40 @@ href="operations.html">运维</a>第 2.6
 MySQL 口令、实例上的
 <code>/etc/andon-finance/bench/mysql_root_password</code> 和
 <code>/etc/andon-finance/jiuan/mysql_app_password</code> 一起删。</li>
+<li><strong>换库评审记下、没改的小问题</strong>（2026-11-06
+整条分支的评审；两处要紧的已用补丁 0018 改了）：
+<ul>
+<li>单据检索的不分大小写只对英文字母有效（库的字符类别是 C）：「É /
+é」、全角「Ａ / a」不再算同一个；九安正式环境若要，改成 ICU 排序或
+<code>lower()</code> 加规范化。</li>
+<li>原来 MySQL 的 <code>unicode_ci</code>
+让唯一键也不分大小写，现在分了（例如审核要素登记表的
+<code>expense_type_oid</code>）；只差大小写的两个值现在能同时存进去。</li>
+<li><code>migrate-data.sh</code> 恢复九安的库时不在一个事务里、恢复完没
+<code>ANALYZE</code>：失败会留下半个库；刚恢复完的头几次进度查询可能很慢。</li>
+<li>连接池缓存的 <code>statement_timeout</code>
+在事务回滚后可能和实际不一致；命名锁在事务里等超时会把那个事务作废。现在没有调用方这样用。</li>
+<li><code>bench/pg-install.sh</code> 把整个
+<code>/etc/andon-finance/bench</code> 挂进 <code>jiuan-pg</code>，PG
+的超级用户读得到 <code>mysql_root_password</code>：只挂
+<code>pg_superuser_password</code> 一个文件就好。</li>
+<li>搬迁工具 <code>--replace</code> 和 <code>--only</code>
+一起用时，<code>TRUNCATE … CASCADE</code>
+会连带清空没在搬的子表（一次性的工具，已经用完）。</li>
+<li>上游字符串里带 NUL（<code>\0</code>、JSON 里的
+<code>\u0000</code>）现在写不进去（MySQL 能存）；错误码 22P05 / 22021
+还没映射成九安认得的码。</li>
+<li>九安每次启动的表结构核对要在库里建一个临时 schema（要 CREATE
+权限）、跑一遍整套建表：测试台的账号是库的属主没问题；客户环境的账号没有这个权限就起不来。</li>
+<li><code>bench-reset.sh</code>
+中途失败后再跑一次，第二次会导出空的启用记录再删库（换库前就是这样）；那一行只在上一次的
+<code>/var/tmp/jiuan-reset.*</code> 里。</li>
+<li>九安测试和 MySQL 基线只比了过 / 不过，没比那 16
+条不过的原因是否一样（原始报告都留着）。</li>
+<li>运行时已经不用的 MySQL 代码还在交付包里（几份 MySQL
+建表文字的模块、构件里的 <code>mysql2</code>）：删 MySQL
+时一起拿掉。</li>
+</ul></li>
 <li><strong>上生产前必须改的</strong>：见第 6.1 节。</li>
 </ol>
 <h2 id="61-上生产前必须改的">6.1 上生产前必须改的</h2>

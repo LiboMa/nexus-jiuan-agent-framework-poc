@@ -68,7 +68,7 @@ audience: 应用开发、Agent 开发、运维
 | 变更 | 改哪里 | 必跑的测试 | 怎么发布 | 怎么回滚 | 谁确认 |
 |---|---|---|---|---|---|
 | 外壳、新前端 | `poc/app/`、`poc/web/` | 新前端 `npm test`、外壳的单元测试（`deploy.sh` 都会先跑）；`run.sh` 里相关的几条（第 7 节） | `deploy.sh --code-only`：动 AWS 之前先在 `poc/web` 里 `npm ci`、测试、构建，`dist/` 随构件发出；外壳启动时读一次 `dist/` | 第 6.1 节（构件里带着那一版的 `dist/`） | 应用开发 + 项目负责人 |
-| 九安补丁 | `patches/jiuan-v0.7.10/`（`poc/bench/build-jiuan.sh` 按文件名顺序打进副本） | 外壳的单元测试（要先构建副本）；`poc/infra/test` 的构建测试；改了数据层（0008–0017 那类）还要跑九安自带的测试（第 7 节）；全部端到端测试 | `deploy.sh --code-only`（构件里的九安是 `.build/jiuan`，带 node_modules） | 第 6.1 节 | 应用开发 + 项目负责人 |
+| 九安补丁 | `patches/jiuan-v0.7.10/`（`poc/bench/build-jiuan.sh` 按文件名顺序打进副本） | 外壳的单元测试（要先构建副本）；`poc/infra/test` 的构建测试；改了数据层（0008–0018 那类）还要跑九安自带的测试（第 7 节）；全部端到端测试 | `deploy.sh --code-only`（构件里的九安是 `.build/jiuan`，带 node_modules） | 第 6.1 节 | 应用开发 + 项目负责人 |
 | 部署脚本、测试台脚本 | `poc/infra/*.sh`、`poc/infra/lib/`、`poc/infra/bench/` | `cd poc/infra && node --test "test/**/*.test.mjs"`；健康检查；全部端到端测试 | `deploy.sh --code-only`（`bench/` 随构件发出）；测试台的密钥只补不换，实例上已有的 PG 超级用户口令和数据密钥只认原值（不一样就在重启前失败，服务照旧跑） | 第 6.1 节 | 运维 + 项目负责人 |
 | 栈参数（Nexus 地址、站点名、知识库的入站网段） | 环境配置 `poc/infra/env/<环境>.env`，或 `aws cloudformation deploy --parameter-overrides …` | 健康检查；`run.sh` | `deploy.sh`（它把配置里写了的栈参数传上去），再 `--code-only`（按参数重写实例上外壳的配置） | 参数改回去，再部署一次 | 运维 + 项目负责人 |
 | 基础设施模板 | `poc/infra/andon-finance-poc.yaml` | `infra.test.mjs`；`validate-template`；全部端到端测试 | `deploy.sh`（不带 `--code-only`）；改了实例的用户数据（哪怕只是注释）实例会停机再开一次，先 `backup.sh`；只改资源的逻辑编号用 stack refactor，不重建资源 | CloudFormation 失败会自动回滚；成功但有问题的，用仓库里上一版模板再部署 | 运维 + 项目负责人 |
@@ -152,7 +152,7 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 | 部署脚本、模板、测试台脚本：`poc/infra/test/`（夹具在 `test/fixtures/deploy-env`） | 本机；九安副本的构建测试要本机有开发包，没有就跳过那几条 | 免费 | 每次改 `poc/infra/`；`deploy.sh` 每次都先跑 |
 | 新前端 `poc/web` 的 `npm test`、外壳 `poc/app/test/unit/` | 本机，假 A2A 网关（`poc/app/test/unit/helpers/fake-a2a.mjs`） | 免费 | 每次改代码；`deploy.sh` 每次都先跑 |
 | 知识库工具 `kb/tests`、审核 Agent 下发脚本 `audit-agent/tests` | 本机 | 免费 | 改了它们；`make-package.sh` 出包前会跑 |
-| 九安自带的测试：`poc/infra/remote-jiuan-tests.sh --engine pg --out <结果.json>`，再 `node poc/infra/test/compare-jiuan-results.mjs poc/bench/pg-port/after-pg.json <结果.json>` | 测试台实例上一次性的测试库容器 `jiuan-test-pg`（127.0.0.1:5434，数据只在内存里，跑完删）；不碰在跑的服务和库 `jiuan` | 免费（一轮最多 55 分钟） | 改了九安的数据层（补丁 0008–0017 那类）；`after-pg.json` 里过的这次不过就列出来 |
+| 九安自带的测试：`poc/infra/remote-jiuan-tests.sh --engine pg --out <结果.json>`，再 `node poc/infra/test/compare-jiuan-results.mjs poc/bench/pg-port/after-pg.json <结果.json>` | 测试台实例上一次性的测试库容器 `jiuan-test-pg`（127.0.0.1:5434，数据只在内存里，跑完删）；不碰在跑的服务和库 `jiuan` | 免费（一轮最多 55 分钟） | 改了九安的数据层（补丁 0008–0018 那类）；`after-pg.json` 里过的这次不过就列出来 |
 | `run.sh`（先 `web.e2e.mjs`，再 `api.e2e.mjs`） | 线上测试台；开始前重置 `jiuan` 库，保留「Agent 接入」的启用记录 | 完整一次约 1–3 美元 | 改了外壳、新前端、补丁、审核 Agent 提示词、知识库。只跑一部分：`E2E_FILES=<文件>`，再加 node 的 `--test-name-pattern`；`KB_E2E_DOCX=<转好的风险判断卡 .docx>` 时跑知识库上传那条 |
 
 写测试和跑测试的规矩：

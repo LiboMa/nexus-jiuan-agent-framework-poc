@@ -66,7 +66,7 @@ open docs/delivery/README.html                                           # 从�
 | `poc/app/` | 九安 v0.7.10 测试台的外壳（组合根、前门、口令登录、假汇联易、出网守卫、「Agent 接入」页和知识库页的后端、新前端用的接口）；`lib/`（A2A 客户端、名片规整、operator 命令行、口令登录、HTTP 小工具）；`test/unit/` 单元测试、`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） | [PoC 说明](../../poc/README.md) |
 | `poc/web/` | 新前端（React 19 + TypeScript + Vite + Tailwind 4，哈希路由）：工作台、单据池、知识库、我的规则、Agent 接入、设置；`npm test`、`npm run build`（不带 `node_modules/`、`dist/`） | [PoC 说明](../../poc/README.md) |
 | `poc/bench/` | `build-jiuan.sh`（九安 v0.7.10 副本：按清单复制，不带 `seeds/`、`database/`、`tests/`，打 `patches/jiuan-v0.7.10/`；`--with-tests` 只给远端跑九安自带的测试用）与锁定的依赖清单（`pg` 8.16.3 给九安副本，`mysql2` 3.14.3 只给搬迁工具；不带 `node_modules`，构建时 `npm ci --ignore-scripts`）；一次性的 MySQL → PostgreSQL 搬迁工具 `mysql-to-pg.mjs` 和它的测试 `test/`；`pg-port/`：换库前后九安自带测试的结果（`baseline-mysql.json`、`after-pg.json`）和删掉、改写的测试清单 `removed-tests.json` | [交接文档](handover.md)第 2.1 节 |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent，0004「规则库 › 制度知识库」页（上传、入库预览、历史、检索、检索日志），0005 规则页跟着知识库方式走、「我的规则」，0006 `review_advice@1` 的时限 120 → 180 秒（只改测试台的副本），0007 调用中间件给 `nexus-a2a` 的时限 200 秒；以下把数据层换成 PostgreSQL（2026-11-06）：0008 `src/pg-database.mjs`，和原来 mysql2 连接池一样用法的 PG 连接池（返回形状、类型、错误码照 mysql2，`?` → `$n`，时间按 UTC 墙上时间读写，连接被断开不出未捕获的异常），0009 命名锁换成会话级 advisory 锁，0010 PG 的基线表结构（版本 19）、迁移、启动时的表结构核对，0011 分析主库的查询，0012 附件下载 / 解析队列、单据数据的摘要 / 清空 / 锁快照，0013 单据详情读取队列和详情投影，0014 平台层（运行记录和设置、数据页、运行锁、调用网关等），0015 审核要素和规则扫描，0016 审批回写、SAP 付款申请的存储和快照刷新，0017 PostgreSQL 是唯一的引擎、MySQL 的模块和 mysql2 依赖去掉。`tests/` 下是九安测试的改动，只有 `--with-tests` 才打 | [开发者快速对接指南](developer-guide.md) |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁：0001 连 Nexus 列发布，0002「Agent 接入」页（一张表、测试、调用记录），0003 启用即就绪、审批流只调一个审批 Agent，0004「规则库 › 制度知识库」页（上传、入库预览、历史、检索、检索日志），0005 规则页跟着知识库方式走、「我的规则」，0006 `review_advice@1` 的时限 120 → 180 秒（只改测试台的副本），0007 调用中间件给 `nexus-a2a` 的时限 200 秒；以下把数据层换成 PostgreSQL（2026-11-06）：0008 `src/pg-database.mjs`，和原来 mysql2 连接池一样用法的 PG 连接池（返回形状、类型、错误码照 mysql2，`?` → `$n`，时间按 UTC 墙上时间读写，连接被断开不出未捕获的异常），0009 命名锁换成会话级 advisory 锁，0010 PG 的基线表结构（版本 19）、迁移、启动时的表结构核对，0011 分析主库的查询，0012 附件下载 / 解析队列、单据数据的摘要 / 清空 / 锁快照，0013 单据详情读取队列和详情投影，0014 平台层（运行记录和设置、数据页、运行锁、调用网关等），0015 审核要素和规则扫描，0016 审批回写、SAP 付款申请的存储和快照刷新，0017 PostgreSQL 是唯一的引擎、MySQL 的模块和 mysql2 依赖去掉，0018 评审后补的两处（等锁有时限 50 秒；事务里有语句出错后的 COMMIT 报错、不当成提交成功）。`tests/` 下是九安测试的改动，只有 `--with-tests` 才打 | [开发者快速对接指南](developer-guide.md) |
 | `poc/infra/` | CloudFormation 模板（默认 m7g.xlarge）、`deploy.sh`、`destroy.sh`、`backup.sh`、`upgrade-instance.sh`、`migrate-data.sh`、`kb.sh`、`lib/`、`bench/`（实例上的 PostgreSQL 安装与建库脚本、配置与重置脚本、九安测试用的一次性测试库、systemd 单元）、换库用过的一次性脚本（`pg-prepare.sh`、`migrate-mysql-to-pg.sh`、`remote-jiuan-tests.sh`）、`test/`（部署脚本、模板、测试台脚本的测试与夹具）、`env/example.env`、`secrets.env.example`、部署说明（**不含 `secrets.env` 和各环境的配置**） | [部署说明](../../poc/infra/README.md)、[部署与迭代规范](deploy-iteration.md) |
 | `poc/README.md` | 测试台使用说明 | [PoC 说明](../../poc/README.md) |
 | `audit-agent/` | 审核 Agent 的提示词（`prompt.yaml` v3，改前的 `prompt-owner-2026-10-25.yaml` 留作回退）、下发脚本 `apply.py`、说明；`prompt-history/`：每次改线上提示词留一个目录（`2026-10-31/`、`2026-11-01/`、`2026-11-01b/`），里面是改前、改后、比对和下发记录 | [审核 Agent 说明](../../audit-agent/README.md) |
@@ -112,11 +112,11 @@ open docs/delivery/README.html                                           # 从�
 ## 7. 现在的状态（2026-11-06）
 
 **已完成**
-- **九安 v0.7.10 测试台**（2026-10-26 封板 v0.7.10，之后持续更新）：新前端 `poc/web`（2026-11-01 起是首页）、外壳 `poc/app`、补丁 0001–0017；单据池自动出 AI 独立建议，一轮上限 180 秒，2026-11-01 改过审核 Agent 的提示词以后一轮 7–20 秒；人在单据抽屉里采纳或改判，不回写汇联易。
+- **九安 v0.7.10 测试台**（2026-10-26 封板 v0.7.10，之后持续更新）：新前端 `poc/web`（2026-11-01 起是首页）、外壳 `poc/app`、补丁 0001–0018；单据池自动出 AI 独立建议，一轮上限 180 秒，2026-11-01 改过审核 Agent 的提示词以后一轮 7–20 秒；人在单据抽屉里采纳或改判，不回写汇联易。
 - **知识库**：PG + pgvector，整库 Cohere Embed v4；测试台经 Nexus 上的 PG 知识库 Agent 读写（`kb.rules/v1`）；有效的规则是审批风险判断卡（449 条）。PG 知识库 Agent 的客户部署交付件 1.0.1 在 `customer-deploy/`。
 - **部署分三块**、经 SSH 管理、默认 m7g.xlarge（arm64）；换机器有 `migrate-data.sh`。2026-11-02 起 m7g 测试环境上线，Nexus 的 PG 连接器指向它。
 - **只留新 UI**（2026-11-02）：v0.5.3 PoC 的代码、文档和测试都拿掉了；交付包的检查和白名单跟着改。
-- **九安的库换成 PostgreSQL**（2026-11-06，补丁 0008–0017）：测试台的库在容器 `jiuan-pg` 里，72 张表、104,538 行逐表核对一致搬过来，停站约 2 分 10 秒；切换前的 MySQL 停着、留着做回退。九安自带的测试在真 PG 上 2475 条过，换库前过的都还过。
+- **九安的库换成 PostgreSQL**（2026-11-06，补丁 0008–0018）：测试台的库在容器 `jiuan-pg` 里，72 张表、104,538 行逐表核对一致搬过来，停站约 2 分 10 秒；切换前的 MySQL 停着、留着做回退。九安自带的测试在真 PG 上 2475 条过，换库前过的都还过。
 - 测试：2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过；2026-11-06 换库后（27 条）的结果见 `CHANGELOG.md`。
 - 交付文档 8 份加索引、架构文档，Markdown 和 HTML 两个版本；由源码生成的图。
 

@@ -51,7 +51,7 @@
 | `poc/web/` | 新前端（React + Vite + Tailwind，哈希路由）；`npm test`、`npm run build` |
 | `poc/app/` | 测试台外壳：口令登录、假汇联易、出网守卫、「Agent 接入」与知识库页的后端、新前端用的接口；`lib/` 共用模块；`test/unit/` 单元测试，`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） |
 | `poc/bench/` | `build-jiuan.sh`：开发包 + 补丁 + 锁定版本的 `pg` → 九安 v0.7.10 副本；`mysql-to-pg.mjs`：一次性的 MySQL → PostgreSQL 搬迁工具（2026-11-06 用过，以后一般用不到）；`pg-port/`：换库前后九安自带测试的结果 |
-| `patches/jiuan-v0.7.10/` | 打进九安副本的补丁 0001–0017：0001–0007 是「Agent 接入」、审批 Agent、制度知识库页、我的规则、两处时限；0008–0017 把九安的数据层换成 PostgreSQL |
+| `patches/jiuan-v0.7.10/` | 打进九安副本的补丁 0001–0018：0001–0007 是「Agent 接入」、审批 Agent、制度知识库页、我的规则、两处时限；0008–0018 把九安的数据层换成 PostgreSQL |
 | `poc/infra/` | 栈模板（默认 m7g.xlarge）、`deploy.sh`、`kb.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`、`lib/remote.sh`（SSH / Instance Connect / SSM）、`bench/`（实例上的脚本：`bench-configure.sh`、`bench-reset.sh`、`pg-install.sh`、`pg-database.sh`、服务单元）；换库用过的一次性脚本 `pg-prepare.sh`、`migrate-mysql-to-pg.sh`、`remote-jiuan-tests.sh`、`env/example.env`、`secrets.env.example`；`test/` |
 | `kb/` | 知识库部署工具（preflight、db、network、egress、connector、ingest、agent、verify）；`convert/risk-cards/` 把审批风险判断卡转成可入库的 .docx |
 | `audit-agent/` | 审核 Agent 的提示词与下发脚本；`prompt-history/` 每次改线上提示词的留底 |

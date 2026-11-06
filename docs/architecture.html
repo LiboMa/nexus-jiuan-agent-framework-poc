@@ -197,8 +197,8 @@ A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG</figcaptio
 <td>九安开发包原样放在
 <code>source/<wbr></code>，<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>
 按清单复制、打
-<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code> 的 17
-个补丁（0001–0007 加功能，0008–0017 把数据层换成
+<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code> 的 18
+个补丁（0001–0007 加功能，0008–0018 把数据层换成
 PostgreSQL），打不上就报错、不留半成品</td>
 <td>九安升级或拿到真实代码线时，补丁可以重放、可以评审；我们的改动一眼看得清</td>
 </tr>
@@ -262,7 +262,7 @@ EC2 m7g.xlarge（arm64，Amazon Linux 2023，Node 24；与 Nexus 同 VPC 的公�
    │    │    ├─ 「Agent 接入」页的后端：Nexus 发布列表（经 nexus-ai-operator）、测试、调用记录、只给审批 Agent 路由
    │    │    ├─ 进程内的假汇联易、出网守卫（只放 Nexus）
    │    │    └─ 组合根 server.mjs：照九安的启动脚本组装九安副本，换掉配置、汇联易传输和出网
-   │    └─ 九安 v0.7.10 副本（开发包 + 补丁 0001–0017）：/analysis.html、/api/analysis/v1/*
+   │    └─ 九安 v0.7.10 副本（开发包 + 补丁 0001–0018）：/analysis.html、/api/analysis/v1/*
    │         单据同步与流水线、读原件、Agent 任务服务（review_advice@1）、调用中间件 nexus-a2a、
    │         A2A 适配层 providers/nexus-a2a.mjs、「Agent 接入」（启用记录加密存库）
    ├─ Docker 容器 jiuan-pg（postgres:17，127.0.0.1:5433，库 jiuan，属主 jiuan_app；2026-11-06 起）
@@ -304,7 +304,7 @@ Radix，哈希路由；工作台、单据池（抽屉看 AI
 <td>九安 v0.7.10 副本</td>
 <td>九安开发包按清单复制、打补丁、装锁定版本的 <code>pg</code>；补丁
 0001–0007 加了「Agent 接入」页的发布列表与测试、启用即就绪、只调一个审批
-Agent、制度知识库页、我的规则、两处时限（180 / 200 秒）；0008–0017
+Agent、制度知识库页、我的规则、两处时限（180 / 200 秒）；0008–0018
 把数据层换成 PostgreSQL（和 mysql2 一样用法的连接池、advisory
 锁、基线表结构和启动时的核对、各模块的查询），mysql2 不再是它的依赖</td>
 <td><code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>、<code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code></td>
@@ -816,9 +816,9 @@ href="delivery/delivery-guide.html">交付指南</a>。</p>
 </tr>
 <tr>
 <td>九安补丁 <code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10</code></td>
-<td>约 7,100（17 个补丁；换库的 0008–0017 约 5,300）</td>
+<td>约 7,100（18 个补丁；换库的 0008–0018 约 5,300）</td>
 <td>外壳的测试和端到端；九安自带的测试在真 PG 上 2,475
-条过（换库前过的都还过），测试的改动另在 <code>tests/<wbr></code> 下 10
+条过（换库前过的都还过），测试的改动另在 <code>tests/<wbr></code> 下 11
 个补丁、约 6,500 行，只在跑九安的测试时打</td>
 </tr>
 <tr>
@@ -909,8 +909,8 @@ href="delivery/delivery-guide.html">交付指南</a>。</p>
 <h1 id="10-技术评估">10. 技术评估</h1>
 <h2 id="101-做得好的">10.1 做得好的</h2>
 <ol type="1">
-<li><strong>对九安的侵入最小、可重放</strong>：17
-个补丁，都是针对开发包的明确改动，打不上就停；其中 0008–0017 是
+<li><strong>对九安的侵入最小、可重放</strong>：18
+个补丁，都是针对开发包的明确改动，打不上就停；其中 0008–0018 是
 2026-11-06 换 PostgreSQL 的，按模块分开，调用方几乎不用改（适配层照
 mysql2 的返回形状、类型和错误码）。契约文件只改了一处：补丁 0006 把
 <code>review_advice@1</code> 的时限从 120 秒放到 180 秒，契约目录的

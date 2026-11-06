@@ -11,7 +11,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 
 ## 1. 一页概览
 
-**是什么**：九安自助审核平台 v0.7.10 的原服务端跑在一台 EC2 上（测试台）。跑的是九安开发包的副本（`.build/jiuan`，开发包 + 补丁 0001–0017，`source/` 不动），用九安自己的运行时：分析存储（2026-11-06 起 PostgreSQL）、平台存储、连接器、调用中间件、流水线运行器、Agent 任务服务；不接真汇联易和钉钉（汇联易是进程内的假的），单据是虚构的，存在实例本机的 PostgreSQL 17 里（容器 `jiuan-pg`；2026-11-06 从 MySQL 换过来，MySQL 停着留做回退）。前面是我们的新前端 `poc/web` 和外壳 `poc/app`（口令登录、出网守卫、新前端用的接口）。AI 能力都在 Nexus 上：管理员在「Agent 接入」页启用 Agent、指定一个审批 Agent，单据池里的对公付款单自动出 AI 独立建议，人在单据抽屉里采纳或改判；知识库经 Nexus 上的 PG 知识库 Agent 读写。
+**是什么**：九安自助审核平台 v0.7.10 的原服务端跑在一台 EC2 上（测试台）。跑的是九安开发包的副本（`.build/jiuan`，开发包 + 补丁 0001–0018，`source/` 不动），用九安自己的运行时：分析存储（2026-11-06 起 PostgreSQL）、平台存储、连接器、调用中间件、流水线运行器、Agent 任务服务；不接真汇联易和钉钉（汇联易是进程内的假的），单据是虚构的，存在实例本机的 PostgreSQL 17 里（容器 `jiuan-pg`；2026-11-06 从 MySQL 换过来，MySQL 停着留做回退）。前面是我们的新前端 `poc/web` 和外壳 `poc/app`（口令登录、出网守卫、新前端用的接口）。AI 能力都在 Nexus 上：管理员在「Agent 接入」页启用 Agent、指定一个审批 Agent，单据池里的对公付款单自动出 AI 独立建议，人在单据抽屉里采纳或改判；知识库经 Nexus 上的 PG 知识库 Agent 读写。
 
 2026-11-02 起只留这一套（新 UI）：原来并排的 v0.5.3 PoC（PoC 服务端，当时在 `poc/app/`、「Nexus Agent」页、知识 Agent、命令行 Skill agent-access、Agent 接入框架的契约 `contract/`）已从代码里拿掉，服务器上的也会删（第 2.2 节、第 6 节第 14 条）。机器类型以后用 m7g.xlarge（arm64）。
 
@@ -52,7 +52,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `poc/web/` | 新前端（React，哈希路由）：`npm ci && npm test && npm run build`；`poc/infra/deploy.sh` 每次都先构建它，`dist/` 随构件发出 | 应用开发 |
 | `poc/bench/` | `build-jiuan.sh`：从九安 v0.7.10 开发包按清单复制 → 按顺序打补丁 → 装上锁定版本的依赖（`pg` 8.16.3 给九安副本；`mysql2` 3.14.3 只给搬迁工具），输出到 `.build/jiuan/`；`--with-tests` 另带九安自带的测试和 `patches/…/tests/` 的测试补丁（只给远端跑九安的测试用，不进构件）。`mysql-to-pg.mjs`：一次性的 MySQL → PostgreSQL 搬迁工具（2026-11-06 用过，测试在 `test/`）；`pg-port/`：换库前后九安自带测试的结果和删掉的测试清单 | 应用开发 |
 | `.build/jiuan/` | 生成物（九安副本 + 补丁 + 依赖）；`deploy.sh` 每次重建，不要手改 | — |
-| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0017，按文件名顺序：连 Nexus 列发布；「Agent 接入」页（手动添加、测试、调用记录）；启用即就绪、审批流只调管理员指定的一个审批 Agent；「规则库」分「审核要点」「制度知识库」两页（`public/kb-page.js`）；规则页跟着知识库方式走、「我的规则」；`review_advice@1` 的时限 180 秒；`nexus-a2a` 的时限 200 秒；0008–0017 把数据层换成 PostgreSQL（2026-11-06，表下面一个一行）。测试的改动在 `tests/` 子目录，只有 `--with-tests` 才打 | 应用开发 |
+| `patches/jiuan-v0.7.10/` | 打进九安 v0.7.10 副本的补丁 0001–0018，按文件名顺序：连 Nexus 列发布；「Agent 接入」页（手动添加、测试、调用记录）；启用即就绪、审批流只调管理员指定的一个审批 Agent；「规则库」分「审核要点」「制度知识库」两页（`public/kb-page.js`）；规则页跟着知识库方式走、「我的规则」；`review_advice@1` 的时限 180 秒；`nexus-a2a` 的时限 200 秒；0008–0018 把数据层换成 PostgreSQL（2026-11-06，表下面一个一行）。测试的改动在 `tests/` 子目录，只有 `--with-tests` 才打 | 应用开发 |
 | `audit-agent/` | 审核 Agent「九安审核AI」的提示词（v3：信封模式、`review_advice@1`、只读查知识库，第 1 次查询用 `kb_search`）、下发脚本 `apply.py`（写提示词并重存发布的动态配置）；`prompt-history/<日期>/`：每次改线上提示词的改前、改后、比对、下发记录（回退用改前那份） | Agent 开发 |
 | `kb/` | 知识库部署工具（原 `pgvector-rules-kb`，2026-10-26 并入）：PG + pgvector 容器、库内语义检索 `kb_search`、Nexus 数据连接器、规则入库、Agent 提示词受管规则、核对。测试台上用 `poc/infra/kb.sh` 驱动（从栈里取实例和网段）；完整说明在 `kb/GUIDE.md`。`kb/convert/risk-cards/`：把审批风险判断卡的 HTML 转成可入库的 .docx（只有代码，原页面和转出来的文件不进仓库） | 运维、Agent 开发 |
 | `knowledgebase-writer-agent-pg/` | PG 知识库 Agent「知识库文档管家（PG 版）」的源码：工具、提示词、打包与导入脚本、A2A 命令行 `scripts/a2a_rules.mjs` | Agent 开发 |
@@ -66,7 +66,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 | `VERSION`、`CHANGELOG.md`、`README.md`（根目录） | 版本号 `Finance-Audit-Nexus-PoC v0.7.10`、每个版本改了什么、包的入口说明 | 应用开发 |
 | `source/九安自助审核平台-测试环境开发包-v0.7.10/` | 九安原开发包。**只读，不改，不执行其中脚本**；`seeds/`、`database/` 含真实数据，不打开、不复制 | 九安 |
 
-补丁 0008–0017（2026-11-06 换 PostgreSQL；每个补丁开头有一段中文说明）：
+补丁 0008–0018（2026-11-06 换 PostgreSQL；每个补丁开头有一段中文说明）：
 - 0008 `src/pg-database.mjs`：和原来 mysql2 连接池一样用法的 PG 连接池（返回形状、类型、错误码照 mysql2；`?` → `$n`；时间按 UTC 墙上时间读写；连接被断开不出未捕获的异常）。
 - 0009 命名锁：`GET_LOCK` / `RELEASE_LOCK` / `IS_USED_LOCK` 换成会话级 advisory 锁。
 - 0010 PG 的基线表结构（版本 19）、迁移、启动时的表结构核对（对不上报 `PG_MIGRATION_DRIFT`，不启动）。
@@ -77,6 +77,7 @@ audience: 接手维护的工程师、运维、Agent 开发者、项目负责人
 - 0015 审核要素和规则扫描。
 - 0016 审批回写、SAP 付款申请的存储和快照刷新。
 - 0017 PostgreSQL 是唯一的引擎，MySQL 的模块和 mysql2 依赖去掉。
+- 0018 评审后补的两处：等锁有时限（每个会话 `lock_timeout` 50 秒，同 InnoDB），事务里有语句出错后的 COMMIT 不再当成提交成功（报 `ER_TRANSACTION_ROLLED_BACK`）。
 
 2026-11-02 拿掉的（找它们的去看[变更记录](../../CHANGELOG.md)）：当时的 `poc/app/`（v0.5.3 PoC 服务端与它的测试）和 `poc/bench/build-jiuan.sh`（v0.5.3 的；现在叫这两个名字的是 v0.7.10 测试台的外壳和构建脚本，第 2.7 节）、`poc/tools/`、`skills/agent-access/`、`knowledge-agent/`、`contract/`（九安 v0.7.10 的 `src/agent-contract/` 里有一份原样拷入的，见[开发者快速对接指南](developer-guide.md)）、`docs/delivery/patches/`；v0.5.3 的开发包 `source/审核平台-测试环境开发包-v0.5.3/` 也不再用到。
 
@@ -254,7 +255,19 @@ v0.5.3 PoC 的那几样（各账号的 Nexus 连接和启用、旧的共享 CLI 
 17. **测试台评审还适用的两条 Minor**：换型脚本只检查实例这一个资源；`backup.sh` 默认第一块卷是根卷。
 18. **九安原来就有的一个竞态，没改**（换库前 MySQL 上也有）：两个流程同时发布同一份审核要素草稿时，输的一方偶尔报 `ELEMENT_FAMILY_RETIRED` 而不是 `FAMILY_CONFLICT`（`element-lifecycle.mjs` 先读状态、再另读是否生效过），大约五次里一次；只影响报错的种类，不影响数据。不在换库的范围里，交项目负责人定要不要改。
 19. **切换前的 MySQL 还留着**（2026-11-06 换库）：容器 `jiuan-mysql` 停着、数据目录 `/var/lib/jiuan-mysql` 留着，给回退用（[运维](operations.md)第 2.6 节）。项目负责人说删再删，删的时候连同 `secrets.env` 里两项 MySQL 口令、实例上的 `/etc/andon-finance/bench/mysql_root_password` 和 `/etc/andon-finance/jiuan/mysql_app_password` 一起删。
-20. **上生产前必须改的**：见第 6.1 节。
+20. **换库评审记下、没改的小问题**（2026-11-06 整条分支的评审；两处要紧的已用补丁 0018 改了）：
+    - 单据检索的不分大小写只对英文字母有效（库的字符类别是 C）：「É / é」、全角「Ａ / a」不再算同一个；九安正式环境若要，改成 ICU 排序或 `lower()` 加规范化。
+    - 原来 MySQL 的 `unicode_ci` 让唯一键也不分大小写，现在分了（例如审核要素登记表的 `expense_type_oid`）；只差大小写的两个值现在能同时存进去。
+    - `migrate-data.sh` 恢复九安的库时不在一个事务里、恢复完没 `ANALYZE`：失败会留下半个库；刚恢复完的头几次进度查询可能很慢。
+    - 连接池缓存的 `statement_timeout` 在事务回滚后可能和实际不一致；命名锁在事务里等超时会把那个事务作废。现在没有调用方这样用。
+    - `bench/pg-install.sh` 把整个 `/etc/andon-finance/bench` 挂进 `jiuan-pg`，PG 的超级用户读得到 `mysql_root_password`：只挂 `pg_superuser_password` 一个文件就好。
+    - 搬迁工具 `--replace` 和 `--only` 一起用时，`TRUNCATE … CASCADE` 会连带清空没在搬的子表（一次性的工具，已经用完）。
+    - 上游字符串里带 NUL（`\0`、JSON 里的 `\u0000`）现在写不进去（MySQL 能存）；错误码 22P05 / 22021 还没映射成九安认得的码。
+    - 九安每次启动的表结构核对要在库里建一个临时 schema（要 CREATE 权限）、跑一遍整套建表：测试台的账号是库的属主没问题；客户环境的账号没有这个权限就起不来。
+    - `bench-reset.sh` 中途失败后再跑一次，第二次会导出空的启用记录再删库（换库前就是这样）；那一行只在上一次的 `/var/tmp/jiuan-reset.*` 里。
+    - 九安测试和 MySQL 基线只比了过 / 不过，没比那 16 条不过的原因是否一样（原始报告都留着）。
+    - 运行时已经不用的 MySQL 代码还在交付包里（几份 MySQL 建表文字的模块、构件里的 `mysql2`）：删 MySQL 时一起拿掉。
+21. **上生产前必须改的**：见第 6.1 节。
 
 ### 6.1 上生产前必须改的
 
