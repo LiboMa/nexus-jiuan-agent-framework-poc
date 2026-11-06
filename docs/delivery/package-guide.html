@@ -480,9 +480,9 @@ Agent、发布</td>
 <td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code>（包里有样例
 <code>secrets.<wbr>env.<wbr>example</code>，没有真实的值）</td>
 <td>有两条口令和测试台的密钥：<code>BENCH_<wbr>PG_<wbr>SUPERUSER_<wbr>PASSWORD</code>、<code>JIUAN_<wbr>PG_<wbr>APP_<wbr>PASSWORD</code>（九安的
-PostgreSQL）、<code>JIUAN_<wbr>DATA_<wbr>KEY</code>，和只留给回退的
-<code>BENCH_<wbr>MYSQL_<wbr>ROOT_<wbr>PASSWORD</code>、<code>JIUAN_<wbr>MYSQL_<wbr>APP_<wbr>PASSWORD</code>。Agent
-的调用密钥不在这里：管理员在「Agent
+PostgreSQL）、<code>JIUAN_<wbr>DATA_<wbr>KEY</code>（原来的两项 MySQL
+口令 2026-11-06 随 MySQL 删了，<code>deploy.<wbr>sh</code>
+见到就删掉）。Agent 的调用密钥不在这里：管理员在「Agent
 接入」页启用，加密存在九安的库里。<strong><code>JIUAN_<wbr>DATA_<wbr>KEY</code>
 丢了，库里的启用记录就解不开</strong></td>
 <td><strong>当面交接</strong>（不经聊天工具、邮件、网盘）；接手后放回
@@ -521,8 +521,7 @@ href="skills-guide.html">Skills 配置指南</a>第 3
 </tr>
 <tr>
 <td>测试台上的数据（九安的 PostgreSQL 里的 <code>jiuan</code>
-库、知识库的 PG、停着的
-MySQL、<code>/<wbr>var/<wbr>lib/<wbr>jiuan/<wbr></code>）</td>
+库、知识库的 PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan/<wbr></code>）</td>
 <td>在线上；单据是虚构的，端到端测试每次都会重建 <code>jiuan</code>
 库；启用记录里有加密的调用密钥</td>
 <td>留在实例上；<code>backup.<wbr>sh</code> 的根卷快照里有一份；换机器用
@@ -654,7 +653,8 @@ m7g.xlarge（arm64）；换机器有 <code>migrate-data.sh</code>。2026-11-02
 <li><strong>九安的库换成 PostgreSQL</strong>（2026-11-06，补丁
 0008–0018）：测试台的库在容器 <code>jiuan-pg</code> 里，72 张表、104,538
 行逐表核对一致搬过来，停站约 2 分 10 秒；切换前的 MySQL
-停着、留着做回退。九安自带的测试在真 PG 上 2475
+当天晚上删了，回不到 MySQL 了（留下切换后的 <code>pg_dump</code>
+和切换前的根卷快照）。九安自带的测试在真 PG 上 2475
 条过，换库前过的都还过。</li>
 <li>测试：2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过；2026-11-06
 换库后（27 条）的结果见 <code>CHANGELOG.md</code>。</li>
@@ -672,8 +672,7 @@ HTTP（评审 C2）。</li>
 <li>值班看不到 Nexus 调用的问题（评审 I6）。</li>
 <li>九安上游的 <code>review_advice@1</code> 时限还是 120
 秒，建议九安调高。</li>
-<li>切换前的 MySQL
-还留着（停着），项目负责人说删再删；九安原来就有的一个审核要素发布的竞态没改（交接文档第
+<li>九安原来就有的一个审核要素发布的竞态没改；换库评审记下的小问题没改（交接文档第
 6 节第 18、19 条）。</li>
 <li>上生产前必须改的，见<a href="handover.html">交接文档</a>第 6.1
 节。</li>
@@ -699,8 +698,8 @@ HTTP（评审 C2）。</li>
 <td></td>
 </tr>
 <tr>
-<td>测试台（九安的 PostgreSQL、知识库的 PG、停着的
-MySQL、测试台密钥、升级前快照）</td>
+<td>测试台（九安的 PostgreSQL、知识库的
+PG、测试台密钥、升级前快照）</td>
 <td></td>
 <td></td>
 <td></td>

@@ -2,7 +2,7 @@ flowchart TB
   subgraph laptop["本机（维护人的电脑）"]
     direction LR
     repo["audit-nexus/<br/>代码 · 文档 · 测试"]
-    secrets["poc/infra/secrets.env（0600）<br/>两条口令 · 测试台密钥（PG 两项 · 数据密钥 ·<br/>MySQL 两项只留给回退）<br/>（Agent 密钥不在这里）"]
+    secrets["poc/infra/secrets.env（0600）<br/>两条口令 · 三项测试台密钥<br/>（PG 两项 · 数据密钥；Agent 密钥不在这里）"]
     envs["poc/infra/env/&lt;环境&gt;.env<br/>.state/ 钉住的主机公钥"]
     operator["nexus-ai-operator<br/>~/.nexus 凭证（不读不复制）"]
     source["source/ 九安开发包 v0.7.10<br/>只读，不执行"]
@@ -13,7 +13,6 @@ flowchart TB
     s3["S3 构件桶<br/>releases/current.tgz · archive/（14 天）<br/>secrets/secrets.env"]
     ec2["EC2（m7g.xlarge）<br/>/opt/andon-finance/current · previous<br/>/etc/andon-finance/secrets.env · bench/ · jiuan/<br/>/var/lib/jiuan"]
     db["PostgreSQL 容器 jiuan-pg<br/>127.0.0.1:5433 · 库 jiuan"]
-    olddb["MySQL 容器 jiuan-mysql（停着）<br/>回退用，项目负责人说删再删"]
     pg["PG 容器 nexus-pgvector<br/>库 nexus"]
     cf["CloudFront<br/>站点 DomainName"]
   end
@@ -30,7 +29,6 @@ flowchart TB
   s3 -- "SSM 或 SSH：装构件 · 重启" --> ec2
   repo -- "kb.sh（kb/）" --> pg
   ec2 --- db
-  ec2 -.- olddb
   ec2 --- pg
   cf e1@== "HTTP :4180" ==> ec2
   ec2 e2@== A2A ==> adv
@@ -41,5 +39,4 @@ flowchart TB
   class repo,operator,envs,s3,ec2,cf,build,pg poc
   class secrets risk
   class source,db jiuan
-  class olddb pocOnly
   class adv,kb,keys nexus

@@ -51,7 +51,7 @@ cp poc/infra/env/example.env poc/infra/env/<环境名>.env && chmod 600 poc/infr
 
 照注释填：栈名和区域、VPC 与子网、`INSTANCE_TYPE=m7g.xlarge`、站点 `DOMAIN_NAME` 和回源名 `ORIGIN_DOMAIN_NAME`、托管区与证书、`NEXUS_ORIGIN` 和 `NEXUS_PROFILE`、知识库的 `KB_MODE=pg` 与 `KB_ALLOWED_CIDR`、经 SSH 管理的 `SSH_KEY_NAME` / `SSH_KEY_FILE` / `SSH_ALLOWED_CIDR`（或 `SSH_VIA=eice`）/ `SSM_MANAGED=false`。Agent 和发布的编号（`AGENT_ID`、`PUBLICATION_ID`、`CONNECTOR_ID`、`KB_PG_PUBLICATION_ID`）部署完对应那一块再填回来。
 
-**密钥配置** `poc/infra/secrets.env`：第一次跑 `deploy.sh` 自动生成（两个账号的口令 + 测试台密钥：PG 的两项、数据密钥，和切换前 MySQL 留给回退的两项，0600），只在本机和实例上，当面交接；样例和对应关系见 `poc/infra/secrets.env.example`。Agent 的调用密钥不放这里。
+**密钥配置** `poc/infra/secrets.env`：第一次跑 `deploy.sh` 自动生成（两个账号的口令 + 三项测试台密钥：PG 的两项和数据密钥，0600），只在本机和实例上，当面交接；样例和对应关系见 `poc/infra/secrets.env.example`。Agent 的调用密钥不放这里。
 
 ## 4. 部署
 
@@ -157,8 +157,7 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判�
 | 改审核 Agent 的提示词 | `audit-agent/apply.py --dry-run` → 下发，留 `prompt-history/` | 用上一版的提示词 `apply.py --base …` 再下发一次 |
 | 改规则 | 新前端「知识库 › 上传制度」（同一份再传是「没有变化」；改版只写变了的） | 「下线」旧版本、「恢复」上一版 |
 | 改栈参数、换机型 | 改环境配置 → `deploy.sh`；换机型用 `upgrade-instance.sh`（只在同一种架构之间换，先 `backup.sh`） | 参数改回去再 `deploy.sh` |
-| 备份 | `backup.sh`：根卷快照（九安的 PostgreSQL、知识库的 PG、留着的 MySQL 数据目录、`/var/lib/jiuan` 都在根卷上） | 用快照建卷换回根卷 |
-| 换回 MySQL（2026-11-06 换库，项目负责人确认之前出问题才做） | — | [运维](operations.md)第 2.6 节：停服务 → `previous` 换回 `current` → `docker start jiuan-mysql` → 起服务；下一次部署之后就要从换库之前的提交重新部署 |
+| 备份 | `backup.sh`：根卷快照（九安的 PostgreSQL、知识库的 PG、`/var/lib/jiuan` 都在根卷上） | 用快照建卷换回根卷 |
 | 换机器、迁域名 | 另建一个栈 → `deploy.sh` → `kb.sh db` → `migrate-data.sh`（旧环境经 SSM 只读导出、加密搬运、逐表核对）→ `kb.sh connector` 把 Nexus 指到新 PG → 端到端 → 旧栈腾出站点名、新栈接上（[交接文档](handover.md)第 2.2 节有 2026-11-02 的实际做法） | 旧栈没删之前：`kb.sh connector` 用旧环境的配置再跑一次，Nexus 就指回旧 PG |
 
 **要知道的几件事**：
@@ -180,7 +179,7 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判�
 |---|---|
 | 测试台 | 栈 `andon-finance-m7g`，一台 m7g.xlarge（arm64），站点 <https://jiuan-v0710.tinyboat.blog>；经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点管理，不用 SSM；环境配置 `poc/infra/env/m7g.env` |
 | Nexus | `nxs-beine1013`；审核 Agent 发布 `pub_5c53e70d8dc7ddea`；PG 知识库 Agent 发布 `pub_6ea5f0855dff6c1b`；PG 数据连接器 `pgvector-andon`（`conn-f0c7233959d9`）指向测试台实例的私网地址 |
-| 九安的库 | 测试台实例上的 PostgreSQL 容器 `jiuan-pg`（127.0.0.1:5433，库 `jiuan`），2026-11-06 20:35–20:37（UTC+8）从 MySQL 切过来；MySQL 容器 `jiuan-mysql` 停着、不删，留着做回退，项目负责人说删再删 |
+| 九安的库 | 测试台实例上的 PostgreSQL 容器 `jiuan-pg`（127.0.0.1:5433，库 `jiuan`），2026-11-06 20:35–20:37（UTC+8）从 MySQL 切过来；切换前的 MySQL 当天晚上删了，回不到 MySQL 了（切换前后的数据在 `pg_dump` 和根卷快照里，[运维](operations.md)第 2.6 节） |
 | 知识库 | 测试台实例上的容器 `nexus-pgvector`；有效规则是审批风险判断卡 `risk-cards`（449 条），向量 Cohere Embed v4 |
 | 旧栈 | `andon-finance-poc`（t3.large）等删（项目负责人定先留几天；根卷快照 `snap-05180f1a83a6edada`） |
 

@@ -1,5 +1,21 @@
 # 变更记录
 
+## 2026-11-06（二）：删掉切换前的 MySQL
+
+项目负责人 2026-11-06 晚上定：换库时留着做回退的 MySQL 删掉。
+
+**删了的**（m7g 实例上）：容器 `jiuan-mysql`、数据目录 `/var/lib/jiuan-mysql`（333 MB）、镜像 `mysql:8.0`、两个口令文件 `/etc/andon-finance/bench/mysql_root_password` 和 `/etc/andon-finance/jiuan/mysql_app_password`。实例上现在只跑 `jiuan-pg` 和 `nexus-pgvector`。
+
+**代码跟着改的**：`poc/infra/lib/bench-secrets.sh` 不再补 `BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN_MYSQL_APP_PASSWORD`，`secrets.env` 里还有就连同上面那行「# 测试台：只补不换（…）」一起删掉；`bench-configure.sh` 每次部署都清掉留下的两个 MySQL 口令文件；`secrets.env.example` 去掉这两项，换成一行说明；`deploy.sh` 新建 `secrets.env` 时的提示改回「三项测试台密钥」（`BENCH_PG_SUPERUSER_PASSWORD`、`JIUAN_PG_APP_PASSWORD`、`JIUAN_DATA_KEY`）。本机和实例上的 `secrets.env` 都由部署自动清掉了这两项，不用手改。测试台重新部署，健康检查通过。
+
+**回不到 MySQL 了**。切换前后的数据还剩两份：切换后马上做的 `pg_dump` `/var/backups/jiuan-pg-20261106T123831Z.dump`（PostgreSQL 的数据，切换后约 1 分钟），和切换前的根卷快照 `snap-0296baf8891b5df4b`（里面还有当时的 MySQL 数据目录）。`/opt/andon-finance/previous` 现在也是连 PostgreSQL 的构件。怎么从这两份恢复见[运维](docs/delivery/operations.md)第 2.6 节。
+
+**没动的**：一次性的搬迁工具 `poc/bench/mysql-to-pg.mjs`、`poc/infra/migrate-mysql-to-pg.sh`（2026-11-06 用过；没有 MySQL 了，跑不起来）和只给它用的 `mysql2`（`poc/bench/package.json`、构件的 `node_modules`）还在。运行时已经不用的 MySQL 代码以后一起拿掉（交接文档第 6 节第 19 条）。
+
+**文档**：写着 MySQL「停着、留着做回退」的地方都改了：回退到 MySQL 的步骤拿掉，换成从 `pg_dump` 或快照恢复；密钥清单去掉两项 MySQL 口令；交接文档第 6 节原来的第 19 条（MySQL 还留着）删掉，后面两条顺延成第 19、20 条；架构与技术评估的风险第 19 条删掉；图 `handover-assets`、`package-contents` 里不再画 MySQL。
+
+**端到端**：删完重新部署后跑了一轮完整的端到端（北京时间 23:29–23:36）：27 条里 26 条过，没过的是新加的「九安连的是 PostgreSQL」那条——测试自己的问题：MySQL 容器删掉以后 `docker inspect` 先打一个空行再失败，测试把它读成了空；改成用 `docker ps` 查（容器不在就是 missing）以后单独重跑这一条通过（jiuan-pg running、jiuan-mysql missing）。另外照运维第 2.6 节的步骤，用那份 dump 在临时库上演练了一次恢复：2 秒恢复 73 张表，属主、条数、启用记录的 sha256 都对，临时库删掉
+
 ## 2026-11-06：九安的库从 MySQL 换成 PostgreSQL
 
 **为什么**：九安的正式环境已经把库换成了 PostgreSQL，没有给新的开发包。项目负责人 2026-11-05 定：手上的 v0.7.10 就是最新的代码，在本地把九安的数据层改成 PostgreSQL，测试台跟着切过去；2026-11-06 确认（测试在远端实例上做，全过就直接切换）。要「无缝」，项目负责人的原话是：数据一条不丢、切过去后一切照常；切换时可以停站几分钟。只走 PostgreSQL，不同时支持两种库；九安的业务逻辑、页面、契约不动，知识库那台 PG（`nexus-pgvector`）和 Nexus 一侧也不动。
@@ -35,7 +51,7 @@
   一是等行锁原来 50 秒就报错（九安的列表同步、详情投影会重试或记下原因），换到 PG 后变成一直等，一个卡住的事务能把连接池占满；
   二是事务里某条语句出错、九安的代码接住了（MySQL 上没事），PG 已经把整个事务作废，之后的 COMMIT 不报错地回滚了，看上去像提交成功。
   两处都先写了测试（真 PG 上先失败、改完通过）。改完九安的测试在真 PG 上整套重跑：2631 条，基线里过的都还过，没有新的失败（原来不过的 16 条少了 1 条）；
-  测试台重新部署（只换代码，库不动），端到端第三轮（北京时间 21:53–22:00）27 条全过（1 条按设计跳过），服务日志里没有锁等待超时、事务作废的报错。另有 12 条小问题记下没改，见交接文档第 6 节第 20 条。
+  测试台重新部署（只换代码，库不动），端到端第三轮（北京时间 21:53–22:00）27 条全过（1 条按设计跳过），服务日志里没有锁等待超时、事务作废的报错。另有 12 条小问题记下没改，见交接文档第 6 节第 19 条。
 
 **切换**（2026-11-06，北京时间 20:35–20:37）
 - 第 0 步：根卷快照 `snap-0296baf8891b5df4b`（卷 `vol-0fa08d506ced8023f`）。

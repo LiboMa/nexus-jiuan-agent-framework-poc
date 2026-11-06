@@ -46,7 +46,6 @@ EC2 m7g.xlarge（arm64，Amazon Linux 2023，Node 24；与 Nexus 同 VPC 的公�
    │         单据同步与流水线、读原件、Agent 任务服务（review_advice@1）、调用中间件 nexus-a2a、
    │         A2A 适配层 providers/nexus-a2a.mjs、「Agent 接入」（启用记录加密存库）
    ├─ Docker 容器 jiuan-pg（postgres:17，127.0.0.1:5433，库 jiuan，属主 jiuan_app；2026-11-06 起）
-   ├─ Docker 容器 jiuan-mysql（切换前的 MySQL，停着、不删，留着做回退，项目负责人说删再删）
    └─ Docker 容器 nexus-pgvector（pgvector/pgvector:pg17，私网 IP:5432，库 nexus；PL/Python 的 kb_embed / kb_search 用实例角色调 Bedrock）
         │
         │ ① A2A 0.3 message/stream，Bearer <「Agent 接入」页启用时粘贴的调用密钥>
@@ -80,7 +79,7 @@ Nexus nxs-beine1013（v0.3.28，同一个 VPC）
 | 「Agent 接入」页连 Nexus 的凭证、我的规则、上传暂存与上传历史、种子时间锚点 | 实例上的 `/var/lib/jiuan/` | 外壳 | 外壳 | 都在根卷上 |
 | 制度规则、向量、上传登记、检索日志 | PG `nexus` 库：`approval_rules`（有效的）、`approval_rules_archive`（下线的）、`kb_documents`、`kb_search_log` 等 | PG 知识库 Agent 的工具；`kb/deploy.sh` 的入库 | 审核 Agent（经数据连接器只读）、PG 知识库 Agent | 现在有效的是审批风险判断卡 `risk-cards` 449 条 |
 | Agent 的提示词、发布、调用记录、会话 | Nexus | `audit-agent/apply.py`、PG 知识库 Agent 的导入脚本、Nexus 网页 | Nexus | 每次改审核 Agent 的线上提示词都在 `audit-agent/prompt-history/` 留底 |
-| 启动配置（两个账号的口令、PostgreSQL 的两个口令、数据密钥；切换前 MySQL 的两个口令留着给回退） | 本机 `poc/infra/secrets.env` → 构件桶（服务端加密）→ 实例 `/etc/andon-finance/secrets.env`（root 0600）→ 拆成服务读的文件 | `deploy.sh`（缺了才补，已有的永不改） | PostgreSQL 容器、外壳 | 当面交接；丢了数据密钥，库里的启用记录就解不开 |
+| 启动配置（两个账号的口令、PostgreSQL 的两个口令、数据密钥） | 本机 `poc/infra/secrets.env` → 构件桶（服务端加密）→ 实例 `/etc/andon-finance/secrets.env`（root 0600）→ 拆成服务读的文件 | `deploy.sh`（缺了才补，已有的永不改） | PostgreSQL 容器、外壳 | 当面交接；丢了数据密钥，库里的启用记录就解不开 |
 
 **往外发的数据**：每一轮 AI 建议都会把单据事实（金额、公司、费用说明、原件的脱敏页文字）发给 Nexus 和它后面的模型。测试台只有虚构数据；接真实单据之前要过九安的数据治理和客户的合规（[客户部署路线](delivery/customer-rollout.md)前置 4）。
 
@@ -285,13 +284,12 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 | 16 | 实例角色还留着 Titan v2 的调用权限 | 多一个用不到的模型权限 | 换 Cohere v4 时留作回退 | 确认不再回退后从 `KbBedrockPolicy` 去掉 | 低 |
 | 17 | 交接仓库被公司的代码安全工具判为未批准的公开仓库 | 推送被拦，交接内容可能已经公开 | 2026-11-03 手动推送过 | 确认审批状态；不该公开就改成私有或换到批准的位置 | 流程上要尽快确认 |
 | 18 | 九安原来就有的一个竞态（换库前 MySQL 上也有） | 两个流程同时发布同一份审核要素草稿时，输的一方偶尔报 `ELEMENT_FAMILY_RETIRED` 而不是 `FAMILY_CONFLICT`，大约五次里一次；只影响报错的种类，不影响数据 | `element-lifecycle.mjs` 先读状态、再另读是否生效过；换库没改它（不在范围） | 交项目负责人定要不要改 | 低 |
-| 19 | 切换前的 MySQL 还留着 | 多一个停着的容器、数据目录和两项口令要管 | 2026-11-06 切换后停着、不删，留着做回退 | 项目负责人说删就删：容器、`/var/lib/jiuan-mysql`、`secrets.env` 里两项 MySQL 口令和实例上的两个口令文件（[运维](delivery/operations.md)第 2.6 节） | 低 |
 
 ### 10.3 建议的路线
 
 1. **上生产前**（挡路的）：第 1、2、3 条；生产 Nexus 上的两个发布单独签发调用密钥；开发测试期间用过的密钥统一清理（[交接文档](delivery/handover.md)第 2.5 节）。
 2. **试运行期间**：第 4、5、6 条，盯住每天的调用量、失败率（`AI_*` 错误码）、单次时长、人工改判率（工作台上有）。
-3. **之后**：第 7–11、15 条，主要是可运维性和成本；第 18、19 条等项目负责人定。
+3. **之后**：第 7–11、15 条，主要是可运维性和成本；第 18 条等项目负责人定。
 
 ## 11. 代码地图
 

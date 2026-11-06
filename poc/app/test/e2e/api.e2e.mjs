@@ -332,15 +332,16 @@ test('检索日志（pg 方式）：这次测试期间审核 Agent 审单时经�
 
 test('数据库：测试台的九安连的是 PostgreSQL（经 SSM 或 SSH 只读查：容器 jiuan-pg 在跑、jiuan-mysql 停了或不存在、外壳的 env 里 POC_DB_PORT=5433；这次重置后新建的库 jiuan 里有服务跑迁移建出来的表）', async () => {
   const reply = await ssm([
-    "printf 'pg=%s\\n' \"$(docker inspect -f '{{.State.Running}}' jiuan-pg 2>/dev/null || echo missing)\"",
-    "printf 'mysql=%s\\n' \"$(docker inspect -f '{{.State.Running}}' jiuan-mysql 2>/dev/null || echo missing)\"",
+    // docker ps 对不存在的容器什么都不打（docker inspect 会先打一个空行再失败，2026-11-06 删掉 MySQL 后撞上过）
+    "printf 'pg=%s\\n' \"$(docker ps -a --filter 'name=^jiuan-pg$' --format '{{.State}}' | grep . || echo missing)\"",
+    "printf 'mysql=%s\\n' \"$(docker ps -a --filter 'name=^jiuan-mysql$' --format '{{.State}}' | grep . || echo missing)\"",
     "printf 'port=%s\\n' \"$(sed -n 's/^POC_DB_PORT=//p' /etc/andon-finance/jiuan/env)\"",
     "printf 'tables=%s\\n' \"$(docker exec -u postgres -e 'PGOPTIONS=-c default_transaction_read_only=on' jiuan-pg psql -X -At -d jiuan -c \"SELECT count(*) FROM pg_tables WHERE schemaname = 'public'\")\"",
   ].join('\n'), 'e2e database engine check (read-only)');
   const facts = Object.fromEntries(reply.split('\n').map(line => line.split('=')));
   console.log(`数据库：jiuan-pg ${facts.pg}，jiuan-mysql ${facts.mysql}，POC_DB_PORT=${facts.port}，库 jiuan 里 ${facts.tables} 张表`);
-  assert.equal(facts.pg, 'true', `jiuan-pg 没在跑：${reply}`);
-  assert.ok(['false', 'missing'].includes(facts.mysql), `jiuan-mysql 还在跑：${reply}`);
+  assert.equal(facts.pg, 'running', `jiuan-pg 没在跑：${reply}`);
+  assert.ok(['missing', 'exited', 'created'].includes(facts.mysql), `jiuan-mysql 还在跑（或读不出状态）：${reply}`);
   assert.equal(facts.port, '5433', `外壳的 env 里 POC_DB_PORT 不是 5433：${reply}`);
   assert.ok(Number(facts.tables) > 0, `库 jiuan 里没有表（服务没在 PG 上跑迁移？）：${reply}`);
 });

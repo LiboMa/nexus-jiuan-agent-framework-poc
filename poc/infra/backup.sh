@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 升级测试台之前的备份（需要本机 AWS 凭证）：根卷快照（标签 andon-finance-poc-backup），等它完成。
-# 根卷上有九安的 PostgreSQL（/var/lib/jiuan-pg）、知识库的 PG、切换前留着做回退的 MySQL 的数据目录和九安 v0.7.10 的状态目录 /var/lib/jiuan，
+# 根卷上有九安的 PostgreSQL（/var/lib/jiuan-pg）、知识库的 PG 和九安 v0.7.10 的状态目录 /var/lib/jiuan，
 # 所以一个快照就够；不登实例（经 SSM 或 SSH 都不用）。
 # 恢复：用快照建卷替换根卷。只搬数据到另一台机器用 migrate-data.sh。
 set -euo pipefail

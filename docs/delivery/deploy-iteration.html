@@ -256,7 +256,7 @@ C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 <td>m7g 测试环境（栈
 <code>andon-<wbr>finance-<wbr>m7g</code>，2026-11-02 起）</td>
 <td>一台 m7g.xlarge（arm64）装前端、九安的 PostgreSQL（2026-11-06
-起；之前的 MySQL 停着留做回退）、知识库的 PG，经
+起；之前的 MySQL 当天晚上删了）、知识库的 PG，经
 SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 端点管理（<code>poc/<wbr>infra/<wbr>README.<wbr>md</code>「经 SSH
 管理」）；数据从旧栈搬来（<code>migrate-<wbr>data.<wbr>sh</code>）；2026-11-02
@@ -402,7 +402,7 @@ refactor，不重建资源</td>
 <td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
 <td>换回旧值（PG
 超级用户口令、数据密钥只补不换；<code>JIUAN_<wbr>PG_<wbr>APP_<wbr>PASSWORD</code>
-可以换，下次部署两边一起换；两项 MySQL 口令只留给回退，不动）</td>
+可以换，下次部署两边一起换）</td>
 <td>运维</td>
 </tr>
 <tr>
@@ -557,14 +557,11 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 <ul>
 <li>回滚不动 <code>secrets.env</code>
 和九安库里的数据；如果问题出在密钥，按第 4 节「密钥」那几行处理；</li>
-<li><strong>2026-11-06
-换库之后</strong>：在下一次部署之前，<code>previous</code> 是连 MySQL
-的那一版，换回它还要
-<code>docker start jiuan-mysql</code>，数据回到切换那一刻（<a
-href="operations.html">运维</a>第 2.6 节）；下一次部署之后
-<code>previous</code> 也连 PostgreSQL，要回到 MySQL
-就得从换库之前的提交（main 上的
-<code>55d1bc8</code>）重新部署，而且停着的 MySQL 还在才行；</li>
+<li><strong>回不到 MySQL 了</strong>：2026-11-06 换库后当天晚上删了
+MySQL，<code>previous</code> 也是连 PostgreSQL
+的构件。九安的库出了问题，只能从切换后的 <code>pg_dump</code>
+或切换前的根卷快照恢复（<a href="operations.html">运维</a>第 2.6
+节）；</li>
 <li>回滚代码不动 Nexus 上的东西：审核 Agent 的提示词按第 6.3
 节回退，知识库里的规则在知识库 Agent 那边（下线的制度可以恢复）；</li>
 <li>回滚后在 <code>CHANGELOG.md</code> 记一笔；下一次正常部署会把现在的

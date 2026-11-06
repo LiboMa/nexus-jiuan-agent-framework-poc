@@ -273,9 +273,8 @@ Chrome</td>
 和发布的编号（<code>AGENT_ID</code>、<code>PUBLICATION_ID</code>、<code>CONNECTOR_ID</code>、<code>KB_PG_PUBLICATION_ID</code>）部署完对应那一块再填回来。</p>
 <p><strong>密钥配置</strong>
 <code>poc/infra/secrets.env</code>：第一次跑 <code>deploy.sh</code>
-自动生成（两个账号的口令 + 测试台密钥：PG 的两项、数据密钥，和切换前
-MySQL
-留给回退的两项，0600），只在本机和实例上，当面交接；样例和对应关系见
+自动生成（两个账号的口令 + 三项测试台密钥：PG
+的两项和数据密钥，0600），只在本机和实例上，当面交接；样例和对应关系见
 <code>poc/infra/secrets.env.example</code>。Agent
 的调用密钥不放这里。</p>
 <h1 id="4-部署">4. 部署</h1>
@@ -509,17 +508,8 @@ href="deploy-iteration.html">部署与迭代规范</a>第 6.1 节）</td>
 <tr>
 <td>备份</td>
 <td><code>backup.<wbr>sh</code>：根卷快照（九安的 PostgreSQL、知识库的
-PG、留着的 MySQL 数据目录、<code>/<wbr>var/<wbr>lib/<wbr>jiuan</code>
-都在根卷上）</td>
+PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan</code> 都在根卷上）</td>
 <td>用快照建卷换回根卷</td>
-</tr>
-<tr>
-<td>换回 MySQL（2026-11-06 换库，项目负责人确认之前出问题才做）</td>
-<td>—</td>
-<td><a href="operations.html">运维</a>第 2.6 节：停服务 →
-<code>previous</code> 换回 <code>current</code> →
-<code>docker start jiuan-<wbr>mysql</code> →
-起服务；下一次部署之后就要从换库之前的提交重新部署</td>
 </tr>
 <tr>
 <td>换机器、迁域名</td>
@@ -592,8 +582,9 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <td>测试台实例上的 PostgreSQL 容器
 <code>jiuan-<wbr>pg</code>（127.0.0.1:5433，库
 <code>jiuan</code>），2026-11-06 20:35–20:37（UTC+8）从 MySQL
-切过来；MySQL 容器 <code>jiuan-<wbr>mysql</code>
-停着、不删，留着做回退，项目负责人说删再删</td>
+切过来；切换前的 MySQL 当天晚上删了，回不到 MySQL 了（切换前后的数据在
+<code>pg_<wbr>dump</code> 和根卷快照里，<a
+href="operations.html">运维</a>第 2.6 节）</td>
 </tr>
 <tr>
 <td>知识库</td>

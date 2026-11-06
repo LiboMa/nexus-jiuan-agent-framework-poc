@@ -10,7 +10,7 @@ audience: 运维、值班、应用开发、Agent 开发
 
 ## 1. 日常运维
 
-一台实例上只有一个服务：测试台外壳 `andon-jiuan`（用户 `jiuan`，直接听 4180），里面跑新前端、九安 v0.7.10 的副本和外壳的接口；旁边是两个容器：九安的 PostgreSQL `jiuan-pg`（2026-11-06 起；只听 127.0.0.1:5433，库 `jiuan`）、知识库的 PG `nexus-pgvector`。还有一个停着的 MySQL `jiuan-mysql`：切换前的库，留着做回退，项目负责人说删再删（第 2.6 节）。对外只有一个站点（CloudFront 分发 `Distribution`，别名是栈参数 `DomainName`）。2026-11-02 起没有 v0.5.3 PoC 的服务 `andon-finance-poc` 了。
+一台实例上只有一个服务：测试台外壳 `andon-jiuan`（用户 `jiuan`，直接听 4180），里面跑新前端、九安 v0.7.10 的副本和外壳的接口；旁边是两个容器：九安的 PostgreSQL `jiuan-pg`（2026-11-06 起；只听 127.0.0.1:5433，库 `jiuan`）、知识库的 PG `nexus-pgvector`。切换前的 MySQL（`jiuan-mysql`）2026-11-06 晚上删了（第 2.6 节）。对外只有一个站点（CloudFront 分发 `Distribution`，别名是栈参数 `DomainName`）。2026-11-02 起没有 v0.5.3 PoC 的服务 `andon-finance-poc` 了。
 
 下面的 `<站点>` 是这个栈的 `DomainName`：现在是 `jiuan-v0710.tinyboat.blog`（2026-11-02 从旧栈迁到 m7g 栈，[交接文档](handover.md)第 2.2 节）。
 
@@ -20,7 +20,7 @@ audience: 运维、值班、应用开发、Agent 开发
 |---|---|---|
 | 站点是否在线 | `curl -fsS https://<站点>/poc/healthz` | HTTP 200 |
 | AI 建议还出不出 | 单据池「最近审核」一栏有新的「AI 建议」；或者管理员模拟来单一张（`https://<站点>/poc/intake`），约 1 分钟后同步进单据池，读完原件后自动出建议 | 健康检查看不出这一点：调用密钥失效、Nexus 出错时它照样是 200（评审 I6，[交接文档](handover.md)第 6.1 节） |
-| 容器 | 登上实例（第 1.2 节）：`sudo docker ps -a` | `jiuan-pg`、`nexus-pgvector` 都是 Up；`jiuan-mysql` 是 Exited（停着是对的，不要起它，除非回退） |
+| 容器 | 登上实例（第 1.2 节）：`sudo docker ps -a` | 只有 `jiuan-pg`、`nexus-pgvector`，都是 Up |
 | 服务日志 | 第 1.2 节 | 有「九安 v0.7.10 测试台已启动」；没有成串的错误码 |
 | Nexus 费用 | Nexus 网页上发布者名下的用量 | 每一轮 AI 独立建议约 0.1–0.3 美元；「Agent 接入」页验证调用密钥不花钱 |
 | AWS 费用 | 账单 | 一台 m7g.xlarge（按需价，以 AWS 价目表为准）、30 GiB gp3 根卷、公网 IPv4；升级前的快照很便宜 |
@@ -96,7 +96,7 @@ nexus-ai-operator 怎么装、怎么连见 [Skills 配置指南](skills-guide.md
 
 ### 2.3 换口令
 
-改 `secrets.env` 里的 `REVIEWER_PASSWORD` / `CHECKER_PASSWORD`（至少 12 个字符），再 `deploy.sh --code-only`。`JIUAN_PG_APP_PASSWORD`（库账号 `jiuan_app` 的口令）也可以这样换：每次部署都按它重设 PG 里的口令。`BENCH_PG_SUPERUSER_PASSWORD`、`JIUAN_DATA_KEY` 不要换；`BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN_MYSQL_APP_PASSWORD` 只留给回退，也不要动。见第 2.6 节。
+改 `secrets.env` 里的 `REVIEWER_PASSWORD` / `CHECKER_PASSWORD`（至少 12 个字符），再 `deploy.sh --code-only`。`JIUAN_PG_APP_PASSWORD`（库账号 `jiuan_app` 的口令）也可以这样换：每次部署都按它重设 PG 里的口令。`BENCH_PG_SUPERUSER_PASSWORD`、`JIUAN_DATA_KEY` 不要换，见第 2.6 节。
 
 ### 2.4 「Agent 接入」页上连不上或启用失败
 
@@ -115,13 +115,13 @@ nexus-ai-operator 怎么装、怎么连见 [Skills 配置指南](skills-guide.md
 
 ### 2.5 实例被替换、换机器
 
-实例被替换（重建栈、换 AMI、改根卷大小、实例故障）后，根卷上的东西都会丢：九安的库 `jiuan`（单据、AI 建议、复核、启用记录）、知识库的 PG、停着的 MySQL、`/var/lib/jiuan/`（「Agent 接入」页的 Nexus 连接、我的规则）。新实例上要重新 `deploy.sh`、`kb.sh db`，再把数据放回去，或者管理员重新连接 Nexus、重新启用 Agent。
+实例被替换（重建栈、换 AMI、改根卷大小、实例故障）后，根卷上的东西都会丢：九安的库 `jiuan`（单据、AI 建议、复核、启用记录）、知识库的 PG、`/var/lib/jiuan/`（「Agent 接入」页的 Nexus 连接、我的规则）。新实例上要重新 `deploy.sh`、`kb.sh db`，再把数据放回去，或者管理员重新连接 Nexus、重新启用 Agent。
 
-- **替换前**：先跑 `poc/infra/backup.sh`（根卷快照；九安的 PostgreSQL、知识库的 PG、停着的 MySQL 和 `/var/lib/jiuan` 都在根卷上，一个快照就够）。要整盘恢复，用快照建卷替换根卷。
+- **替换前**：先跑 `poc/infra/backup.sh`（根卷快照；九安的 PostgreSQL、知识库的 PG 和 `/var/lib/jiuan` 都在根卷上，一个快照就够）。要整盘恢复，用快照建卷替换根卷。
 - **换实例类型**：用 `upgrade-instance.sh <类型>`，它只允许停机再开，不替换实例；不能在 arm64 和 x86 之间换。
 - **换机器**（另建一个栈）：新栈 `deploy.sh` → `kb.sh db` → `migrate-data.sh`（搬 `jiuan` 库（`pg_dump` / `pg_restore`，两边都得是换库之后的构件）、PG 库 `nexus`、`/var/lib/jiuan`；两边 `secrets.env` 要是同一份）→ `kb.sh connector`（把 Nexus 指到新 PG，先 `--dry-run`）→ 端到端测试 → 迁域名前 `migrate-data.sh --skip-pg` 再同步一次。步骤见 [`poc/infra/README.md`](../../poc/infra/README.md)「换机器时搬数据」。
 
-### 2.6 测试台：九安的库（PostgreSQL）的检查、查库、重置、备份、回退
+### 2.6 测试台：九安的库（PostgreSQL）的检查、查库、重置、备份、恢复
 
 2026-11-06 起九安的库在容器 `jiuan-pg`（`postgres:17`，只听 127.0.0.1:5433，数据目录 `/var/lib/jiuan-pg`，上海时区）里：库 `jiuan`，属主 `jiuan_app`（只有它连得上）。外壳的连库设置在 `/etc/andon-finance/jiuan/env`（`POC_DB_HOST`、`POC_DB_PORT=5433`、`POC_DB_NAME`、`POC_DB_USER`），口令在同目录的 `db_app_password`。
 
@@ -131,8 +131,10 @@ nexus-ai-operator 怎么装、怎么连见 [Skills 配置指南](skills-guide.md
 - **升级前备份**：`poc/infra/backup.sh`（根卷快照，九安的 PostgreSQL 也在里面）。要单独留一份库，在实例上 `sudo sh -c 'umask 077; docker exec -u postgres jiuan-pg pg_dump -Fc jiuan > /var/backups/jiuan-pg-$(date -u +%Y%m%dT%H%M%SZ).dump'`；2026-11-06 切换后留的那份是 `/var/backups/jiuan-pg-20261106T123831Z.dump`（root 0600，9.4 MB）。
 - **换实例类型**：`poc/infra/upgrade-instance.sh <类型>`：只允许停机再开；变更集里实例会被替换就不执行。
 - **测试台密钥只认原值**：实例上已有的 PG 超级用户口令（`/etc/andon-finance/bench/pg_superuser_password`）和数据密钥（`/etc/andon-finance/jiuan/analysis_data_key`）和 `secrets.env` 里的不一样时，部署在重启之前就失败，服务照旧跑。多半是 `secrets.env` 被重新生成了：找回交接的那份。`jiuan_app` 的口令不钉住，换了下次部署两边一起换。数据密钥永远不要换：换了库里加密的启用记录就打不开。
-- **回退到 MySQL**（项目负责人确认换库之前，出了问题才做）：在实例上停服务（`sudo systemctl stop andon-jiuan.service`）→ 把 `/opt/andon-finance/previous`（上一版构件，连 MySQL）换回 `current`（做法同[部署与迭代规范](deploy-iteration.md)第 6.1 节）→ `sudo docker start jiuan-mysql` → 起服务、看健康检查。MySQL 里是 2026-11-06 切换那一刻的数据，切换之后写进 PostgreSQL 的不会带回去。**注意**：下一次部署会把 `previous` 换成连 PostgreSQL 的这一版；那以后要回退，就得从换库之前的提交（main 上的 `55d1bc8`，`feat/jiuan-postgres` 从这里分出来）重新部署。切换前的数据另有两份：上面那份 `pg_dump`，和切换前的根卷快照 `snap-0296baf8891b5df4b`。
-- **删掉 MySQL**（项目负责人说删再删）：删容器 `jiuan-mysql` 和数据目录 `/var/lib/jiuan-mysql`，连同本机 `secrets.env` 里的 `BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN_MYSQL_APP_PASSWORD` 和实例上的 `/etc/andon-finance/bench/mysql_root_password`、`/etc/andon-finance/jiuan/mysql_app_password`。删了就回不到 MySQL 了。`poc/infra/lib/bench-secrets.sh` 现在还会补这两项，删之前先把它们从那里拿掉，不然下一次部署又生成两行新的。
+- **回不到 MySQL 了**：切换前的 MySQL 2026-11-06 晚上按项目负责人的意思删了（容器 `jiuan-mysql`、数据目录 `/var/lib/jiuan-mysql`、镜像 `mysql:8.0`、两个 MySQL 口令文件），`/opt/andon-finance/previous` 也是连 PostgreSQL 的构件。`secrets.env` 里原来的两项 MySQL 口令，`deploy.sh` 见到就连同注释删掉（`lib/bench-secrets.sh`）；实例上那两个口令文件，`bench-configure.sh` 每次部署都清掉。
+- **九安的库坏了怎么恢复**：只剩两份切换前后的数据。
+  - 切换后马上做的 `pg_dump`：`/var/backups/jiuan-pg-20261106T123831Z.dump`（PostgreSQL 的数据，切换后约 1 分钟）。用它恢复，库回到那一刻，之后写进去的都没了：停服务 → `sudo docker exec -u postgres jiuan-pg psql -X -q -d postgres -c 'DROP DATABASE IF EXISTS jiuan WITH (FORCE)'` → `sudo bash /opt/andon-finance/current/bench/pg-database.sh jiuan` → `sudo sh -c 'docker exec -i -u postgres jiuan-pg pg_restore -d jiuan --exit-on-error < /var/backups/jiuan-pg-20261106T123831Z.dump'` → 起服务、看健康检查（和 `migrate-data.sh` 在新机器上换库的做法一样）。2026-11-06 在临时库 `jiuan_rehearsal` 上照这几步演练过：2 秒恢复 73 张表，属主是 `jiuan_app`，条数和启用记录的 sha256 都和切换时一样。以后的备份照上面「升级前备份」另做一份 dump，用法一样。
+  - 切换前的根卷快照 `snap-0296baf8891b5df4b`：整台机器（连知识库的 PG、`/var/lib/jiuan`）回到切换之前，那时还是 MySQL 和旧构件，快照里还有当时的 MySQL 数据目录。用快照建卷替换根卷；之后写的全没了，只在整盘出问题时用。
 
 ### 2.7 AI 建议出不来、慢
 

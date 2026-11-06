@@ -266,7 +266,6 @@ EC2 m7g.xlarge（arm64，Amazon Linux 2023，Node 24；与 Nexus 同 VPC 的公�
    │         单据同步与流水线、读原件、Agent 任务服务（review_advice@1）、调用中间件 nexus-a2a、
    │         A2A 适配层 providers/nexus-a2a.mjs、「Agent 接入」（启用记录加密存库）
    ├─ Docker 容器 jiuan-pg（postgres:17，127.0.0.1:5433，库 jiuan，属主 jiuan_app；2026-11-06 起）
-   ├─ Docker 容器 jiuan-mysql（切换前的 MySQL，停着、不删，留着做回退，项目负责人说删再删）
    └─ Docker 容器 nexus-pgvector（pgvector/pgvector:pg17，私网 IP:5432，库 nexus；PL/Python 的 kb_embed / kb_search 用实例角色调 Bedrock）
         │
         │ ① A2A 0.3 message/stream，Bearer &lt;「Agent 接入」页启用时粘贴的调用密钥&gt;
@@ -424,8 +423,7 @@ Agent、发布、调接口用</td>
 <code>audit-<wbr>agent/<wbr>prompt-<wbr>history/<wbr></code> 留底</td>
 </tr>
 <tr>
-<td>启动配置（两个账号的口令、PostgreSQL 的两个口令、数据密钥；切换前
-MySQL 的两个口令留着给回退）</td>
+<td>启动配置（两个账号的口令、PostgreSQL 的两个口令、数据密钥）</td>
 <td>本机 <code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code> →
 构件桶（服务端加密）→ 实例
 <code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>secrets.<wbr>env</code>（root
@@ -1105,16 +1103,6 @@ Actions）跑单元测试和文档检查；部署仍由人触发</td>
 <td>交项目负责人定要不要改</td>
 <td>低</td>
 </tr>
-<tr>
-<td>19</td>
-<td>切换前的 MySQL 还留着</td>
-<td>多一个停着的容器、数据目录和两项口令要管</td>
-<td>2026-11-06 切换后停着、不删，留着做回退</td>
-<td>项目负责人说删就删：容器、<code>/<wbr>var/<wbr>lib/<wbr>jiuan-<wbr>mysql</code>、<code>secrets.<wbr>env</code>
-里两项 MySQL 口令和实例上的两个口令文件（<a
-href="delivery/operations.html">运维</a>第 2.6 节）</td>
-<td>低</td>
-</tr>
 </tbody>
 </table>
 </div>
@@ -1126,8 +1114,8 @@ href="delivery/handover.html">交接文档</a>第 2.5 节）。</li>
 <li><strong>试运行期间</strong>：第 4、5、6
 条，盯住每天的调用量、失败率（<code>AI_*</code>
 错误码）、单次时长、人工改判率（工作台上有）。</li>
-<li><strong>之后</strong>：第 7–11、15 条，主要是可运维性和成本；第
-18、19 条等项目负责人定。</li>
+<li><strong>之后</strong>：第 7–11、15 条，主要是可运维性和成本；第 18
+条等项目负责人定。</li>
 </ol>
 <h1 id="11-代码地图">11. 代码地图</h1>
 <div class="table-wrap">

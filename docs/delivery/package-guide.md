@@ -85,12 +85,12 @@ open docs/delivery/README.html                                           # 从�
 
 | 东西 | 为什么不在包里 | 怎么交接 |
 |---|---|---|
-| `poc/infra/secrets.env`（包里有样例 `secrets.env.example`，没有真实的值） | 有两条口令和测试台的密钥：`BENCH_PG_SUPERUSER_PASSWORD`、`JIUAN_PG_APP_PASSWORD`（九安的 PostgreSQL）、`JIUAN_DATA_KEY`，和只留给回退的 `BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN_MYSQL_APP_PASSWORD`。Agent 的调用密钥不在这里：管理员在「Agent 接入」页启用，加密存在九安的库里。**`JIUAN_DATA_KEY` 丢了，库里的启用记录就解不开** | **当面交接**（不经聊天工具、邮件、网盘）；接手后放回 `poc/infra/`，权限 0600 |
+| `poc/infra/secrets.env`（包里有样例 `secrets.env.example`，没有真实的值） | 有两条口令和测试台的密钥：`BENCH_PG_SUPERUSER_PASSWORD`、`JIUAN_PG_APP_PASSWORD`（九安的 PostgreSQL）、`JIUAN_DATA_KEY`（原来的两项 MySQL 口令 2026-11-06 随 MySQL 删了，`deploy.sh` 见到就删掉）。Agent 的调用密钥不在这里：管理员在「Agent 接入」页启用，加密存在九安的库里。**`JIUAN_DATA_KEY` 丢了，库里的启用记录就解不开** | **当面交接**（不经聊天工具、邮件、网盘）；接手后放回 `poc/infra/`，权限 0600 |
 | 各环境的配置 `poc/infra/env/<环境>.env`、钉住的主机公钥 `poc/infra/.state/` | 有实例、网段、密钥对名字和私钥路径等环境信息 | 照 `env/example.env` 自己写；主机公钥第一次部署时自动钉住 |
 | 九安开发包 `source/九安自助审核平台-测试环境开发包-v0.7.10/` | 第三方代码，按版本号引用；`seeds/`、`database/` 含真实数据 | 从九安按版本号取，解压到包根目录下的同名路径；`build-jiuan.sh`、外壳的单元测试、`deploy.sh` 都要用到它 |
 | `~/.nexus/`（operator 凭证） | 个人凭证 | 不交接；接手的人用自己的 Nexus 账号和 API 密钥 |
 | 各人的 Nexus API 密钥 | 个人凭证；每把只能给一个地方用 | 接手的人在自己的 Nexus 网页「个人设置 › API 密钥」生成，交给编码工具里的 nexus-ai-operator（[Skills 配置指南](skills-guide.md)第 3 节）；另生成一把，在「Agent 接入」页「连接 Nexus」时用。包里的 `skills/nexus-ai-operator/` 不带任何密钥 |
-| 测试台上的数据（九安的 PostgreSQL 里的 `jiuan` 库、知识库的 PG、停着的 MySQL、`/var/lib/jiuan/`） | 在线上；单据是虚构的，端到端测试每次都会重建 `jiuan` 库；启用记录里有加密的调用密钥 | 留在实例上；`backup.sh` 的根卷快照里有一份；换机器用 `migrate-data.sh`（[运维](operations.md)第 2.5 节） |
+| 测试台上的数据（九安的 PostgreSQL 里的 `jiuan` 库、知识库的 PG、`/var/lib/jiuan/`） | 在线上；单据是虚构的，端到端测试每次都会重建 `jiuan` 库；启用记录里有加密的调用密钥 | 留在实例上；`backup.sh` 的根卷快照里有一份；换机器用 `migrate-data.sh`（[运维](operations.md)第 2.5 节） |
 | AWS 与 Nexus 的访问权限 | 账号权限 | 由项目负责人另行授予（[交接文档](handover.md)第 5 节） |
 
 ## 6. 验收清单
@@ -116,7 +116,7 @@ open docs/delivery/README.html                                           # 从�
 - **知识库**：PG + pgvector，整库 Cohere Embed v4；测试台经 Nexus 上的 PG 知识库 Agent 读写（`kb.rules/v1`）；有效的规则是审批风险判断卡（449 条）。PG 知识库 Agent 的客户部署交付件 1.0.1 在 `customer-deploy/`。
 - **部署分三块**、经 SSH 管理、默认 m7g.xlarge（arm64）；换机器有 `migrate-data.sh`。2026-11-02 起 m7g 测试环境上线，Nexus 的 PG 连接器指向它。
 - **只留新 UI**（2026-11-02）：v0.5.3 PoC 的代码、文档和测试都拿掉了；交付包的检查和白名单跟着改。
-- **九安的库换成 PostgreSQL**（2026-11-06，补丁 0008–0018）：测试台的库在容器 `jiuan-pg` 里，72 张表、104,538 行逐表核对一致搬过来，停站约 2 分 10 秒；切换前的 MySQL 停着、留着做回退。九安自带的测试在真 PG 上 2475 条过，换库前过的都还过。
+- **九安的库换成 PostgreSQL**（2026-11-06，补丁 0008–0018）：测试台的库在容器 `jiuan-pg` 里，72 张表、104,538 行逐表核对一致搬过来，停站约 2 分 10 秒；切换前的 MySQL 当天晚上删了，回不到 MySQL 了（留下切换后的 `pg_dump` 和切换前的根卷快照）。九安自带的测试在真 PG 上 2475 条过，换库前过的都还过。
 - 测试：2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过；2026-11-06 换库后（27 条）的结果见 `CHANGELOG.md`。
 - 交付文档 8 份加索引、架构文档，Markdown 和 HTML 两个版本；由源码生成的图。
 
@@ -125,7 +125,7 @@ open docs/delivery/README.html                                           # 从�
 2. 构件和健康检查还不带提交号（评审 C1 的后一半）；源站还是明文 HTTP（评审 C2）。
 3. 值班看不到 Nexus 调用的问题（评审 I6）。
 4. 九安上游的 `review_advice@1` 时限还是 120 秒，建议九安调高。
-5. 切换前的 MySQL 还留着（停着），项目负责人说删再删；九安原来就有的一个审核要素发布的竞态没改（交接文档第 6 节第 18、19 条）。
+5. 九安原来就有的一个审核要素发布的竞态没改；换库评审记下的小问题没改（交接文档第 6 节第 18、19 条）。
 6. 上生产前必须改的，见[交接文档](handover.md)第 6.1 节。
 
 ## 8. 签收
@@ -133,7 +133,7 @@ open docs/delivery/README.html                                           # 从�
 | 项 | 交出 | 接收 | 日期 | 备注 |
 |---|---|---|---|---|
 | 交付包（文件名与 sha256） | | | | |
-| 测试台（九安的 PostgreSQL、知识库的 PG、停着的 MySQL、测试台密钥、升级前快照） | | | | |
+| 测试台（九安的 PostgreSQL、知识库的 PG、测试台密钥、升级前快照） | | | | |
 | `secrets.env`（当面） | | | | |
 | AWS 与 Nexus 权限 | | | | |
 | 验收清单第 1–7 项（含 3a、4a） | | | | |

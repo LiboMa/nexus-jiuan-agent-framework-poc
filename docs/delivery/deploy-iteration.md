@@ -49,7 +49,7 @@ audience: 应用开发、Agent 开发、运维
 | 环境 | 用途 | 现状 |
 |---|---|---|
 | 本机 | 开发、单元测试（假 A2A 网关，不连 Nexus） | 可用 |
-| m7g 测试环境（栈 `andon-finance-m7g`，2026-11-02 起） | 一台 m7g.xlarge（arm64）装前端、九安的 PostgreSQL（2026-11-06 起；之前的 MySQL 停着留做回退）、知识库的 PG，经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点管理（`poc/infra/README.md`「经 SSH 管理」）；数据从旧栈搬来（`migrate-data.sh`）；2026-11-02 16:59（UTC+8）起 Nexus 的 PG 连接器和密钥指向它的 PG | `jiuan-v0710.tinyboat.blog`（2026-11-02 19:13–19:18 UTC+8 从旧栈迁来）；新代码部署在这里 |
+| m7g 测试环境（栈 `andon-finance-m7g`，2026-11-02 起） | 一台 m7g.xlarge（arm64）装前端、九安的 PostgreSQL（2026-11-06 起；之前的 MySQL 当天晚上删了）、知识库的 PG，经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点管理（`poc/infra/README.md`「经 SSH 管理」）；数据从旧栈搬来（`migrate-data.sh`）；2026-11-02 16:59（UTC+8）起 Nexus 的 PG 连接器和密钥指向它的 PG | `jiuan-v0710.tinyboat.blog`（2026-11-02 19:13–19:18 UTC+8 从旧栈迁来）；新代码部署在这里 |
 | 旧栈（`andon-finance-poc`） | t3.large，经 SSM；旧版本，站点名已改成 `jiuan-v0710-old.tinyboat.blog`，`andon-finance.tinyboat.blog` 还在，都没人用 | 等删：项目负责人定先留几天；根卷快照 `snap-05180f1a83a6edada` |
 | 预发（建议） | 部署到九安之前，用同一模板另建一个栈（不同栈名和域名）先验证 | 未建 |
 
@@ -72,7 +72,7 @@ audience: 应用开发、Agent 开发、运维
 | 部署脚本、测试台脚本 | `poc/infra/*.sh`、`poc/infra/lib/`、`poc/infra/bench/` | `cd poc/infra && node --test "test/**/*.test.mjs"`；健康检查；全部端到端测试 | `deploy.sh --code-only`（`bench/` 随构件发出）；测试台的密钥只补不换，实例上已有的 PG 超级用户口令和数据密钥只认原值（不一样就在重启前失败，服务照旧跑） | 第 6.1 节 | 运维 + 项目负责人 |
 | 栈参数（Nexus 地址、站点名、知识库的入站网段） | 环境配置 `poc/infra/env/<环境>.env`，或 `aws cloudformation deploy --parameter-overrides …` | 健康检查；`run.sh` | `deploy.sh`（它把配置里写了的栈参数传上去），再 `--code-only`（按参数重写实例上外壳的配置） | 参数改回去，再部署一次 | 运维 + 项目负责人 |
 | 基础设施模板 | `poc/infra/andon-finance-poc.yaml` | `infra.test.mjs`；`validate-template`；全部端到端测试 | `deploy.sh`（不带 `--code-only`）；改了实例的用户数据（哪怕只是注释）实例会停机再开一次，先 `backup.sh`；只改资源的逻辑编号用 stack refactor，不重建资源 | CloudFormation 失败会自动回滚；成功但有问题的，用仓库里上一版模板再部署 | 运维 + 项目负责人 |
-| 启动配置（口令、测试台密钥） | `poc/infra/secrets.env` | 健康检查；端到端测试 | `deploy.sh --code-only` | 换回旧值（PG 超级用户口令、数据密钥只补不换；`JIUAN_PG_APP_PASSWORD` 可以换，下次部署两边一起换；两项 MySQL 口令只留给回退，不动） | 运维 |
+| 启动配置（口令、测试台密钥） | `poc/infra/secrets.env` | 健康检查；端到端测试 | `deploy.sh --code-only` | 换回旧值（PG 超级用户口令、数据密钥只补不换；`JIUAN_PG_APP_PASSWORD` 可以换，下次部署两边一起换） | 运维 |
 | Agent 调用密钥、Nexus 连接、审批 Agent | 不在文件里：管理员在新前端「Agent 接入」页操作 | 页面上当场验证（名片 + `tasks/get`） | 启用、换钥匙、停用、设为审批 Agent，不部署、不重启 | 换回上一把密钥；把审批 Agent 指回原来那个 | 管理员 |
 | 审核 Agent 提示词（「九安审核AI」） | `audit-agent/prompt.yaml`，`audit-agent/apply.py` 写到 Nexus 并重存发布的动态配置 | `audit-agent/tests` 的单元测试；`apply.py --dry-run`；`run.sh`（自动出建议的几条） | 第 6.3 节 | 第 6.3 节 | Agent 开发 + 项目负责人 |
 | PG 知识库 Agent | `knowledgebase-writer-agent-pg/`（工具、提示词） | 它自己的本机测试（它的 README 第 2 节）；`run.sh` 知识库的几条 | 按它的 README 第 10 节：更新工具代码、重存提示词 | 它的 README 第 17 节 | Agent 开发 + 项目负责人 |
@@ -122,7 +122,7 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 
 注意：
 - 回滚不动 `secrets.env` 和九安库里的数据；如果问题出在密钥，按第 4 节「密钥」那几行处理；
-- **2026-11-06 换库之后**：在下一次部署之前，`previous` 是连 MySQL 的那一版，换回它还要 `docker start jiuan-mysql`，数据回到切换那一刻（[运维](operations.md)第 2.6 节）；下一次部署之后 `previous` 也连 PostgreSQL，要回到 MySQL 就得从换库之前的提交（main 上的 `55d1bc8`）重新部署，而且停着的 MySQL 还在才行；
+- **回不到 MySQL 了**：2026-11-06 换库后当天晚上删了 MySQL，`previous` 也是连 PostgreSQL 的构件。九安的库出了问题，只能从切换后的 `pg_dump` 或切换前的根卷快照恢复（[运维](operations.md)第 2.6 节）；
 - 回滚代码不动 Nexus 上的东西：审核 Agent 的提示词按第 6.3 节回退，知识库里的规则在知识库 Agent 那边（下线的制度可以恢复）；
 - 回滚后在 `CHANGELOG.md` 记一笔；下一次正常部署会把现在的 `current` 挪进 `previous`。
 
