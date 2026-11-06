@@ -102,7 +102,7 @@ test('在 macOS 上打包时不带 AppleDouble 与扩展属性（否则实例上
 test('shell 脚本里变量名后面不能紧跟中文等非 ASCII 字符（bash 会把它们算进变量名，set -u 下直接报错）；要写成 ${VAR}', async () => {
   for (const file of [infra('deploy.sh'), infra('destroy.sh'), infra('backup.sh'), infra('upgrade-instance.sh'), infra('kb.sh'), infra('migrate-data.sh'),
     infra('lib/remote.sh'), infra('lib/deploy-env.sh'), infra('lib/bench-secrets.sh'), infra('pg-prepare.sh'), infra('remote-jiuan-tests.sh'), infra('migrate-mysql-to-pg.sh'),
-    bench('mysql-install.sh'), bench('pg-install.sh'), bench('pg-database.sh'), bench('test-databases.sh'), bench('bench-configure.sh'), bench('bench-reset.sh'),
+    bench('pg-install.sh'), bench('pg-database.sh'), bench('test-databases.sh'), bench('bench-configure.sh'), bench('bench-reset.sh'),
     fileURLToPath(new URL('../../bench/build-jiuan.sh', import.meta.url)), e2eFile('run.sh'),
     repo('docs/delivery/make-package.sh'), repo('docs/build-html.sh')]) {
     const offenders = (await readFile(file, 'utf8')).split('\n').map((line, index) => [index + 1, line])
@@ -242,7 +242,7 @@ test('实例上：解开新构件 → 新构件里的 bench-configure.sh → 换
 
 // ---------- 测试台脚本（poc/infra/bench）
 test('测试台脚本语法正确，里面没有写死的密码', async () => {
-  for (const name of ['mysql-install.sh', 'pg-install.sh', 'pg-database.sh', 'test-databases.sh', 'bench-configure.sh', 'bench-reset.sh']) {
+  for (const name of ['pg-install.sh', 'pg-database.sh', 'test-databases.sh', 'bench-configure.sh', 'bench-reset.sh']) {
     await run('bash', ['-n', bench(name)]);
     const text = await readFile(bench(name), 'utf8');
     assert.doesNotMatch(text, /PASSWORD=(?!\$|")[^\s"]+/, `${name} 不能有密码字面量`);
@@ -250,24 +250,13 @@ test('测试台脚本语法正确，里面没有写死的密码', async () => {
   }
 });
 
-test('切换前的 MySQL（mysql-install.sh，切换后连同容器留着给回退，不再由 bench-configure.sh 调）：固定用 mysql:8.0，只听本机，参数和九安自己的测试编排一致；只建 root，root 密码只认原值', async () => {
-  const script = await readFile(bench('mysql-install.sh'), 'utf8');
-  for (const expected of ['mysql:8.0', '127.0.0.1:3306:3306', '--skip-log-bin', '--character-set-server=utf8mb4', '--collation-server=utf8mb4_unicode_ci', 'TZ=Asia/Shanghai',
-    '/var/lib/jiuan-mysql:/var/lib/mysql', 'MYSQL_ROOT_PASSWORD_FILE=/run/bench-secrets/mysql_root_password', '"$DIR":/run/bench-secrets:ro']) {
-    assert.ok(script.includes(expected), `mysql-install.sh 应包含 ${expected}`);
+test('MySQL 不再装（2026-11-06 换库之后）：bench/mysql-install.sh 删掉了，部署和测试台脚本里不再起、不再建 MySQL（停着的 jiuan-mysql 和它的数据目录留着给回退，不由脚本管）', async () => {
+  assert.equal(await stat(bench('mysql-install.sh')).then(() => true, () => false), false);
+  for (const name of ['bench-configure.sh', 'bench-reset.sh', 'test-databases.sh', 'pg-install.sh', 'pg-database.sh']) {
+    const code = (await readFile(bench(name), 'utf8')).split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
+    assert.doesNotMatch(code, /mysql-install|docker run[^\n]*mysql|jiuan-test-mysql|mysql:8\.0/, name);
   }
-  for (const gone of ['-e MYSQL_DATABASE', '-e MYSQL_USER', '-e MYSQL_PASSWORD_FILE', 'jiuan_analysis', 'root:andon', '-g andon']) assert.ok(!script.includes(gone), `不该有 ${gone}`);
-  assert.doesNotMatch(script, /0\.0\.0\.0/);
-  assert.match(script, /mysqladmin ping/);
-  assert.match(script, /拒绝替换/);
-  assert.match(script, /chmod 0600 "\$DIR\/mysql_root_password\.new"/);
-  // v0.5.3 时建的容器（带 MYSQL_PASSWORD_FILE，那个文件已经没了）：只换容器、数据目录不动，再按现在的参数建
-  const replace = script.indexOf("grep -q '^MYSQL_PASSWORD_FILE='");
-  assert.ok(replace > 0 && replace < script.indexOf('docker run -d --name jiuan-mysql'), '先换掉旧容器再建');
-  assert.match(script, /docker rm -f jiuan-mysql >\/dev\/null\n  echo "BENCH_MYSQL_CONTAINER_REPLACED"/);
-  assert.doesNotMatch(script, /rm -rf \/var\/lib\/jiuan-mysql/);
-  const configure = await readFile(bench('bench-configure.sh'), 'utf8');
-  assert.ok(!configure.includes('mysql-install.sh'), 'bench-configure.sh 不再装 MySQL');
+  assert.doesNotMatch(await readFile(infra('deploy.sh'), 'utf8'), /mysql-install/);
 });
 
 test('PostgreSQL（九安的库）：容器 jiuan-pg 用 postgres:17，只绑 127.0.0.1:5433，上海时区，数据目录 /var/lib/jiuan-pg；超级用户口令只从文件读、只认原值；容器在且参数对就不重建，参数不对只换容器、数据目录不动', async () => {
@@ -285,29 +274,32 @@ test('PostgreSQL（九安的库）：容器 jiuan-pg 用 postgres:17，只绑 12
   assert.ok(replace > 0 && replace < script.indexOf('docker run -d --name jiuan-pg'), '参数不对先换容器再建');
 });
 
-test('测试库（test-databases.sh，只给远端测试用）：单独两个用完即删的容器（数据在内存里）——MySQL 在 127.0.0.1:3307（九安测试认的隔离端口）、PG 在 127.0.0.1:5434，各有一个 jiuan_test 和同名账号（PG 那边 UTF8 / C / 上海时区，账号不是超级用户）；口令只在实例上的 root 0600 文件里，经文件进容器；不碰在用的 jiuan-mysql、jiuan-pg', async () => {
+test('测试库（test-databases.sh，只给远端测试用）：一个用完即删的容器 jiuan-test-pg（数据在内存里，postgres:17，127.0.0.1:5434），库 jiuan_test 和同名账号（UTF8 / C / 上海时区，账号不是超级用户）；口令只在实例上的 root 0600 文件里，经文件进容器；不碰在用的 jiuan-pg；MySQL 的测试库拿掉了', async () => {
   const script = await readFile(bench('test-databases.sh'), 'utf8');
-  for (const expected of ['jiuan-test-mysql', 'jiuan-test-pg', '127.0.0.1:3307:3306', '127.0.0.1:5434:5432', '--tmpfs /var/lib/mysql', '--tmpfs /var/lib/postgresql/data',
-    'mysql:8.0', 'postgres:17', '-e TZ=Asia/Shanghai', '-c timezone=Asia/Shanghai', 'MYSQL_ROOT_PASSWORD_FILE=', 'MYSQL_PASSWORD_FILE=', 'POSTGRES_PASSWORD_FILE=',
-    'MYSQL_DATABASE=jiuan_test', 'MYSQL_USER=jiuan_test', "CREATE ROLE jiuan_test LOGIN", "CREATE DATABASE jiuan_test OWNER jiuan_test ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0",
-    "ALTER DATABASE jiuan_test SET timezone = 'Asia/Shanghai'", '/etc/andon-finance/test', 'pg_test_password', 'mysql_test_password', 'umask 077',
-    'TEST_DATABASES_READY', 'TEST_DATABASES_DROPPED', 'docker rm -f jiuan-test-mysql jiuan-test-pg']) {
+  for (const expected of ['jiuan-test-pg', '127.0.0.1:5434:5432', '--tmpfs /var/lib/postgresql/data', 'postgres:17', '-e TZ=Asia/Shanghai', '-c timezone=Asia/Shanghai', 'POSTGRES_PASSWORD_FILE=',
+    "CREATE ROLE jiuan_test LOGIN", "CREATE DATABASE jiuan_test OWNER jiuan_test ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0",
+    "ALTER DATABASE jiuan_test SET timezone = 'Asia/Shanghai'", '/etc/andon-finance/test', 'pg_test_password', 'umask 077',
+    'TEST_DATABASES_READY', 'TEST_DATABASES_DROPPED', 'docker rm -f jiuan-test-pg']) {
     assert.ok(script.includes(expected), `test-databases.sh 应包含 ${expected}`);
   }
-  assert.ok(script.indexOf('docker rm -f jiuan-test-mysql jiuan-test-pg') < script.indexOf('docker run -d --name jiuan-test-mysql'), 'create 先删再建');
+  assert.ok(script.indexOf('docker rm -f jiuan-test-pg') < script.indexOf('docker run -d --name jiuan-test-pg'), 'create 先删再建');
   assert.doesNotMatch(script, /docker (exec|rm|stop|restart)[^\n]*\bjiuan-(mysql|pg)\b/, '不碰在用的容器');
-  assert.doesNotMatch(script, /--restart/, '测试容器不随机器重启');
   assert.doesNotMatch(script, /-e [A-Z_]*PASSWORD=/, '口令不上命令行');
+  assert.doesNotMatch(script.split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n'), /mysql|3307/i, 'MySQL 的测试库拿掉了（注释里可以说明）');
 });
 
 test('远端跑九安测试（remote-jiuan-tests.sh）：本机构建带测试的副本，传到实例上的临时目录（只有自己能读），在实例上用 root 的口令文件拼测试库地址，按文件一个一个跑（junit 报告带文件名），取回结果、删掉远端目录；不碰正在跑的服务', async () => {
   const script = await readFile(infra('remote-jiuan-tests.sh'), 'utf8');
   for (const expected of ['--with-tests', 'ssh_setup', 'remote_root', 'mktemp -d /var/tmp/jiuan-pgtest.XXXXXX', 'chmod 0700', 'test-databases.sh" create',
-    '--test-concurrency=1', '--test-timeout=180000', '--test-reporter=junit', 'MYSQL_TEST_URL', 'PG_TEST_URL', 'cat /etc/andon-finance/test/', 'compare-jiuan-results.mjs', 'rm -rf',
-    '@127.0.0.1:3307/jiuan_test', '@127.0.0.1:5434/jiuan_test', 'test-databases.sh" drop', 'flock -w 7200 9', '--test-force-exit', 'timeout 3300 node --test',
-    '--shell-tests', 'JIUAN_DIR=', 'shell/test/unit/{pg-stores,reviews,kb-cache}.test.mjs',
-    '--bench-tests', 'bench/test/*.test.mjs', 'JIUAN_SHELL_DIR=', '--mysql-build', 'JIUAN_MYSQL_BUILD=', 'mysql-build/']) {
+    '--test-concurrency=1', '--test-timeout=180000', '--test-reporter=junit', 'PG_TEST_URL', 'cat /etc/andon-finance/test/', 'compare-jiuan-results.mjs', 'rm -rf',
+    '@127.0.0.1:5434/jiuan_test', 'test-databases.sh" drop', 'flock -w 7200 9', '--test-force-exit', 'timeout 3300 node --test',
+    '--shell-tests', 'JIUAN_DIR=', 'shell/test/unit/{pg-stores,reviews,kb-cache}.test.mjs']) {
     assert.ok(script.includes(expected), `remote-jiuan-tests.sh 应包含 ${expected}`);
+  }
+  // MySQL 的测试库拿掉了：只有 PG；搬迁工具的测试（要真 MySQL）不再经这里跑
+  assert.doesNotMatch(script, /MYSQL_TEST_URL|3307|mysql-build|--bench-tests|JIUAN_MYSQL_BUILD/);
+  for (const engine of ['mysql', 'both']) {
+    await assert.rejects(run('bash', [infra('remote-jiuan-tests.sh'), '--engine', engine, '--out', '/tmp/x.json']), error => error.code === 2 && /只能是 pg/.test(error.stderr), engine);
   }
   assert.ok(script.indexOf('flock -w 7200 9') < script.indexOf('test-databases.sh" create'), '两次远端测试不同时跑：先拿实例上的锁再建测试库');
   assert.doesNotMatch(script, /systemctl (stop|restart) andon-jiuan/);

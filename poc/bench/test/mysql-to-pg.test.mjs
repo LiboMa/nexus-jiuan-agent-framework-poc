@@ -11,6 +11,7 @@ import pg from 'pg';
 // MySQL 那边用只打了 0001–0007 的九安副本（JIUAN_MYSQL_BUILD，换库之前的样子）跑 migrateMySql 建表，外壳的两张表照换库前的 DDL 建；
 // PG 那边由工具自己 --create-schema（JIUAN_DIR 的 migratePg）和 --shell（JIUAN_SHELL_DIR 的外壳，两张表在 start() 时建）建表。
 // 造一份覆盖各种列类型的数据（二进制含 \x00、嵌套 JSON 和大数、DATETIME(6) 的微秒、空值、中文、INT UNSIGNED 最大值）→ 搬 → 逐表核对。
+// 2026-11-06 换库时在实例上跑过（6/6）；之后测试台上没有 MySQL 的测试库了（remote-jiuan-tests.sh 只起 PG），没给 MYSQL_TEST_URL 就跳过。
 const MYSQL_URL = process.env.MYSQL_TEST_URL;
 const PG_URL = process.env.PG_TEST_URL;
 const skip = MYSQL_URL && PG_URL && process.env.JIUAN_MYSQL_BUILD ? false : '要 MYSQL_TEST_URL、PG_TEST_URL 和 JIUAN_MYSQL_BUILD';
