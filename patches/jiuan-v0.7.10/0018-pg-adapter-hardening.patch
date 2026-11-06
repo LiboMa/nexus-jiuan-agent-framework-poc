@@ -1,0 +1,66 @@
+补丁 0018（换库到 PostgreSQL，评审后补）：连接池两处和 MySQL 不一样的地方改回 MySQL 的样子（src/pg-database.mjs）。
+- 等锁有时限：每个会话 lock_timeout 缺省 50 秒（同 InnoDB 的 innodb_lock_wait_timeout），等过了报 ER_LOCK_WAIT_TIMEOUT（九安的列表同步、
+  详情投影照旧重试或记下原因）；PG 自己的缺省是一直等，一个卡住的事务会把连接池占满。createPgPool 多一个 lockTimeoutMs（1 毫秒–1 小时）。
+  命名锁等完以后 RESET lock_timeout（回到这个缺省），不再设成 0。
+- 事务里有语句出错、调用方接住了（MySQL 上没事），PG 已经把整个事务作废，之后的 COMMIT 回 ROLLBACK 却不报错：现在报
+  ER_TRANSACTION_ROLLED_BACK（sqlState 25P02），不让它当成提交成功（例如 analysis-documents-admin 的 resetDocumentData 里接住的查询）。
+
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+index 83a5143..fe64d73 100644
+--- a/src/pg-database.mjs
++++ b/src/pg-database.mjs
+@@ -250,12 +250,19 @@ async function run(client, sql, params, timeoutMs) {
+   if (client.__broken) throw Object.assign(new Error('The database connection was lost.', { cause: client.__broken }), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true });
+   const limit = timeout ?? timeoutMs ?? 0;
+   if (!Number.isInteger(limit) || limit < 0) throw new TypeError('Query timeout must be a non-negative integer.');
++  let result;
+   try {
+     if (limit !== client.__statementTimeout) { await client.query(`SET statement_timeout = ${limit}`); client.__statementTimeout = limit; }
+-    return withInsertId(await client.query({ text, values }));
++    result = await client.query({ text, values });
+   } catch (error) {
+     throw pgErrorToMysqlShape(error);
+   }
++  // PG voids the whole transaction once a statement in it fails, even when the caller caught that error (harmless on MySQL);
++  // COMMIT then answers ROLLBACK without an error. Never let that pass as a successful commit.
++  if (result?.command === 'ROLLBACK' && /^\s*(COMMIT|END)\b/i.test(text)) {
++    throw Object.assign(new Error('The transaction was rolled back because a statement in it failed; nothing in it was written.'), { code: 'ER_TRANSACTION_ROLLED_BACK', sqlState: '25P02' });
++  }
++  return withInsertId(result);
+ }
+ 
+ function connection(pool, client) {
+@@ -274,19 +281,22 @@ function connection(pool, client) {
+   return conn;
+ }
+ 
+-export function createPgPool({ url = process.env.ANALYSIS_DATABASE_URL, connectionLimit = 10, connectTimeout = 10000, acquireTimeoutMs = 0, queryTimeoutMs = 0, ssl } = {}) {
++export function createPgPool({ url = process.env.ANALYSIS_DATABASE_URL, connectionLimit = 10, connectTimeout = 10000, acquireTimeoutMs = 0, queryTimeoutMs = 0, lockTimeoutMs = 50000, ssl } = {}) {
+   const config = parsePgUrl(url);
+   if (!Number.isInteger(connectionLimit) || connectionLimit < 1 || connectionLimit > 100) throw configuration('PostgreSQL connection limit is invalid.');
+   if (!Number.isInteger(connectTimeout) || connectTimeout < 100 || connectTimeout > 120000) throw configuration('PostgreSQL connect timeout is invalid.');
+   if (!Number.isInteger(acquireTimeoutMs) || acquireTimeoutMs < 0 || acquireTimeoutMs > 600000) throw configuration('PostgreSQL acquire timeout is invalid.');
+   if (!Number.isInteger(queryTimeoutMs) || queryTimeoutMs < 0 || queryTimeoutMs > 3600000) throw configuration('PostgreSQL query timeout is invalid.');
++  if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs < 1 || lockTimeoutMs > 3600000) throw configuration('PostgreSQL lock timeout is invalid.');
+   const effectiveSsl = ssl === undefined ? config.ssl : ssl;
+   const core = new pg.Pool({
+     host: config.host, port: config.port, user: config.user, password: config.password, database: config.database,
+     // pg-pool uses connectionTimeoutMillis both for connecting and for waiting in its queue; the wait is bounded below by
+     // acquireTimeoutMs, so the pool's own limit is the wait plus the connect (it never fires first on a queued caller)
+     max: connectionLimit, connectionTimeoutMillis: acquireTimeoutMs ? acquireTimeoutMs + connectTimeout : connectTimeout, idleTimeoutMillis: 30000, keepAlive: true,
+-    options: `-c TimeZone=${SESSION_TIME_ZONE}`, types: TYPES,
++    // lock_timeout: waiting for a row (or any) lock gives up like InnoDB's innodb_lock_wait_timeout (50 s by default) with
++    // ER_LOCK_WAIT_TIMEOUT, which callers retry or report; PG's own default is to wait forever
++    options: `-c TimeZone=${SESSION_TIME_ZONE} -c lock_timeout=${lockTimeoutMs}`, types: TYPES,
+     ...(effectiveSsl === true ? { ssl: { rejectUnauthorized: true } } : effectiveSsl ? { ssl: effectiveSsl } : {}),
+   });
+   core.on('error', () => {});   // an idle client that died: the pool drops it; callers see errors on their own queries
+@@ -349,7 +359,7 @@ export async function acquireNamedLock(conn, name, seconds) {
+     if (error?.code === 'ER_LOCK_WAIT_TIMEOUT') return false;
+     throw error;
+   } finally {
+-    await conn.query('SET lock_timeout = 0');
++    await conn.query('RESET lock_timeout');   // back to the session's default from the pool (lockTimeoutMs)
+   }
+ }
+ 
