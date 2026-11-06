@@ -97,6 +97,10 @@ test('--with-tests：带上整个开发包（tests/、seeds/、scripts/、deploy
   assert.equal(await exists(path.join(plain, 'tests')), false, '普通构建不带 tests/');
   assert.match(await readFile(path.join(withTests, target), 'utf8'), /^\/\/ probe from tests patch$/m, 'tests 补丁打上了');
   assert.ok((await readdir(path.join(withTests, 'tests'))).filter(name => name.endsWith('.test.mjs')).length > 200);
+  // A patch that deletes a file (0017 removes the MySQL modules) leaves no empty file behind in either build
+  for (const out of [plain, withTests]) for (const removed of ['src/mysql-database.mjs', 'src/mysql-sync-database.mjs', 'src/mysql-sync-worker.mjs']) {
+    assert.equal(await exists(path.join(out, removed)), false, `${out} 不该还有 ${removed}`);
+  }
   for (const name of ['seeds', 'database', 'deploy', 'scripts', 'server.mjs']) {
     assert.equal(await exists(path.join(plain, name)), false, `普通构建不该有 ${name}`);
     assert.equal(await exists(path.join(withTests, name)), true, `带测试的构建要有 ${name}`);

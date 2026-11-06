@@ -41,15 +41,16 @@ if $WITH_TESTS; then
     "$SOURCE/" "$WORK/"
 fi
 
+# -E：补丁删掉的文件（如 0017 删 MySQL 模块）不留空文件
 if [[ -d "$PATCHES" ]]; then
   while IFS= read -r file; do
-    patch -p1 -N -s -d "$WORK" -i "$file" || { echo "补丁打不上：$file" >&2; exit 1; }
+    patch -p1 -N -E -s -d "$WORK" -i "$file" || { echo "补丁打不上：$file" >&2; exit 1; }
   done < <(find "$PATCHES" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort)
 fi
 if $WITH_TESTS; then
   if [[ -d "$PATCHES/tests" ]]; then
     while IFS= read -r file; do
-      patch -p1 -N -s -d "$WORK" -i "$file" || { echo "测试补丁打不上：$file" >&2; exit 1; }
+      patch -p1 -N -E -s -d "$WORK" -i "$file" || { echo "测试补丁打不上：$file" >&2; exit 1; }
     done < <(find "$PATCHES/tests" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort)
   fi
 fi

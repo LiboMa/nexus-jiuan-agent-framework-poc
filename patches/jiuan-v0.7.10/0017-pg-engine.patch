@@ -1,0 +1,1429 @@
+补丁 0017：PostgreSQL 是正式分析库唯一的引擎；MySQL 的模块和 mysql2 去掉。
+- src/analysis-database.mjs：analysisDatabaseEngine 只认 'postgres'；createAnalysisDatabase 用 createPgPool（请求池和锁池照旧两个）；
+  地址覆盖用 ANALYSIS_DATABASE_URL（ECS 部署照旧不许覆盖），端口缺省 5432；别的引擎报 ANALYSIS_DATABASE_ENGINE_UNSUPPORTED「正式分析仅支持 PostgreSQL 数据库。」
+- src/analysis-config.mjs：postgres 的配置照原来 MySQL 那条的规则校验（主机、端口、库名、用户），去掉 127.0.0.1:55432 / jiuan_analysis 的旧特例；
+  ssl 的规则（true，或绝对路径的 CA 文件；ECS 只认挂载的 RDS CA）原样移给 postgres；ECS 要求 engine === 'postgres'，
+  文案「ECS 配置必须使用 PostgreSQL、挂载密钥及已核验的钉钉账号。」
+- 删除 src/mysql-database.mjs、src/mysql-sync-database.mjs、src/mysql-sync-worker.mjs；src/db.mjs 去掉 mysql:// 那一支和它的 import；
+  package.json 的 dependencies 去掉 mysql2（pg 8.16.3 原来就在）。
+- 留下的：element-store-schema、approval-identity-schema、approval-writeback-schema、document-search-schema、sap-payment-schema、mysql-source-foundation
+  这几个 MySQL 建表文字的模块运行时没有谁再 import，测试还读其中两个（检查约束名的清单）。
+按文字查的列（Review Focus 5）：用户输入的搜索（单据号、表单名、公司名、收款方、申请人）和表单名筛选用 ILIKE，同 MySQL 的 unicode_ci 不分大小写
+（document-search P5、P7 测）；编号、版本、工号（安全复核要求逐字节一致）、状态等机器值照旧精确匹配；scope_key 的前缀 LIKE 是机器值，区分大小写不影响。
+
+diff --git a/package.json b/package.json
+index 3cd1d5e..7a5d8d4 100644
+--- a/package.json
++++ b/package.json
+@@ -21,7 +21,6 @@
+     "test": "node --test --test-concurrency=1 --test-timeout=180000 tests/*.test.mjs"
+   },
+   "dependencies": {
+-    "mysql2": "3.14.3",
+     "pg": "8.16.3"
+   }
+ }
+diff --git a/src/analysis-config.mjs b/src/analysis-config.mjs
+index cce3398..b4f01fa 100644
+--- a/src/analysis-config.mjs
++++ b/src/analysis-config.mjs
+@@ -71,9 +71,8 @@ export function protectLocal(bytes,{decrypt=false,exec=execFileSync}={}){
+ function validateDatabaseSsl(database,engine,docker){
+   const ssl=database?.ssl;
+   if(ssl===undefined||ssl===null||ssl===false)return;
+-  if(engine!=='mysql'){if(typeof ssl==='object')throw new Error('Postgres database.ssl objects are not supported.');return;}
+-  if(ssl===true){if(docker)throw new Error('ECS MySQL ssl must use the mounted RDS CA.');return;}
+-  if(!ssl||typeof ssl!=='object'||Array.isArray(ssl)||typeof ssl.caFile!=='string'||!isAbsolute(ssl.caFile)||docker&&ssl.caFile!=='/app/config/rds-ca.pem'||ssl.verifyIdentity!==undefined&&typeof ssl.verifyIdentity!=='boolean'||Object.keys(ssl).some(key=>!['caFile','verifyIdentity'].includes(key)))throw new Error('MySQL ssl configuration is invalid.');
++  if(ssl===true){if(docker)throw new Error('ECS PostgreSQL ssl must use the mounted RDS CA.');return;}
++  if(!ssl||typeof ssl!=='object'||Array.isArray(ssl)||typeof ssl.caFile!=='string'||!isAbsolute(ssl.caFile)||docker&&ssl.caFile!=='/app/config/rds-ca.pem'||ssl.verifyIdentity!==undefined&&typeof ssl.verifyIdentity!=='boolean'||Object.keys(ssl).some(key=>!['caFile','verifyIdentity'].includes(key)))throw new Error('PostgreSQL ssl configuration is invalid.');
+ }
+ // Nexus integration (terms 57-61): optional in both instances; whether a task runs is switched elsewhere.
+ const plainObject=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
+@@ -119,13 +118,13 @@ export function readAnalysisConfig(file=ANALYSIS_CONFIG){
+   }else if(source.kind!=='huilianyi-mcp')throw new Error('正式实例必须使用汇联易 MCP 数据源。');
+   const interval=c.syncIntervalMs===undefined?0:Number(c.syncIntervalMs);
+   const engine=c.database?.engine||'postgres';
+-  const postgresDatabase=engine==='postgres'&&c.database?.host==='127.0.0.1'&&c.database?.port===55432&&c.database?.database==='jiuan_analysis';
+-  const mysqlDatabase=engine==='mysql'&&typeof c.database?.host==='string'&&/^[A-Za-z0-9.-]{1,253}$/.test(c.database.host)&&Number.isInteger(c.database?.port)&&c.database.port>0&&c.database.port<=65535&&/^[A-Za-z0-9_$-]{1,191}$/.test(c.database?.database||'')&&typeof c.database?.user==='string'&&c.database.user.length>0&&c.database.user.length<=191;
++  // PostgreSQL is the only engine; its settings follow the rules the MySQL ones had
++  const postgresDatabase=engine==='postgres'&&typeof c.database?.host==='string'&&/^[A-Za-z0-9.-]{1,253}$/.test(c.database.host)&&Number.isInteger(c.database?.port)&&c.database.port>0&&c.database.port<=65535&&/^[A-Za-z0-9_$-]{1,191}$/.test(c.database?.database||'')&&typeof c.database?.user==='string'&&c.database.user.length>0&&c.database.user.length<=191;
+   const docker=isDockerAnalysis(c);
+   validateDatabaseSsl(c.database,engine,docker);
+   validateAgentsConfig(c.agents);
+-  if(c.environment!=='prod'||c.mode!=='read_only_analysis'||!c.scope?.tenantId||!c.scope?.companyId||(c.scope.allCompaniesInTenant!==undefined&&typeof c.scope.allCompaniesInTenant!=='boolean')||!Array.isArray(c.accounts)||!(postgresDatabase||mysqlDatabase)||(docker?!publicOrigin(c.origin):c.origin!=='http://127.0.0.1:4180')||typeof c.automaticSync!=='boolean'||!(interval===0||(Number.isSafeInteger(interval)&&interval>=60000&&interval<=86400000)))throw new Error('正式分析配置无效。');
+-  if(docker&&(engine!=='mysql'||typeof c.connectionId!=='string'||!c.connectionId.trim()||c.accounts.some(a=>a.mode!=='dingtalk'||a.enabled===true&&(!a.corpId||a.userId!==undefined&&(typeof a.userId!=='string'||!a.userId.trim())||!a.employeeId||a.sourceVerified!==true))||!c.secretFiles||['databasePassword','dataKey'].some(k=>typeof c.secretFiles[k]!=='string'||!isAbsolute(c.secretFiles[k]))))throw new Error('ECS 配置必须使用 MySQL、挂载密钥及已核验的钉钉账号。');
++  if(c.environment!=='prod'||c.mode!=='read_only_analysis'||!c.scope?.tenantId||!c.scope?.companyId||(c.scope.allCompaniesInTenant!==undefined&&typeof c.scope.allCompaniesInTenant!=='boolean')||!Array.isArray(c.accounts)||!postgresDatabase||(docker?!publicOrigin(c.origin):c.origin!=='http://127.0.0.1:4180')||typeof c.automaticSync!=='boolean'||!(interval===0||(Number.isSafeInteger(interval)&&interval>=60000&&interval<=86400000)))throw new Error('正式分析配置无效。');
++  if(docker&&(engine!=='postgres'||typeof c.connectionId!=='string'||!c.connectionId.trim()||c.accounts.some(a=>a.mode!=='dingtalk'||a.enabled===true&&(!a.corpId||a.userId!==undefined&&(typeof a.userId!=='string'||!a.userId.trim())||!a.employeeId||a.sourceVerified!==true))||!c.secretFiles||['databasePassword','dataKey'].some(k=>typeof c.secretFiles[k]!=='string'||!isAbsolute(c.secretFiles[k]))))throw new Error('ECS 配置必须使用 PostgreSQL、挂载密钥及已核验的钉钉账号。');
+   try {
+     const principals=new Set(),employees=new Set();
+     for(const account of c.accounts){
+diff --git a/src/analysis-database.mjs b/src/analysis-database.mjs
+index fd48b17..5dbb403 100644
+--- a/src/analysis-database.mjs
++++ b/src/analysis-database.mjs
+@@ -1,11 +1,11 @@
+-import { createMySqlPool, mysqlPoolOptions } from './mysql-database.mjs';
++import { createPgPool, pgPoolOptions } from './pg-database.mjs';
+ import { openMySqlAnalysisStore } from './mysql-analysis-store.mjs';
+ 
+ // The request pool is shared by HTTP handlers, the scheduler and its agents.
+ // A caller that cannot get a connection within acquireTimeoutMs fails instead
+ // of waiting forever, and a one-shot query is cut off after queryTimeoutMs.
+ export const ANALYSIS_POOL_LIMITS = Object.freeze({ connectionLimit: 5, acquireTimeoutMs: 10_000, queryTimeoutMs: 60_000 });
+-// Connections that hold a MySQL named lock for a whole job or the life of the
++// Connections that hold a named (advisory) lock for a whole job or the life of the
+ // process get a pool of their own: the connector locks of the gateway (one each for
+ // hly-prod, sap-mcp, ai-relay and dingtalk, never given back), the lock of each agent run,
+ // the detail worker lock and the detail projection. On the request pool
+@@ -15,33 +15,34 @@ export const ANALYSIS_POOL_LIMITS = Object.freeze({ connectionLimit: 5, acquireT
+ // in sixteen; past that a caller times out instead of waiting.
+ export const ANALYSIS_LOCK_POOL_LIMIT = 16;
+ 
+-function mysqlUrl(config, secrets) {
+-  const supplied = process.env.ANALYSIS_MYSQL_URL || process.env.MYSQL_URL;
++function databaseUrl(config, secrets) {
++  const supplied = process.env.ANALYSIS_DATABASE_URL;
+   if (supplied) return supplied;
+   const host = config.database.host;
+-  const port = config.database.port || 3306;
++  const port = config.database.port || 5432;
+   const user = encodeURIComponent(config.database.user);
+   const password = encodeURIComponent(secrets.databasePassword);
+   const database = encodeURIComponent(config.database.database);
+-  return `mysql://${user}:${password}@${host}:${port}/${database}`;
++  return `postgres://${user}:${password}@${host}:${port}/${database}`;
+ }
+ 
++/** PostgreSQL is the only engine of the formal analysis store. */
+ export function analysisDatabaseEngine(config) {
+-  return config?.database?.engine === 'mysql' ? 'mysql' : 'unsupported';
++  return config?.database?.engine === 'postgres' ? 'postgres' : 'unsupported';
+ }
+ 
+ export function createAnalysisDatabase({ config, secrets, limits = {} } = {}) {
+   if (!config?.database || !secrets?.databasePassword) throw Object.assign(new Error('正式分析数据库配置无效。'), { code: 'ANALYSIS_CONFIGURATION' });
+-  if (analysisDatabaseEngine(config) !== 'mysql') throw Object.assign(new Error('正式分析仅支持 MySQL 数据库。'), { code: 'ANALYSIS_DATABASE_ENGINE_UNSUPPORTED' });
+-  if (config.deployment === 'ecs-docker' && (process.env.ANALYSIS_MYSQL_URL || process.env.MYSQL_URL)) throw Object.assign(new Error('ECS database URL overrides are not allowed.'), { code: 'ECS_DATABASE_URL_OVERRIDE' });
++  if (analysisDatabaseEngine(config) !== 'postgres') throw Object.assign(new Error('正式分析仅支持 PostgreSQL 数据库。'), { code: 'ANALYSIS_DATABASE_ENGINE_UNSUPPORTED' });
++  if (config.deployment === 'ecs-docker' && process.env.ANALYSIS_DATABASE_URL) throw Object.assign(new Error('ECS database URL overrides are not allowed.'), { code: 'ECS_DATABASE_URL_OVERRIDE' });
+   const { connectionLimit, acquireTimeoutMs, queryTimeoutMs } = { ...ANALYSIS_POOL_LIMITS, ...limits };
+-  const url = mysqlUrl(config, secrets), options = mysqlPoolOptions(config.database);
+-  const pool = createMySqlPool({ url, connectionLimit, connectTimeout: 5000, acquireTimeoutMs, queryTimeoutMs, ...options });
++  const url = databaseUrl(config, secrets), options = pgPoolOptions(config.database);
++  const pool = createPgPool({ url, connectionLimit, connectTimeout: 5000, acquireTimeoutMs, queryTimeoutMs, ...options });
+   let lockPool = null;
+   return {
+     pool,
+     // Created on first use, so one-shot scripts that hold no long locks open no second pool.
+-    lockPool: () => (lockPool ??= createMySqlPool({ url, connectionLimit: ANALYSIS_LOCK_POOL_LIMIT, connectTimeout: 5000, acquireTimeoutMs, ...options })),
++    lockPool: () => (lockPool ??= createPgPool({ url, connectionLimit: ANALYSIS_LOCK_POOL_LIMIT, connectTimeout: 5000, acquireTimeoutMs, ...options })),
+     open: options => openMySqlAnalysisStore({ ...options, pool }),
+     health: async()=>{await pool.query({sql:'SELECT 1',timeout:3000});return true;},
+   };
+diff --git a/src/db.mjs b/src/db.mjs
+index d39b525..3d02df6 100644
+--- a/src/db.mjs
++++ b/src/db.mjs
+@@ -2,7 +2,6 @@ import { DatabaseSync } from 'node:sqlite';
+ import { mkdirSync } from 'node:fs';
+ import { dirname, resolve } from 'node:path';
+ import { randomUUID } from 'node:crypto';
+-import { openMysqlSyncDatabase } from './mysql-sync-database.mjs';
+ 
+ export const COMPANIES = [
+   { id: 'c-a', name: '云川科技有限公司', shortName: '云川科技', taxId: '91310115MA1K4A001X' },
+@@ -18,7 +17,6 @@ export const USERS = [
+ ];
+ 
+ export function openDatabase(dbPath) {
+-  if (typeof dbPath === 'string' && /^mysql(?:\+tcp)?:\/\//i.test(dbPath)) return openMysqlSyncDatabase(dbPath);
+   if (dbPath !== ':memory:') mkdirSync(dirname(resolve(dbPath)), { recursive: true });
+   const db = new DatabaseSync(dbPath);
+   db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
+diff --git a/src/mysql-database.mjs b/src/mysql-database.mjs
+deleted file mode 100644
+index f9dbf52..0000000
+--- a/src/mysql-database.mjs
++++ /dev/null
+@@ -1,1167 +0,0 @@
+-import mysql from 'mysql2/promise';
+-import { createHash } from 'node:crypto';
+-import { readFileSync } from 'node:fs';
+-import { MYSQL_SOURCE_FOUNDATION_MIGRATION, MYSQL_AUDIT_APPROVAL_EVENTS_MIGRATION, MYSQL_ATTACHMENT_QUEUE_MIGRATION, MYSQL_ATTACHMENT_EXTRACTION_RETRY_MIGRATION, MYSQL_REPORT_DETAIL_MIGRATION, MYSQL_REFERENCE_SEED_MIGRATION, MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION, MYSQL_SCAN_LEDGER_MIGRATION } from './mysql-source-foundation.mjs';
+-import { MYSQL_SAP_PAYMENT_MIGRATION } from './sap-payment-schema.mjs';
+-import { MYSQL_APPROVAL_WRITEBACK_MIGRATION } from './approval-writeback-schema.mjs';
+-import { MYSQL_APPROVAL_IDENTITY_MIGRATION } from './approval-identity-schema.mjs';
+-import { MYSQL_DOCUMENT_SEARCH_MIGRATION } from './document-search-schema.mjs';
+-import { MYSQL_ELEMENT_DIRECTIVE_FORMAT_MIGRATION, MYSQL_ELEMENT_PUBLISH_MIGRATION, MYSQL_ELEMENT_REGISTRY_MIGRATION, MYSQL_ELEMENT_STORE_MIGRATION } from './element-store-schema.mjs';
+-
+-const MYSQL_CONFIGURATION = 'MYSQL_CONFIGURATION';
+-const LOCK_NAME = 'jiuan:mysql:schema';
+-const metadataReadyConnections = new WeakSet();
+-
+-export const MYSQL_CORE_SCHEMA = `
+-CREATE TABLE IF NOT EXISTS schema_migrations (
+-  version INT UNSIGNED NOT NULL PRIMARY KEY,
+-  name VARCHAR(191) NOT NULL,
+-  applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS entities (
+-  kind VARCHAR(64) NOT NULL,
+-  id VARCHAR(191) NOT NULL,
+-  data JSON NOT NULL,
+-  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+-  PRIMARY KEY (kind, id),
+-  KEY entities_updated_at (updated_at)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS sessions (
+-  token CHAR(64) NOT NULL PRIMARY KEY,
+-  user_id VARCHAR(191) NOT NULL,
+-  expires_at BIGINT UNSIGNED NOT NULL,
+-  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+-  KEY sessions_user_expires (user_id, expires_at),
+-  KEY sessions_expires (expires_at)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS source_tasks (
+-  document_id VARCHAR(191) NOT NULL PRIMARY KEY,
+-  version BIGINT UNSIGNED NOT NULL,
+-  status VARCHAR(32) NOT NULL,
+-  assignee_id VARCHAR(191) NOT NULL,
+-  scenario VARCHAR(64) NOT NULL DEFAULT 'normal',
+-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+-  KEY source_tasks_assignee_status (assignee_id, status),
+-  KEY source_tasks_status_version (status, version)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS decisions (
+-  id VARCHAR(191) NOT NULL PRIMARY KEY,
+-  actor_id VARCHAR(191) NOT NULL,
+-  document_id VARCHAR(191) NOT NULL,
+-  fingerprint CHAR(64) NOT NULL,
+-  created_at DATETIME(6) NOT NULL,
+-  UNIQUE KEY decisions_document_fingerprint (document_id, fingerprint),
+-  KEY decisions_actor_created (actor_id, created_at),
+-  KEY decisions_document_created (document_id, created_at)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS metadata (
+-  \`key\` VARCHAR(191) NOT NULL PRIMARY KEY,
+-  \`value\` LONGTEXT NOT NULL,
+-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS stage_workspaces (
+-  workspace_id VARCHAR(191) NOT NULL PRIMARY KEY,
+-  ciphertext LONGBLOB NOT NULL,
+-  key_version INT UNSIGNED NOT NULL,
+-  revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+-  KEY stage_workspaces_updated_at (updated_at)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`;
+-
+-export const MYSQL_ANALYSIS_SCHEMA = `
+-CREATE TABLE IF NOT EXISTS analysis_connections (
+-  connection_id VARCHAR(191) NOT NULL PRIMARY KEY,
+-  environment VARCHAR(16) NOT NULL,
+-  schema_version INT UNSIGNED NOT NULL,
+-  key_check LONGBLOB NOT NULL,
+-  tenant_id VARCHAR(191) NULL,
+-  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+-  CONSTRAINT analysis_connections_environment CHECK (environment = 'prod')
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS analysis_documents (
+-  connection_id VARCHAR(191) NOT NULL,
+-  id VARCHAR(191) NOT NULL,
+-  environment VARCHAR(16) NOT NULL,
+-  tenant_id VARCHAR(191) NOT NULL,
+-  company_id VARCHAR(191) NOT NULL,
+-  company_name VARCHAR(255) NOT NULL,
+-  source_id VARCHAR(191) NOT NULL,
+-  number VARCHAR(191) NOT NULL,
+-  form_name VARCHAR(191) NOT NULL,
+-  document_type VARCHAR(191) NOT NULL,
+-  status VARCHAR(64) NOT NULL,
+-  amount VARCHAR(128) NULL,
+-  currency VARCHAR(32) NULL,
+-  modified_at DATETIME(6) NULL,
+-  collected_at DATETIME(6) NOT NULL,
+-  version VARCHAR(191) NOT NULL,
+-  history_count INT UNSIGNED NOT NULL,
+-  rejection_count INT UNSIGNED NOT NULL,
+-  withdrawal_count INT UNSIGNED NOT NULL,
+-  PRIMARY KEY (connection_id, id),
+-  UNIQUE KEY analysis_documents_source (connection_id, tenant_id, company_id, source_id),
+-  KEY analysis_documents_company (connection_id, company_id, collected_at, id),
+-  KEY analysis_documents_status (connection_id, company_id, status, collected_at),
+-  CONSTRAINT analysis_documents_environment CHECK (environment = 'prod'),
+-  CONSTRAINT analysis_documents_connection FOREIGN KEY (connection_id) REFERENCES analysis_connections(connection_id)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS analysis_document_versions (
+-  connection_id VARCHAR(191) NOT NULL,
+-  document_id VARCHAR(191) NOT NULL,
+-  version VARCHAR(191) NOT NULL,
+-  modified_at DATETIME(6) NULL,
+-  collected_at DATETIME(6) NOT NULL,
+-  batch_id VARCHAR(191) NULL,
+-  payload LONGBLOB NOT NULL,
+-  PRIMARY KEY (connection_id, document_id, version),
+-  KEY analysis_document_versions_batch (connection_id, batch_id),
+-  CONSTRAINT analysis_document_versions_document FOREIGN KEY (connection_id, document_id) REFERENCES analysis_documents(connection_id, id)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS analysis_events (
+-  connection_id VARCHAR(191) NOT NULL,
+-  document_id VARCHAR(191) NOT NULL,
+-  id VARCHAR(191) NOT NULL,
+-  version VARCHAR(191) NOT NULL,
+-  operation VARCHAR(64) NOT NULL,
+-  category VARCHAR(64) NOT NULL,
+-  at DATETIME(6) NULL,
+-  node_type VARCHAR(128) NOT NULL,
+-  payload LONGBLOB NOT NULL,
+-  PRIMARY KEY (connection_id, document_id, id, version),
+-  KEY analysis_events_latest (connection_id, document_id, id, at),
+-  CONSTRAINT analysis_events_version FOREIGN KEY (connection_id, document_id, version) REFERENCES analysis_document_versions(connection_id, document_id, version)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS analysis_batches (
+-  connection_id VARCHAR(191) NOT NULL,
+-  id VARCHAR(191) NOT NULL,
+-  tenant_id VARCHAR(191) NOT NULL,
+-  company_id VARCHAR(191) NOT NULL,
+-  status VARCHAR(32) NOT NULL,
+-  started_at DATETIME(6) NOT NULL,
+-  finished_at DATETIME(6) NULL,
+-  pages INT UNSIGNED NOT NULL DEFAULT 0,
+-  report_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  request_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  query_payload LONGBLOB NOT NULL,
+-  coverage_payload LONGBLOB NULL,
+-  message VARCHAR(1000) NOT NULL DEFAULT '',
+-  error_code VARCHAR(100) NULL,
+-  PRIMARY KEY (connection_id, id),
+-  KEY analysis_batches_scope (connection_id, company_id, started_at),
+-  CONSTRAINT analysis_batches_connection FOREIGN KEY (connection_id) REFERENCES analysis_connections(connection_id)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS analysis_sync_states (
+-  connection_id VARCHAR(191) NOT NULL,
+-  scope_key VARCHAR(191) NOT NULL,
+-  payload LONGBLOB NOT NULL,
+-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+-  PRIMARY KEY (connection_id, scope_key),
+-  CONSTRAINT analysis_sync_states_connection FOREIGN KEY (connection_id) REFERENCES analysis_connections(connection_id)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`;
+-
+-function splitTopLevel(value) {
+-  const result = [];
+-  let start = 0;
+-  let depth = 0;
+-  let quote = null;
+-  let escaped = false;
+-  for (let index = 0; index < value.length; index += 1) {
+-    const char = value[index];
+-    if (escaped) { escaped = false; continue; }
+-    if (quote && char === '\\') { escaped = true; continue; }
+-    if (char === "'" || char === '"' || char === '`') { quote = quote === char ? null : quote || char; continue; }
+-    if (quote) continue;
+-    if (char === '(') depth += 1;
+-    else if (char === ')') depth -= 1;
+-    else if (char === ',' && depth === 0) { result.push(value.slice(start, index).trim()); start = index + 1; }
+-  }
+-  if (value.slice(start).trim()) result.push(value.slice(start).trim());
+-  return result;
+-}
+-
+-function matchingParenthesis(value, opening) {
+-  let depth = 0;
+-  let quote = null;
+-  let escaped = false;
+-  for (let index = opening; index < value.length; index += 1) {
+-    const char = value[index];
+-    if (escaped) { escaped = false; continue; }
+-    if (quote && char === '\\') { escaped = true; continue; }
+-    if (char === "'" || char === '"' || char === '`') { quote = quote === char ? null : quote || char; continue; }
+-    if (quote) continue;
+-    if (char === '(') depth += 1;
+-    else if (char === ')' && --depth === 0) return index;
+-  }
+-  return -1;
+-}
+-
+-function indexColumns(value) {
+-  return value.split(',').map(column => column.trim().replace(/^`|`$/g, '').replace(/\s+(?:ASC|DESC)\s*$/i, '')).filter(Boolean);
+-}
+-
+-function unquoteIdentifier(value) {
+-  return String(value || '').trim().replace(/^`|`$/g, '');
+-}
+-
+-function parseDefaultValue(definition) {
+-  const match = String(definition).match(/\bDEFAULT\s+((?:'(?:''|[^'])*')|(?:"(?:""|[^"])*")|(?:[^\s,]+))/i);
+-  if (!match) return undefined;
+-  const value = match[1];
+-  if (value.startsWith("'") && value.endsWith("'")) {
+-    const inner = value.slice(1, -1);
+-    return (inner === "''" ? '' : inner.replaceAll("''", "'"));
+-  }
+-  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replaceAll('""', '"');
+-  if (value.toUpperCase() === 'NULL') return null;
+-  return value;
+-}
+-
+-function defineExpectationMetadata(target, key, value) {
+-  Object.defineProperty(target, key, { value, enumerable: false, configurable: true });
+-  return target;
+-}
+-
+-function canonicalColumnType(type, typeArguments, remainder) {
+-  const rawType = String(type || '').toLowerCase();
+-  const normalizedType = rawType === 'boolean' ? 'tinyint' : rawType;
+-  const argumentsText = String(typeArguments || '').trim().replace(/\s*,\s*/g, ',');
+-  let value = normalizedType;
+-  if (argumentsText) value += `(${argumentsText.toLowerCase()})`;
+-  else if (rawType === 'boolean') value += '(1)';
+-  if (/\bUNSIGNED\b/i.test(remainder)) value += ' unsigned';
+-  if (/\bZEROFILL\b/i.test(remainder)) value += ' zerofill';
+-  return value;
+-}
+-
+-function canonicalExtra(remainder) {
+-  const value = String(remainder || '').toLowerCase();
+-  const extras = [];
+-  if (/\bauto_increment\b/.test(value)) extras.push('auto_increment');
+-  const onUpdate = value.match(/\bON\s+UPDATE\s+((?:CURRENT_TIMESTAMP|NOW)(?:\s*\([^)]*\))?)/i);
+-  if (onUpdate) extras.push(`on update ${onUpdate[1].replace(/\s+/g, '').toLowerCase()}`);
+-  return extras.join(' ');
+-}
+-
+-function parseColumnDefinition(definition, table) {
+-  const match = String(definition).trim().match(/^`?([A-Za-z0-9_]+)`?\s+([A-Za-z]+)(?:\s*\(([^)]*)\))?(.*)$/is);
+-  if (!match) return null;
+-  const name = unquoteIdentifier(match[1]);
+-  const type = match[2].toLowerCase();
+-  const typeArguments = match[3];
+-  const column = {
+-    table,
+-    name,
+-    type,
+-    nullable: !/\bNOT\s+NULL\b/i.test(match[4]),
+-  };
+-  defineExpectationMetadata(column, '__columnType', canonicalColumnType(type, typeArguments, match[4]));
+-  defineExpectationMetadata(column, '__extra', canonicalExtra(match[4]));
+-  if ((type === 'varchar' || type === 'char') && /^\d+$/.test(String(typeArguments || '').trim())) {
+-    column.length = Number(typeArguments.trim());
+-  }
+-  const defaultValue = parseDefaultValue(match[4]);
+-  if (defaultValue !== undefined) {
+-    column.default = type === 'boolean'
+-      ? String(defaultValue).toUpperCase() === 'TRUE' ? '1' : '0'
+-      : defaultValue;
+-  }
+-  defineExpectationMetadata(column, '__defaultSpecified', defaultValue !== undefined);
+-  return column;
+-}
+-
+-function addUnique(list, value, key) {
+-  if (!list.some(item => key(item) === key(value))) list.push(value);
+-}
+-
+-function addColumnExpectation(expectations, column) {
+-  if (!column) return;
+-  expectations.tables[column.table] ||= [];
+-  if (!expectations.tables[column.table].includes(column.name)) expectations.tables[column.table].push(column.name);
+-  addUnique(expectations.columns, column, item => `${item.table}.${item.name}`);
+-}
+-
+-function addIndexExpectation(expectations, index) {
+-  if (!index) return;
+-  addUnique(expectations.indexes, index, item => `${item.table}.${item.name}`);
+-}
+-
+-function parseAlterColumnExpectations(sql, expectations) {
+-  const pattern = /\bALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?\s+(?:ADD\s+COLUMN|MODIFY\s+COLUMN|CHANGE\s+COLUMN)\s+(`?[A-Za-z0-9_]+`?\s+[^;\r\n]+?)(?=(?:;|\r?\n|['"]\s*(?:,|\))|$))/gi;
+-  for (const match of String(sql).matchAll(pattern)) {
+-    const column = parseColumnDefinition(match[2], match[1]);
+-    addColumnExpectation(expectations, column);
+-  }
+-}
+-
+-function parseAlterIndexExpectations(sql, expectations) {
+-  const pattern = /\bALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?\s+(?:ADD\s+)?(?:(UNIQUE)\s+)?(?:KEY|INDEX)\s+`?([A-Za-z0-9_]+)`?\s*\(([^)]+)\)/gi;
+-  for (const match of String(sql).matchAll(pattern)) {
+-    addIndexExpectation(expectations, {
+-      table: match[1],
+-      name: match[3],
+-      columns: indexColumns(match[4]),
+-      unique: Boolean(match[2]),
+-    });
+-  }
+-}
+-
+-export function parseMigrationExpects(sql) {
+-  const expectations = { tables: {}, tableOptions: {}, columns: [], indexes: [], primaryKeys: [], foreignKeys: [], checks: [] };
+-  const tablePattern = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`?([A-Za-z0-9_]+)`?/gi;
+-  for (const match of String(sql).matchAll(tablePattern)) {
+-    const opening = sql.indexOf('(', match.index + match[0].length);
+-    const closing = opening < 0 ? -1 : matchingParenthesis(sql, opening);
+-    if (opening < 0 || closing < 0) continue;
+-    const table = match[1];
+-    expectations.tables[table] ||= [];
+-    for (const definition of splitTopLevel(sql.slice(opening + 1, closing))) {
+-      const trimmed = definition.trim();
+-      const indexMatch = trimmed.match(/^(?:(UNIQUE)\s+)?(?:KEY|INDEX)\s+`?([A-Za-z0-9_]+)`?\s*\(([^)]+)\)/i);
+-      if (indexMatch) {
+-        addIndexExpectation(expectations, {
+-          table,
+-          name: indexMatch[2],
+-          columns: indexColumns(indexMatch[3]),
+-          unique: Boolean(indexMatch[1]),
+-        });
+-        continue;
+-      }
+-      const primaryMatch = trimmed.match(/^PRIMARY\s+KEY\s*\(([^)]+)\)/i);
+-      if (primaryMatch) {
+-        addUnique(expectations.primaryKeys, { table, name: 'PRIMARY', columns: indexColumns(primaryMatch[1]) }, item => `${item.table}.${item.name}`);
+-        continue;
+-      }
+-      const foreignMatch = trimmed.match(/^(?:CONSTRAINT\s+`?([A-Za-z0-9_]+)`?\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+`?([A-Za-z0-9_]+)`?\s*\(([^)]+)\)/i);
+-      if (foreignMatch) {
+-        const foreign = {
+-          table,
+-          name: foreignMatch[1] || `FOREIGN_KEY_${expectations.foreignKeys.length + 1}`,
+-          columns: indexColumns(foreignMatch[2]),
+-          referencedTable: foreignMatch[3],
+-          referencedColumns: indexColumns(foreignMatch[4]),
+-        };
+-        const foreignRemainder = trimmed.slice(foreignMatch[0].length);
+-        const deleteRule = foreignRemainder.match(/\bON\s+DELETE\s+(RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION|SET\s+DEFAULT)\b/i);
+-        const updateRule = foreignRemainder.match(/\bON\s+UPDATE\s+(RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION|SET\s+DEFAULT)\b/i);
+-        if (deleteRule) foreign.deleteRule = deleteRule[1].replace(/\s+/g, ' ').toUpperCase();
+-        if (updateRule) foreign.updateRule = updateRule[1].replace(/\s+/g, ' ').toUpperCase();
+-        addUnique(expectations.foreignKeys, foreign, item => `${item.table}.${item.name}`);
+-        continue;
+-      }
+-      const checkMatch = trimmed.match(/^(?:CONSTRAINT\s+`?([A-Za-z0-9_]+)`?\s+)?CHECK\s*\(/i);
+-      if (checkMatch) {
+-        const opening = trimmed.indexOf('(', checkMatch.index + checkMatch[0].length - 1);
+-        const closing = opening < 0 ? -1 : matchingParenthesis(trimmed, opening);
+-        const check = { table, name: checkMatch[1] || `CHECK_${expectations.checks.length + 1}` };
+-        if (opening >= 0 && closing >= 0) defineExpectationMetadata(check, '__clause', trimmed.slice(opening + 1, closing));
+-        addUnique(expectations.checks, check, item => `${item.table}.${item.name}`);
+-        continue;
+-      }
+-      const column = parseColumnDefinition(trimmed, table);
+-      addColumnExpectation(expectations, column);
+-      if (column && /\bPRIMARY\s+KEY\b/i.test(trimmed)) {
+-        addUnique(expectations.primaryKeys, { table, name: 'PRIMARY', columns: [column.name] }, item => `${item.table}.${item.name}`);
+-      }
+-    }
+-    const semicolon = sql.indexOf(';', closing + 1);
+-    const tail = sql.slice(closing + 1, semicolon < 0 ? sql.length : semicolon);
+-    const engine = tail.match(/\bENGINE\s*=\s*([A-Za-z0-9_]+)/i)?.[1];
+-    const tableCollation = tail.match(/\bCOLLATE\s*=\s*([A-Za-z0-9_]+)/i)?.[1];
+-    const charset = tail.match(/\b(?:DEFAULT\s+)?(?:CHARSET|CHARACTER\s+SET)\s*=\s*([A-Za-z0-9_]+)/i)?.[1];
+-    if (engine || tableCollation || charset) expectations.tableOptions[table] = {
+-      ...(engine ? { engine: engine.toUpperCase() } : {}),
+-      ...(tableCollation ? { tableCollation: tableCollation.toLowerCase() } : {}),
+-      ...(charset ? { charset: charset.toLowerCase() } : {}),
+-    };
+-  }
+-  parseAlterColumnExpectations(sql, expectations);
+-  parseAlterIndexExpectations(sql, expectations);
+-  for (const foreign of expectations.foreignKeys) {
+-    const covered = [...expectations.indexes, ...expectations.primaryKeys].some(index => index.table === foreign.table
+-      && foreign.columns.every((column, position) => index.columns[position] === column));
+-    if (!covered) addIndexExpectation(expectations, {
+-      table: foreign.table,
+-      name: foreign.name,
+-      columns: [...foreign.columns],
+-      unique: false,
+-      implicit: true,
+-    });
+-  }
+-  return expectations;
+-}
+-
+-function mergeMigrationExpectations(parsed, explicit) {
+-  const result = {
+-    tables: Object.fromEntries(Object.entries(parsed.tables || {}).map(([table, columns]) => [table, [...columns]])),
+-    tableOptions: Object.fromEntries(Object.entries(parsed.tableOptions || {}).map(([table, options]) => [table, { ...options }])),
+-    columns: [...(parsed.columns || [])],
+-    indexes: [...(parsed.indexes || [])],
+-    primaryKeys: [...(parsed.primaryKeys || [])],
+-    foreignKeys: [...(parsed.foreignKeys || [])],
+-    checks: [...(parsed.checks || [])],
+-  };
+-  for (const [table, options] of Object.entries(explicit?.tableOptions || {})) {
+-    result.tableOptions[table] = { ...(result.tableOptions[table] || {}), ...options };
+-  }
+-  for (const [table, value] of Object.entries(explicit?.tables || {})) {
+-    const columns = Array.isArray(value) ? value : value?.columns || [];
+-    result.tables[table] ||= [];
+-    for (const column of columns) if (!result.tables[table].includes(column)) result.tables[table].push(column);
+-  }
+-  for (const key of ['columns', 'indexes', 'primaryKeys', 'foreignKeys', 'checks']) {
+-    for (const item of explicit?.[key] || []) {
+-      const identity = key === 'columns' ? `${item.table}.${item.name}` : `${item.table}.${item.name}`;
+-      const existing = result[key].find(value => `${value.table}.${value.name}` === identity);
+-      if (existing) Object.assign(existing, item);
+-      else result[key].push(item);
+-    }
+-  }
+-  return result;
+-}
+-
+-export const MYSQL_PLATFORM_FOUNDATION_SCHEMA = `
+-CREATE TABLE IF NOT EXISTS platform_agent_runs (
+-  run_id CHAR(26) NOT NULL PRIMARY KEY,
+-  agent_id VARCHAR(64) NOT NULL,
+-  code_version CHAR(64) NOT NULL,
+-  mode VARCHAR(16) NOT NULL,
+-  lane VARCHAR(16) NULL,
+-  trigger_kind VARCHAR(16) NOT NULL,
+-  upstream_run_id CHAR(26) NULL,
+-  actor_principal VARCHAR(191) NOT NULL,
+-  status VARCHAR(16) NOT NULL,
+-  started_at DATETIME(6) NOT NULL,
+-  heartbeat_at DATETIME(6) NOT NULL,
+-  lease_expires_at DATETIME(6) NOT NULL,
+-  finished_at DATETIME(6) NULL,
+-  selected_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  succeeded_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  skipped_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  recovered_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  request_count INT UNSIGNED NOT NULL DEFAULT 0,
+-  params_sha256 CHAR(64) NULL,
+-  settings_revision INT UNSIGNED NULL,
+-  legacy_ref VARCHAR(191) NULL,
+-  error_code VARCHAR(64) NULL,
+-  summary_json JSON NULL,
+-  KEY platform_agent_runs_agent_started (agent_id, started_at),
+-  KEY platform_agent_runs_status_lease (status, lease_expires_at),
+-  KEY platform_agent_runs_upstream (upstream_run_id),
+-  CONSTRAINT platform_agent_runs_mode CHECK (mode IN ('incremental', 'history', 'catch_up', 'operation')),
+-  CONSTRAINT platform_agent_runs_lane CHECK (lane IS NULL OR lane IN ('corporate', 'employee')),
+-  CONSTRAINT platform_agent_runs_trigger CHECK (trigger_kind IN ('manual', 'schedule', 'upstream', 'startup')),
+-  CONSTRAINT platform_agent_runs_status CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'cancelled', 'abandoned')),
+-  CONSTRAINT platform_agent_runs_summary_size CHECK (summary_json IS NULL OR OCTET_LENGTH(summary_json) <= 8192)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS platform_settings (
+-  scope_kind VARCHAR(16) NOT NULL,
+-  scope_id VARCHAR(64) NOT NULL,
+-  revision INT UNSIGNED NOT NULL,
+-  value_json JSON NOT NULL,
+-  value_sha256 CHAR(64) NOT NULL,
+-  updated_by VARCHAR(191) NOT NULL,
+-  updated_at DATETIME(6) NOT NULL,
+-  PRIMARY KEY (scope_kind, scope_id),
+-  CONSTRAINT platform_settings_scope CHECK (scope_kind IN ('agent', 'connector', 'middleware', 'scheduler', 'platform'))
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS platform_change_log (
+-  change_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+-  event_kind VARCHAR(16) NOT NULL,
+-  scope_kind VARCHAR(16) NOT NULL,
+-  scope_id VARCHAR(64) NOT NULL,
+-  from_revision INT UNSIGNED NULL,
+-  to_revision INT UNSIGNED NULL,
+-  actor_principal VARCHAR(191) NOT NULL,
+-  actor_role VARCHAR(32) NOT NULL,
+-  occurred_at DATETIME(6) NOT NULL,
+-  reason VARCHAR(400) NULL,
+-  before_json JSON NULL,
+-  after_json JSON NULL,
+-  operation_json JSON NULL,
+-  result_json JSON NULL,
+-  outcome VARCHAR(16) NOT NULL,
+-  run_id CHAR(26) NULL,
+-  KEY platform_change_log_scope_time (scope_kind, scope_id, occurred_at),
+-  KEY platform_change_log_event_time (event_kind, occurred_at),
+-  KEY platform_change_log_actor_time (actor_principal, occurred_at),
+-  CONSTRAINT platform_change_log_event CHECK (event_kind IN ('config_change', 'operation', 'auth', 'access_denied')),
+-  CONSTRAINT platform_change_log_outcome CHECK (outcome IN ('ok', 'refused', 'failed'))
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS platform_call_log (
+-  call_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+-  connector_id VARCHAR(32) NOT NULL,
+-  operation VARCHAR(96) NOT NULL,
+-  agent_id VARCHAR(64) NOT NULL,
+-  run_id CHAR(26) NULL,
+-  attempt_no TINYINT UNSIGNED NOT NULL,
+-  started_at DATETIME(6) NOT NULL,
+-  duration_ms INT UNSIGNED NOT NULL,
+-  outcome VARCHAR(24) NOT NULL,
+-  http_status SMALLINT UNSIGNED NULL,
+-  error_code VARCHAR(64) NULL,
+-  response_bytes INT UNSIGNED NULL,
+-  input_tokens INT UNSIGNED NULL,
+-  output_tokens INT UNSIGNED NULL,
+-  process_tag VARCHAR(64) NOT NULL,
+-  KEY platform_call_log_connector_started (connector_id, started_at),
+-  KEY platform_call_log_agent_started (agent_id, started_at),
+-  KEY platform_call_log_run (run_id),
+-  CONSTRAINT platform_call_log_outcome CHECK (outcome IN ('ok', 'error', 'retryable_error', 'timeout', 'rejected_budget', 'rejected_paused', 'rejected_not_allowed', 'rejected_breaker', 'rejected_unattributed'))
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-
+-CREATE TABLE IF NOT EXISTS platform_call_budget_daily (
+-  budget_day DATE NOT NULL,
+-  connector_id VARCHAR(32) NOT NULL,
+-  agent_id VARCHAR(64) NOT NULL,
+-  limit_calls INT UNSIGNED NOT NULL,
+-  used_calls INT UNSIGNED NOT NULL DEFAULT 0,
+-  limit_tokens BIGINT UNSIGNED NULL,
+-  used_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
+-  PRIMARY KEY (budget_day, connector_id, agent_id)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`;
+-
+-const platformParsedExpects = parseMigrationExpects(MYSQL_PLATFORM_FOUNDATION_SCHEMA);
+-export const MYSQL_PLATFORM_FOUNDATION_MIGRATION = Object.freeze({
+-  version: 11,
+-  name: 'platform-foundation',
+-  sql: MYSQL_PLATFORM_FOUNDATION_SCHEMA,
+-  expects: {
+-    tables: platformParsedExpects.tables,
+-    tableOptions: platformParsedExpects.tableOptions,
+-    columns: platformParsedExpects.columns,
+-    indexes: platformParsedExpects.indexes,
+-    primaryKeys: platformParsedExpects.primaryKeys,
+-    checks: platformParsedExpects.checks,
+-  },
+-});
+-
+-export function migrationChecksum(migration) {
+-  const normalized = String(migration?.sql ?? '').replaceAll('\r\n', '\n').trim();
+-  return createHash('sha256').update(normalized, 'utf8').digest('hex');
+-}
+-
+-/**
+- * Classify the version numbers stored in schema_migrations against the
+- * migrations known by this program. Every version-state entry point uses this
+- * rule so newer additive schemas are handled consistently.
+- */
+-export function classifyMigrationVersions(appliedRecords = [], knownMigrations = MYSQL_MIGRATIONS) {
+-  const ordered = [...(knownMigrations || [])].sort((a, b) => a.version - b.version);
+-  const highestKnownVersion = Math.max(0, ...ordered.map(item => Number(item.version)));
+-  const records = appliedRecords instanceof Map
+-    ? appliedRecords
+-    : new Map((appliedRecords || []).map(record => [Number(record?.version), record]));
+-  const normal = [];
+-  const pending = [];
+-  for (const migration of ordered) {
+-    if (records.has(Number(migration.version))) normal.push(Number(migration.version));
+-    else pending.push(Number(migration.version));
+-  }
+-  const aheadAdditive = [];
+-  const drift = [];
+-  for (const [version, record] of records) {
+-    const numericVersion = Number(version);
+-    if (ordered.some(item => Number(item.version) === numericVersion)) continue;
+-    if (numericVersion > highestKnownVersion && Number(record?.additive) === 1) aheadAdditive.push(numericVersion);
+-    else drift.push({ version: numericVersion, reason: 'unknown_version' });
+-  }
+-  aheadAdditive.sort((a, b) => a - b);
+-  drift.sort((a, b) => a.version - b.version);
+-  return { normal, pending, aheadAdditive, drift, highestKnownVersion };
+-}
+-
+-// Additive means the previous image keeps working on the migrated database (REL-03a-3): only new
+-// tables, without a foreign key (the old image would no longer be able to delete the parent rows)
+-// and not copied from another table (CREATE TABLE ... SELECT, CREATE TABLE ... LIKE).
+-export function validateAdditiveMigration(migration) {
+-  if (migration?.additive !== true) return;
+-  const label = `Migration ${migration.version} (${migration.name}) marked additive`;
+-  const statements = splitMySqlStatements(String(migration.sql || ''));
+-  if (!statements.length || statements.some(statement => !/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/i.test(statement))) {
+-    throw configuration(`${label} must contain only CREATE TABLE IF NOT EXISTS statements.`);
+-  }
+-  for (const statement of statements) {
+-    // Quoted text, quoted names and comments are not clauses. The quote characters are written
+-    // as \x27 \x22 \x60 so tests/sql-literal-gate.test.mjs does not read this line as a string.
+-    const code = statement
+-      .replace(/\x27(?:[^\x27\\]|\\.|\x27\x27)*\x27|\x22(?:[^\x22\\]|\\.|\x22\x22)*\x22|\x60(?:[^\x60]|\x60\x60)*\x60/g, ' ')
+-      .replace(/--\s[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
+-    if (/\bFOREIGN\s+KEY\b|\bREFERENCES\b/i.test(code)) {
+-      throw configuration(`${label} must not declare a FOREIGN KEY or REFERENCES: the previous image could no longer delete the rows it points to.`);
+-    }
+-    if (/\bSELECT\b/i.test(code)) throw configuration(`${label} must not create a table from a SELECT (CREATE TABLE ... AS SELECT).`);
+-    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?:\S+\s*)?\(?\s*LIKE\b/i.test(code)) throw configuration(`${label} must not copy another table (CREATE TABLE ... LIKE).`);
+-  }
+-}
+-
+-const MYSQL_MIGRATION_DEFINITIONS = [
+-  { version: 1, name: 'core', sql: MYSQL_CORE_SCHEMA },
+-  { version: 2, name: 'analysis', sql: MYSQL_ANALYSIS_SCHEMA },
+-  MYSQL_SOURCE_FOUNDATION_MIGRATION,
+-  MYSQL_SAP_PAYMENT_MIGRATION,
+-  MYSQL_AUDIT_APPROVAL_EVENTS_MIGRATION,
+-  MYSQL_ATTACHMENT_QUEUE_MIGRATION,
+-  MYSQL_ATTACHMENT_EXTRACTION_RETRY_MIGRATION,
+-  MYSQL_REFERENCE_SEED_MIGRATION,
+-  MYSQL_REPORT_DETAIL_MIGRATION,
+-  MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION,
+-  MYSQL_PLATFORM_FOUNDATION_MIGRATION,
+-  MYSQL_SCAN_LEDGER_MIGRATION,
+-  MYSQL_APPROVAL_WRITEBACK_MIGRATION,
+-  MYSQL_ELEMENT_STORE_MIGRATION,
+-  MYSQL_ELEMENT_REGISTRY_MIGRATION,
+-  MYSQL_ELEMENT_DIRECTIVE_FORMAT_MIGRATION,
+-  MYSQL_ELEMENT_PUBLISH_MIGRATION,
+-  MYSQL_APPROVAL_IDENTITY_MIGRATION,
+-  MYSQL_DOCUMENT_SEARCH_MIGRATION,
+-];
+-
+-/**
+- * CHECKs a later migration replaced ("table.name" -> replacing version).  An
+- * earlier migration no longer expects them, as v3 no longer expects what v6
+- * changed: its readback must not reject a database the later migration ran on.
+- */
+-const SUPERSEDED_CHECKS = new Map(MYSQL_MIGRATION_DEFINITIONS.flatMap(migration => (migration.supersedes?.checks || []).map(key => [key, migration.version])));
+-
+-export const MYSQL_MIGRATIONS = Object.freeze(MYSQL_MIGRATION_DEFINITIONS.map(migration => {
+-  const hasExplicitExpects = Object.prototype.hasOwnProperty.call(migration, 'expects');
+-  const expects = mergeMigrationExpectations(parseMigrationExpects(migration.sql), migration.expects);
+-  // v6 intentionally changes two v3 objects; v3 must still describe the final
+-  // schema union without rejecting a database after the later migration ran.
+-  if (migration.version === 3) {
+-    expects.indexes = expects.indexes.filter(index => !(index.table === 'audit_attachment_extractions' && index.name === 'audit_attachment_extractions_identity'));
+-    const modelVersion = expects.columns.find(column => column.table === 'audit_attachment_extractions' && column.name === 'model_version');
+-    if (modelVersion) {
+-      delete modelVersion.nullable;
+-      delete modelVersion.default;
+-    }
+-  }
+-  expects.checks = expects.checks.filter(check => !(SUPERSEDED_CHECKS.get(`${check.table}.${check.name}`) > migration.version));
+-  return Object.freeze({
+-    ...migration,
+-    expects,
+-    __expectsExplicit: hasExplicitExpects,
+-  });
+-}));
+-
+-function configuration(message) {
+-  return Object.assign(new Error(message), { code: MYSQL_CONFIGURATION });
+-}
+-
+-export function parseMySqlUrl(value) {
+-  if (typeof value !== 'string' || !value.trim()) throw configuration('MYSQL_URL is required.');
+-  let url;
+-  try { url = new URL(value); } catch { throw configuration('MYSQL_URL is invalid.'); }
+-  if (!['mysql:', 'mysql+tcp:'].includes(url.protocol) || !url.hostname || !url.username || !url.password || !url.pathname || url.pathname === '/') throw configuration('MYSQL_URL is invalid.');
+-  const port = url.port ? Number(url.port) : 3306;
+-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw configuration('MYSQL_URL port is invalid.');
+-  let username, password, database;
+-  try {
+-    username = decodeURIComponent(url.username);
+-    password = decodeURIComponent(url.password);
+-    database = decodeURIComponent(url.pathname.slice(1));
+-  } catch { throw configuration('MYSQL_URL is invalid.'); }
+-  if (!/^[A-Za-z0-9_$-]{1,191}$/.test(database)) throw configuration('MYSQL_URL database is invalid.');
+-  const ssl = ['1', 'true', 'required'].includes((url.searchParams.get('ssl') || '').toLowerCase());
+-  return { host: url.hostname, port, user: username, password, database, ssl };
+-}
+-
+-export function mysqlPoolOptions(database = {}) {
+-  const ssl = database?.ssl;
+-  if (ssl === undefined || ssl === null || ssl === false) return {};
+-  if (ssl === true) return { ssl: { rejectUnauthorized: true } };
+-  if (!ssl || typeof ssl !== 'object' || Array.isArray(ssl) || typeof ssl.caFile !== 'string' || (ssl.verifyIdentity !== undefined && typeof ssl.verifyIdentity !== 'boolean')) throw configuration('MySQL ssl configuration is invalid.');
+-  let ca;
+-  try { ca = readFileSync(ssl.caFile, 'utf8'); } catch { throw configuration('MySQL CA file is invalid.'); }
+-  if (!ca || Buffer.byteLength(ca, 'utf8') > 128 * 1024) throw configuration('MySQL CA file is invalid.');
+-  return { ssl: { ca, rejectUnauthorized: true, verifyIdentity: ssl.verifyIdentity !== false } };
+-}
+-
+-// mysql2 has no acquire timeout: with every connection taken, getConnection(),
+-// query() and execute() wait forever. Both go through the getConnection of the
+-// core pool, so bounding that one call bounds all of them. A connection
+-// that arrives after its caller gave up goes straight back to the pool.
+-function boundConnectionWait(core, acquireTimeoutMs) {
+-  const getConnection = core.getConnection.bind(core);
+-  core.getConnection = callback => {
+-    let settled = false;
+-    const timer = setTimeout(() => {
+-      settled = true;
+-      callback(Object.assign(new Error('Timed out waiting for a free database connection.'), { code: 'MYSQL_POOL_ACQUIRE_TIMEOUT' }));
+-    }, acquireTimeoutMs);
+-    getConnection((error, connection) => {
+-      if (settled) { if (connection) connection.release(); return; }
+-      settled = true; clearTimeout(timer); callback(error, connection);
+-    });
+-  };
+-}
+-
+-// A one-shot pool query without its own timeout gets queryTimeoutMs. Queries on
+-// a connection taken with getConnection() (transactions, migrations, named
+-// locks) keep their own timing.
+-function withDefaultTimeout(sql, queryTimeoutMs) {
+-  if (typeof sql === 'string') return { sql, timeout: queryTimeoutMs };
+-  if (sql && typeof sql.sql === 'string' && sql.timeout === undefined) return { ...sql, timeout: queryTimeoutMs };
+-  return sql;
+-}
+-function defaultQueryTimeout(core, queryTimeoutMs) {
+-  const query = core.query.bind(core);
+-  core.query = (sql, values, callback) => query(withDefaultTimeout(sql, queryTimeoutMs), values, callback);
+-}
+-
+-export function createMySqlPool({ url = process.env.MYSQL_URL, connectionLimit = 10, connectTimeout = 10000, acquireTimeoutMs = 0, queryTimeoutMs = 0, ssl } = {}) {
+-  const config = parseMySqlUrl(url);
+-  if (!Number.isInteger(connectionLimit) || connectionLimit < 1 || connectionLimit > 100) throw configuration('MYSQL_CONNECTION_LIMIT is invalid.');
+-  if (!Number.isInteger(connectTimeout) || connectTimeout < 100 || connectTimeout > 120000) throw configuration('MYSQL_CONNECT_TIMEOUT is invalid.');
+-  if (!Number.isInteger(acquireTimeoutMs) || acquireTimeoutMs < 0 || acquireTimeoutMs > 600000) throw configuration('MYSQL_ACQUIRE_TIMEOUT is invalid.');
+-  if (!Number.isInteger(queryTimeoutMs) || queryTimeoutMs < 0 || queryTimeoutMs > 3600000) throw configuration('MYSQL_QUERY_TIMEOUT is invalid.');
+-  const effectiveSsl = ssl === undefined ? config.ssl : ssl;
+-  const pool = mysql.createPool({
+-    host: config.host, port: config.port, user: config.user, password: config.password, database: config.database,
+-    waitForConnections: true, connectionLimit, queueLimit: 0, connectTimeout,
+-    charset: 'utf8mb4', timezone: 'Z', enableKeepAlive: true,
+-    ...(effectiveSsl === true ? { ssl: { rejectUnauthorized: true } } : effectiveSsl ? { ssl: effectiveSsl } : {}),
+-  });
+-  if (acquireTimeoutMs > 0) boundConnectionWait(pool.pool, acquireTimeoutMs);
+-  if (queryTimeoutMs > 0) defaultQueryTimeout(pool.pool, queryTimeoutMs);
+-  return pool;
+-}
+-
+-export function splitMySqlStatements(sql) {
+-  const result = [];
+-  let start = 0, quote = null, escaped = false;
+-  for (let index = 0; index < sql.length; index += 1) {
+-    const char = sql[index];
+-    if (escaped) { escaped = false; continue; }
+-    if (quote && char === '\\') { escaped = true; continue; }
+-    if (char === "'" || char === '"' || char === '`') { quote = quote === char ? null : quote || char; continue; }
+-    if (!quote && char === ';') { if (sql.slice(start, index).trim()) result.push(sql.slice(start, index).trim()); start = index + 1; }
+-  }
+-  if (sql.slice(start).trim()) result.push(sql.slice(start).trim());
+-  return result;
+-}
+-
+-function migrationExpectations(migration) {
+-  const hasExplicitExpects = migration.expects != null
+-    && (migration.__expectsExplicit ?? Object.prototype.hasOwnProperty.call(migration, 'expects'));
+-  if (!hasExplicitExpects && /\bALTER\s+TABLE\b|information_schema\./i.test(migration.sql)) {
+-    throw configuration(`Migration ${migration.version} (${migration.name}) must declare expects.`);
+-  }
+-  const expects = migration.expects || parseMigrationExpects(migration.sql);
+-  if (!expects || !Object.keys(expects.tables || {}).length) {
+-    throw configuration(`Migration ${migration.version} (${migration.name}) has no structural expectations.`);
+-  }
+-  return expects;
+-}
+-
+-function rowsWithField(rows, field) {
+-  return rows.map(row => row[field] ?? row[field.toUpperCase()] ?? row[field.toLowerCase()]);
+-}
+-
+-function rowField(row, field) {
+-  return row?.[field] ?? row?.[field.toUpperCase()] ?? row?.[field.toLowerCase()];
+-}
+-
+-function expectedColumns(expects) {
+-  const columns = [...(expects.columns || [])];
+-  for (const [table, value] of Object.entries(expects.tables || {})) {
+-    const names = Array.isArray(value) ? value : value?.columns || [];
+-    for (const name of names) if (!columns.some(item => item.table === table && item.name === name)) columns.push({ table, name });
+-  }
+-  return columns;
+-}
+-
+-function normalizedType(type) {
+-  const value = String(type || '').toLowerCase();
+-  return value === 'boolean' ? 'tinyint' : value;
+-}
+-
+-function normalizedColumnType(type) {
+-  return String(type || '')
+-    .toLowerCase()
+-    .replace(/\s*,\s*/g, ',')
+-    .replace(/\s+/g, ' ')
+-    .trim()
+-    .replace(/^boolean$/, 'tinyint(1)');
+-}
+-
+-function normalizedDefault(value) {
+-  if (value == null) return null;
+-  const text = String(value)
+-    .trim()
+-    .replace(/^current_timestamp(?:\s*\(\s*\))?$/i, 'current_timestamp')
+-    .replace(/\s*\(\s*(\d+)\s*\)/g, '($1)')
+-    .replace(/\s+/g, ' ');
+-  return /^(?:current_timestamp|now)(?:\(\d+\))?$/i.test(text) ? text.toLowerCase() : text;
+-}
+-
+-function normalizedExtra(value) {
+-  return String(value || '')
+-    .toLowerCase()
+-    .replace(/\bdefault_generated\b/g, '')
+-    .replace(/\s+/g, ' ')
+-    .trim()
+-    .replace(/current_timestamp\s*\(\s*(\d+)\s*\)/g, 'current_timestamp($1)');
+-}
+-
+-function expectedColumnType(expected) {
+-  if (expected?.__columnType) return normalizedColumnType(expected.__columnType);
+-  if (expected?.type && expected?.length !== undefined) return normalizedColumnType(`${expected.type}(${expected.length})`);
+-  return null;
+-}
+-
+-function sameColumn(actual, expected) {
+-  if (normalizedType(rowField(actual, 'DATA_TYPE')) !== normalizedType(expected.type)) return false;
+-  const expectedType = expectedColumnType(expected);
+-  if (expectedType && normalizedColumnType(rowField(actual, 'COLUMN_TYPE')) !== expectedType) return false;
+-  if (expected.nullable !== undefined && (String(rowField(actual, 'IS_NULLABLE') || '').toUpperCase() === 'YES') !== Boolean(expected.nullable)) return false;
+-  if (expected.length !== undefined && Number(rowField(actual, 'CHARACTER_MAXIMUM_LENGTH')) !== Number(expected.length)) return false;
+-  if (Object.prototype.hasOwnProperty.call(expected, 'default') || expected.__defaultSpecified) {
+-    const actualDefault = rowField(actual, 'COLUMN_DEFAULT');
+-    const expectedDefault = Object.prototype.hasOwnProperty.call(expected, 'default') ? expected.default : null;
+-    if (normalizedDefault(actualDefault) !== normalizedDefault(expectedDefault)) return false;
+-  }
+-  if (expected.__extra !== undefined && normalizedExtra(rowField(actual, 'EXTRA')) !== normalizedExtra(expected.__extra)) return false;
+-  return true;
+-}
+-
+-function normalizedReferentialRule(value) {
+-  const rule = String(value || 'RESTRICT').replace(/\s+/g, ' ').trim().toUpperCase();
+-  return rule === 'NO ACTION' ? 'RESTRICT' : rule;
+-}
+-
+-function normalizedCheckClause(value) {
+-  let clause = String(value || '')
+-    .replace(/\\(?=['"])/g, '')
+-    .replace(/`/g, '')
+-    .replace(/_[a-z0-9]+(?=\s*['"])/gi, '')
+-    .replace(/\s+/g, ' ')
+-    .replace(/\s*,\s*/g, ',')
+-    .replace(/\(\s+/g, '(')
+-    .replace(/\s+\)/g, ')')
+-    .replace(/\boctet_length\s*\(/gi, 'length(')
+-    .replace(/\)\s+(and|or)\s+\(/gi, ' $1 ')
+-    .trim()
+-    .toLowerCase();
+-  while (clause.startsWith('(') && clause.endsWith(')')) {
+-    const closing = matchingParenthesis(clause, 0);
+-    if (closing !== clause.length - 1) break;
+-    clause = clause.slice(1, -1).trim();
+-  }
+-  return clause;
+-}
+-
+-function sameOrderedColumns(actual, expected) {
+-  return Boolean(actual) && actual.columns.length === expected.columns.length && actual.columns.every((column, index) => column === expected.columns[index]);
+-}
+-
+-function structureLabel(kind, item) {
+-  if (kind === 'column') return `column ${item.table}.${item.name}`;
+-  if (kind === 'index') return `index ${item.table}.${item.name}`;
+-  if (kind === 'primary_key') return `primary_key ${item.table}.${item.name}`;
+-  if (kind === 'foreign_key') return `foreign_key ${item.table}.${item.name}`;
+-  if (kind === 'check') return `check ${item.table}.${item.name}`;
+-  return `${item.table}.${item.name}`;
+-}
+-
+-function expectationCollections(migrations) {
+-  const result = { columns: new Set(), indexes: new Set(), primaryKeys: new Set(), foreignKeys: new Set(), checks: new Set() };
+-  for (const migration of migrations) {
+-    const expects = migrationExpectations(migration);
+-    for (const column of expectedColumns(expects)) result.columns.add(`${column.table}.${column.name}`);
+-    for (const index of expects.indexes || []) result.indexes.add(`${index.table}.${index.name}`);
+-    for (const primary of expects.primaryKeys || []) result.primaryKeys.add(`${primary.table}.${primary.name}`);
+-    for (const foreign of expects.foreignKeys || []) result.foreignKeys.add(`${foreign.table}.${foreign.name}`);
+-    for (const check of expects.checks || []) result.checks.add(`${check.table}.${check.name}`);
+-  }
+-  return result;
+-}
+-
+-export async function inspectMigrationSchema(connection, migration, { migrations = [migration] } = {}) {
+-  const expects = migrationExpectations(migration);
+-  const allowed = expectationCollections(migrations);
+-  const tableNames = [...new Set([
+-    ...Object.keys(expects.tables || {}),
+-    ...expectedColumns(expects).map(item => item.table),
+-    ...(expects.indexes || []).map(item => item.table),
+-    ...(expects.primaryKeys || []).map(item => item.table),
+-    ...(expects.foreignKeys || []).map(item => item.table),
+-    ...(expects.checks || []).map(item => item.table),
+-  ])];
+-  const presentTables = new Set();
+-  const missing = [];
+-  const unexpected = [];
+-  const hints = [];
+-  const actualTableRows = [];
+-  if (tableNames.length) {
+-    const placeholders = tableNames.map(() => '?').join(',');
+-    const [tableRows] = await connection.query(
+-      `SELECT TABLE_NAME, ENGINE, TABLE_COLLATION FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${placeholders})`,
+-      tableNames,
+-    );
+-    actualTableRows.push(...tableRows);
+-    for (const value of rowsWithField(tableRows, 'TABLE_NAME')) presentTables.add(String(value));
+-  }
+-  for (const table of tableNames) if (!presentTables.has(table)) missing.push(table);
+-
+-  const actualTables = new Map(actualTableRows.map(row => [String(rowField(row, 'TABLE_NAME')), row]));
+-  for (const [table, expectedOptions] of Object.entries(expects.tableOptions || {})) {
+-    if (!presentTables.has(table)) continue;
+-    const actual = actualTables.get(table);
+-    const expectedEngine = expectedOptions.engine && String(expectedOptions.engine).toUpperCase();
+-    const expectedCollation = expectedOptions.tableCollation && String(expectedOptions.tableCollation).toLowerCase();
+-    if ((expectedEngine && String(rowField(actual, 'ENGINE') || '').toUpperCase() !== expectedEngine)
+-      || (expectedCollation && String(rowField(actual, 'TABLE_COLLATION') || '').toLowerCase() !== expectedCollation)) missing.push(`table ${table}`);
+-  }
+-
+-  const existingTables = tableNames.filter(table => presentTables.has(table));
+-  const actualColumns = new Map();
+-  const actualColumnsByTable = new Map();
+-  if (existingTables.length) {
+-    const placeholders = existingTables.map(() => '?').join(',');
+-    const [columnRows] = await connection.query(
+-      `SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, COLUMN_DEFAULT, EXTRA FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${placeholders})`,
+-      existingTables,
+-    );
+-    for (const row of columnRows) {
+-      const table = String(rowField(row, 'TABLE_NAME'));
+-      const name = String(rowField(row, 'COLUMN_NAME'));
+-      actualColumns.set(`${table}.${name}`, row);
+-      const tableColumns = actualColumnsByTable.get(table) || new Map();
+-      tableColumns.set(name, row);
+-      actualColumnsByTable.set(table, tableColumns);
+-    }
+-  }
+-  // MySQL's prepared conditional ADD COLUMN form drops the empty-string
+-  // default when there is no AFTER clause in v8. Keep readback aligned with
+-  // the schema that the shipped migration actually creates.
+-  if (migration.version === 8) {
+-    for (const column of expects.columns) {
+-      if (column.name !== 'seed_version' || column.table === 'ref_seed_snapshots') continue;
+-      delete column.default;
+-      defineExpectationMetadata(column, '__defaultSpecified', false);
+-    }
+-  }
+-  for (const column of expectedColumns(expects)) {
+-    if (!presentTables.has(column.table)) continue;
+-    const actual = actualColumns.get(`${column.table}.${column.name}`);
+-    if (!actual || !sameColumn(actual, column)) missing.push(structureLabel('column', column));
+-  }
+-  for (const [table, columns] of actualColumnsByTable) {
+-    for (const [name, actual] of columns) {
+-      const key = `${table}.${name}`;
+-      if (allowed.columns.has(key)) continue;
+-      if (String(rowField(actual, 'IS_NULLABLE') || '').toUpperCase() === 'NO' && rowField(actual, 'COLUMN_DEFAULT') == null) unexpected.push(`column ${key}`);
+-      else hints.push(`column ${key}`);
+-    }
+-  }
+-
+-  const actualIndexes = new Map();
+-  if (existingTables.length) {
+-    const placeholders = existingTables.map(() => '?').join(',');
+-    const [indexRows] = await connection.query(
+-      `SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX, NON_UNIQUE FROM information_schema.statistics WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${placeholders}) ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`,
+-      existingTables,
+-    );
+-    for (const row of indexRows) {
+-      const key = `${String(rowField(row, 'TABLE_NAME'))}.${String(rowField(row, 'INDEX_NAME'))}`;
+-      const entry = actualIndexes.get(key) || { columns: [], unique: Number(rowField(row, 'NON_UNIQUE')) === 0 };
+-      entry.columns[Number(rowField(row, 'SEQ_IN_INDEX')) - 1] = String(rowField(row, 'COLUMN_NAME'));
+-      actualIndexes.set(key, entry);
+-    }
+-  }
+-  const expectedIndexes = (expects.indexes || []).filter(index => presentTables.has(index.table));
+-  for (const index of expectedIndexes) {
+-    const actual = actualIndexes.get(`${index.table}.${index.name}`);
+-    if (!sameOrderedColumns(actual, index) || (index.unique !== undefined && actual.unique !== Boolean(index.unique))) missing.push(structureLabel('index', index));
+-  }
+-  for (const [key, actual] of actualIndexes) {
+-    if (allowed.indexes.has(key) || allowed.primaryKeys.has(key)) continue;
+-    if (actual.unique) unexpected.push(`index ${key}`);
+-    else hints.push(`index ${key}`);
+-  }
+-
+-  const expectedPrimaryKeys = (expects.primaryKeys || []).filter(item => presentTables.has(item.table));
+-  const expectedForeignKeys = (expects.foreignKeys || []).filter(item => presentTables.has(item.table));
+-  const actualConstraints = new Map();
+-  if (existingTables.length) {
+-    const placeholders = existingTables.map(() => '?').join(',');
+-    const [constraintRows] = await connection.query(
+-      `SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME, kcu.ORDINAL_POSITION, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, rc.DELETE_RULE, rc.UPDATE_RULE FROM information_schema.table_constraints tc LEFT JOIN information_schema.key_column_usage kcu ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND kcu.TABLE_NAME = tc.TABLE_NAME AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME AND kcu.ORDINAL_POSITION IS NOT NULL LEFT JOIN information_schema.referential_constraints rc ON rc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND rc.TABLE_NAME = tc.TABLE_NAME AND rc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA = DATABASE() AND tc.TABLE_NAME IN (${placeholders}) AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'FOREIGN KEY') ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION`,
+-      existingTables,
+-    );
+-    for (const row of constraintRows) {
+-      const type = String(rowField(row, 'CONSTRAINT_TYPE') || '').toUpperCase();
+-      const key = `${String(rowField(row, 'TABLE_NAME'))}.${String(rowField(row, 'CONSTRAINT_NAME'))}`;
+-      const entry = actualConstraints.get(key) || { type, columns: [], referencedTable: undefined, referencedColumns: [], deleteRule: rowField(row, 'DELETE_RULE'), updateRule: rowField(row, 'UPDATE_RULE') };
+-      const ordinal = Number(rowField(row, 'ORDINAL_POSITION')) - 1;
+-      if (ordinal >= 0) entry.columns[ordinal] = String(rowField(row, 'COLUMN_NAME'));
+-      if (type === 'FOREIGN KEY') {
+-        entry.referencedTable = rowField(row, 'REFERENCED_TABLE_NAME') == null ? undefined : String(rowField(row, 'REFERENCED_TABLE_NAME'));
+-        if (ordinal >= 0) entry.referencedColumns[ordinal] = String(rowField(row, 'REFERENCED_COLUMN_NAME'));
+-      }
+-      actualConstraints.set(key, entry);
+-    }
+-  }
+-  for (const primary of expectedPrimaryKeys) {
+-    const actual = actualConstraints.get(`${primary.table}.${primary.name}`);
+-    if (!actual || actual.type !== 'PRIMARY KEY' || !sameOrderedColumns(actual, primary)) missing.push(structureLabel('primary_key', primary));
+-  }
+-  for (const foreign of expectedForeignKeys) {
+-    const actual = actualConstraints.get(`${foreign.table}.${foreign.name}`);
+-    const sameRules = actual && normalizedReferentialRule(actual.deleteRule) === normalizedReferentialRule(foreign.deleteRule)
+-      && normalizedReferentialRule(actual.updateRule) === normalizedReferentialRule(foreign.updateRule);
+-    if (!actual || actual.type !== 'FOREIGN KEY' || !sameOrderedColumns(actual, foreign) || actual.referencedTable !== foreign.referencedTable || actual.referencedColumns.length !== foreign.referencedColumns.length || actual.referencedColumns.some((column, index) => column !== foreign.referencedColumns[index]) || !sameRules) missing.push(structureLabel('foreign_key', foreign));
+-  }
+-  for (const [key, actual] of actualConstraints) {
+-    if (actual.type === 'FOREIGN KEY' && !allowed.foreignKeys.has(key)) unexpected.push(`foreign_key ${key}`);
+-  }
+-
+-  const actualChecks = new Map();
+-  if (existingTables.length) {
+-    const placeholders = existingTables.map(() => '?').join(',');
+-    const [checkRows] = await connection.query(
+-      `SELECT tc.TABLE_NAME, cc.CONSTRAINT_NAME, cc.CHECK_CLAUSE FROM information_schema.table_constraints tc INNER JOIN information_schema.check_constraints cc ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA = DATABASE() AND tc.TABLE_NAME IN (${placeholders}) AND tc.CONSTRAINT_TYPE = 'CHECK'`,
+-      existingTables,
+-    );
+-    for (const row of checkRows) actualChecks.set(`${String(rowField(row, 'TABLE_NAME'))}.${String(rowField(row, 'CONSTRAINT_NAME'))}`, rowField(row, 'CHECK_CLAUSE'));
+-  }
+-  const expectedChecks = (expects.checks || []).filter(item => presentTables.has(item.table));
+-  for (const check of expectedChecks) {
+-    const key = `${check.table}.${check.name}`;
+-    const expectedClause = check.__clause ?? check.clause;
+-    if (!actualChecks.has(key) || (expectedClause !== undefined && normalizedCheckClause(actualChecks.get(key)) !== normalizedCheckClause(expectedClause))) missing.push(structureLabel('check', check));
+-  }
+-  for (const key of actualChecks.keys()) if (!allowed.checks.has(key)) unexpected.push(`check ${key}`);
+-
+-  return {
+-    ok: missing.length === 0 && unexpected.length === 0,
+-    missing: [...new Set(missing)],
+-    unexpected: [...new Set(unexpected)],
+-    hints: [...new Set(hints)],
+-  };
+-}
+-
+-async function ensureSchemaMigrationMetadata(connection) {
+-  if (metadataReadyConnections.has(connection)) return;
+-  const [rows] = await connection.query(
+-    "SELECT COLUMN_NAME FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'schema_migrations' AND COLUMN_NAME IN ('checksum', 'adopted_by', 'additive')",
+-  );
+-  const columns = new Set(rows.map(row => String(row.COLUMN_NAME ?? row.column_name)));
+-  if (!columns.has('checksum')) await connection.query('ALTER TABLE schema_migrations ADD COLUMN checksum CHAR(64) NULL');
+-  if (!columns.has('adopted_by')) await connection.query('ALTER TABLE schema_migrations ADD COLUMN adopted_by VARCHAR(32) NULL');
+-  if (!columns.has('additive')) await connection.query('ALTER TABLE schema_migrations ADD COLUMN additive TINYINT(1) NULL');
+-  metadataReadyConnections.add(connection);
+-}
+-
+-function migrationDriftError(drift) {
+-  const summary = drift.map(item => `v${item.version} ${item.reason}${item.missing?.length ? `: ${item.missing.join(', ')}` : ''}${item.unexpected?.length ? `: ${item.unexpected.join(', ')}` : ''}`).join('; ');
+-  return Object.assign(new Error(`MySQL migration drift detected: ${summary}`), { code: 'MYSQL_MIGRATION_DRIFT', drift });
+-}
+-
+-export async function migrateMySql(pool, { migrations = MYSQL_MIGRATIONS, lockName = LOCK_NAME, lockTimeout = 30 } = {}) {
+-  if (!pool || typeof pool.getConnection !== 'function') throw configuration('A MySQL pool is required.');
+-  if (!Array.isArray(migrations) || !migrations.length || migrations.some(item => !Number.isInteger(item.version) || item.version < 1 || typeof item.name !== 'string' || !item.name || typeof item.sql !== 'string' || !item.sql.trim())) throw configuration('MySQL migrations are invalid.');
+-  const ordered = [...migrations].sort((a, b) => a.version - b.version);
+-  if (new Set(ordered.map(item => item.version)).size !== ordered.length) throw configuration('MySQL migrations contain duplicate versions.');
+-  for (const migration of ordered) {
+-    validateAdditiveMigration(migration);
+-    migrationExpectations(migration);
+-  }
+-  const connection = await pool.getConnection();
+-  let locked = false;
+-  try {
+-    const [lockRows] = await connection.query("SELECT GET_LOCK(CONCAT(?, ':', DATABASE()), ?) AS acquired", [lockName, lockTimeout]);
+-    if (Number(lockRows?.[0]?.acquired) !== 1) throw Object.assign(new Error('Unable to acquire MySQL migration lock.'), { code: 'MYSQL_MIGRATION_LOCKED' });
+-    locked = true;
+-    await connection.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+-      version INT UNSIGNED NOT NULL PRIMARY KEY,
+-      name VARCHAR(191) NOT NULL,
+-      applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+-    await ensureSchemaMigrationMetadata(connection);
+-    const [rows] = await connection.query('SELECT version FROM schema_migrations ORDER BY version');
+-    const appliedVersions = new Set(rows.map(row => Number(row.version)));
+-    let metadataRows = [];
+-    let metadataSupported = true;
+-    try {
+-      [metadataRows] = await connection.query('SELECT version, name, checksum, adopted_by, additive FROM schema_migrations ORDER BY version');
+-    } catch (error) {
+-      if (error?.code !== 'ER_BAD_FIELD_ERROR' && error?.code !== 'ER_NO_SUCH_TABLE') throw error;
+-      metadataSupported = false;
+-    }
+-    if (metadataSupported && appliedVersions.size && metadataRows.length === 0) {
+-      // A lightweight test double (and an old read-only replica) may not
+-      // expose the additive column in its metadata projection. Keep the
+-      // checksum/adoption readback usable; missing additive then correctly
+-      // makes an unknown newer version drift.
+-      try {
+-        [metadataRows] = await connection.query('SELECT version, name, checksum, adopted_by FROM schema_migrations ORDER BY version');
+-      } catch (error) {
+-        if (error?.code !== 'ER_BAD_FIELD_ERROR' && error?.code !== 'ER_NO_SUCH_TABLE') throw error;
+-      }
+-      metadataSupported = metadataRows.length > 0;
+-    }
+-    const records = new Map((metadataSupported ? metadataRows : rows).map(row => [Number(row.version), row]));
+-    const adoptions = [];
+-    const drift = [];
+-    const classification = classifyMigrationVersions(records, ordered);
+-    drift.push(...classification.drift);
+-    for (const version of classification.aheadAdditive) console.log(`MYSQL_SCHEMA_AHEAD_ADDITIVE v${version}`);
+-    if (metadataSupported) {
+-      for (const migration of ordered) {
+-        if (!appliedVersions.has(migration.version)) continue;
+-        const record = records.get(migration.version) || {};
+-        const checksum = record.checksum == null ? null : String(record.checksum);
+-        const currentChecksum = migrationChecksum(migration);
+-        const schema = await inspectMigrationSchema(connection, migration, { migrations: ordered });
+-        if (checksum && checksum !== currentChecksum) drift.push({ version: migration.version, name: migration.name, reason: 'checksum_changed' });
+-        if (!schema.ok) {
+-          if (schema.missing.length) drift.push({ version: migration.version, name: migration.name, reason: 'schema_missing', missing: schema.missing });
+-          if (schema.unexpected.length) drift.push({ version: migration.version, name: migration.name, reason: 'unexpected', unexpected: schema.unexpected });
+-        }
+-        else if (!checksum) adoptions.push({ version: migration.version, checksum: currentChecksum });
+-      }
+-    }
+-    if (drift.length) throw migrationDriftError(drift);
+-    for (const adoption of adoptions) {
+-      await connection.query('UPDATE schema_migrations SET checksum = ?, adopted_by = ? WHERE version = ?', [adoption.checksum, 'readback', adoption.version]);
+-    }
+-    const applied = [];
+-    for (const migration of ordered) {
+-      if (appliedVersions.has(migration.version)) continue;
+-      for (const statement of splitMySqlStatements(migration.sql)) await connection.query(statement);
+-      await connection.query('INSERT INTO schema_migrations(version, name, checksum, adopted_by, additive) VALUES (?, ?, ?, ?, ?)', [migration.version, migration.name, migrationChecksum(migration), 'applied', migration.additive === true ? 1 : 0]);
+-      applied.push(migration.version);
+-    }
+-    return { applied, currentVersion: Math.max(0, ...ordered.map(item => item.version), ...appliedVersions), aheadAdditive: classification.aheadAdditive };
+-  } finally {
+-    if (locked) { try { await connection.query("SELECT RELEASE_LOCK(CONCAT(?, ':', DATABASE()))", [lockName]); } catch { /* release is best effort */ } }
+-    connection.release();
+-  }
+-}
+-
+-export async function mysqlHealth(pool) {
+-  if (!pool || typeof pool.query !== 'function') throw configuration('A MySQL pool is required.');
+-  const [rows] = await pool.query('SELECT 1 AS ok');
+-  return Number(rows?.[0]?.ok) === 1;
+-}
+-
+-export const MYSQL_ERROR_CODES = Object.freeze({ CONFIGURATION: MYSQL_CONFIGURATION, MIGRATION_LOCKED: 'MYSQL_MIGRATION_LOCKED', MIGRATION_DRIFT: 'MYSQL_MIGRATION_DRIFT' });
+diff --git a/src/mysql-sync-database.mjs b/src/mysql-sync-database.mjs
+deleted file mode 100644
+index dff940d..0000000
+--- a/src/mysql-sync-database.mjs
++++ /dev/null
+@@ -1,37 +0,0 @@
+-import { Worker } from 'node:worker_threads';
+-
+-const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+-
+-export function openMysqlSyncDatabase(url) {
+-  if (typeof url !== 'string' || !url.startsWith('mysql')) throw Object.assign(new Error('MySQL database URL is required.'), { code: 'MYSQL_CONFIGURATION' });
+-  const worker = new Worker(new URL('./mysql-sync-worker.mjs', import.meta.url), { workerData: { url } });
+-  let closed = false;
+-  const call = (op, payload = {}) => {
+-    if (closed) throw Object.assign(new Error('Database is closed.'), { code: 'MYSQL_CLOSED' });
+-    const shared = new SharedArrayBuffer(4 + MAX_RESPONSE_BYTES);
+-    const state = new Int32Array(shared, 0, 1);
+-    worker.postMessage({ op, ...payload, shared });
+-    const result = Atomics.wait(state, 0, 0, 120000);
+-    if (result === 'timed-out') { closed = true; void worker.terminate(); throw Object.assign(new Error('MySQL operation timed out.'), { code: 'MYSQL_TIMEOUT' }); }
+-    const length = Atomics.load(state, 0);
+-    let response;
+-    try { response = JSON.parse(Buffer.from(shared, 4, length).toString('utf8')); } catch { throw Object.assign(new Error('Invalid MySQL worker response.'), { code: 'MYSQL_SYNC_ERROR' }); }
+-    if (!response.ok) throw Object.assign(new Error(response.error?.message || 'MySQL operation failed.'), { code: response.error?.code || 'MYSQL_SYNC_ERROR' });
+-    return response.value;
+-  };
+-  call('get', { sql: 'SELECT 1 AS ready', params: [] });
+-  const database = {
+-    __mysql: true,
+-    exec(sql) { call('exec', { sql }); },
+-    prepare(sql) {
+-      if (typeof sql !== 'string' || !sql.trim()) throw new TypeError('SQL is required.');
+-      return {
+-        run(...params) { return call('run', { sql, params }); },
+-        get(...params) { return call('get', { sql, params }); },
+-        all(...params) { return call('all', { sql, params }); },
+-      };
+-    },
+-    close() { if (!closed) { try { call('close'); } finally { closed = true; void worker.terminate(); } } },
+-  };
+-  return database;
+-}
+diff --git a/src/mysql-sync-worker.mjs b/src/mysql-sync-worker.mjs
+deleted file mode 100644
+index 829668d..0000000
+--- a/src/mysql-sync-worker.mjs
++++ /dev/null
+@@ -1,65 +0,0 @@
+-import mysql from 'mysql2/promise';
+-import { parentPort, workerData } from 'node:worker_threads';
+-import { migrateMySql, MYSQL_MIGRATIONS, parseMySqlUrl, splitMySqlStatements } from './mysql-database.mjs';
+-
+-const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+-let connectionPromise;
+-
+-function serializeError(error) {
+-  return { code: /^[A-Z0-9_]+$/.test(error?.code || '') ? error.code : 'MYSQL_SYNC_ERROR', message: String(error?.message || 'MySQL operation failed.').slice(0, 300) };
+-}
+-
+-async function connection() {
+-  if (!connectionPromise) {
+-    const config = parseMySqlUrl(workerData.url);
+-    connectionPromise = mysql.createConnection({ host: config.host, port: config.port, user: config.user, password: config.password, database: config.database, charset: 'utf8mb4', timezone: 'Z', multipleStatements: false, ...(config.ssl ? { ssl: { rejectUnauthorized: true } } : {}) });
+-    const conn = await connectionPromise;
+-    await migrateMySql({ getConnection: async () => ({ query: conn.query.bind(conn), release() {} }) }, { migrations: MYSQL_MIGRATIONS });
+-  }
+-  return connectionPromise;
+-}
+-
+-function params(value) {
+-  return (value || []).map(item => item instanceof Uint8Array && !Buffer.isBuffer(item) ? Buffer.from(item) : item);
+-}
+-
+-function cleanSql(sql) {
+-  return splitMySqlStatements(String(sql).replace(/PRAGMA\s+[^;]+;?/gi, '').replace(/BEGIN\s+IMMEDIATE/gi, 'START TRANSACTION'));
+-}
+-
+-function respond(shared, payload) {
+-  const bytes = Buffer.from(JSON.stringify(payload));
+-  if (bytes.length > MAX_RESPONSE_BYTES) payload = { ok: false, error: { code: 'MYSQL_SYNC_RESPONSE_TOO_LARGE', message: 'MySQL response exceeded the bounded limit.' } };
+-  const encoded = Buffer.from(JSON.stringify(payload));
+-  if (encoded.length > MAX_RESPONSE_BYTES) throw new Error('MYSQL_SYNC_RESPONSE_TOO_LARGE');
+-  encoded.copy(Buffer.from(shared, 4));
+-  const state = new Int32Array(shared, 0, 1);
+-  Atomics.store(state, 0, encoded.length);
+-  Atomics.notify(state, 0);
+-}
+-
+-parentPort.on('message', message => {
+-  void (async () => {
+-    try {
+-      const conn = await connection();
+-      if (message.op === 'exec') {
+-        for (const statement of cleanSql(message.sql)) await conn.query(statement);
+-        respond(message.shared, { ok: true, value: null });
+-      } else if (message.op === 'run') {
+-        const [result] = await conn.execute(message.sql, params(message.params));
+-        respond(message.shared, { ok: true, value: { changes: Number(result.affectedRows || 0), lastInsertRowid: result.insertId ?? 0 } });
+-      } else if (message.op === 'get' || message.op === 'all') {
+-        const [rows] = await conn.execute(message.sql, params(message.params));
+-        respond(message.shared, { ok: true, value: message.op === 'get' ? (rows[0] || null) : rows });
+-      } else if (message.op === 'close') {
+-        if (connectionPromise) (await connectionPromise).end();
+-        respond(message.shared, { ok: true, value: null });
+-        setImmediate(() => process.exit(0));
+-      } else {
+-        respond(message.shared, { ok: false, error: { code: 'MYSQL_SYNC_OPERATION', message: 'Unknown MySQL operation.' } });
+-      }
+-    } catch (error) {
+-      try { respond(message.shared, { ok: false, error: serializeError(error) }); } catch { process.exitCode = 1; }
+-    }
+-  })();
+-});
