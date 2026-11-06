@@ -1,0 +1,291 @@
+补丁 0014：平台这一层（src/platform/：运行记录和设置 platform-store、数据页 platform-routes、运行锁 agent-runner、调用网关 call-middleware、
+流水线进度 pipeline-progress、AI 预审和要素检查两个 adapter）改成 PostgreSQL；适配层 src/pg-database.mjs 补连接断开的处理。
+改了哪几类写法：
+- insertId：INSERT 后面加 RETURNING change_id / call_id（自增列）。
+- ON DUPLICATE KEY UPDATE → ON CONFLICT (主键) DO UPDATE …。设置的首次写入同 0011 的状态：已有的行锁住再覆盖；没有就普通 INSERT，
+  两个同时首次写入时后到的撞唯一键 → 409（InnoDB 报的是死锁，结果一样）。
+- 命名锁：Agent 的运行锁 platform-agent:<agentId>、连接器的网关锁 platform-gateway:<connectorId>（advisory 锁本来就按库分开，名字不再拼库名）；
+  IS_USED_LOCK(…) = CONNECTION_ID() → isNamedLockUsed(…) === 这条连接的 threadId。
+- source_entity_id 的 JSON 文字：JSON_UNQUOTE(JSON_EXTRACT(x,'$[0]')) → (x::jsonb->>0)；可空列排序 NULLS LAST。
+- 适配层：拿出来用的连接被数据库那头断掉（重启、被踢）时，node-postgres 在这个连接上发 'error'，pg-pool 只给空闲连接挂了监听，
+  不挂就是未捕获的异常、整个进程退出；现在每个拿出来的连接都挂上监听：标成坏的，之后的查询报 PROTOCOL_CONNECTION_LOST，放回时销毁不再复用。
+平台数据页 platform-routes 的其它查询本来就是两边通用的写法（库名在 0010 里已改 current_database()）。
+
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+index 03b5671..606b947 100644
+--- a/src/pg-database.mjs
++++ b/src/pg-database.mjs
+@@ -193,7 +193,7 @@ export function pgErrorToMysqlShape(error) {
+   if (!mapped && sqlState) return Object.assign(error, { sqlState });
+   if (!mapped) {
+     if (/timeout exceeded when trying to connect/i.test(error.message ?? '')) return Object.assign(new Error(error.message, { cause: error }), { code: 'ETIMEDOUT' });
+-    if (/Connection terminated|connection.*(ended|closed)/i.test(error.message ?? '')) return Object.assign(new Error(error.message, { cause: error }), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true });
++    if (/Connection terminated|connection.*(ended|closed)|not queryable/i.test(error.message ?? '')) return Object.assign(new Error(error.message, { cause: error }), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true });
+     return error;
+   }
+   const [code, errno] = mapped;
+@@ -230,8 +230,23 @@ function withInsertId(result) {
+   return [Object.assign(rows, { affectedRows: last.rowCount ?? rows.length, changedRows: last.rowCount ?? rows.length, insertId: insertId == null ? 0 : insertId }), fields];
+ }
+ 
++/**
++ * A checked-out client whose server session dies (restart, terminated) emits 'error'; pg-pool only listens on idle clients,
++ * so without a listener that is an uncaught exception that takes the process down. Mark the client broken instead: its
++ * queries fail as a lost connection and it is destroyed, not reused, when it goes back to the pool.
++ */
++function guard(client) {
++  if (!client.__guarded) {
++    client.__guarded = true;
++    client.on('error', error => { client.__broken = error || new Error('Connection terminated'); });
++  }
++  return client;
++}
++const releaseClient = client => client.release(client.__broken ? true : undefined);
++
+ async function run(client, sql, params, timeoutMs) {
+   const { text, values, timeout } = normalize(sql, params);
++  if (client.__broken) throw Object.assign(new Error('The database connection was lost.', { cause: client.__broken }), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true });
+   const limit = timeout ?? timeoutMs ?? 0;
+   if (!Number.isInteger(limit) || limit < 0) throw new TypeError('Query timeout must be a non-negative integer.');
+   try {
+@@ -251,7 +266,7 @@ function connection(pool, client) {
+     beginTransaction: () => run(client, 'BEGIN', [], 0),
+     commit: () => run(client, 'COMMIT', [], 0),
+     rollback: () => run(client, 'ROLLBACK', [], 0),
+-    release: once(() => client.release()),
++    release: once(() => releaseClient(client)),
+     destroy: once(() => client.release(true)),
+     get threadId() { return client.processID; },
+   };
+@@ -277,7 +292,7 @@ export function createPgPool({ url = process.env.ANALYSIS_DATABASE_URL, connecti
+   // pg-pool has one timeout for connecting and for waiting on a free client; mysql2 had two. Bound the wait for a free client
+   // here (acquireTimeoutMs), and let connectionTimeoutMillis bound the connect itself. A client that arrives late goes back.
+   async function acquire() {
+-    if (!acquireTimeoutMs) return core.connect();
++    if (!acquireTimeoutMs) return guard(await core.connect());
+     let timer, late = false;
+     const waiting = core.connect();
+     const timeout = new Promise((_, reject) => {
+@@ -287,12 +302,12 @@ export function createPgPool({ url = process.env.ANALYSIS_DATABASE_URL, connecti
+       }, acquireTimeoutMs);
+     });
+     waiting.then(client => { if (late) client.release(); }, () => {});
+-    try { return await Promise.race([waiting, timeout]); } finally { clearTimeout(timer); }
++    try { return guard(await Promise.race([waiting, timeout])); } finally { clearTimeout(timer); }
+   }
+   const pool = {
+     async query(sql, params) {
+       const client = await acquire().catch(error => { throw pgErrorToMysqlShape(error); });
+-      try { return await run(client, sql, params, queryTimeoutMs); } finally { client.release(); }
++      try { return await run(client, sql, params, queryTimeoutMs); } finally { releaseClient(client); }
+     },
+     execute: (sql, params) => pool.query(sql, params),
+     async getConnection() {
+diff --git a/src/platform/adapters/ai-advice.mjs b/src/platform/adapters/ai-advice.mjs
+index 31b5cea..c2918bc 100644
+--- a/src/platform/adapters/ai-advice.mjs
++++ b/src/platform/adapters/ai-advice.mjs
+@@ -95,7 +95,7 @@ export async function listAiAdviceCandidates({ pool, connectionId, tenantId, com
+     if (!companyIds.length) return [];
+     where += ` AND d.company_id IN (${companyIds.map(() => '?').join(',')})`; args.push(...companyIds);
+   }
+-  const [rows] = await pool.query(`SELECT d.id,d.tenant_id,d.company_id,d.version,d.number,d.form_name,d.status,d.modified_at,d.collected_at FROM analysis_documents d JOIN audit_report_details rd ON d.connection_id=? AND rd.document_id=d.id AND rd.content_version=d.version AND rd.company_id=d.company_id WHERE ${where} ORDER BY d.modified_at DESC,d.collected_at DESC,d.id`, args);
++  const [rows] = await pool.query(`SELECT d.id,d.tenant_id,d.company_id,d.version,d.number,d.form_name,d.status,d.modified_at,d.collected_at FROM analysis_documents d JOIN audit_report_details rd ON d.connection_id=? AND rd.document_id=d.id AND rd.content_version=d.version AND rd.company_id=d.company_id WHERE ${where} ORDER BY d.modified_at DESC NULLS LAST,d.collected_at DESC,d.id`, args);
+   return rows.map(row => ({ id: String(row.id), tenantId: String(row.tenant_id), companyId: String(row.company_id), version: String(row.version), number: row.number,
+     formName: row.form_name, status: row.status, modifiedAt: row.modified_at, collectedAt: row.collected_at }));
+ }
+diff --git a/src/platform/adapters/element-check.mjs b/src/platform/adapters/element-check.mjs
+index 6043d97..56aaa72 100644
+--- a/src/platform/adapters/element-check.mjs
++++ b/src/platform/adapters/element-check.mjs
+@@ -49,7 +49,7 @@ export async function listElementCheckCandidates({ pool, connectionId, tenantId,
+     if (!companyIds.length) return [];
+     where += ` AND d.company_id IN (${companyIds.map(() => '?').join(',')})`; args.push(...companyIds);
+   }
+-  const [rows] = await pool.query(`SELECT d.id,d.tenant_id,d.company_id,d.version,d.number,d.status,d.modified_at,d.collected_at FROM analysis_documents d JOIN audit_report_details rd ON d.connection_id=? AND rd.document_id=d.id AND rd.content_version=d.version AND rd.company_id=d.company_id WHERE ${where} ORDER BY d.modified_at DESC,d.collected_at DESC,d.id`, args);
++  const [rows] = await pool.query(`SELECT d.id,d.tenant_id,d.company_id,d.version,d.number,d.status,d.modified_at,d.collected_at FROM analysis_documents d JOIN audit_report_details rd ON d.connection_id=? AND rd.document_id=d.id AND rd.content_version=d.version AND rd.company_id=d.company_id WHERE ${where} ORDER BY d.modified_at DESC NULLS LAST,d.collected_at DESC,d.id`, args);
+   return rows.map(row => ({ id: String(row.id), companyId: String(row.company_id), version: String(row.version), number: row.number,
+     status: row.status == null ? null : String(row.status), modifiedAt: row.modified_at, collectedAt: row.collected_at }));
+ }
+diff --git a/src/platform/agent-runner.mjs b/src/platform/agent-runner.mjs
+index 6ec439e..b11a00e 100644
+--- a/src/platform/agent-runner.mjs
++++ b/src/platform/agent-runner.mjs
+@@ -4,6 +4,10 @@ import { AGENT_CATALOG, codeVersion } from './agent-catalog.mjs';
+ import { GATEWAY_ERRORS, runWithAttribution } from './call-middleware.mjs';
+ import { CONNECTORS, isCompanyScopedConnector, isModelConnector } from './connectors.mjs';
+ import { SYSTEM_PIPELINE } from './service-identity.mjs';
++import { acquireNamedLock, isNamedLockUsed, releaseNamedLock } from '../pg-database.mjs';
++
++// The run lock of one agent (an advisory lock; advisory locks are per database, so the name no longer carries it).
++const runLockName = agentId => `platform-agent:${agentId}`;
+ 
+ const TRIGGERS = new Set(['manual', 'schedule', 'upstream', 'startup']);
+ const MODES = new Set(['incremental', 'history']);
+@@ -150,12 +154,12 @@ export function createAgentRunner({ pool, lockPool = pool, platformStore, gatewa
+     // The run lock is held for the whole run: take it from lockPool, not the request pool.
+     const connection = await lockPool.getConnection(); let locked = false;
+     try {
+-      let rows;
+-      try { [rows] = await connection.query("SELECT GET_LOCK(CONCAT('platform-agent:', ?, ':', DATABASE()), 0) AS acquired", [agentId]); }
++      let acquired;
++      try { acquired = await acquireNamedLock(connection, runLockName(agentId), 0); }
+       catch { throw error('PLATFORM_CONFIGURATION'); }
+-      if (Number(rows?.[0]?.acquired) !== 1) throw error('PLATFORM_RUN_BUSY');
++      if (!acquired) throw error('PLATFORM_RUN_BUSY');
+       locked = true;
+-      return { connection, release: async () => { try { await connection.query("SELECT RELEASE_LOCK(CONCAT('platform-agent:', ?, ':', DATABASE()))", [agentId]); } catch {} try { connection.release?.(); } catch {} } };
++      return { connection, release: async () => { try { await releaseNamedLock(connection, runLockName(agentId)); } catch {} try { connection.release?.(); } catch {} } };
+     } catch (e) { if (!locked) try { connection.release?.(); } catch {} throw e; }
+   }
+   async function recover({ agentId = null } = {}) {
+@@ -195,11 +199,11 @@ export function createAgentRunner({ pool, lockPool = pool, platformStore, gatewa
+     entry.onAbort = onAbort;
+     const heartbeat = async () => {
+       if (entry.controller.signal.aborted) return;
+-      let rows;
++      let owned;
+       try {
+-        [rows] = await lock.connection.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:', ?, ':', DATABASE())) = CONNECTION_ID() AS owned", [input.agentId]);
++        owned = (await isNamedLockUsed(lock.connection, runLockName(input.agentId))) === lock.connection.threadId;
+       } catch { return onAbort('PLATFORM_RUN_LOCK_LOST'); }
+-      if (!Number(rows?.[0]?.owned)) return onAbort('PLATFORM_RUN_LOCK_LOST');
++      if (!owned) return onAbort('PLATFORM_RUN_LOCK_LOST');
+       try {
+         const result = await platformStore.heartbeat({ runId, leaseMs, at: asDate(clock()) });
+         if (!result.updated) return onAbort('PLATFORM_RUN_LEASE_LOST');
+diff --git a/src/platform/call-middleware.mjs b/src/platform/call-middleware.mjs
+index e10c696..afeabd5 100644
+--- a/src/platform/call-middleware.mjs
++++ b/src/platform/call-middleware.mjs
+@@ -1,6 +1,10 @@
+ import { AsyncLocalStorage } from 'node:async_hooks';
+ 
+ import { CONNECTORS, isCompanyScopedConnector, isModelConnector } from './connectors.mjs';
++import { acquireNamedLock, isNamedLockUsed, releaseNamedLock } from '../pg-database.mjs';
++
++// The gateway lock of one connector (an advisory lock, per database by itself).
++const gatewayLockName = connectorId => `platform-gateway:${connectorId}`;
+ 
+ const attributionStorage = new AsyncLocalStorage();
+ const MINUTE = 60 * 1000;
+@@ -510,10 +514,9 @@ export function createCallGateway({
+       try {
+         connection = await Promise.resolve().then(() => lockPool.getConnection());
+         if (closed) throw gatewayError('CONNECTOR_GATEWAY_CLOSED');
+-        const result = await connection.query('SELECT GET_LOCK(CONCAT(\'platform-gateway:\', ?, \':\', DATABASE()), 0) AS acquired', [connectorId]);
+-        if (Number(scalar(result, 'acquired')) !== 1) throw gatewayError('CONNECTOR_GATEWAY_BUSY');
++        if (!(await acquireNamedLock(connection, gatewayLockName(connectorId), 0))) throw gatewayError('CONNECTOR_GATEWAY_BUSY');
+         if (closed) {
+-          try { await connection.query('SELECT RELEASE_LOCK(CONCAT(\'platform-gateway:\', ?, \':\', DATABASE())) AS released', [connectorId]); } catch {}
++          try { await releaseNamedLock(connection, gatewayLockName(connectorId)); } catch {}
+           throw gatewayError('CONNECTOR_GATEWAY_CLOSED');
+         }
+         const lock = { connection, connectorId };
+@@ -544,12 +547,9 @@ export function createCallGateway({
+       return true;
+     }
+     try {
+-      const result = await lock.connection.query(
+-        'SELECT IS_USED_LOCK(CONCAT(\'platform-gateway:\', ?, \':\', DATABASE())) = CONNECTION_ID() AS owned',
+-        [connectorId],
+-      );
++      const owned = (await isNamedLockUsed(lock.connection, gatewayLockName(connectorId))) === lock.connection.threadId;
+       if (closed) throw gatewayError('CONNECTOR_GATEWAY_CLOSED');
+-      if (Boolean(Number(scalar(result, 'owned')))) return true;
++      if (owned) return true;
+     } catch (error) {
+       if (error?.code === 'CONNECTOR_GATEWAY_CLOSED') throw error;
+     }
+@@ -571,10 +571,7 @@ export function createCallGateway({
+     };
+     const releaseQuery = (async () => {
+       try {
+-        await lock.connection.query(
+-          'SELECT RELEASE_LOCK(CONCAT(\'platform-gateway:\', ?, \':\', DATABASE())) AS released',
+-          [connectorId],
+-        );
++        await releaseNamedLock(lock.connection, gatewayLockName(connectorId));
+       } catch {}
+       releaseConnection();
+     })();
+diff --git a/src/platform/pipeline-progress.mjs b/src/platform/pipeline-progress.mjs
+index 75e6913..0a2a6c5 100644
+--- a/src/platform/pipeline-progress.mjs
++++ b/src/platform/pipeline-progress.mjs
+@@ -267,22 +267,22 @@ async function currentDetails(pool, companyIds, successfulOnly = false, document
+ 
+ async function detailQueueRows(pool, companyIds, documentId = null) {
+   const scope = companyPredicate('ad', companyIds);
+-  const idFilter = documentId === null ? '' : " AND JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))=?";
++  const idFilter = documentId === null ? '' : " AND (i.source_entity_id::jsonb->>0)=?";
+   const params = documentId === null ? scope.params : [...scope.params, documentId];
+   return queryRows(pool, `SELECT i.sync_item_id,i.source_entity_id,i.status,i.attempt_count,i.next_retry_at,
+       i.created_at,i.started_at,i.finished_at,i.lease_expires_at,i.error_code
+     FROM audit_sync_items i
+-    JOIN analysis_documents ad ON ad.id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))
++    JOIN analysis_documents ad ON ad.id=(i.source_entity_id::jsonb->>0)
+     WHERE i.entity_type=?${scope.sql}${idFilter}
+     ORDER BY i.created_at,i.sync_item_id`, [DETAIL_ENTITY_TYPE, ...params]);
+ }
+ 
+ async function orphanedQueueRows(pool, companyIds) {
+   const scope = companyPredicate('d', companyIds);
+-  return queryRows(pool, `SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]')) AS document_id
++  return queryRows(pool, `SELECT DISTINCT (i.source_entity_id::jsonb->>0) AS document_id
+     FROM audit_sync_items i
+-    LEFT JOIN analysis_documents ad ON ad.id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))
+-    LEFT JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))
++    LEFT JOIN analysis_documents ad ON ad.id=(i.source_entity_id::jsonb->>0)
++    LEFT JOIN audit_documents d ON d.document_id=(i.source_entity_id::jsonb->>0)
+     WHERE i.entity_type=? AND i.error_code='SKIPPED_DOCUMENT_MISSING' AND ad.id IS NULL${scope.sql}`,
+   [DETAIL_ENTITY_TYPE, ...scope.params]);
+ }
+diff --git a/src/platform/platform-store.mjs b/src/platform/platform-store.mjs
+index b980d6e..2d53d9e 100644
+--- a/src/platform/platform-store.mjs
++++ b/src/platform/platform-store.mjs
+@@ -89,7 +89,7 @@ export function createPlatformStore({ pool, clock = () => new Date() } = {}) {
+     const scopeKind = text(inputOf(input, 'scopeKind', 'scope_kind'), 16), scopeId = text(inputOf(input, 'scopeId', 'scope_id'), 64);
+     if (!scopeKind || !scopeId) fail('PLATFORM_VALIDATION', 'A change scope is required.');
+     const occurredAt = sqlDateTime(input.occurredAt ?? input.occurred_at ?? now());
+-    const [result] = await client.query(`INSERT INTO platform_change_log(event_kind,scope_kind,scope_id,from_revision,to_revision,actor_principal,actor_role,occurred_at,reason,before_json,after_json,operation_json,result_json,outcome,run_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
++    const [result] = await client.query(`INSERT INTO platform_change_log(event_kind,scope_kind,scope_id,from_revision,to_revision,actor_principal,actor_role,occurred_at,reason,before_json,after_json,operation_json,result_json,outcome,run_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING change_id`, [
+       eventKind, scopeKind, scopeId, inputOf(input, 'fromRevision', 'from_revision') ?? null, inputOf(input, 'toRevision', 'to_revision') ?? null,
+       actorPrincipal, actorRole, occurredAt, reason, input.before === undefined ? null : jsonValue(input.before), input.after === undefined ? null : jsonValue(input.after),
+       inputOf(input, 'operationJson', 'operation_json') === undefined ? null : jsonValue(inputOf(input, 'operationJson', 'operation_json')),
+@@ -139,7 +139,7 @@ export function createPlatformStore({ pool, clock = () => new Date() } = {}) {
+       const pending = [];
+       for (const request of normalized) {
+         await client.query(
+-          `INSERT INTO platform_call_budget_daily(budget_day,connector_id,agent_id,limit_calls,used_calls,limit_tokens,used_tokens) VALUES (?,?,?, ?,0,?,0) ON DUPLICATE KEY UPDATE limit_calls=VALUES(limit_calls),limit_tokens=VALUES(limit_tokens)`,
++          `INSERT INTO platform_call_budget_daily(budget_day,connector_id,agent_id,limit_calls,used_calls,limit_tokens,used_tokens) VALUES (?,?,?, ?,0,?,0) ON CONFLICT (budget_day,connector_id,agent_id) DO UPDATE SET limit_calls=EXCLUDED.limit_calls,limit_tokens=EXCLUDED.limit_tokens`,
+           [request.budgetDay, request.connectorId, request.agentId, request.limitCalls, request.limitTokens],
+         );
+         const [rows] = await client.query(
+@@ -299,12 +299,14 @@ export function createPlatformStore({ pool, clock = () => new Date() } = {}) {
+           const [rows] = await client.query('SELECT scope_kind,scope_id,revision,value_json,value_sha256,updated_by,updated_at FROM platform_settings WHERE scope_kind=? AND scope_id=? FOR UPDATE', [scopeKind, scopeId]);
+           const current = rowSetting(rows?.[0]); if ((current?.revision ?? 0) !== expectedRevision) fail('PLATFORM_SETTINGS_CONFLICT', 'Platform settings revision conflict.', { status: 409, current });
+           const nextRevision = expectedRevision + 1, updatedAt = sqlDateTime(input.updatedAt ?? input.updated_at ?? now()), valueHash = createHash('sha256').update(serialized, 'utf8').digest('hex');
+-          await client.query(`INSERT INTO platform_settings(scope_kind,scope_id,revision,value_json,value_sha256,updated_by,updated_at) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE revision=VALUES(revision),value_json=VALUES(value_json),value_sha256=VALUES(value_sha256),updated_by=VALUES(updated_by),updated_at=VALUES(updated_at)`, [scopeKind, scopeId, nextRevision, serialized, valueHash, actorPrincipal, updatedAt]);
++          // An existing row is locked above; a first write is a plain insert, so of two first writers the second finds the key
++          // taken and gets the conflict (InnoDB reported that race as a deadlock; ON CONFLICT would let both succeed)
++          await client.query(`INSERT INTO platform_settings(scope_kind,scope_id,revision,value_json,value_sha256,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)${rows?.[0] ? ' ON CONFLICT (scope_kind,scope_id) DO UPDATE SET revision=EXCLUDED.revision,value_json=EXCLUDED.value_json,value_sha256=EXCLUDED.value_sha256,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at' : ''}`, [scopeKind, scopeId, nextRevision, serialized, valueHash, actorPrincipal, updatedAt]);
+           await insertChange(client, { eventKind: 'config_change', scopeKind, scopeId, fromRevision: expectedRevision || null, toRevision: nextRevision, actorPrincipal, actorRole, occurredAt: updatedAt, reason: input.reason, before: current?.value ?? null, after: value, outcome: 'ok', runId: input.runId });
+           return { scopeKind, scopeId, revision: nextRevision, value, valueSha256: valueHash, updatedBy: actorPrincipal, updatedAt };
+         });
+       } catch (error) {
+-        if (error?.code === 'ER_LOCK_DEADLOCK' || error?.errno === 1213) {
++        if (error?.code === 'ER_LOCK_DEADLOCK' || error?.errno === 1213 || error?.code === 'ER_DUP_ENTRY') {
+           throw Object.assign(new Error('Platform settings revision conflict.'), { code: 'PLATFORM_SETTINGS_CONFLICT', status: 409, cause: error });
+         }
+         throw error;
+@@ -335,7 +337,7 @@ export function createPlatformStore({ pool, clock = () => new Date() } = {}) {
+       }
+       const runId = suppliedRunId == null ? null : text(suppliedRunId, 26, true);
+       if (suppliedRunId != null && !runId) fail('PLATFORM_VALIDATION', 'Platform call log run id is invalid.');
+-      const [result] = await pool.query(`INSERT INTO platform_call_log(connector_id,operation,agent_id,run_id,attempt_no,started_at,duration_ms,outcome,http_status,error_code,response_bytes,input_tokens,output_tokens,process_tag) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [connectorId, operation, agentId, runId, Number(input.attemptNo ?? input.attempt_no ?? 1), sqlDateTime(input.startedAt ?? input.started_at ?? now()), Number(input.durationMs ?? input.duration_ms ?? 0), outcome, input.httpStatus ?? input.http_status ?? null, input.errorCode ?? input.error_code ?? null, input.responseBytes ?? input.response_bytes ?? null, input.inputTokens ?? input.input_tokens ?? null, input.outputTokens ?? input.output_tokens ?? null, text(input.processTag ?? input.process_tag, 64) || 'unknown']);
++      const [result] = await pool.query(`INSERT INTO platform_call_log(connector_id,operation,agent_id,run_id,attempt_no,started_at,duration_ms,outcome,http_status,error_code,response_bytes,input_tokens,output_tokens,process_tag) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING call_id`, [connectorId, operation, agentId, runId, Number(input.attemptNo ?? input.attempt_no ?? 1), sqlDateTime(input.startedAt ?? input.started_at ?? now()), Number(input.durationMs ?? input.duration_ms ?? 0), outcome, input.httpStatus ?? input.http_status ?? null, input.errorCode ?? input.error_code ?? null, input.responseBytes ?? input.response_bytes ?? null, input.inputTokens ?? input.input_tokens ?? null, input.outputTokens ?? input.output_tokens ?? null, text(input.processTag ?? input.process_tag, 64) || 'unknown']);
+       return { callId: Number(result?.insertId ?? 0) };
+     },
+     async purgeCallLog(input = {}) {
