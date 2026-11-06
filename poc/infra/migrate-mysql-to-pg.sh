@@ -3,7 +3,7 @@
 #   本机 build-jiuan.sh 构建当前的九安副本 → 连同工具 poc/bench/mysql-to-pg.mjs、它的依赖（poc/bench/node_modules：mysql2、pg）、
 #   外壳（poc/app，不带测试）和 bench/pg-database.sh 打包，经 SSH 传到实例上只有自己能读的临时目录 /var/tmp/jiuan-migrate.*
 #   → 实例上以 root：（--create-db）按 pg-database.sh 建目标库 → 用口令文件拼两边的地址（MySQL 用 root 读库 jiuan，PG 用 jiuan_app 连目标库），
-#   只经环境变量交给工具 → 工具建表（--create-schema 九安副本、--shell 外壳）、在一个事务里搬、逐表核对 → 删掉临时目录。
+#   只经环境变量交给工具（只核对时只读，以 PG 的超级用户连：那时 jiuan_app 可能还没建）→ 工具建表（--create-schema 九安副本、--shell 外壳）、在一个事务里搬、逐表核对 → 删掉临时目录。
 #   MySQL 只读（一致的只读快照），服务照常跑也可以（演练）；正式搬到库 jiuan 时服务必须停着（快照之后的写入就不会丢），还在跑就停下。
 # 用法：DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/infra/migrate-mysql-to-pg.sh --target jiuan|jiuan_rehearsal [--create-db] [--dry-run] [--replace]
 #       DEPLOY_ENV=… bash poc/infra/migrate-mysql-to-pg.sh --target jiuan_rehearsal --drop-db
@@ -52,10 +52,10 @@ if $CREATE_DB; then
 fi
 KEY=JIUAN_PG_APP_PASSWORD
 mysql_pw="$(cat "$BENCH_DIR/mysql_root_password")"
-pg_pw="$(sed -n "s/^${KEY}=//p" "$SECRETS" | head -1)"
-[[ "$mysql_pw" =~ ^[0-9a-f]{32}$ && "$pg_pw" =~ ^[0-9a-f]{32}$ ]] || { echo "口令文件不对：mysql_root_password 和 secrets.env 的 JIUAN_PG_APP_PASSWORD 应是 32 位十六进制" >&2; exit 1; }
+if $DRY_RUN; then pg_user=postgres; pg_pw="$(cat "$BENCH_DIR/pg_superuser_password")"; else pg_user=jiuan_app; pg_pw="$(sed -n "s/^${KEY}=//p" "$SECRETS" | head -1)"; fi
+[[ "$mysql_pw" =~ ^[0-9a-f]{32}$ && "$pg_pw" =~ ^[0-9a-f]{32}$ ]] || { echo "口令文件不对：mysql_root_password、pg_superuser_password 和 secrets.env 的 JIUAN_PG_APP_PASSWORD 应是 32 位十六进制" >&2; exit 1; }
 export MIGRATE_MYSQL_URL="mysql://root:${mysql_pw}@127.0.0.1:3306/jiuan"
-export MIGRATE_PG_URL="postgres://jiuan_app:${pg_pw}@127.0.0.1:5433/${TARGET}"
+export MIGRATE_PG_URL="postgres://${pg_user}:${pg_pw}@127.0.0.1:5433/${TARGET}"
 unset mysql_pw pg_pw
 if $DRY_RUN; then args=(--dry-run); else args=(--create-schema "$d/jiuan" --shell "$d/shell"); fi
 if $REPLACE; then args+=(--replace); fi

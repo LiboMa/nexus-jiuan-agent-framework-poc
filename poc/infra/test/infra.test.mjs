@@ -501,6 +501,7 @@ async function runMigrateRemote(t, args, { active = false } = {}) {
   const bin = path.join(dir, 'bin'), pkg = path.join(dir, 'pkg'), log = path.join(dir, 'calls.log');
   await mkdir(bin); await mkdir(pkg);
   await writeFile(path.join(dir, 'mysql_root_password'), '0123456789abcdef0123456789abcdef');
+  await writeFile(path.join(dir, 'pg_superuser_password'), '00112233445566778899aabbccddeeff');
   await writeFile(path.join(dir, 'secrets.env'), 'REVIEWER_PASSWORD=x\nJIUAN_PG_APP_PASSWORD=fedcba9876543210fedcba9876543210\n');
   await writeFile(path.join(pkg, 'pg-database.sh'), `echo "pg-database.sh $* secrets=$BENCH_SECRETS_FILE" >> "$LOG"\n`);
   await writeFile(path.join(pkg, 'mysql-to-pg.mjs'), '');
@@ -512,6 +513,7 @@ async function runMigrateRemote(t, args, { active = false } = {}) {
     'printf "node %s\\n" "$(printf "%s " "$@" | sed "s#$PKG#<pkg>#g")" >> "$LOG.args"',
     '[[ "$MIGRATE_MYSQL_URL" == mysql://root:0123456789abcdef0123456789abcdef@127.0.0.1:3306/jiuan ]] && echo mysql-url-ok >> "$LOG"',
     '[[ "$MIGRATE_PG_URL" == postgres://jiuan_app:fedcba9876543210fedcba9876543210@127.0.0.1:5433/* ]] && echo "pg-url-ok ${MIGRATE_PG_URL##*/}" >> "$LOG"',
+    '[[ "$MIGRATE_PG_URL" == postgres://postgres:00112233445566778899aabbccddeeff@127.0.0.1:5433/* ]] && echo "pg-url-superuser ${MIGRATE_PG_URL##*/}" >> "$LOG"',
     'echo MIGRATE_OK'].join('\n')), { mode: 0o755 });
   const prelude = `d=${JSON.stringify(pkg)}\nSECRETS=${JSON.stringify(path.join(dir, 'secrets.env'))}\nBENCH_DIR=${JSON.stringify(dir)}\nNODE=node\n`;
   const body = script.split('\n').filter(line => !/^(d|SECRETS|BENCH_DIR|NODE)=/.test(line)).join('\n');
@@ -534,7 +536,7 @@ test('migrate-mysql-to-pg.sh 在实例上：演练库 --create-db 先按原参�
   assert.equal(result.gone, true, '临时目录删掉');
 });
 
-test('migrate-mysql-to-pg.sh 在实例上：正式搬到 jiuan 时服务还在跑就停下（退出 3，不建库、不搬）；停了才搬；--dry-run 不建库、只核对；--replace 交给工具', async t => {
+test('migrate-mysql-to-pg.sh 在实例上：正式搬到 jiuan 时服务还在跑就停下（退出 3，不建库、不搬）；停了才搬；--dry-run 不建库、只核对（只读，以超级用户连，账号 jiuan_app 还没建也能看）；--replace 交给工具', async t => {
   const refused = await runMigrateRemote(t, ['--target', 'jiuan', '--create-db'], { active: true });
   assert.equal(refused.code, 3);
   assert.match(refused.stderr, /先停服务/);
@@ -547,6 +549,7 @@ test('migrate-mysql-to-pg.sh 在实例上：正式搬到 jiuan 时服务还在�
   assert.equal(dry.code, 0, dry.stderr);
   assert.equal(dry.nodeArgs, 'node <pkg>/mysql-to-pg.mjs --dry-run');
   assert.ok(!dry.lines.some(line => line.startsWith('pg-database.sh')), 'dry-run 不建库');
+  assert.ok(dry.lines.includes('pg-url-superuser jiuan_rehearsal'), `dry-run 只读，用超级用户连（jiuan_app 那时可能还没建）：${dry.lines.join('\n')}`);
   const dryLive = await runMigrateRemote(t, ['--target', 'jiuan', '--dry-run'], { active: true });
   assert.equal(dryLive.code, 0, '只核对不用停服务');
 });
