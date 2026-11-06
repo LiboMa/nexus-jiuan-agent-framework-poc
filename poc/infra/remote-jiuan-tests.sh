@@ -8,9 +8,11 @@
 # 用法：DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/infra/remote-jiuan-tests.sh --engine mysql|pg|both [--only '<glob>'] [--patches <目录>] [--junit <报告.xml>] --out <结果.json>
 #   --junit：另存一份原始 junit 报告（失败的报错原文在里面，查原因用）。
 #   --shell-tests：外壳（poc/app）也传过去，连库的那几个单元测试（pg-stores、reviews、kb-cache）一起跑（JIUAN_DIR 指到这份九安副本；真 PG 的那几条要它）。
+#   --bench-tests：搬迁工具（poc/bench/mysql-to-pg.mjs）和它的测试 bench/test/*.test.mjs 也传过去一起跑（外壳一并传过去，JIUAN_SHELL_DIR 指到它）。
+#   --mysql-build <目录>：另一份九安副本（例如只打了 0001–0007 的，换库之前的样子）传成 mysql-build/，JIUAN_MYSQL_BUILD 指到它。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-ENGINE="" ONLY='tests/*.test.mjs' PATCHES="" OUT="" JUNIT="" SHELL_TESTS=false
+ENGINE="" ONLY='tests/*.test.mjs' PATCHES="" OUT="" JUNIT="" SHELL_TESTS=false BENCH_TESTS=false MYSQL_BUILD=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --engine) ENGINE="$2"; shift 2 ;;
@@ -19,12 +21,15 @@ while [[ $# -gt 0 ]]; do
     --out) OUT="$2"; shift 2 ;;
     --junit) JUNIT="$2"; shift 2 ;;
     --shell-tests) SHELL_TESTS=true; shift ;;
+    --bench-tests) BENCH_TESTS=true; shift ;;
+    --mysql-build) MYSQL_BUILD="$2"; shift 2 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
 [[ "$ENGINE" == mysql || "$ENGINE" == pg || "$ENGINE" == both ]] || { echo "--engine 只能是 mysql、pg 或 both" >&2; exit 2; }
 [[ -n "$OUT" ]] || { echo "要给 --out <结果.json>" >&2; exit 2; }
 [[ "$ONLY" =~ ^[A-Za-z0-9_./*{},-]+$ ]] || { echo "--only 只能是 tests/ 下的文件名或通配" >&2; exit 2; }
+[[ -z "$MYSQL_BUILD" || -f "$MYSQL_BUILD/src/mysql-database.mjs" ]] || { echo "--mysql-build 要指到一份带 src/mysql-database.mjs 的九安副本" >&2; exit 2; }
 source "$HERE/lib/deploy-env.sh"
 load_deploy_env
 source "$HERE/lib/remote.sh"
@@ -41,11 +46,18 @@ build_args=(--with-tests --out "$local_work/jiuan")
 [[ -z "$PATCHES" ]] || build_args+=(--patches "$PATCHES")
 bash "$HERE/../bench/build-jiuan.sh" "${build_args[@]}" >/dev/null
 cp "$HERE/bench/test-databases.sh" "$local_work/jiuan/test-databases.sh"
-SHELL_GLOB=""
-if $SHELL_TESTS; then
+SHELL_GLOB="" BENCH_GLOB=""
+if $SHELL_TESTS || $BENCH_TESTS; then
   rsync -a --exclude 'node_modules/' --exclude '.DS_Store' --exclude 'test/e2e/' "$HERE/../app/" "$local_work/jiuan/shell/"
-  SHELL_GLOB='shell/test/unit/{pg-stores,reviews,kb-cache}.test.mjs'
 fi
+$SHELL_TESTS && SHELL_GLOB='shell/test/unit/{pg-stores,reviews,kb-cache}.test.mjs'
+if $BENCH_TESTS; then
+  mkdir -p "$local_work/jiuan/bench"
+  cp "$HERE/../bench/mysql-to-pg.mjs" "$local_work/jiuan/bench/"
+  rsync -a --exclude '.DS_Store' "$HERE/../bench/test/" "$local_work/jiuan/bench/test/"
+  BENCH_GLOB='bench/test/*.test.mjs'
+fi
+[[ -z "$MYSQL_BUILD" ]] || rsync -a --exclude '.DS_Store' "$MYSQL_BUILD/" "$local_work/jiuan/mysql-build/"
 # 上传：打包经 SSH 传到实例上新建的临时目录（chmod 0700），回传目录名
 remote_dir="$(COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -C "$local_work/jiuan" -czf - . \
   | ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'd=$(mktemp -d /var/tmp/jiuan-pgtest.XXXXXX) && chmod 0700 "$d" && tar -C "$d" -xzf - && echo "$d"')"
@@ -67,9 +79,10 @@ case '$ENGINE' in
   both) export MYSQL_TEST_URL="\$url_mysql" PG_TEST_URL="\$url_pg" ;;
 esac
 cd "\$d"
-export JIUAN_DIR="\$d"
+export JIUAN_DIR="\$d" JIUAN_SHELL_DIR="\$d/shell"
+[ ! -d "\$d/mysql-build" ] || export JIUAN_MYSQL_BUILD="\$d/mysql-build"
 shopt -s nullglob
-files=( $ONLY $SHELL_GLOB )
+files=( $ONLY $SHELL_GLOB $BENCH_GLOB )
 (( \${#files[@]} > 0 )) || { echo "没有匹配的测试文件：$ONLY" >&2; exit 1; }
 # 一个文件的测试跑完就退出（哪怕还有连接没关）；整轮最多 55 分钟（经 EC2 Instance Connect 的 SSH 一小时就断）
 timeout 3300 node --test --test-force-exit --test-concurrency=1 --test-timeout=180000 --test-reporter=junit --test-reporter-destination="\$d/junit.xml" "\${files[@]}" >/dev/null 2>"\$d/stderr.txt"
