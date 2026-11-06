@@ -1,0 +1,109 @@
+补丁 0016：审批回写（src/approval-writeback.mjs）、SAP 付款申请的存储和快照刷新（src/sap-payment-store.mjs、src/sap-payment-refresh.mjs）改成 PostgreSQL。
+改了哪几类写法：
+- ON DUPLICATE KEY UPDATE x=VALUES(x) → ON CONFLICT (主键五列) DO UPDATE SET x=EXCLUDED.x；写进 smallint 列的 FALSE → 0。
+- DATE_FORMAT(d,'%Y-%m-%d') → to_char(d,'YYYY-MM-DD')；收集时间 DATE_FORMAT(t,'%Y-%m-%dT%H:%i:%s.000Z') → to_char(t,'YYYY-MM-DD"T"HH24:MI:SS".000Z"')。
+- 驼峰别名加双引号（28 处）。
+- 快照刷新：命名锁 GET_LOCK / RELEASE_LOCK → acquireNamedLock / releaseNamedLock；暂存表 CREATE TEMPORARY TABLE x LIKE y（MySQL 连键一起抄）→
+  CREATE TEMPORARY TABLE x (LIKE y INCLUDING ALL)（暂存时的 upsert 要用主键）；DROP TEMPORARY TABLE → DROP TABLE IF EXISTS pg_temp.x。
+- 审批汇总的时间窗：created_at>=DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY) → created_at>=(now() AT TIME ZONE 'UTC')::timestamp - make_interval(days => ?)
+  （created_at 存的是 UTC）。
+不动的：src/mysql-source-foundation.mjs 是 MySQL 迁移的建表语句（PG 的基线替了它）和只给 scripts/ 用的 MySQL 表结构检查，随 MySQL 模块在补丁 0017 处理；
+src/sap-supplier-analysis-service.mjs 不发 SQL；server.mjs 不在运行副本里。
+
+diff --git a/src/approval-writeback.mjs b/src/approval-writeback.mjs
+index c7341fd..43d0c47 100644
+--- a/src/approval-writeback.mjs
++++ b/src/approval-writeback.mjs
+@@ -402,7 +402,7 @@ export function createApprovalWritebackService({ client, pool = null, key = null
+       if (!['7d', '30d', 'all'].includes(window)) fail('INVALID_REQUEST');
+       if (!text(actor?.id, 191)) fail('APPROVAL_EMPLOYEE_REQUIRED', 403);
+       let rows;
+-      if (pool?.query) { const params = [connectionId, actor.id]; const filter = window === 'all' ? '' : ' AND created_at>=DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)'; if (window !== 'all') params.push(Number(window.slice(0, -1))); const [result] = await pool.query(`SELECT document_id,decision,ai_verdict,expense_type_codes FROM audit_approval_decisions WHERE connection_id=? AND actor_account_id=? AND status='succeeded'${filter}`, params); rows = result || []; }
++      if (pool?.query) { const params = [connectionId, actor.id]; const filter = window === 'all' ? '' : ' AND created_at>=(now() AT TIME ZONE \'UTC\')::timestamp - make_interval(days => ?)'; if (window !== 'all') params.push(Number(window.slice(0, -1))); const [result] = await pool.query(`SELECT document_id,decision,ai_verdict,expense_type_codes FROM audit_approval_decisions WHERE connection_id=? AND actor_account_id=? AND status='succeeded'${filter}`, params); rows = result || []; }
+       else rows = [...local.values()].filter(row => row.status === 'succeeded' && row.actorAccountId === actor.id && (window === 'all' || new Date(row.createdAt.replace(' ', 'T') + 'Z').getTime() >= clockMs() - Number(window.slice(0, -1)) * 86400000));
+       if (typeof canRead === 'function') {
+         const access = new Map(), visible = [];
+diff --git a/src/sap-payment-refresh.mjs b/src/sap-payment-refresh.mjs
+index 6a6c0fc..dbf430e 100644
+--- a/src/sap-payment-refresh.mjs
++++ b/src/sap-payment-refresh.mjs
+@@ -2,6 +2,7 @@ import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+ import { mkdir, writeFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+ import { openSapPaymentStore } from './sap-payment-store.mjs';
++import { acquireNamedLock, releaseNamedLock } from './pg-database.mjs';
+ import { normalizeSapPaymentRow } from './sap-supplier-analysis.mjs';
+ 
+ const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+@@ -123,10 +124,10 @@ export async function refreshSapPaymentSnapshot({ pool, key, connectionId, tenan
+     },
+   };
+   try {
+-    const [[result]] = await connection.query('SELECT GET_LOCK(?,0) AS acquired', [lock]);
+-    if (Number(result.acquired) !== 1) throw Object.assign(new Error('已有 SAP 刷新在运行。'), { code: 'SAP_PAYMENT_BUSY' });
++    if (!(await acquireNamedLock(connection, lock, 0))) throw Object.assign(new Error('已有 SAP 刷新在运行。'), { code: 'SAP_PAYMENT_BUSY' });
+     locked = true;
+-    await connection.query(`CREATE TEMPORARY TABLE ${stageName} LIKE sap_payment_requests`);
++    // MySQL's CREATE TABLE … LIKE copies the keys too; the staged upserts need the primary key for ON CONFLICT
++    await connection.query(`CREATE TEMPORARY TABLE ${stageName} (LIKE sap_payment_requests INCLUDING ALL)`);
+     const resultSync = await runSapPaymentTraversal({ client: wrappedClient, store: syncStore, tenantId, companyCode, startDate, endDate, pageSize, maxPages });
+     if (!resultSync.complete) return { ...resultSync, promoted: false };
+     const check = await request({ company_code: companyCode, top: pageSize, skip: 0 });
+@@ -160,8 +161,8 @@ export async function refreshSapPaymentSnapshot({ pool, key, connectionId, tenan
+     await Promise.allSettled(buffered.values());
+     await store.close();
+     if (locked) {
+-      await connection.query(`DROP TEMPORARY TABLE IF EXISTS ${stageName}`).catch(() => {});
+-      await connection.query('SELECT RELEASE_LOCK(?)', [lock]).catch(() => {});
++      await connection.query(`DROP TABLE IF EXISTS pg_temp.${stageName}`).catch(() => {});
++      await releaseNamedLock(connection, lock).catch(() => {});
+     }
+     connection.release();
+   }
+diff --git a/src/sap-payment-store.mjs b/src/sap-payment-store.mjs
+index 86fe753..01c081d 100644
+--- a/src/sap-payment-store.mjs
++++ b/src/sap-payment-store.mjs
+@@ -60,7 +60,7 @@ export function openSapPaymentStore({ pool, key, connectionId, tenantId } = {})
+       ready(); companyCode = text(companyCode, 32); if (!companyCode || !dateOnly(startDate) || endDate !== null && !dateOnly(endDate)) fail('SAP_PAYMENT_VALIDATION');
+       const id = randomUUID();
+       await pool.query(`INSERT INTO sap_payment_sync_batches(connection_id,id,tenant_id,company_code,start_date,end_date,status,complete,started_at)
+-        VALUES (?,?,?,?,?,?, 'running', FALSE, ?)`, [connectionId, id, tenantId, companyCode, mysqlDate(startDate), endDate ? mysqlDate(endDate) : null, sqlDateTime(startedAt)]);
++        VALUES (?,?,?,?,?,?, 'running', 0, ?)`, [connectionId, id, tenantId, companyCode, mysqlDate(startDate), endDate ? mysqlDate(endDate) : null, sqlDateTime(startedAt)]);
+       return { id, companyCode, startDate, endDate };
+     },
+ 
+@@ -84,8 +84,8 @@ export function openSapPaymentStore({ pool, key, connectionId, tenantId } = {})
+             order_quantity,currency,order_amount,order_unit_price,paid_amount,receipt_quantity,receipt_amount,invoice_quantity,invoice_amount,adjustment_amount,advance_deduction_amount,proposed_payment_amount,
+             sync_batch_id,raw_payload,payload_sha256,collected_at)
+             VALUES (${values.map(() => '?').join(',')})
+-            ON DUPLICATE KEY UPDATE company_name=VALUES(company_name),payee=VALUES(payee),supplier_code=VALUES(supplier_code),supplier_name=VALUES(supplier_name),status=VALUES(status),purchase_order=VALUES(purchase_order),material_code=VALUES(material_code),material_description=VALUES(material_description),
+-              request_date=VALUES(request_date),order_quantity=VALUES(order_quantity),currency=VALUES(currency),order_amount=VALUES(order_amount),order_unit_price=VALUES(order_unit_price),paid_amount=VALUES(paid_amount),receipt_quantity=VALUES(receipt_quantity),receipt_amount=VALUES(receipt_amount),invoice_quantity=VALUES(invoice_quantity),invoice_amount=VALUES(invoice_amount),adjustment_amount=VALUES(adjustment_amount),advance_deduction_amount=VALUES(advance_deduction_amount),proposed_payment_amount=VALUES(proposed_payment_amount),sync_batch_id=VALUES(sync_batch_id),raw_payload=VALUES(raw_payload),payload_sha256=VALUES(payload_sha256),collected_at=VALUES(collected_at)`, values);
++            ON CONFLICT (connection_id,tenant_id,company_code,request_number,line_item) DO UPDATE SET company_name=EXCLUDED.company_name,payee=EXCLUDED.payee,supplier_code=EXCLUDED.supplier_code,supplier_name=EXCLUDED.supplier_name,status=EXCLUDED.status,purchase_order=EXCLUDED.purchase_order,material_code=EXCLUDED.material_code,material_description=EXCLUDED.material_description,
++              request_date=EXCLUDED.request_date,order_quantity=EXCLUDED.order_quantity,currency=EXCLUDED.currency,order_amount=EXCLUDED.order_amount,order_unit_price=EXCLUDED.order_unit_price,paid_amount=EXCLUDED.paid_amount,receipt_quantity=EXCLUDED.receipt_quantity,receipt_amount=EXCLUDED.receipt_amount,invoice_quantity=EXCLUDED.invoice_quantity,invoice_amount=EXCLUDED.invoice_amount,adjustment_amount=EXCLUDED.adjustment_amount,advance_deduction_amount=EXCLUDED.advance_deduction_amount,proposed_payment_amount=EXCLUDED.proposed_payment_amount,sync_batch_id=EXCLUDED.sync_batch_id,raw_payload=EXCLUDED.raw_payload,payload_sha256=EXCLUDED.payload_sha256,collected_at=EXCLUDED.collected_at`, values);
+           saved++;
+         }
+         return { saved };
+@@ -125,19 +125,19 @@ export function openSapPaymentStore({ pool, key, connectionId, tenantId } = {})
+       const clauses = ['connection_id=?', 'tenant_id=?', 'company_code=?'], params = [connectionId, tenantId, companyCode];
+       if (startDate) { clauses.push('request_date>=?'); params.push(startDate); }
+       if (endDate) { clauses.push('request_date<=?'); params.push(endDate); }
+-      const [rows] = await pool.query(`SELECT DATE_FORMAT(request_date,'%Y-%m-%d') AS date,company_code AS companyCode,request_number AS requestNumber,line_item AS lineItem,payee,supplier_code AS supplierCode,supplier_name AS supplierName,status,purchase_order AS purchaseOrder,material_code AS materialCode,material_description AS materialDescription,order_quantity AS orderQuantity,currency,order_amount AS orderAmount,order_unit_price AS orderUnitPrice,paid_amount AS paidAmount,receipt_quantity AS receiptQuantity,receipt_amount AS receiptAmount,invoice_quantity AS invoiceQuantity,invoice_amount AS invoiceAmount,adjustment_amount AS adjustmentAmount,advance_deduction_amount AS advanceDeductionAmount,proposed_payment_amount AS proposedPaymentAmount FROM sap_payment_requests WHERE ${clauses.join(' AND ')} ORDER BY request_date,request_number,line_item`, params);
++      const [rows] = await pool.query(`SELECT to_char(request_date,'YYYY-MM-DD') AS date,company_code AS "companyCode",request_number AS "requestNumber",line_item AS "lineItem",payee,supplier_code AS "supplierCode",supplier_name AS "supplierName",status,purchase_order AS "purchaseOrder",material_code AS "materialCode",material_description AS "materialDescription",order_quantity AS "orderQuantity",currency,order_amount AS "orderAmount",order_unit_price AS "orderUnitPrice",paid_amount AS "paidAmount",receipt_quantity AS "receiptQuantity",receipt_amount AS "receiptAmount",invoice_quantity AS "invoiceQuantity",invoice_amount AS "invoiceAmount",adjustment_amount AS "adjustmentAmount",advance_deduction_amount AS "advanceDeductionAmount",proposed_payment_amount AS "proposedPaymentAmount" FROM sap_payment_requests WHERE ${clauses.join(' AND ')} ORDER BY request_date,request_number,line_item`, params);
+       return rows;
+     },
+ 
+     async dateRange({ actor, companyCode } = {}) {
+       ready(); companyCode = text(companyCode, 32); if (!companyCode) fail('SAP_PAYMENT_VALIDATION'); guardActorCode(actor, companyCode);
+-      const [rows] = await pool.query(`SELECT DATE_FORMAT(MIN(request_date),'%Y-%m-%d') AS startDate,DATE_FORMAT(MAX(request_date),'%Y-%m-%d') AS endDate,COUNT(*) AS count FROM sap_payment_requests WHERE connection_id=? AND tenant_id=? AND company_code=?`, [connectionId, tenantId, companyCode]);
++      const [rows] = await pool.query(`SELECT to_char(MIN(request_date),'YYYY-MM-DD') AS "startDate",to_char(MAX(request_date),'YYYY-MM-DD') AS "endDate",COUNT(*) AS count FROM sap_payment_requests WHERE connection_id=? AND tenant_id=? AND company_code=?`, [connectionId, tenantId, companyCode]);
+       const row = rows[0] || {}; return { startDate: row.startDate || null, endDate: row.endDate || null, count: Number(row.count || 0) };
+     },
+ 
+     async latestSync({ actor, companyCode } = {}) {
+       ready(); companyCode = text(companyCode, 32); if (!companyCode) fail('SAP_PAYMENT_VALIDATION'); guardActorCode(actor, companyCode);
+-      const [rows] = await pool.query(`SELECT DATE_FORMAT(start_date,'%Y-%m-%d') AS startDate,DATE_FORMAT(end_date,'%Y-%m-%d') AS endDate,status,complete,row_count AS rowCount,request_count AS requestCount,pages,cursor_skip AS cursorSkip,DATE_FORMAT(collected_at,'%Y-%m-%dT%H:%i:%s.000Z') AS collectedAt,error_code AS errorCode FROM sap_payment_sync_batches WHERE connection_id=? AND tenant_id=? AND company_code=? ORDER BY started_at DESC,id DESC LIMIT 1`, [connectionId, tenantId, companyCode]);
++      const [rows] = await pool.query(`SELECT to_char(start_date,'YYYY-MM-DD') AS "startDate",to_char(end_date,'YYYY-MM-DD') AS "endDate",status,complete,row_count AS "rowCount",request_count AS "requestCount",pages,cursor_skip AS "cursorSkip",to_char(collected_at,'YYYY-MM-DD"T"HH24:MI:SS".000Z"') AS "collectedAt",error_code AS "errorCode" FROM sap_payment_sync_batches WHERE connection_id=? AND tenant_id=? AND company_code=? ORDER BY started_at DESC,id DESC LIMIT 1`, [connectionId, tenantId, companyCode]);
+       const row = rows[0]; return row ? { ...row, complete: Boolean(row.complete), rows: Number(row.rowCount || 0), requestCount: Number(row.requestCount || 0), pages: Number(row.pages || 0), cursorSkip: Number(row.cursorSkip || 0) } : null;
+     },
+ 
