@@ -1,0 +1,188 @@
+补丁 0010 的测试：tests/pg-schema.test.mjs（基线表结构、迁移、表结构核对、自动改时间、平台库状态）；tests/platform-routes.test.mjs 改用 PG 的迁移清单。
+
+diff --git a/tests/pg-schema.test.mjs b/tests/pg-schema.test.mjs
+new file mode 100644
+index 0000000..a7e6ad0
+--- /dev/null
++++ b/tests/pg-schema.test.mjs
+@@ -0,0 +1,156 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { createHash } from 'node:crypto';
++import {
++  classifyMigrationVersions, createPgPool, expectedSchemaListing, migratePg, migrationChecksum, parsePgUrl, pgHealth,
++  PG_ERROR_CODES, PG_MIGRATIONS, splitSqlStatements, validateAdditiveMigration,
++} from '../src/pg-database.mjs';
++import { PG_BASELINE_SCHEMA, readSchemaListing } from '../src/pg-schema.mjs';
++import { createPlatformRoutes } from '../src/platform/platform-routes.mjs';
++
++// PostgreSQL 的表结构：一个基线迁移（版本 19）建出 MySQL 第 1–19 个迁移跑完后的全部表；启动时核对表结构没被人改过。
++// 要真 PG 的用 PG_TEST_URL（库名以 _test 结尾），每条测试先把 public 清空。
++
++// MySQL 那边 jiuan 库 information_schema.tables 里九安自己的表（不含外壳的 poc_*）
++const JIUAN_TABLES = `analysis_batches analysis_connections analysis_document_search analysis_document_versions analysis_documents analysis_events
++analysis_sync_states audit_advice_runs audit_approval_actor_index audit_approval_actors audit_approval_decisions audit_approval_events
++audit_approval_pending audit_attachment_extractions audit_attachment_fetches audit_attachments audit_document_versions audit_documents
++audit_evidence_packs audit_expense_lines audit_expense_receipts audit_expense_subsidies audit_issue_events audit_issues
++audit_permission_snapshots audit_report_details audit_report_projection audit_report_projection_gaps audit_report_projection_status
++audit_review_runs audit_scan_rule_settings audit_scan_runs audit_source_connections audit_suspicion_documents audit_suspicion_events
++audit_suspicions audit_sync_batches audit_sync_items audit_tasks audit_travel_applications decisions element_draft_edits
++element_family_drafts element_family_events element_family_heads element_family_registry element_family_versions element_oid_claims
++entities hly_departments metadata platform_agent_runs platform_call_budget_daily platform_call_log platform_change_log platform_settings
++ref_approval_nodes ref_audit_element_seed ref_expense_type_codes ref_expense_type_seed ref_invoice_controls ref_org_segment_map
++ref_reject_codes ref_seed_snapshots ref_standard_candidates sap_payment_requests sap_payment_sync_batches schema_migrations sessions
++source_tasks stage_workspaces`.split(/\s+/);
++
++test('迁移清单：只有一个基线迁移，版本 19（接着 MySQL 的 1–19），以后的从 20 起；checksum 是去掉首尾空白后 SQL 的 sha256', () => {
++  assert.equal(JIUAN_TABLES.length, 71);
++  assert.deepEqual(PG_MIGRATIONS.map(item => [item.version, item.name]), [[19, 'postgres-baseline']]);
++  assert.equal(PG_MIGRATIONS[0].sql, PG_BASELINE_SCHEMA);
++  assert.equal(migrationChecksum(PG_MIGRATIONS[0]), createHash('sha256').update(PG_BASELINE_SCHEMA.trim(), 'utf8').digest('hex'));
++});
++
++test('拆语句：分号分句；字符串、双引号名字、$tag$ 函数体、注释里的分号不算；空句去掉', () => {
++  const sql = "CREATE TABLE a (x text DEFAULT ';');\n-- 注释; 不算\nCREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN RETURN NEW; END $body$;\n/* ; */ CREATE TABLE \"b;c\" (y int);;\n";
++  assert.deepEqual(splitSqlStatements(sql), [
++    "CREATE TABLE a (x text DEFAULT ';')",
++    '-- 注释; 不算\nCREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN RETURN NEW; END $body$',
++    '/* ; */ CREATE TABLE "b;c" (y int)',
++  ]);
++});
++
++test('版本归类：认识的已执行 / 待执行；比程序新、标了只新增表的算「库比程序新」；别的不认识的版本算漂移', () => {
++  const ahead = classifyMigrationVersions([{ version: 19 }, { version: 20, additive: 1 }]);
++  assert.deepEqual([ahead.normal, ahead.pending, ahead.aheadAdditive, ahead.drift, ahead.highestKnownVersion], [[19], [], [20], [], 19]);
++  const odd = classifyMigrationVersions([{ version: 5 }]);
++  assert.deepEqual([odd.pending, odd.drift], [[19], [{ version: 5, reason: 'unknown_version' }]]);
++});
++
++test('只新增表的迁移：只许 CREATE TABLE IF NOT EXISTS，不许外键、不许从别的表复制', () => {
++  const additive = sql => () => validateAdditiveMigration({ version: 20, name: 'x', additive: true, sql });
++  assert.doesNotThrow(additive('CREATE TABLE IF NOT EXISTS x (id int PRIMARY KEY, note text DEFAULT \'REFERENCES\')'));
++  for (const bad of ['ALTER TABLE metadata ADD COLUMN x int', 'CREATE TABLE IF NOT EXISTS x (id int REFERENCES metadata (key))',
++    'CREATE TABLE IF NOT EXISTS x AS SELECT * FROM metadata', 'CREATE TABLE IF NOT EXISTS x (LIKE metadata)']) {
++    assert.throws(additive(bad), error => error.code === PG_ERROR_CODES.CONFIGURATION, bad);
++  }
++});
++
++const url = process.env.PG_TEST_URL;
++const real = { skip: !url };
++
++async function freshPool(t, options = {}) {
++  assert.match(parsePgUrl(url).database, /_test$/);
++  const pool = createPgPool({ url, connectionLimit: 6, ...options });
++  t.after(() => pool.end());
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  return pool;
++}
++const tableNames = async pool => (await pool.query("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"))[0].map(row => row.name);
++
++test('空库：migratePg 建出九安的 71 张表、登记版本 19；再跑一次什么都不做；核对用的临时 schema 不留下', real, async t => {
++  const pool = await freshPool(t);
++  assert.deepEqual(await migratePg(pool), { applied: [19], currentVersion: 19, aheadAdditive: [] });
++  assert.deepEqual(await tableNames(pool), [...JIUAN_TABLES].sort());
++  const [rows] = await pool.query('SELECT version, name, checksum, adopted_by, additive FROM schema_migrations');
++  assert.deepEqual(rows, [{ version: 19, name: 'postgres-baseline', checksum: migrationChecksum(PG_MIGRATIONS[0]), adopted_by: 'applied', additive: 0 }]);
++  assert.deepEqual(await migratePg(pool), { applied: [], currentVersion: 19, aheadAdditive: [] });
++  const [left] = await pool.query("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'jiuan_expected%'");
++  assert.deepEqual(left, []);
++  assert.equal(await pgHealth(pool), true);
++});
++
++test('新库读出来的表结构清单 = 按迁移清单现建出来的期望清单（表、列、索引、约束、触发器、函数都在里面）', real, async t => {
++  const pool = await freshPool(t);
++  await migratePg(pool);
++  const conn = await pool.getConnection();
++  try {
++    const live = await readSchemaListing(conn);
++    const expected = await expectedSchemaListing(conn);
++    assert.equal(live, expected);
++    for (const line of ['table metadata', 'column metadata.updated_at timestamp(6) without time zone not null default LOCALTIMESTAMP(6)',
++      'trigger metadata.metadata_touch_updated_at', 'function jiuan_touch_updated_at()', 'constraint platform_call_log.platform_call_log_outcome CHECK']) {
++      assert.ok(live.split('\n').some(item => item.startsWith(line)), `清单里应有 ${line}`);
++    }
++  } finally { conn.release(); }
++});
++
++test('两个连接同时 migratePg：只执行一次，另一个等锁后看到已是最新', real, async t => {
++  const pool = await freshPool(t);
++  const other = createPgPool({ url, connectionLimit: 2 });
++  t.after(() => other.end());
++  const results = await Promise.all([migratePg(pool), migratePg(other)]);
++  assert.deepEqual(results.map(item => item.applied).sort(), [[], [19]]);
++  const [[count]] = await pool.query('SELECT count(*) AS n FROM schema_migrations');
++  assert.equal(count.n, 1);
++});
++
++test('有人手工改了表（加一列）→ 下次启动报 PG_MIGRATION_DRIFT，报错里写着差在哪；改回去就好；外壳自己的表不算', real, async t => {
++  const pool = await freshPool(t);
++  await migratePg(pool);
++  await pool.query('CREATE TABLE poc_review_decisions (id text PRIMARY KEY)');
++  assert.deepEqual((await migratePg(pool)).applied, []);
++  await pool.query('ALTER TABLE analysis_batches ADD COLUMN x int');
++  await assert.rejects(migratePg(pool), error => error.code === PG_ERROR_CODES.MIGRATION_DRIFT && /analysis_batches\.x/.test(error.message));
++  await pool.query('ALTER TABLE analysis_batches DROP COLUMN x');
++  await pool.query('DROP INDEX audit_issues_work');
++  await assert.rejects(migratePg(pool), error => error.code === PG_ERROR_CODES.MIGRATION_DRIFT && /audit_issues_work/.test(error.message));
++});
++
++test('登记的 checksum 和程序里的对不上 → PG_MIGRATION_DRIFT（checksum_changed）', real, async t => {
++  const pool = await freshPool(t);
++  await migratePg(pool);
++  await pool.query("UPDATE schema_migrations SET checksum = repeat('0', 64) WHERE version = 19");
++  await assert.rejects(migratePg(pool), error => error.code === PG_ERROR_CODES.MIGRATION_DRIFT && /checksum_changed/.test(error.message));
++});
++
++test('更新时自动改时间（原 ON UPDATE CURRENT_TIMESTAMP）：别的列变了 → updated_at 变成上海墙上时间；什么都没变或显式给了 updated_at → 不动', real, async t => {
++  const pool = await freshPool(t);
++  await migratePg(pool);
++  const old = new Date('2020-01-01T00:00:00.000Z');
++  await pool.query('INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)', ['k', 'v1', old]);
++  const read = async () => (await pool.query('SELECT value, updated_at FROM metadata WHERE key = ?', ['k']))[0][0];
++  await pool.query('UPDATE metadata SET value = ? WHERE key = ?', ['v1', 'k']);
++  assert.equal((await read()).updated_at.toISOString(), old.toISOString(), '值没变：不改时间');
++  await pool.query('UPDATE metadata SET value = ? WHERE key = ?', ['v2', 'k']);
++  const ahead = (await read()).updated_at.getTime() - Date.now();
++  assert.ok(Math.abs(ahead - 8 * 3600_000) < 60_000, `应是上海墙上时间（比 UTC 快 8 小时），实际差 ${ahead} 毫秒`);
++  const given = new Date('2021-06-01T12:00:00.000Z');
++  await pool.query('UPDATE metadata SET value = ?, updated_at = ? WHERE key = ?', ['v3', given, 'k']);
++  assert.equal((await read()).updated_at.toISOString(), given.toISOString(), '显式给了时间：用给的');
++});
++
++test('平台「数据概览」的库状态：新库上是 jiuan_test、版本 19 / 期望 19、已是最新', real, async t => {
++  const pool = await freshPool(t);
++  await migratePg(pool);
++  // 库状态那几句（schema_migrations、current_database()）走真库；同一页上别的查询（进度、调用记录）归补丁 0014，这里给空
++  const statusOnly = { query: (sql, params) => (/schema_migrations|current_database\(\)/.test(typeof sql === 'string' ? sql : sql.sql) ? pool.query(sql, params) : Promise.resolve([[]])) };
++  const sent = [];
++  const routes = createPlatformRoutes({ pool: statusOnly, catalog: [], send: (_res, status, body) => sent.push({ status, body }) });
++  await routes.handle({ req: { method: 'GET' }, url: new URL('http://localhost/api/analysis/v1/platform/data-overview'), path: '/api/analysis/v1/platform/data-overview', session: { user: { role: 'analyst', companyIds: ['c1'] } } });
++  assert.equal(sent.at(-1).status, 200);
++  const database = sent.at(-1).body.data.dataRange.database;
++  assert.deepEqual([database.name, database.migrationVersion, database.expectedMigrationVersion, database.drift.status], ['jiuan_test', 19, 19, 'ok']);
++});
+diff --git a/tests/platform-routes.test.mjs b/tests/platform-routes.test.mjs
+index 5db21e5..e9ec529 100644
+--- a/tests/platform-routes.test.mjs
++++ b/tests/platform-routes.test.mjs
+@@ -2,7 +2,7 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+ import * as platformRoutes from '../src/platform/platform-routes.mjs';
+-import { MYSQL_MIGRATIONS, migrationChecksum } from '../src/mysql-database.mjs';
++import { PG_MIGRATIONS, migrationChecksum } from '../src/pg-database.mjs';
+ const { createPlatformRoutes } = platformRoutes;
+ 
+ test('platform routes expose a GET handler and leave non-platform paths untouched', async () => {
+@@ -92,8 +92,8 @@ test('calls route selects a field whitelist when storage rows contain extra colu
+ 
+ test('data overview labels a database with only newer additive migrations as runnable', async () => {
+   const sent = [];
+-  const rows = MYSQL_MIGRATIONS.map(migration => ({ version: migration.version, checksum: migrationChecksum(migration), additive: 0 }));
+-  rows.push({ version: Math.max(...MYSQL_MIGRATIONS.map(migration => migration.version)) + 1, checksum: null, additive: 1 });
++  const rows = PG_MIGRATIONS.map(migration => ({ version: migration.version, checksum: migrationChecksum(migration), additive: 0 }));
++  rows.push({ version: Math.max(...PG_MIGRATIONS.map(migration => migration.version)) + 1, checksum: null, additive: 1 });
+   const pool = { query: async sql => {
+     if (sql.includes('SELECT version,checksum') || sql.includes('SELECT version, checksum')) return [rows];
+     return [[]];
