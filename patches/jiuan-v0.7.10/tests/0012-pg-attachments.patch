@@ -1,0 +1,325 @@
+补丁 0012 的测试。
+- 改成连 PG：analysis-documents-admin、approval-identity-store 的集成测试（PG_TEST_URL、createPgPool、migratePg、隔离端口 5434、清库 DROP SCHEMA）；
+  测试自己的 SQL：NOW(6) → LOCALTIMESTAMP(6)；UTC_TIMESTAMP(6) ± INTERVAL n HOUR / MINUTE → (now() AT TIME ZONE 'UTC')::timestamp(6) ± interval；
+  GET_LOCK / IS_USED_LOCK / CONNECTION_ID() / RELEASE_ALL_LOCKS() → acquireNamedLock / isNamedLockUsed / pg_backend_pid() / pg_advisory_unlock_all()；
+  「开着事务、语句里有单据字样」那一句 COUNT(*) … FOR UPDATE → 锁一行（PG 不许聚合加 FOR UPDATE）。
+- ops-lock-snapshot.test 的假库认 PG 的查询（pg_stat_activity、pg_locks 按锁键的两半）；断言不动。
+- 新 tests/pg-attachment-store.integration.test.mjs：附件队列在真 PG 上走一遍（原来只有假库的单元测试）。
+
+diff --git a/tests/analysis-documents-admin.integration.test.mjs b/tests/analysis-documents-admin.integration.test.mjs
+index dc18feb..eddbdd1 100644
+--- a/tests/analysis-documents-admin.integration.test.mjs
++++ b/tests/analysis-documents-admin.integration.test.mjs
+@@ -1,27 +1,25 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { acquireNamedLock, createPgPool, isNamedLockUsed, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { companiesOutsideAccess, documentDataSummary, resetDocumentData } from '../src/analysis-documents-admin.mjs';
+ import { acquireFullSyncLock } from '../src/full-sync-lock.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const CONN = 'hly-prod-test-tenant';
+ 
+ async function dropAll(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-  try { for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-  finally { await pool.query('SET FOREIGN_KEY_CHECKS = 1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ async function seed(pool) {
+   await pool.query("INSERT INTO analysis_connections(connection_id, environment, schema_version, key_check, tenant_id) VALUES (?, 'prod', 1, ?, 't1')", [CONN, Buffer.from('k')]);
+   await pool.query(`INSERT INTO analysis_documents(connection_id, id, environment, tenant_id, company_id, company_name, source_id, number, form_name, document_type, status,
+       amount, currency, modified_at, collected_at, version, history_count, rejection_count, withdrawal_count)
+-    VALUES (?, 'd1', 'prod', 't1', 'c1', 'Company', 's1', 'N1', 'Form', 'corporate_payment', 'approved', '1.00', 'CNY', '2026-03-02', NOW(6), 'v1', 1, 0, 0)`, [CONN]);
+-  await pool.query("INSERT INTO analysis_batches(connection_id, id, tenant_id, company_id, status, started_at, query_payload) VALUES (?, 'b1', 't1', 'c1', 'completed', NOW(6), ?)", [CONN, Buffer.from('q')]);
+-  await pool.query("INSERT INTO analysis_document_versions(connection_id, document_id, version, collected_at, batch_id, payload) VALUES (?, 'd1', 'v1', NOW(6), 'b1', ?)", [CONN, Buffer.from('p')]);
++    VALUES (?, 'd1', 'prod', 't1', 'c1', 'Company', 's1', 'N1', 'Form', 'corporate_payment', 'approved', '1.00', 'CNY', '2026-03-02', LOCALTIMESTAMP(6), 'v1', 1, 0, 0)`, [CONN]);
++  await pool.query("INSERT INTO analysis_batches(connection_id, id, tenant_id, company_id, status, started_at, query_payload) VALUES (?, 'b1', 't1', 'c1', 'completed', LOCALTIMESTAMP(6), ?)", [CONN, Buffer.from('q')]);
++  await pool.query("INSERT INTO analysis_document_versions(connection_id, document_id, version, collected_at, batch_id, payload) VALUES (?, 'd1', 'v1', LOCALTIMESTAMP(6), 'b1', ?)", [CONN, Buffer.from('p')]);
+   await pool.query("INSERT INTO analysis_events(connection_id, document_id, id, version, operation, category, node_type, payload) VALUES (?, 'd1', 'e1', 'v1', 'approve', 'approval', 'node', ?)", [CONN, Buffer.from('e')]);
+   for (const key of ['production-analysis-sync-v1:abc', 'formal-evidence:d1:detail', 'formal-evidence:advice:index1', 'formal-rule-workspace:c1', 'formal-payments:c1', 'something-new:1', 'formal-evidence-backup'])
+     await pool.query('INSERT INTO analysis_sync_states(connection_id, scope_key, payload) VALUES (?, ?, ?)', [CONN, key, Buffer.from('x')]);
+@@ -35,22 +33,22 @@ function containsText(value, needles) {
+ }
+ 
+ test('document data reset clears synced documents and derived state, keeps rules and unknown state, and refuses shared databases', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl });
+   try {
+     await dropAll(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     const runSql = `INSERT INTO platform_agent_runs
+       (run_id, agent_id, code_version, mode, lane, trigger_kind, upstream_run_id, actor_principal, status,
+        started_at, heartbeat_at, lease_expires_at, finished_at, selected_count, succeeded_count, failed_count,
+        skipped_count, recovered_count, request_count, summary_json)
+       VALUES (?, ?, 'test', 'incremental', 'corporate', ?, NULL, 'system', ?,
+-        UTC_TIMESTAMP(6) - INTERVAL ? HOUR, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) + INTERVAL 1 HOUR,
+-        UTC_TIMESTAMP(6) - INTERVAL ? HOUR, 1, 0, 0, 0, 0, 0, NULL)`;
++        (now() AT TIME ZONE 'UTC')::timestamp(6) - make_interval(hours => ?), (now() AT TIME ZONE 'UTC')::timestamp(6), (now() AT TIME ZONE 'UTC')::timestamp(6) + interval '1 hour',
++        (now() AT TIME ZONE 'UTC')::timestamp(6) - make_interval(hours => ?), 1, 0, 0, 0, 0, 0, NULL)`;
+     await pool.query(runSql, ['list-old-1', 'hly.list-sync', 'schedule', 'failed', 25, 25]);
+     await pool.query(runSql, ['list-new-1', 'hly.list-sync', 'schedule', 'succeeded', 0, 0]);
+     await pool.query(runSql, ['detail-old-1', 'hly.report-detail', 'upstream', 'succeeded', 25, 25]);
+@@ -58,8 +56,8 @@ test('document data reset clears synced documents and derived state, keeps rules
+     await pool.query(runSql, ['proj-new-1', 'hly.detail-projection', 'upstream', 'partial', 3, 3]);
+     // The employee lane's last incremental run failed with a code; a history run after it does not count (10-20).
+     await pool.query(`INSERT INTO platform_agent_runs (run_id, agent_id, code_version, mode, lane, trigger_kind, actor_principal, status, error_code, started_at, heartbeat_at, lease_expires_at, finished_at, selected_count, succeeded_count, failed_count, skipped_count, recovered_count, request_count)
+-      VALUES ('list-emp-1', 'hly.list-sync', 'test', 'incremental', 'employee', 'schedule', 'system', 'failed', 'SYNC_SCOPE_MISMATCH', UTC_TIMESTAMP(6) - INTERVAL 30 HOUR, UTC_TIMESTAMP(6) - INTERVAL 30 HOUR, UTC_TIMESTAMP(6) - INTERVAL 30 HOUR, UTC_TIMESTAMP(6) - INTERVAL 30 HOUR, 0, 0, 0, 0, 0, 0),
+-             ('list-emp-h', 'hly.list-sync', 'test', 'history', 'employee', 'manual', 'human:test', 'succeeded', NULL, UTC_TIMESTAMP(6) - INTERVAL 26 HOUR, UTC_TIMESTAMP(6) - INTERVAL 26 HOUR, UTC_TIMESTAMP(6) - INTERVAL 26 HOUR, UTC_TIMESTAMP(6) - INTERVAL 26 HOUR, 0, 0, 0, 0, 0, 0)`);
++      VALUES ('list-emp-1', 'hly.list-sync', 'test', 'incremental', 'employee', 'schedule', 'system', 'failed', 'SYNC_SCOPE_MISMATCH', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '30 hours', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '30 hours', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '30 hours', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '30 hours', 0, 0, 0, 0, 0, 0),
++             ('list-emp-h', 'hly.list-sync', 'test', 'history', 'employee', 'manual', 'human:test', 'succeeded', NULL, (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '26 hours', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '26 hours', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '26 hours', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '26 hours', 0, 0, 0, 0, 0, 0)`);
+     // HOTFIX-074: each lane also carries the store's short cause from its last failed incremental run.
+     // Corporate: the failed run 25 h ago kept 'upsertPage:ER_LOCK_WAIT_TIMEOUT'; a newer failed
+     // history run with another cause does not count. Employee: its failed run kept something that
+@@ -69,7 +67,7 @@ test('document data reset clears synced documents and derived state, keeps rules
+     await pool.query("UPDATE platform_agent_runs SET summary_json=? WHERE run_id='list-emp-1'",
+       [JSON.stringify({ stoppedBy: 'SYNC_SCOPE_MISMATCH', storeErrorCause: "upsertPage:Lock wait timeout exceeded; INSERT INTO analysis_documents VALUES ('供应商甲')" })]);
+     await pool.query(`INSERT INTO platform_agent_runs (run_id, agent_id, code_version, mode, lane, trigger_kind, actor_principal, status, error_code, started_at, heartbeat_at, lease_expires_at, finished_at, selected_count, succeeded_count, failed_count, skipped_count, recovered_count, request_count, summary_json)
+-      VALUES ('list-hist-fail', 'hly.list-sync', 'test', 'history', 'corporate', 'manual', 'human:test', 'failed', 'SYNC_STORE_ERROR', UTC_TIMESTAMP(6) - INTERVAL 1470 MINUTE, UTC_TIMESTAMP(6) - INTERVAL 1470 MINUTE, UTC_TIMESTAMP(6) - INTERVAL 1470 MINUTE, UTC_TIMESTAMP(6) - INTERVAL 1470 MINUTE, 0, 0, 0, 0, 0, 0, ?)`,
++      VALUES ('list-hist-fail', 'hly.list-sync', 'test', 'history', 'corporate', 'manual', 'human:test', 'failed', 'SYNC_STORE_ERROR', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '1470 minutes', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '1470 minutes', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '1470 minutes', (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '1470 minutes', 0, 0, 0, 0, 0, 0, ?)`,
+       [JSON.stringify({ storeErrorCause: 'writeState:PROTOCOL_CONNECTION_LOST' })]);
+     await seed(pool);
+ 
+@@ -130,30 +128,30 @@ test('document data reset clears synced documents and derived state, keeps rules
+ });
+ 
+ test('HOTFIX-074: the summary shows who holds the full-sync and agent locks, and never a statement', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl });
+   let fullSync = null, agentConnection = null, busy = null;
+   try {
+     await dropAll(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     for (const [runId, agentId] of [['lock-run-1', 'hly.list-sync'], ['lock-run-2', 'hly.report-detail']]) {
+       await pool.query(`INSERT INTO platform_agent_runs (run_id, agent_id, code_version, mode, lane, trigger_kind, actor_principal, status, started_at, heartbeat_at, lease_expires_at, finished_at, selected_count, succeeded_count, failed_count, skipped_count, recovered_count, request_count)
+-        VALUES (?, ?, 'test', 'incremental', 'corporate', 'schedule', 'system', 'succeeded', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), 0, 0, 0, 0, 0, 0)`, [runId, agentId]);
++        VALUES (?, ?, 'test', 'incremental', 'corporate', 'schedule', 'system', 'succeeded', (now() AT TIME ZONE 'UTC')::timestamp(6), (now() AT TIME ZONE 'UTC')::timestamp(6), (now() AT TIME ZONE 'UTC')::timestamp(6), (now() AT TIME ZONE 'UTC')::timestamp(6), 0, 0, 0, 0, 0, 0)`, [runId, agentId]);
+     }
+     // A full sync holds its lock; the list sync's run lock is held by another connection, which also
+     // has a transaction open on a statement that names a document.
+     fullSync = await acquireFullSyncLock(pool, CONN);
+     agentConnection = await pool.getConnection();
+-    await agentConnection.query("SELECT GET_LOCK(CONCAT('platform-agent:', 'hly.list-sync', ':', DATABASE()), 0)");
+-    const [[{ fullSyncHolder }]] = await pool.query('SELECT IS_USED_LOCK(?) AS fullSyncHolder', [fullSync.name]);
+-    const [[{ agentHolder }]] = await agentConnection.query('SELECT CONNECTION_ID() AS agentHolder');
++    assert.equal(await acquireNamedLock(agentConnection, 'platform-agent:hly.list-sync', 0), true);
++    const fullSyncHolder = await isNamedLockUsed(pool, fullSync.name);
++    const [[{ agentHolder }]] = await agentConnection.query('SELECT pg_backend_pid() AS "agentHolder"');
+     busy = await pool.getConnection();
+     await busy.query('START TRANSACTION');
+-    await busy.query("SELECT COUNT(*) FROM platform_agent_runs WHERE run_id = 'statement-marker-供应商甲' FOR UPDATE");
++    await busy.query("SELECT run_id FROM platform_agent_runs WHERE run_id = 'statement-marker-供应商甲' FOR UPDATE");
+ 
+     const { locks } = await documentDataSummary(pool, CONN);
+     assert.deepEqual(locks.fullSync, { used: true, connectionId: Number(fullSyncHolder) });
+@@ -170,7 +168,7 @@ test('HOTFIX-074: the summary shows who holds the full-sync and agent locks, and
+     assert.deepEqual(after.locks.fullSync, { used: false, connectionId: null });
+   } finally {
+     if (busy) { try { await busy.query('ROLLBACK'); } catch {} busy.release(); }
+-    if (agentConnection) { try { await agentConnection.query("SELECT RELEASE_ALL_LOCKS()"); } catch {} agentConnection.release(); }
++    if (agentConnection) { try { await agentConnection.query('SELECT pg_advisory_unlock_all()'); } catch {} agentConnection.release(); }
+     if (fullSync) await fullSync.release();
+     await pool.end();
+   }
+diff --git a/tests/approval-identity-store.integration.test.mjs b/tests/approval-identity-store.integration.test.mjs
+index 8894122..91bc750 100644
+--- a/tests/approval-identity-store.integration.test.mjs
++++ b/tests/approval-identity-store.integration.test.mjs
+@@ -1,13 +1,13 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { resetDocumentData } from '../src/analysis-documents-admin.mjs';
+ 
+ // SYNC-06a: the analysis store keeps, per document version, who acted on it (operator and named
+ // approver job numbers) and who holds it now. Job numbers are plain columns for lookups; every
+ // name is sealed. All values here are synthetic.
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const CONN = 'approval-identity-integration';
+ const scope = { tenantId: 'identity-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+ const FAKE_NAMES = ['FAKE-NAME-甲', 'FAKE-NAME-乙', 'FAKE-NAME-丙', 'FAKE-DEPT-丁'];
+@@ -29,18 +29,16 @@ const rowBytes = row => Buffer.concat(Object.values(row).map(value => Buffer.isB
+ const holdsNoName = (rows, list) => rows.every(row => list.every(name => !rowBytes(row).includes(Buffer.from(name, 'utf8'))));
+ const rejectsValidation = promise => assert.rejects(promise, { code: 'ANALYSIS_VALIDATION' });
+ 
+-test('SYNC-06a MySQL approval identities', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async t => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++test('SYNC-06a MySQL approval identities', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async t => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   let store;
+   t.after(async () => { await store?.close(); await pool.end(); });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await migrateMySql(pool);
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
+   store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 61), connectionId: CONN });
+   await store.migrate();
+   await store.upsertPage({ scope, collectedAt: '2026-10-15T02:00:00Z', reports: [
+diff --git a/tests/ops-lock-snapshot.test.mjs b/tests/ops-lock-snapshot.test.mjs
+index 07644a5..db8132d 100644
+--- a/tests/ops-lock-snapshot.test.mjs
++++ b/tests/ops-lock-snapshot.test.mjs
+@@ -3,26 +3,34 @@ import assert from 'node:assert/strict';
+ 
+ import { lockSnapshot } from '../src/analysis-documents-admin.mjs';
+ import { fullSyncLockName } from '../src/full-sync-lock.mjs';
++import { namedLockKey } from '../src/pg-database.mjs';
+ 
+ // HOTFIX-074: the read-only lock and transaction snapshot of the hourly ops summary. It names who
+ // holds a lock (a connection id) and how old and in what state the oldest open transaction is;
+ // it never reads a statement (trx_query, processlist info), so no SQL or document data can reach it.
+ const CONNECTION = 'connection-a';
+ 
++// PostgreSQL: the transactions come from pg_stat_activity, a lock's holder from pg_locks by the two halves of its key
++const lockHalves = name => { const key = BigInt.asUintN(64, namedLockKey(name)); return [key >> 32n, key & 0xffffffffn]; };
+ function fakeDb({ trx = { open: 2, oldest: 75, state: 'LOCK WAIT', operation: 'inserting' }, trxError = null, holders = {}, agents = ['hly.list-sync', 'hly.report-detail'] } = {}) {
+   const queries = [];
+   return {
+     queries,
+     async query(sql, params = []) {
+       queries.push(sql);
+-      if (/information_schema\.innodb_trx/u.test(sql)) {
++      if (/FROM pg_stat_activity/u.test(sql)) {
+         if (trxError) throw trxError;
+         if (/COUNT\(\*\)/u.test(sql)) return [[{ open: trx.open, oldest: trx.oldest }]];
+         return [trx.open ? [{ trx_state: trx.state, trx_operation_state: trx.operation }] : []];
+       }
+       if (/DISTINCT agent_id/u.test(sql)) return [agents.map(agent_id => ({ agent_id }))];
+-      if (/IS_USED_LOCK\(CONCAT\('platform-agent:'/u.test(sql)) return [[{ holder: holders[`agent:${params[0]}`] ?? null }]];
+-      if (/IS_USED_LOCK\(\?\)/u.test(sql)) return [[{ holder: holders[`name:${params[0]}`] ?? null }]];
++      if (/FROM pg_locks/u.test(sql)) {
++        const names = [...Object.keys(holders).filter(label => label.startsWith('name:')).map(label => [label, label.slice(5)]),
++          ...agents.map(agent => [`agent:${agent}`, `platform-agent:${agent}`])];
++        const hit = names.find(([, name]) => { const [high, low] = lockHalves(name); return high === params[0] && low === params[1]; });
++        const holder = hit ? holders[hit[0]] ?? null : null;
++        return [holder === null ? [] : [{ pid: holder }]];
++      }
+       throw new Error(`unexpected query: ${sql}`);
+     },
+   };
+diff --git a/tests/pg-attachment-store.integration.test.mjs b/tests/pg-attachment-store.integration.test.mjs
+new file mode 100644
+index 0000000..2084b33
+--- /dev/null
++++ b/tests/pg-attachment-store.integration.test.mjs
+@@ -0,0 +1,81 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
++import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
++import { openMySqlAttachmentStore } from '../src/mysql-attachment-store.mjs';
++
++// 附件下载、解析队列在真 PostgreSQL 上走一遍（原来只有假库的单元测试）：排队、领取、失败重排、租约过期收回、完成、
++// 解析排队 / 领取 / 完成、直接记一次解析、到期清理。MySQL 的「一句 UPDATE 同时改两张表」在 PG 里拆成了一句带 CTE 的。
++const url = process.env.PG_TEST_URL;
++const skip = url ? false : 'PG_TEST_URL is not set; integration database was not contacted';
++const CONN = 'pg-attachment-integration';
++const scope = { tenantId: 'att-tenant', companyId: 'company-a', allCompaniesInTenant: true };
++const file = name => ({ attachmentOID: `oid-${name}`, fileName: `${name}.pdf`, fileURL: `https://oss-huilianyi.jiuan.com/${name}.pdf`, size: 12 });
++const report = { tenantId: scope.tenantId, docCompanyOID: 'company-a', docCompanyName: 'Company A', companyOID: 'source', expenseReportOID: 'att-report',
++  businessCode: 'ATT-1', formName: 'Corporate Payment', status: '1002', paymentAmount: '1.00', paymentCurrencyCode: 'CNY', lastModifyDate: '2026-10-15T01:00:00Z',
++  approvalHistoryDTOs: [], expenseReportInvoices: [{ invoiceView: { attachments: [file('one'), file('two')] } }] };
++const at = minutes => new Date(Date.parse('2026-11-01T00:00:00Z') + minutes * 60_000).toISOString();
++const sha = char => char.repeat(64);
++
++test('附件队列在真 PG 上：排队 → 领取 → 失败重排 → 租约过期收回 → 完成 → 解析 → 到期清理', { skip }, async t => {
++  const config = parsePgUrl(url);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url, connectionLimit: 4 });
++  t.after(() => pool.end());
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
++  const analysis = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 5), connectionId: CONN });
++  t.after(() => analysis.close());
++  await analysis.migrate();
++  await analysis.upsertPage({ scope, reports: [report] });
++  const store = await openMySqlAttachmentStore({ pool, key: Buffer.alloc(32, 6), connectionId: CONN });
++  const state = async id => (await pool.query('SELECT content_state, content_available FROM audit_attachments WHERE attachment_id = ?', [id]))[0][0];
++  const fetches = async id => (await pool.query('SELECT attempt_no, status FROM audit_attachment_fetches WHERE attachment_id = ? ORDER BY attempt_no', [id]))[0];
++
++  const queued = await store.enqueuePending({ now: at(0) });
++  assert.equal(queued.length, 2);
++  assert.deepEqual(queued.map(item => item.attemptNo), [1, 1]);
++  assert.deepEqual(await store.enqueuePending({ now: at(0) }), [], '已经排上的不再排');
++
++  // 第一个领走后失败、一小时后再试；第二个领走后租约过期，被收回
++  const first = await store.claimNext({ workerId: 'w1', leaseMs: 60_000, now: at(1) });
++  assert.equal((await state(first.attachment_id)).content_state, 'fetching');
++  const failed = await store.failFetch({ fetchId: first.fetch_id, attachmentId: first.attachment_id, workerId: 'w1', failureCode: 'HTTP_503', failureMessage: 'busy', retryAt: at(60), finishedAt: at(2) });
++  assert.deepEqual([failed.status, failed.nextAttempt], ['failed', 2]);
++  assert.deepEqual(await fetches(first.attachment_id), [{ attempt_no: 1, status: 'failed' }, { attempt_no: 2, status: 'queued' }]);
++  const second = await store.claimNext({ workerId: 'w2', leaseMs: 60_000, now: at(3) });
++  assert.notEqual(second.attachment_id, first.attachment_id, '还没到重试时间的不领');
++  assert.equal(await store.claimNext({ workerId: 'w3', leaseMs: 60_000, now: at(3) }), null);
++  assert.ok(await store.recoverExpired({ now: at(10) }) >= 1);
++  assert.deepEqual((await fetches(second.attachment_id)).map(row => row.status), ['queued']);
++  assert.equal((await state(second.attachment_id)).content_state, 'queued');
++
++  // 收回的那个再领、下载完成
++  const again = await store.claimNext({ workerId: 'w4', leaseMs: 60_000, now: at(11) });
++  assert.equal(again.attachment_id, second.attachment_id);
++  await store.completeFetch({ fetchId: again.fetch_id, attachmentId: again.attachment_id, workerId: 'w4', storageRef: 'aa/two.bin', sha256: sha('a'), receivedBytes: 12, retentionUntil: at(600), finishedAt: at(12) });
++  assert.deepEqual(await state(again.attachment_id), { content_state: 'downloaded', content_available: 1 });
++  await assert.rejects(store.completeFetch({ fetchId: again.fetch_id, attachmentId: again.attachment_id, workerId: 'w4', storageRef: 'aa/two.bin', sha256: sha('a'), receivedBytes: 12, finishedAt: at(13) }),
++    error => error.code === 'ANALYSIS_ATTACHMENT_LEASE', '同一个租约只能完成一次');
++
++  // 解析：排队（下载了、还没解析过的）→ 领取 → 完成；再直接记一次别的方法，记两遍是同一行
++  const extractions = await store.enqueuePendingExtractions({ method: 'text', parserVersion: 'p1', now: at(14) });
++  assert.deepEqual(extractions.map(item => item.attachment_id), [again.attachment_id]);
++  const job = await store.claimNextExtraction({ workerId: 'x1', leaseMs: 60_000, now: at(15) });
++  assert.equal(job.extraction_id, extractions[0].extractionId);
++  await store.completeExtraction({ extractionId: job.extraction_id, attachmentId: job.attachment_id, workerId: 'x1', contentSha256: sha('a'), method: 'text', parserVersion: 'p1', status: 'succeeded', pageCount: 1, coverageState: 'complete', text: '合成文字', finishedAt: at(16) });
++  for (let round = 0; round < 2; round += 1) {
++    await store.recordExtraction({ attachmentId: job.attachment_id, method: 'ocr', parserVersion: 'p2', contentSha256: sha('a'), status: 'succeeded', pageCount: 1, coverageState: 'complete', text: `第 ${round} 次`, finishedAt: at(17 + round) });
++  }
++  const [rows] = await pool.query('SELECT method, status FROM audit_attachment_extractions WHERE attachment_id = ? ORDER BY method', [job.attachment_id]);
++  assert.deepEqual(rows, [{ method: 'ocr', status: 'succeeded' }, { method: 'text', status: 'succeeded' }]);
++  assert.deepEqual(await store.enqueuePendingExtractions({ method: 'text', parserVersion: 'p1', now: at(20) }), []);
++
++  // 到期清理：只清下载了、过了保留期的
++  const expired = await store.expireDownloaded({ before: at(601) });
++  assert.deepEqual(expired.map(row => row.attachment_id), [again.attachment_id]);
++  assert.deepEqual(await state(again.attachment_id), { content_state: 'expired', content_available: 0 });
++});

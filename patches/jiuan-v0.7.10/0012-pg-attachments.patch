@@ -1,0 +1,278 @@
+补丁 0012：附件下载 / 解析队列（src/mysql-attachment-store.mjs）和单据数据的摘要、清空、锁快照（src/analysis-documents-admin.mjs）改成 PostgreSQL。
+改了哪几类写法：
+- MySQL 的 UPDATE … JOIN 一句改两张表（租约过期的下载和它的附件）→ 一句带两个 UPDATE 的 CTE；返回的「改了几行」照旧是两张表加起来。
+  只改一张表的 UPDATE … JOIN → UPDATE … FROM … WHERE（SET 里的列不带表别名）。
+- FOR UPDATE 不能和聚合一起用：COALESCE(MAX(attempt_no),0) … FOR UPDATE → 先在子查询里锁住那几行再取最大。
+- FOR UPDATE 不能锁外连接可空的一边：带 LEFT JOIN 的领取 → FOR UPDATE OF a SKIP LOCKED（锁附件那一行）。
+- ON DUPLICATE KEY UPDATE → ON CONFLICT (fetch_id / extraction_id) DO UPDATE …（另一个唯一键由同几列算出编号，一起撞）。
+- content_available=TRUE / FALSE → 1 / 0；? IS NULL → ?::text IS NULL；可空列排序 NULLS FIRST（同 MySQL 升序）。
+- 表清单：information_schema 的 TABLE_SCHEMA = DATABASE() → table_schema = current_schema()；反引号 → 双引号；别名 ruleWorkspace 加双引号。
+- JSON_UNQUOTE(JSON_EXTRACT(summary_json,'$.storeErrorCause')) → summary_json->>'storeErrorCause'；UTC_TIMESTAMP(6) - INTERVAL 24 HOUR →
+  (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '24 hours'。
+- 锁快照：InnoDB 的 information_schema.innodb_trx → pg_stat_activity（本库里、除了自己的、有事务开头时间的会话：几个、最老的多少秒、
+  它的 state 和 wait_event_type，从不读语句）；锁的持有者 IS_USED_LOCK → isNamedLockUsed（后端进程号）；Agent 的运行锁名
+  platform-agent:<agentId>（advisory 锁本来就按库分开，不再拼库名；agent-runner 在补丁 0014 里用同一个名字）。
+- 顺带修 0011 漏的一处：listApprovalIndexCandidates 的别名 companyId 加双引号。
+
+diff --git a/src/analysis-documents-admin.mjs b/src/analysis-documents-admin.mjs
+index 9c6154c..f40a1a4 100644
+--- a/src/analysis-documents-admin.mjs
++++ b/src/analysis-documents-admin.mjs
+@@ -1,7 +1,8 @@
+ import { STORE_ERROR_CAUSE, storeCause } from './analysis-sync.mjs';
+ import { fullSyncLockName } from './full-sync-lock.mjs';
++import { isNamedLockUsed } from './pg-database.mjs';
+ 
+-// Summary and reset of the synced document data in the formal MySQL database.
++// Summary and reset of the synced document data in the formal analysis database (PostgreSQL).
+ //
+ // Owner asked on 2026-10-10 to clear the document data on the server and sync it
+ // again from the Huilianyi production environment. "Document data" is everything a
+@@ -40,18 +41,18 @@ export async function resetAfterManifestRemoval({ removeManifests, reset } = {})
+ }
+ 
+ async function existingTables(db) {
+-  const [rows] = await db.query('SELECT TABLE_NAME AS name FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
++  const [rows] = await db.query('SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema()');
+   return new Set(rows.map(row => String(row.name)));
+ }
+ async function count(db, table) {
+-  const [rows] = await db.query(`SELECT COUNT(*) AS n FROM \`${table}\``);
++  const [rows] = await db.query(`SELECT COUNT(*) AS n FROM "${table}"`);
+   return Number(rows[0]?.n || 0);
+ }
+ async function stateCounts(db, connectionId, tables) {
+   if (!tables.has('analysis_sync_states')) return { derived: 0, ruleWorkspace: 0, payments: 0, other: 0 };
+   const [rows] = await db.query(`SELECT
+       SUM(CASE WHEN ${DERIVED_STATE} THEN 1 ELSE 0 END) AS derived,
+-      SUM(CASE WHEN scope_key LIKE 'formal-rule-workspace:%' THEN 1 ELSE 0 END) AS ruleWorkspace,
++      SUM(CASE WHEN scope_key LIKE 'formal-rule-workspace:%' THEN 1 ELSE 0 END) AS "ruleWorkspace",
+       SUM(CASE WHEN scope_key LIKE 'formal-payments:%' THEN 1 ELSE 0 END) AS payments,
+       COUNT(*) AS total
+     FROM analysis_sync_states WHERE connection_id = ?`, [connectionId]);
+@@ -108,7 +109,7 @@ export async function documentDataSummary(db, connectionId) {
+     const laneCauses = new Map();
+     for (const lane of ['corporate', 'employee']) {
+       const [rows] = await db.query(
+-        `SELECT JSON_UNQUOTE(JSON_EXTRACT(summary_json, '$.storeErrorCause')) AS store_error_cause, started_at
++        `SELECT summary_json->>'storeErrorCause' AS store_error_cause, started_at
+            FROM platform_agent_runs
+           WHERE agent_id = 'hly.list-sync' AND lane = ? AND mode = 'incremental' AND status = 'failed'
+           ORDER BY started_at DESC
+@@ -124,7 +125,7 @@ export async function documentDataSummary(db, connectionId) {
+       `SELECT agent_id, status, COUNT(*) AS count
+          FROM platform_agent_runs
+         WHERE agent_id IN (${placeholders})
+-          AND started_at >= UTC_TIMESTAMP(6) - INTERVAL 24 HOUR
++          AND started_at >= (now() AT TIME ZONE 'UTC')::timestamp(6) - interval '24 hours'
+           AND status IN ('succeeded', 'failed', 'partial')
+         GROUP BY agent_id, status`,
+       agentIds,
+@@ -162,8 +163,8 @@ export async function documentDataSummary(db, connectionId) {
+   return summary;
+ }
+ 
+-// InnoDB's own wording for a transaction's state (RUNNING, LOCK WAIT, inserting, ...); anything
+-// else is never repeated.
++// PostgreSQL's own wording for a session's state and what it waits on (active, idle in transaction,
++// Lock, Client, ...); anything else is never repeated.
+ const trxState = value => value == null ? null : typeof value === 'string' && /^[A-Za-z ]{1,64}$/u.test(value) ? value : 'OTHER';
+ const holderOf = row => {
+   const id = row?.holder == null ? null : Number(row.holder);
+@@ -180,27 +181,25 @@ async function runAgentIds(db) {
+ 
+ /**
+  * HOTFIX-074: a read-only look at what can block a sync, for the hourly ops summary. The open
+- * InnoDB transactions (how many, the oldest one's age and state, never its statement), and who
+- * holds the full-sync lock and each agent's run lock (a connection id, never a statement).
+- * The app's database user has no PROCESS privilege on the servers, so the transaction part is
+- * usually a short code saying so; ops.sh reads it as root and replaces it.
++ * transactions in this database other than this session's own (how many, the oldest one's age,
++ * state and wait, never its statement), and who holds the full-sync lock and each agent's run lock
++ * (a backend process id, never a statement). PostgreSQL shows another role's sessions without their
++ * transaction start, so those do not count; the app's own sessions are the ones that block a sync.
+  */
++const OPEN_TRANSACTIONS = "FROM pg_stat_activity WHERE datname = current_database() AND xact_start IS NOT NULL AND pid <> pg_backend_pid()";
+ export async function lockSnapshot(db, connectionId) {
+   let transactions;
+   try {
+-    const [[totals]] = await db.query('SELECT COUNT(*) AS open, MAX(TIMESTAMPDIFF(SECOND, trx_started, NOW())) AS oldest FROM information_schema.innodb_trx');
+-    const [oldest] = await db.query('SELECT trx_state, trx_operation_state FROM information_schema.innodb_trx ORDER BY trx_started LIMIT 1');
++    const [[totals]] = await db.query(`SELECT COUNT(*) AS open, floor(MAX(EXTRACT(EPOCH FROM (now() - xact_start))))::bigint AS oldest ${OPEN_TRANSACTIONS}`);
++    const [oldest] = await db.query(`SELECT state AS trx_state, wait_event_type AS trx_operation_state ${OPEN_TRANSACTIONS} ORDER BY xact_start LIMIT 1`);
+     transactions = { open: Number(totals?.open ?? 0), oldestSeconds: totals?.oldest == null ? null : Number(totals.oldest),
+       oldestState: trxState(oldest?.[0]?.trx_state), oldestOperationState: trxState(oldest?.[0]?.trx_operation_state) };
+   } catch (error) {
+     transactions = { unavailable: storeCause(error) };
+   }
+-  const [[fullSync]] = await db.query('SELECT IS_USED_LOCK(?) AS holder', [fullSyncLockName(connectionId)]);
++  const fullSync = { holder: await isNamedLockUsed(db, fullSyncLockName(connectionId)) };
+   const agents = {};
+-  for (const agentId of await runAgentIds(db)) {
+-    const [[row]] = await db.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:', ?, ':', DATABASE())) AS holder", [agentId]);
+-    agents[agentId] = holderOf(row);
+-  }
++  for (const agentId of await runAgentIds(db)) agents[agentId] = holderOf({ holder: await isNamedLockUsed(db, `platform-agent:${agentId}`) });
+   return { transactions, fullSync: holderOf(fullSync), agents };
+ }
+ 
+@@ -241,7 +240,7 @@ export async function resetDocumentData(pool, connectionId, { confirm, execute =
+     // connection can appear between the check and the deletes.
+     const [locked] = await db.query('SELECT connection_id FROM analysis_connections FOR UPDATE');
+     if (locked.length !== 1 || locked[0].connection_id !== connectionId) fail('RESET_SHARED_DATABASE', 'this database serves other connections; nothing changed');
+-    for (const table of DOCUMENT_TABLES) if (tables.has(table)) await db.query(`DELETE FROM \`${table}\``);
++    for (const table of DOCUMENT_TABLES) if (tables.has(table)) await db.query(`DELETE FROM "${table}"`);
+     if (tables.has('analysis_sync_states')) await db.query(`DELETE FROM analysis_sync_states WHERE connection_id = ? AND ${DERIVED_STATE}`, [connectionId]);
+     const after = await documentDataSummary(db, connectionId);
+     const leftover = DOCUMENT_TABLES.filter(table => tables.has(table) && after.tables[table] !== 0);
+diff --git a/src/mysql-analysis-store.mjs b/src/mysql-analysis-store.mjs
+index d5fcaa1..633dc47 100644
+--- a/src/mysql-analysis-store.mjs
++++ b/src/mysql-analysis-store.mjs
+@@ -279,7 +279,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+     async listApprovalIndexCandidates({ limit = 100 } = {}) {
+       ready();
+       pageNumber(limit, 500); if (limit < 1) throw problem('ANALYSIS_VALIDATION');
+-      const [rows] = await pool.query(`SELECT a.document_id AS id,a.company_id AS companyId,a.source_version AS version,
++      const [rows] = await pool.query(`SELECT a.document_id AS id,a.company_id AS "companyId",a.source_version AS version,
+         v.payload_ciphertext AS audit_payload
+         FROM audit_documents a
+         JOIN audit_document_versions v ON v.document_id=a.document_id AND v.source_version=a.source_version
+diff --git a/src/mysql-attachment-store.mjs b/src/mysql-attachment-store.mjs
+index 5141ecc..8adcf7f 100644
+--- a/src/mysql-attachment-store.mjs
++++ b/src/mysql-attachment-store.mjs
+@@ -25,6 +25,16 @@ function transaction(pool, callback) {
+   })();
+ }
+ 
++// Fetches whose lease ran out go back to the queue, and so do their attachments (params: now, connection, now).
++const EXPIRE_FETCHES = `WITH expired AS (
++          UPDATE audit_attachment_fetches f SET status='queued',next_retry_at=?,lease_owner=NULL,lease_expires_at=NULL
++          FROM audit_attachments a JOIN audit_documents d ON d.document_id=a.document_id
++          WHERE a.attachment_id=f.attachment_id AND d.source_connection_id=? AND f.status='running' AND f.lease_expires_at IS NOT NULL AND f.lease_expires_at<=?
++          RETURNING f.attachment_id
++        ), attachments AS (
++          UPDATE audit_attachments SET content_state='queued' WHERE attachment_id IN (SELECT attachment_id FROM expired) RETURNING attachment_id
++        ) SELECT (SELECT COUNT(*) FROM expired) + (SELECT COUNT(*) FROM attachments) AS changed`;
++
+ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {}) {
+   ensurePool(pool); ensureKey(key); connectionId = safeText(connectionId);
+   const sealText = (value, purpose) => {
+@@ -42,13 +52,14 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+         const [rows] = await client.query(`SELECT a.attachment_id,a.document_id,a.source_attachment_id,a.source_version
+           FROM audit_attachments a JOIN audit_documents d ON d.document_id=a.document_id
+           WHERE d.source_connection_id=? AND a.metadata_state='listed' AND a.content_state IN ('not_requested','failed')
+-          ORDER BY a.updated_at,a.attachment_id LIMIT ? FOR UPDATE SKIP LOCKED`, [connectionId, limit]);
++          ORDER BY a.updated_at,a.attachment_id LIMIT ? FOR UPDATE OF a SKIP LOCKED`, [connectionId, limit]);
+         const queued = [];
+         for (const row of rows) {
+-          const [attemptRows] = await client.query('SELECT COALESCE(MAX(attempt_no),0) AS attempt_no FROM audit_attachment_fetches WHERE attachment_id=? FOR UPDATE', [row.attachment_id]);
++          // PostgreSQL locks rows, not an aggregate: lock the attempts, then take their highest number
++          const [attemptRows] = await client.query('SELECT COALESCE(MAX(attempt_no),0) AS attempt_no FROM (SELECT attempt_no FROM audit_attachment_fetches WHERE attachment_id=? FOR UPDATE) attempts', [row.attachment_id]);
+           const attemptNo = Number(attemptRows[0]?.attempt_no || 0) + 1, id = fetchId(row.attachment_id, attemptNo);
+           await client.query(`INSERT INTO audit_attachment_fetches(fetch_id,attachment_id,attempt_no,status,queued_at,next_retry_at)
+-            VALUES (?,?,?,'queued',?,?) ON DUPLICATE KEY UPDATE status='queued',queued_at=VALUES(queued_at),next_retry_at=VALUES(next_retry_at),failure_code=NULL,failure_message=NULL`, [id, row.attachment_id, attemptNo, nowSql, nowSql]);
++            VALUES (?,?,?,'queued',?,?) ON CONFLICT (fetch_id) DO UPDATE SET status='queued',queued_at=EXCLUDED.queued_at,next_retry_at=EXCLUDED.next_retry_at,failure_code=NULL,failure_message=NULL`, [id, row.attachment_id, attemptNo, nowSql, nowSql]);
+           await client.query(`UPDATE audit_attachments SET content_state='queued',failure_code=NULL WHERE attachment_id=? AND content_state IN ('not_requested','failed')`, [row.attachment_id]);
+           queued.push({ ...row, fetchId: id, attemptNo });
+         }
+@@ -57,21 +68,19 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+     },
+     async recoverExpired({ now = new Date().toISOString() } = {}) {
+       now = iso(now);
+-      const [result] = await pool.query(`UPDATE audit_attachment_fetches f JOIN audit_attachments a ON a.attachment_id=f.attachment_id
+-        JOIN audit_documents d ON d.document_id=a.document_id SET f.status='queued',f.next_retry_at=?,f.lease_owner=NULL,f.lease_expires_at=NULL,
+-        a.content_state='queued' WHERE d.source_connection_id=? AND f.status='running' AND f.lease_expires_at IS NOT NULL AND f.lease_expires_at<=?`, [mysqlDateTime(now), connectionId, mysqlDateTime(now)]);
+-      return Number(result?.affectedRows || 0);
++      // MySQL changed both tables in one UPDATE … JOIN and counted the rows of both; PostgreSQL updates one table per
++      // statement, so the expired fetches and their attachments are two updates in one statement, counted the same way.
++      const [rows] = await pool.query(`${EXPIRE_FETCHES}`, [mysqlDateTime(now), connectionId, mysqlDateTime(now)]);
++      return Number(rows?.[0]?.changed || 0);
+     },
+     async claimNext({ workerId, leaseMs = 20 * 60 * 1000, now = new Date().toISOString() } = {}) {
+       workerId = safeText(workerId); positive(leaseMs, 24 * 60 * 60 * 1000); now = iso(now);
+       return transaction(pool, async client => {
+-        await client.query(`UPDATE audit_attachment_fetches f JOIN audit_attachments a ON a.attachment_id=f.attachment_id
+-          JOIN audit_documents d ON d.document_id=a.document_id SET f.status='queued',f.next_retry_at=?,f.lease_owner=NULL,f.lease_expires_at=NULL,a.content_state='queued'
+-          WHERE d.source_connection_id=? AND f.status='running' AND f.lease_expires_at IS NOT NULL AND f.lease_expires_at<=?`, [mysqlDateTime(now), connectionId, mysqlDateTime(now)]);
++        await client.query(EXPIRE_FETCHES, [mysqlDateTime(now), connectionId, mysqlDateTime(now)]);
+         const [rows] = await client.query(`SELECT f.fetch_id,f.attachment_id,f.attempt_no,f.status,f.next_retry_at,a.document_id,a.source_attachment_id,a.source_version,a.name,a.media_type,a.declared_bytes,a.storage_ref,d.tenant_id,d.company_id,d.legal_entity_id,d.source_type,d.document_number
+           FROM audit_attachment_fetches f JOIN audit_attachments a ON a.attachment_id=f.attachment_id
+           JOIN audit_documents d ON d.document_id=a.document_id WHERE d.source_connection_id=? AND f.status='queued'
+-          AND (f.next_retry_at IS NULL OR f.next_retry_at<=?) ORDER BY f.next_retry_at,f.queued_at,f.fetch_id LIMIT 1 FOR UPDATE SKIP LOCKED`, [connectionId, mysqlDateTime(now)]);
++          AND (f.next_retry_at IS NULL OR f.next_retry_at<=?) ORDER BY f.next_retry_at NULLS FIRST,f.queued_at,f.fetch_id LIMIT 1 FOR UPDATE SKIP LOCKED`, [connectionId, mysqlDateTime(now)]);
+         const row = rows[0]; if (!row) return null;
+         const leaseExpiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
+         await client.query(`UPDATE audit_attachment_fetches SET status='running',lease_owner=?,lease_expires_at=?,started_at=?,finished_at=NULL
+@@ -87,7 +96,7 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+         const [result] = await client.query(`UPDATE audit_attachment_fetches SET status='succeeded',response_hash=?,received_bytes=?,finished_at=?,lease_owner=NULL,lease_expires_at=NULL,failure_code=NULL,failure_message=NULL
+           WHERE fetch_id=? AND attachment_id=? AND status='running' AND lease_owner=?`, [sha256, receivedBytes, mysqlDateTime(finishedAt), id, attachmentId, workerId]);
+         if (Number(result?.affectedRows || 0) !== 1) throw problem('ANALYSIS_ATTACHMENT_LEASE', '附件读取租约已失效。');
+-        await client.query(`UPDATE audit_attachments SET sha256=?,storage_ref=?,key_version=?,content_state='downloaded',content_available=TRUE,coverage_state='partial',fetched_at=?,retention_until=?,deleted_at=NULL,last_fetch_id=?,failure_code=NULL
++        await client.query(`UPDATE audit_attachments SET sha256=?,storage_ref=?,key_version=?,content_state='downloaded',content_available=1,coverage_state='partial',fetched_at=?,retention_until=?,deleted_at=NULL,last_fetch_id=?,failure_code=NULL
+           WHERE attachment_id=?`, [sha256, storageRef, keyVersion, mysqlDateTime(finishedAt), retentionUntil ? mysqlDateTime(retentionUntil) : null, id, attachmentId]);
+         return { fetchId: id, attachmentId, status: 'succeeded', sha256, receivedBytes, storageRef };
+       });
+@@ -127,12 +136,12 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+           FROM audit_attachments a JOIN audit_documents d ON d.document_id=a.document_id
+           LEFT JOIN audit_attachment_extractions e ON e.attachment_id=a.attachment_id AND e.content_sha256=a.sha256 AND e.method=? AND e.parser_version=? AND e.model_version=''
+           WHERE d.source_connection_id=? AND a.content_state='downloaded' AND a.sha256 IS NOT NULL AND e.extraction_id IS NULL
+-          ORDER BY a.fetched_at,a.attachment_id LIMIT ? FOR UPDATE SKIP LOCKED`, [method, parserVersion, connectionId, limit]);
++          ORDER BY a.fetched_at NULLS FIRST,a.attachment_id LIMIT ? FOR UPDATE OF a SKIP LOCKED`, [method, parserVersion, connectionId, limit]);
+         const queued = [];
+         for (const row of rows) {
+           const extractionId = digest(`attachment-extraction:${row.attachment_id}:${row.sha256}:${method}:${parserVersion}:`);
+           await client.query(`INSERT INTO audit_attachment_extractions(extraction_id,attachment_id,content_sha256,method,parser_version,model_version,status,coverage_state,next_retry_at)
+-            VALUES (?,?,?,?,?,'','queued','unknown',?) ON DUPLICATE KEY UPDATE status='queued',next_retry_at=VALUES(next_retry_at)`, [extractionId, row.attachment_id, row.sha256, method, parserVersion, mysqlDateTime(now)]);
++            VALUES (?,?,?,?,?,'','queued','unknown',?) ON CONFLICT (extraction_id) DO UPDATE SET status='queued',next_retry_at=EXCLUDED.next_retry_at`, [extractionId, row.attachment_id, row.sha256, method, parserVersion, mysqlDateTime(now)]);
+           queued.push({ ...row, extractionId, method, parserVersion });
+         }
+         return queued;
+@@ -141,13 +150,13 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+     async claimNextExtraction({ workerId, leaseMs = 20 * 60 * 1000, now = new Date().toISOString() } = {}) {
+       workerId = safeText(workerId); positive(leaseMs, 24 * 60 * 60 * 1000); now = iso(now);
+       return transaction(pool, async client => {
+-        await client.query(`UPDATE audit_attachment_extractions e JOIN audit_attachments a ON a.attachment_id=e.attachment_id
+-          JOIN audit_documents d ON d.document_id=a.document_id SET e.status='queued',e.next_retry_at=?,e.lease_owner=NULL,e.lease_expires_at=NULL
+-          WHERE d.source_connection_id=? AND e.status='running' AND e.lease_expires_at IS NOT NULL AND e.lease_expires_at<=?`, [mysqlDateTime(now), connectionId, mysqlDateTime(now)]);
++        await client.query(`UPDATE audit_attachment_extractions e SET status='queued',next_retry_at=?,lease_owner=NULL,lease_expires_at=NULL
++          FROM audit_attachments a JOIN audit_documents d ON d.document_id=a.document_id
++          WHERE a.attachment_id=e.attachment_id AND d.source_connection_id=? AND e.status='running' AND e.lease_expires_at IS NOT NULL AND e.lease_expires_at<=?`, [mysqlDateTime(now), connectionId, mysqlDateTime(now)]);
+         const [rows] = await client.query(`SELECT e.extraction_id,e.attachment_id,e.content_sha256,e.method,e.parser_version,e.model_version,e.attempt_no,a.storage_ref,a.media_type,a.declared_bytes
+           FROM audit_attachment_extractions e JOIN audit_attachments a ON a.attachment_id=e.attachment_id JOIN audit_documents d ON d.document_id=a.document_id
+           WHERE d.source_connection_id=? AND e.status='queued' AND (e.next_retry_at IS NULL OR e.next_retry_at<=?)
+-          ORDER BY e.next_retry_at,e.extraction_id LIMIT 1 FOR UPDATE SKIP LOCKED`, [connectionId, mysqlDateTime(now)]);
++          ORDER BY e.next_retry_at NULLS FIRST,e.extraction_id LIMIT 1 FOR UPDATE SKIP LOCKED`, [connectionId, mysqlDateTime(now)]);
+         const row = rows[0]; if (!row) return null;
+         const leaseExpiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
+         await client.query(`UPDATE audit_attachment_extractions SET status='running',lease_owner=?,lease_expires_at=?,started_at=? WHERE extraction_id=? AND status='queued'`, [workerId, mysqlDateTime(leaseExpiresAt), mysqlDateTime(now), row.extraction_id]);
+@@ -164,7 +173,7 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+         const [result] = await client.query(`UPDATE audit_attachment_extractions SET status=?,page_count=?,coverage_state=?,text_ciphertext=?,text_sha256=?,result_sha256=?,finished_at=?,failure_code=?,failure_message=?,lease_owner=NULL,lease_expires_at=NULL
+           WHERE extraction_id=? AND attachment_id=? AND content_sha256=? AND status='running' AND lease_owner=?`, [status, pageCount, coverageState, textCiphertext, textSha256, textSha256, mysqlDateTime(finishedAt), failureCode, redactMessage(failureMessage), extractionId, attachmentId, contentSha256, workerId]);
+         if (Number(result?.affectedRows || 0) !== 1) throw problem('ANALYSIS_ATTACHMENT_LEASE', '附件解析租约已失效。');
+-        await client.query('UPDATE audit_attachments SET parser_version=?,page_count=?,last_extraction_id=?,failure_code=CASE WHEN ? IS NULL THEN failure_code ELSE ? END WHERE attachment_id=?', [parserVersion, pageCount, extractionId, failureCode, failureCode, attachmentId]);
++        await client.query('UPDATE audit_attachments SET parser_version=?,page_count=?,last_extraction_id=?,failure_code=CASE WHEN ?::text IS NULL THEN failure_code ELSE ? END WHERE attachment_id=?', [parserVersion, pageCount, extractionId, failureCode, failureCode, attachmentId]);
+         return { extractionId, attachmentId, status, contentSha256, textSha256 };
+       });
+     },
+@@ -193,8 +202,8 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+       const extractionId = digest(`attachment-extraction:${attachmentId}:${contentHash}:${method}:${parserVersion}:${modelVersion}`), textCiphertext = status === 'succeeded' || status === 'partial' ? sealText(text, `attachment-extraction:${extractionId}`) : null, textSha256 = typeof text === 'string' ? digest(text) : null;
+       await transaction(pool, async client => {
+         await client.query(`INSERT INTO audit_attachment_extractions(extraction_id,attachment_id,content_sha256,method,parser_version,model_version,status,page_count,coverage_state,text_ciphertext,text_sha256,result_sha256,started_at,finished_at,failure_code,failure_message)
+-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE status=VALUES(status),page_count=VALUES(page_count),coverage_state=VALUES(coverage_state),text_ciphertext=VALUES(text_ciphertext),text_sha256=VALUES(text_sha256),result_sha256=VALUES(result_sha256),finished_at=VALUES(finished_at),failure_code=VALUES(failure_code),failure_message=VALUES(failure_message)`, [extractionId, attachmentId, contentHash, method, parserVersion, modelVersion, status, pageCount, coverageState, textCiphertext, textSha256, textSha256, startedAt ? mysqlDateTime(startedAt) : null, mysqlDateTime(finishedAt), failureCode, redactMessage(failureMessage)]);
+-        await client.query(`UPDATE audit_attachments SET parser_version=?,page_count=?,last_extraction_id=?,failure_code=CASE WHEN ? IS NULL THEN failure_code ELSE ? END WHERE attachment_id=?`, [parserVersion, pageCount, extractionId, failureCode, failureCode, attachmentId]);
++          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (extraction_id) DO UPDATE SET status=EXCLUDED.status,page_count=EXCLUDED.page_count,coverage_state=EXCLUDED.coverage_state,text_ciphertext=EXCLUDED.text_ciphertext,text_sha256=EXCLUDED.text_sha256,result_sha256=EXCLUDED.result_sha256,finished_at=EXCLUDED.finished_at,failure_code=EXCLUDED.failure_code,failure_message=EXCLUDED.failure_message`, [extractionId, attachmentId, contentHash, method, parserVersion, modelVersion, status, pageCount, coverageState, textCiphertext, textSha256, textSha256, startedAt ? mysqlDateTime(startedAt) : null, mysqlDateTime(finishedAt), failureCode, redactMessage(failureMessage)]);
++        await client.query(`UPDATE audit_attachments SET parser_version=?,page_count=?,last_extraction_id=?,failure_code=CASE WHEN ?::text IS NULL THEN failure_code ELSE ? END WHERE attachment_id=?`, [parserVersion, pageCount, extractionId, failureCode, failureCode, attachmentId]);
+       });
+       return { extractionId, attachmentId, method, parserVersion, status, coverageState, textSha256 };
+     },
+@@ -202,7 +211,7 @@ export async function openMySqlAttachmentStore({ pool, key, connectionId } = {})
+       before = iso(before); limit = positive(limit, 5000);
+       return transaction(pool, async client => {
+         const [rows] = await client.query(`SELECT attachment_id,storage_ref FROM audit_attachments WHERE content_state='downloaded' AND retention_until IS NOT NULL AND retention_until<? ORDER BY retention_until,attachment_id LIMIT ? FOR UPDATE SKIP LOCKED`, [mysqlDateTime(before), limit]);
+-        for (const row of rows) await client.query(`UPDATE audit_attachments SET content_state='expired',content_available=FALSE,storage_ref=NULL,key_version=NULL,deleted_at=? WHERE attachment_id=?`, [mysqlDateTime(before), row.attachment_id]);
++        for (const row of rows) await client.query(`UPDATE audit_attachments SET content_state='expired',content_available=0,storage_ref=NULL,key_version=NULL,deleted_at=? WHERE attachment_id=?`, [mysqlDateTime(before), row.attachment_id]);
+         return rows;
+       });
+     },
