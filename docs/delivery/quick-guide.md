@@ -15,7 +15,7 @@ audience: 所有第一次接触这个项目的人：审核员、管理员、部�
 
 测试台的站点是 <https://jiuan-v0710.tinyboat.blog>，数据全部虚构，复核不回写汇联易。
 
-![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
+![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
 
 ## 2. 你是谁、从哪开始
 
@@ -84,7 +84,7 @@ audience: 所有第一次接触这个项目的人：审核员、管理员、部�
 | 1. PG 与知识库后端 | 起一台主机（自己的 SSH 密钥），填 `kb/deploy.env`（审核 Agent 还没建，写 `AGENT_PATCH_PROMPT=false`），`cd kb && ./deploy.sh preflight,db,network,egress,connector --dry-run`，再去掉 `--dry-run`，然后 `./deploy.sh verify` | 除了「规则表不存在」（规则还没上传）各层都是 ✓；Nexus 上有 PG 数据连接器和数据库凭证密钥 |
 | 2. Nexus 上的 Agent | PG 知识库 Agent 照 `customer-deploy/knowledgebase-writer-agent-pg/` 部署；审核 Agent：`python3 audit-agent/setup.py --env <环境配置> --dry-run`，再去掉 `--dry-run`，然后 `apply.py` 同样先演练再下发；发布者本人签发两把调用密钥 | 两个 A2A 发布在线 |
 | 3. 前端 | `cp poc/infra/env/example.env poc/infra/env/<环境>.env` 填好（包括第 2 块拿到的知识库 Agent 的发布编号 `KB_PG_PUBLICATION_ID`；审核 Agent 的 `PUBLICATION_ID` 由 `setup.py` 写回，只给它和端到端测试用），`DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/infra/deploy.sh`，再按第 4 节接好两个 Agent、在「知识库」页上传制度 | `https://<站点>/poc/healthz` 回 `ok`，单据池出 AI 建议 |
-| 验收 | `DEPLOY_ENV=… KB_E2E_DOCX=<风险判断卡 .docx> bash poc/app/test/e2e/run.sh` | 26 条全过 |
+| 验收 | `DEPLOY_ENV=… KB_E2E_DOCX=<风险判断卡 .docx> bash poc/app/test/e2e/run.sh` | 27 条全过 |
 
 本机要有 Node.js 24、AWS CLI v2、`uv`、`python3`、`ssh`、`rsync`、`openssl`、`curl`，跑端到端还要 Chrome。密钥配置 `poc/infra/secrets.env` 第一次部署时自动生成，当面交接，不进仓库。
 

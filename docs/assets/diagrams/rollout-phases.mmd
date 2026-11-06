@@ -2,7 +2,7 @@ flowchart TB
   p0["阶段 0 · 对接与拍板<br/>补丁基线 · 生产用哪套 Nexus<br/>数据外发 · review_advice@1 的时限"]
   p1["阶段 1 · 先部署 PG 与知识库<br/>九安用自己的 SSH 密钥（kb/）<br/>Nexus 连接器 · 规则入库"]
   p2["阶段 2 · Nexus 上的 Agent 与发布<br/>审核 Agent · PG 知识库 Agent<br/>（audit-agent/ · customer-deploy/）"]
-  p3["阶段 3 · 前端分批部署与试运行<br/>补丁 0001–0007 并入九安<br/>Agent 接入 · 限定公司与单据"]
+  p3["阶段 3 · 前端分批部署与试运行<br/>补丁 0001–0017 按前置 1、2 并入九安<br/>Agent 接入 · 限定公司与单据"]
   p4["阶段 4 · 生产上线<br/>密钥与凭证清理<br/>回退演练"]
   p0 -- "门槛：前置都有结论" --> p1
   p1 -- "门槛：kb verify 通过" --> p2

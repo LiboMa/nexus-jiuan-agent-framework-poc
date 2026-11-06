@@ -246,6 +246,13 @@ nexus-a2a 调 A2A 适配层，适配层拿着管理员在「Agent
 <td>—</td>
 <td>0004、0005（测试台外壳经 A2A 调知识库 Agent）</td>
 </tr>
+<tr>
+<td>数据层（存储、迁移、命名锁）</td>
+<td><code>src/<wbr>analysis-<wbr>database.<wbr>mjs</code> 等；开发包里是
+MySQL</td>
+<td>0008–0017：换成 PostgreSQL（2026-11-06），和 Agent
+对接无关，契约、接口都没动</td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -618,10 +625,11 @@ MB）。<code>review_<wbr>advice@1</code> 的请求上限是 87,442 字</td>
 <td>九安仓库的 <code>src/<wbr>agent-<wbr>contract/<wbr></code></td>
 </tr>
 <tr>
-<td>测试台加的补丁（Agent 接入、知识库页、我的规则、时限）</td>
+<td>测试台加的补丁（Agent 接入、知识库页、我的规则、时限；数据层换
+PostgreSQL）</td>
 <td>交接仓库的
 <code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>
-0001–0007</td>
+0001–0007；0008–0017</td>
 </tr>
 <tr>
 <td>一个查知识库的审核

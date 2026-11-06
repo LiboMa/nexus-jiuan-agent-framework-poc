@@ -1,7 +1,7 @@
 ---
 subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
-date: 2026-11-02
-status: 交付版（写的是现在的做法；2026-11-02 在 m7g 测试台上从部署到端到端验收走过一遍）
+date: 2026-11-06
+status: 交付版（写的是现在的做法；2026-11-02 在 m7g 测试台上从部署到端到端验收走过一遍；2026-11-06 九安的库换成 PostgreSQL）
 scope: 从零部署一整套（PG 与知识库后端 → Nexus 上的 Agent 与发布 → 前端）、验收、日常变更与回滚、交接
 audience: 部署的人（我们、九安运维）、项目负责人
 ---
@@ -18,13 +18,13 @@ audience: 部署的人（我们、九安运维）、项目负责人
 |---|---|---|---|
 | **PG 与知识库后端** | PostgreSQL + pgvector 容器、库内语义检索 `kb_search`（库里调 Bedrock 的 Cohere Embed v4 生成向量）、规则表、Nexus 上的数据连接器和数据库凭证密钥 | `kb/`（测试台上由 `poc/infra/kb.sh` 驱动）；`kb/convert/risk-cards/`（审批风险判断卡 → 可入库的 .docx） | [kb/README.md](../../kb/README.md)、[kb/GUIDE.md](../../kb/GUIDE.md) |
 | **Nexus 上的 Agent 与发布** | 审核 Agent「九安审核AI」（`review_advice@1`，经连接器只读查知识库）；PG 知识库 Agent「知识库文档管家（PG 版）」（`kb.rules/v1`：入库、清单、检索） | `audit-agent/`；`knowledgebase-writer-agent-pg/`（源码）与 `customer-deploy/knowledgebase-writer-agent-pg/`（客户部署件）；`skills/nexus-ai-operator/` | [审核 Agent 说明](../../audit-agent/README.md)、[PG 知识库 Agent](../../knowledgebase-writer-agent-pg/README.md)、[Skills 配置指南](skills-guide.md) |
-| **前端** | 新前端 `poc/web`（React）、测试台外壳 `poc/app`、九安 v0.7.10 副本（打 `patches/jiuan-v0.7.10/` 的补丁）、九安的 MySQL；一台 EC2 + CloudFront | `poc/infra/`（栈模板、`deploy.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`）、`poc/bench/build-jiuan.sh` | [部署说明](../../poc/infra/README.md)、[PoC 说明](../../poc/README.md) |
+| **前端** | 新前端 `poc/web`（React）、测试台外壳 `poc/app`、九安 v0.7.10 副本（打 `patches/jiuan-v0.7.10/` 的补丁）、九安的 PostgreSQL（容器 `jiuan-pg`）；一台 EC2 + CloudFront | `poc/infra/`（栈模板、`deploy.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`）、`poc/bench/build-jiuan.sh` | [部署说明](../../poc/infra/README.md)、[PoC 说明](../../poc/README.md) |
 
 测试阶段三块在一台 m7g.xlarge（arm64）上；正式环境三块分开，先 PG，再 Agent，再分批部署前端（[客户部署路线](customer-rollout.md)）。
 
 ## 2. 一页看懂
 
-![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
+![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
 
 - 浏览器 → CloudFront（站点 `DomainName`）→ 实例的 4180 端口：测试台外壳 `andon-jiuan.service` 直接在这里听（安全组只放 CloudFront 回源）。首页 `/` 是新前端，九安原来的页面在 `/analysis.html`，接口在 `/api/analysis/v1/…`。
 - 单据池里的单据读完原件后自动出「AI 独立建议」：九安经 A2A 调「Agent 接入」页上指定的审批 Agent（审核 Agent），一轮上限 180 秒；审核 Agent 经 Nexus 的 PostgreSQL 数据连接器只读查 PG（先 `kb_search`）。
@@ -51,7 +51,7 @@ cp poc/infra/env/example.env poc/infra/env/<环境名>.env && chmod 600 poc/infr
 
 照注释填：栈名和区域、VPC 与子网、`INSTANCE_TYPE=m7g.xlarge`、站点 `DOMAIN_NAME` 和回源名 `ORIGIN_DOMAIN_NAME`、托管区与证书、`NEXUS_ORIGIN` 和 `NEXUS_PROFILE`、知识库的 `KB_MODE=pg` 与 `KB_ALLOWED_CIDR`、经 SSH 管理的 `SSH_KEY_NAME` / `SSH_KEY_FILE` / `SSH_ALLOWED_CIDR`（或 `SSH_VIA=eice`）/ `SSM_MANAGED=false`。Agent 和发布的编号（`AGENT_ID`、`PUBLICATION_ID`、`CONNECTOR_ID`、`KB_PG_PUBLICATION_ID`）部署完对应那一块再填回来。
 
-**密钥配置** `poc/infra/secrets.env`：第一次跑 `deploy.sh` 自动生成（两个账号的口令 + 三项测试台密钥，0600），只在本机和实例上，当面交接；样例和对应关系见 `poc/infra/secrets.env.example`。Agent 的调用密钥不放这里。
+**密钥配置** `poc/infra/secrets.env`：第一次跑 `deploy.sh` 自动生成（两个账号的口令 + 测试台密钥：PG 的两项、数据密钥，和切换前 MySQL 留给回退的两项，0600），只在本机和实例上，当面交接；样例和对应关系见 `poc/infra/secrets.env.example`。Agent 的调用密钥不放这里。
 
 ## 4. 部署
 
@@ -115,7 +115,7 @@ DEPLOY_ENV=… bash poc/infra/kb.sh verify
    DEPLOY_ENV=poc/infra/env/<环境名>.env bash poc/infra/deploy.sh --code-only # 以后只改了代码：不动栈
    ```
 
-   动 AWS 之前先跑 `poc/infra/test` 的测试、构建九安副本（`poc/bench/build-jiuan.sh`）、新前端 `npm ci` → 测试 → 构建、外壳的单元测试，哪一步不过就停。实例上（root，经 SSM 或 SSH）：装 `secrets.env`（只有 root 能读）→ 解开新构件 → `bench/bench-configure.sh`（MySQL 容器、库 `jiuan` 和账号 `jiuan_app`、系统用户 `jiuan`、服务 `andon-jiuan`、`/etc/hosts` 堵掉九安写死的外部地址）→ 换上新构件（上一版留在 `previous`）→ 重启 → 查 `https://<站点>/poc/healthz`。
+   动 AWS 之前先跑 `poc/infra/test` 的测试、构建九安副本（`poc/bench/build-jiuan.sh`）、新前端 `npm ci` → 测试 → 构建、外壳的单元测试，哪一步不过就停。实例上（root，经 SSM 或 SSH）：装 `secrets.env`（只有 root 能读）→ 解开新构件 → `bench/bench-configure.sh`（PostgreSQL 容器 `jiuan-pg`、库 `jiuan` 和它的属主 `jiuan_app`、系统用户 `jiuan`、服务 `andon-jiuan`、`/etc/hosts` 堵掉九安写死的外部地址）→ 换上新构件（上一版留在 `previous`）→ 重启 → 查 `https://<站点>/poc/healthz`。
 2. **经 SSH 管理**：主机公钥第一次从实例的控制台输出里取来钉住（`poc/infra/.state/`），之后严格核对；本机网络连不到弹性 IP（2026-11-02 m7g 环境的弹性 IP 在 `184.192.0.0/12`，公司网络到不了）时 `SSH_VIA=eice`，栈另建一个 EC2 Instance Connect 端点，还是 SSH + 自己的密钥，不用 SSM。
 3. **在页面上接好 Agent**（管理员 `poc-reviewer`，口令在 `secrets.env`；[快速上手](quick-guide.md)第 4 节）：
    - 「Agent 接入」页：连接 Nexus（贴管理员自己的 Nexus API 密钥）→ 两个发布各贴一次调用密钥启用 → 审核 Agent「设为审批 Agent」（要写原因）→ 文本、请求信封、单据三种测试。
@@ -129,7 +129,7 @@ DEPLOY_ENV=… bash poc/infra/kb.sh verify
 DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判断卡 .docx> bash poc/app/test/e2e/run.sh
 ```
 
-先跑 `web.e2e.mjs`（新前端的页面），再跑 `api.e2e.mjs`（接口、出网、写回、自定义规则），共 26 条。
+先跑 `web.e2e.mjs`（新前端的页面，15 条），再跑 `api.e2e.mjs`（接口、出网、写回、自定义规则、库是 PostgreSQL，12 条），共 27 条；没给 `KB_E2E_DOCX` 时网页的上传那条跳过。
 
 | 验收项 | 做完是什么样 |
 |---|---|
@@ -140,11 +140,14 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判�
 | 知识库 | 风险判断卡 449 条有效；再传同一份是「没有变化」；检索能命中卡片 |
 | Agent 接入 | 审批 Agent 就绪、接 `review_advice@1`；知识库 Agent 就绪、不进审批流；三种测试合格 |
 | 出网 | 被拦下的只有九安写死的外部地址，没有 Nexus |
+| 九安的库 | 跑在 PostgreSQL 上：容器 `jiuan-pg` 在跑、`jiuan-mysql` 停着或不在、外壳的 `POC_DB_PORT=5433`，重置后新建的库里有迁移建出的表 |
 | 知识库后端 | `kb.sh verify`（或 `kb/deploy.sh verify`）只剩已知的那一条 |
 
 **单元测试**（不连任何服务）：`cd poc/infra && node --test "test/**/*.test.mjs"`；`cd poc/app && node --test "test/unit/**/*.test.mjs"`；`cd poc/web && npm test`；kb 的 Python 测试和 shell 测试（[kb/GUIDE.md](../../kb/GUIDE.md)）；`python3 -m unittest discover -s audit-agent/tests`。出包时 `docs/delivery/make-package.sh` 会再跑一遍。
 
 **2026-11-02 的结果**（m7g 测试台）：单元测试 `poc/infra` 108 条、外壳 193 条（1 条跳过）、新前端 331 条全过；端到端 26 条全过；`kb.sh verify` 只剩已知的一条。
+
+**2026-11-06 换库**：外壳单元测试 205 条、`poc/infra` 130 多条；九安自带的测试在真 PG 上 2475 条过（换库前过的都还过）；切换和端到端的结果见[变更记录](../../CHANGELOG.md)。
 
 ## 6. 日常变更与回滚
 
@@ -154,7 +157,8 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判�
 | 改审核 Agent 的提示词 | `audit-agent/apply.py --dry-run` → 下发，留 `prompt-history/` | 用上一版的提示词 `apply.py --base …` 再下发一次 |
 | 改规则 | 新前端「知识库 › 上传制度」（同一份再传是「没有变化」；改版只写变了的） | 「下线」旧版本、「恢复」上一版 |
 | 改栈参数、换机型 | 改环境配置 → `deploy.sh`；换机型用 `upgrade-instance.sh`（只在同一种架构之间换，先 `backup.sh`） | 参数改回去再 `deploy.sh` |
-| 备份 | `backup.sh`：根卷快照（MySQL、PG、`/var/lib/jiuan` 都在根卷上） | 用快照建卷换回根卷 |
+| 备份 | `backup.sh`：根卷快照（九安的 PostgreSQL、知识库的 PG、留着的 MySQL 数据目录、`/var/lib/jiuan` 都在根卷上） | 用快照建卷换回根卷 |
+| 换回 MySQL（2026-11-06 换库，项目负责人确认之前出问题才做） | — | [运维](operations.md)第 2.6 节：停服务 → `previous` 换回 `current` → `docker start jiuan-mysql` → 起服务；下一次部署之后就要从换库之前的提交重新部署 |
 | 换机器、迁域名 | 另建一个栈 → `deploy.sh` → `kb.sh db` → `migrate-data.sh`（旧环境经 SSM 只读导出、加密搬运、逐表核对）→ `kb.sh connector` 把 Nexus 指到新 PG → 端到端 → 旧栈腾出站点名、新栈接上（[交接文档](handover.md)第 2.2 节有 2026-11-02 的实际做法） | 旧栈没删之前：`kb.sh connector` 用旧环境的配置再跑一次，Nexus 就指回旧 PG |
 
 **要知道的几件事**：
@@ -170,12 +174,13 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<本机转好的风险判�
 3. **当面交接**：`poc/infra/secrets.env`；九安开发包按版本号另给；各人的 Nexus API 密钥各人在自己的 Nexus 网页上生成。
 4. **交给维护的人**：[交接文档](handover.md)（资产清单、密钥清单、未完成事项、上生产前必须改的）。
 
-**现在的环境**（2026-11-02）：
+**现在的环境**（2026-11-06）：
 
 | | |
 |---|---|
 | 测试台 | 栈 `andon-finance-m7g`，一台 m7g.xlarge（arm64），站点 <https://jiuan-v0710.tinyboat.blog>；经 SSH（`key-malibo-sa`）+ EC2 Instance Connect 端点管理，不用 SSM；环境配置 `poc/infra/env/m7g.env` |
 | Nexus | `nxs-beine1013`；审核 Agent 发布 `pub_5c53e70d8dc7ddea`；PG 知识库 Agent 发布 `pub_6ea5f0855dff6c1b`；PG 数据连接器 `pgvector-andon`（`conn-f0c7233959d9`）指向测试台实例的私网地址 |
+| 九安的库 | 测试台实例上的 PostgreSQL 容器 `jiuan-pg`（127.0.0.1:5433，库 `jiuan`），2026-11-06 20:35–20:37（UTC+8）从 MySQL 切过来；MySQL 容器 `jiuan-mysql` 停着、不删，留着做回退，项目负责人说删再删 |
 | 知识库 | 测试台实例上的容器 `nexus-pgvector`；有效规则是审批风险判断卡 `risk-cards`（449 条），向量 Cohere Embed v4 |
 | 旧栈 | `andon-finance-poc`（t3.large）等删（项目负责人定先留几天；根卷快照 `snap-05180f1a83a6edada`） |
 

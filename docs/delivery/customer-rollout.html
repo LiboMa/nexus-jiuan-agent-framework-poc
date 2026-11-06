@@ -95,7 +95,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
 v0.7.10</span>客户部署路线：从测试台到九安上线</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-06</td></tr>
     <tr><th scope="row">状态</th><td>建议稿 v3（部署分三块：先 PG，再
 Agent，再分批部署前端；九安自己适配，我们用代码协助部署；其余待项目负责人确认）<span class="stamp">路线</span></td></tr>
     <tr><th scope="row">范围</th><td>九安审核平台（客户环境）、Nexus
@@ -108,8 +108,8 @@ Agent，再分批部署前端；九安自己适配，我们用代码协助部署
 <ul>
 <li><a href="#1-结论从哪里入手" id="toc-1-结论从哪里入手">1.
 结论：从哪里入手</a></li>
-<li><a href="#2-现在在哪2026-11-02" id="toc-2-现在在哪2026-11-02">2.
-现在在哪（2026-11-02）</a></li>
+<li><a href="#2-现在在哪2026-11-06" id="toc-2-现在在哪2026-11-06">2.
+现在在哪（2026-11-06）</a></li>
 <li><a href="#3-整体部署要部署哪三块" id="toc-3-整体部署要部署哪三块">3.
 「整体部署」要部署哪三块</a></li>
 <li><a href="#4-分阶段怎么走" id="toc-4-分阶段怎么走">4.
@@ -155,8 +155,9 @@ Agent（客户部署交付件
 <code>customer-deploy/knowledgebase-writer-agent-pg/</code>，1.0.1）。换
 PG 主机不用动它们。</li>
 <li><strong>前端</strong>：测试阶段是 <code>poc/infra/deploy.sh</code>
-部署的这一套（新前端 + 外壳 + 九安 v0.7.10 副本 + 九安的 MySQL），和 PG
-在同一台机器上；客户环境里由专人在 PG 之后分批部署。</li>
+部署的这一套（新前端 + 外壳 + 九安 v0.7.10 副本 + 九安的
+PostgreSQL），和知识库的 PG 在同一台机器上；客户环境里由专人在 PG
+之后分批部署。</li>
 </ol>
 <p><strong>同时要做的</strong>：约九安开一次对接会，把第 4 节阶段 0
 的前置定下来。</p>
@@ -166,7 +167,9 @@ Agent，只放虚构数据。所以测试台自己的那些上生产前事项（
 HTTP、构件不带提交号等，<a href="handover.html">交接文档</a>第 6.1 节第
 1、2、8、9
 条）<strong>不挡客户部署</strong>；前提是测试台上永远不放真实单据。新前端和补丁
-0001–0007 以什么形式进九安自己的系统，要和九安在阶段 0 定。</p>
+0001–0007 以什么形式进九安自己的系统，要和九安在阶段 0 定；补丁
+0008–0017 是测试台跟着九安换 PostgreSQL
+时改的数据层，要不要、怎么进九安的代码线，一起定。</p>
 <p><strong>部署方式</strong>（2026-10-19
 定）：九安拿到补丁和代码后，在自己的环境里自己适配；<strong>部署由我们用代码协助完成</strong>。九安的人或他们的编码工具运行我们的部署代码（第
 5
@@ -182,7 +185,7 @@ alt="五个阶段：对接与拍板 → 先部署 PG 与知识库 → Nexus 上�
 与发布 → 前端分批部署与试运行 →
 生产上线；每一步都有进入下一步的门槛</figcaption>
 </figure>
-<h1 id="2-现在在哪2026-11-02">2. 现在在哪（2026-11-02）</h1>
+<h1 id="2-现在在哪2026-11-06">2. 现在在哪（2026-11-06）</h1>
 <div class="table-wrap">
 <table>
 <thead>
@@ -195,8 +198,11 @@ alt="五个阶段：对接与拍板 → 先部署 PG 与知识库 → Nexus 上�
 <tbody>
 <tr>
 <td>测试台（九安 v0.7.10 副本 + 新前端 <code>poc/<wbr>web</code> + 外壳
-<code>poc/<wbr>app</code> + 本机 MySQL）</td>
-<td>已就绪；2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过</td>
+<code>poc/<wbr>app</code> + 本机的 PostgreSQL）</td>
+<td>已就绪；2026-11-02 对 m7g 测试环境完整端到端 26
+条全部通过；2026-11-06 九安的库从 MySQL 换成
+PostgreSQL（和九安的正式环境一样），端到端现在 27 条，换库后的结果见<a
+href="../../CHANGELOG.md">变更记录</a></td>
 <td>不用再动；用来验收补丁和 Agent</td>
 </tr>
 <tr>
@@ -213,6 +219,16 @@ alt="五个阶段：对接与拍板 → 先部署 PG 与知识库 → Nexus 上�
 Agent、制度知识库页、我的规则、两处时限）</td>
 <td>测试台上可用</td>
 <td>九安评审；在真实代码线上重新打一次（前置 2）</td>
+</tr>
+<tr>
+<td>测试台补丁 0008–0017（九安的数据层换成
+PostgreSQL：连接池、命名锁、基线表结构、各模块的查询，MySQL 的模块和
+mysql2 去掉）</td>
+<td>2026-11-06 起测试台跑在上面；九安自带的测试在真 PG 上 2475
+条过，换库前过的都还过</td>
+<td>九安的正式环境已经是
+PostgreSQL：和九安对一下他们的数据层，这几个补丁要不要、怎么进（前置
+1、2）</td>
 </tr>
 <tr>
 <td>审核 Agent（<code>review_<wbr>advice@1</code>，查 PG 知识库）</td>
@@ -272,7 +288,8 @@ zip）</td>
 </tr>
 <tr>
 <td><strong>前端</strong></td>
-<td>新前端、外壳、九安 v0.7.10 副本（打补丁）、九安的 MySQL；「Agent
+<td>新前端、外壳、九安 v0.7.10
+副本（打补丁）、九安的库（测试台上是本机的 PostgreSQL）；「Agent
 接入」里启用发布、指定审批 Agent</td>
 <td>专人分批部署；九安适配</td>
 <td>测试阶段是
@@ -305,7 +322,8 @@ TLS；调用额度；日志与告警；密钥保管；回退办法</td>
 <tbody>
 <tr>
 <td>前置 1</td>
-<td>新前端、外壳和补丁 0001–0007 以什么形式进九安自己的系统</td>
+<td>新前端、外壳和补丁 0001–0017 以什么形式进九安自己的系统（0008–0017
+是数据层换 PostgreSQL 的）</td>
 <td>决定前端那一块部署什么、谁来部署</td>
 <td>项目负责人 + 九安</td>
 </tr>
@@ -452,8 +470,8 @@ SSM 或部署人自己的 SSH 密钥；换向量模型有防混用、迁移、�
 <td></td>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code> +
 <code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code></td>
-<td>补丁
-0001–0007，按清单复制开发包、打补丁，打不上就报错，不留半成品</td>
+<td>补丁 0001–0017（0008–0017 把数据层换成
+PostgreSQL），按清单复制开发包、打补丁，打不上就报错，不留半成品</td>
 </tr>
 <tr>
 <td></td>
@@ -646,6 +664,13 @@ href="https://d3u3hj2us186y.cloudfront.net/">https://d3u3hj2us186y.cloudfront.ne
 与发布；客户先用自己的 SSH 密钥部署 PG，再分批部署前端。</li>
 <li>机器类型用 m7g.xlarge（arm64）；测试台只留新 UI，v0.5.3 PoC
 拿掉。</li>
+</ul>
+<p>2026-11-05 的决定（2026-11-06 确认）：</p>
+<ul>
+<li>九安的正式环境已经把库换成
+PostgreSQL，没有给新的开发包。项目负责人定：手上的 v0.7.10
+就是最新的代码，测试台跟着换成 PostgreSQL（补丁 0008–0017，2026-11-06
+切换）。</li>
 </ul>
 <p>部署由谁做已经定了：九安自己适配，我们用代码协助部署（第 1 节）。</p>
 </main>

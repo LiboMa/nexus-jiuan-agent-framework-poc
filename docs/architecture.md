@@ -1,6 +1,6 @@
 ---
 subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
-date: 2026-11-05
+date: 2026-11-06
 status: 交付版 v4（写的是现在跑着的样子，外加一份技术评估；数据全部虚构）
 scope: 九安 v0.7.10 测试台（jiuan-v0710.tinyboat.blog，栈 andon-finance-m7g）、Nexus nxs-beine1013 上的两个发布、audit-nexus 仓库的全部代码
 audience: 应用开发、Agent 开发、运维、项目负责人
@@ -14,13 +14,13 @@ audience: 应用开发、Agent 开发、运维、项目负责人
 
 九安自助审核平台 v0.7.10 的原服务端跑在测试台上，前面是新写的前端；AI 能力全在 Nexus 上，经 A2A 调用。单据进来、读完原件后，九安把它交给管理员指定的「审批 Agent」，拿回一份 **AI 独立建议**（建议通过 / 不建议通过 + 依据）；结论由人在单据池里复核。审核时要查的制度在 PostgreSQL 知识库里，由 Nexus 上的另一个 Agent 负责入库和检索。数据全部虚构，人工复核不回写汇联易。
 
-![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](assets/diagrams/bench-overview.svg)
+![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](assets/diagrams/bench-overview.svg)
 
 ## 2. 设计原则：为什么这样搭
 
 | 原则 | 做法 | 换来什么 |
 |---|---|---|
-| **不改九安的源码，只打补丁** | 九安开发包原样放在 `source/`，`poc/bench/build-jiuan.sh` 按清单复制、打 `patches/jiuan-v0.7.10/` 的 7 个补丁，打不上就报错、不留半成品 | 九安升级或拿到真实代码线时，补丁可以重放、可以评审；我们的改动一眼看得清 |
+| **不改九安的源码，只打补丁** | 九安开发包原样放在 `source/`，`poc/bench/build-jiuan.sh` 按清单复制、打 `patches/jiuan-v0.7.10/` 的 17 个补丁（0001–0007 加功能，0008–0017 把数据层换成 PostgreSQL），打不上就报错、不留半成品 | 九安升级或拿到真实代码线时，补丁可以重放、可以评审；我们的改动一眼看得清 |
 | **契约先行** | 九安自带的 Agent 契约 `jiuan.agent/v1`（`src/agent-contract/`）定好请求信封和结果格式；审批流只认 `review_advice@1`；A2A 适配层按契约检查回答，不合格就在同一段对话里要求修正一次 | 换 Agent、换提示词、换模型都不用改九安；回答不合格能被抓住，不会把乱码写进单据 |
 | **知识和 Agent 在一起** | 制度知识库的入库、检索都由 Nexus 上的 Agent 做；测试台不直连 PG、不解析文档；审核 Agent 经 Nexus 的数据连接器只读查库 | 前端只做调用；知识库的逻辑、凭证、网络都在 Nexus 一侧，客户换前端不用动知识库 |
 | **密钥不进文件** | Agent 的调用密钥只由管理员在「Agent 接入」页粘贴，九安用数据密钥加密存库；Nexus 的 API 密钥由 operator 保存和续期；PG 的口令放在 Nexus 的数据库凭证密钥里；启动配置单独一份 `secrets.env`（0600，当面交接） | 加、换、停用一个 Agent 都不改文件、不部署、不重启；仓库和交付包里没有任何真实密钥（出包时扫描） |
@@ -42,10 +42,11 @@ EC2 m7g.xlarge（arm64，Amazon Linux 2023，Node 24；与 Nexus 同 VPC 的公�
    │    │    ├─ 「Agent 接入」页的后端：Nexus 发布列表（经 nexus-ai-operator）、测试、调用记录、只给审批 Agent 路由
    │    │    ├─ 进程内的假汇联易、出网守卫（只放 Nexus）
    │    │    └─ 组合根 server.mjs：照九安的启动脚本组装九安副本，换掉配置、汇联易传输和出网
-   │    └─ 九安 v0.7.10 副本（开发包 + 补丁 0001–0007）：/analysis.html、/api/analysis/v1/*
+   │    └─ 九安 v0.7.10 副本（开发包 + 补丁 0001–0017）：/analysis.html、/api/analysis/v1/*
    │         单据同步与流水线、读原件、Agent 任务服务（review_advice@1）、调用中间件 nexus-a2a、
    │         A2A 适配层 providers/nexus-a2a.mjs、「Agent 接入」（启用记录加密存库）
-   ├─ Docker 容器 jiuan-mysql（mysql:8.0，127.0.0.1:3306，库 jiuan）
+   ├─ Docker 容器 jiuan-pg（postgres:17，127.0.0.1:5433，库 jiuan，属主 jiuan_app；2026-11-06 起）
+   ├─ Docker 容器 jiuan-mysql（切换前的 MySQL，停着、不删，留着做回退，项目负责人说删再删）
    └─ Docker 容器 nexus-pgvector（pgvector/pgvector:pg17，私网 IP:5432，库 nexus；PL/Python 的 kb_embed / kb_search 用实例角色调 Bedrock）
         │
         │ ① A2A 0.3 message/stream，Bearer <「Agent 接入」页启用时粘贴的调用密钥>
@@ -61,7 +62,7 @@ Nexus nxs-beine1013（v0.3.28，同一个 VPC）
 |---|---|---|
 | 新前端 | React 19 + TypeScript + Vite + Tailwind 4 + TanStack Query + Radix，哈希路由；工作台、单据池（抽屉看 AI 建议、原件、单据信息、历史，采纳或改判）、知识库、我的规则、Agent 接入、设置 | `poc/web/src/` |
 | 测试台外壳 | Node 24 的 ES 模块，没有 Web 框架；把九安副本嵌进同一个进程，自己只加新前端要的接口和测试台的替身（假汇联易、口令登录、出网守卫） | `poc/app/` |
-| 九安 v0.7.10 副本 | 九安开发包按清单复制、打补丁、装锁定版本的 `mysql2`；补丁加了「Agent 接入」页的发布列表与测试、启用即就绪、只调一个审批 Agent、制度知识库页、我的规则、两处时限（180 / 200 秒） | `poc/bench/build-jiuan.sh`、`patches/jiuan-v0.7.10/` |
+| 九安 v0.7.10 副本 | 九安开发包按清单复制、打补丁、装锁定版本的 `pg`；补丁 0001–0007 加了「Agent 接入」页的发布列表与测试、启用即就绪、只调一个审批 Agent、制度知识库页、我的规则、两处时限（180 / 200 秒）；0008–0017 把数据层换成 PostgreSQL（和 mysql2 一样用法的连接池、advisory 锁、基线表结构和启动时的核对、各模块的查询），mysql2 不再是它的依赖 | `poc/bench/build-jiuan.sh`、`patches/jiuan-v0.7.10/` |
 | 审核 Agent | Nexus 上的 Agent，提示词在仓库里（`prompt.yaml` v3）：信封模式处理 `review_advice@1`，先 `kb_search` 再按关键词补查，查满 3 次就作答 | `audit-agent/` |
 | PG 知识库 Agent | Nexus 上的 Agent，三个工具 `rules_writer` / `rules_search` / `rules_manager`；收 Word、Excel、PDF、Markdown，一条一块入库；接口约定见 [`kb.rules/v1`](kb-rules-v1.md) | `knowledgebase-writer-agent-pg/`、客户部署件 `customer-deploy/knowledgebase-writer-agent-pg/` |
 | 知识库后端 | PG 17 + pgvector；`approval_rules` 规则表、`kb_search` 库内语义检索（先按关键词命中数、再按语义排）、检索日志；部署与核对工具 | `kb/`（`deploy.sh` 的 preflight、db、network、egress、connector、ingest、agent、verify） |
@@ -72,14 +73,14 @@ Nexus nxs-beine1013（v0.3.28，同一个 VPC）
 
 | 数据 | 放在哪 | 谁写 | 谁读 | 备注 |
 |---|---|---|---|---|
-| 单据、原件页文字、AI 建议的各轮、流水线状态 | MySQL `jiuan` 库（九安的表） | 九安（从假汇联易同步、流水线、任务服务） | 九安、外壳、新前端 | 端到端测试每次重建这个库 |
-| 「Agent 接入」的启用记录（含调用密钥） | MySQL `jiuan` 库，状态表里一行，九安用数据密钥 `JIUAN_DATA_KEY` 加密 | 九安（管理员启用时） | 九安的适配层、外壳 | 按租户编号 `fake-tenant-jiuan07` 存；重置测试台时导出再写回 |
-| 人工复核（采纳 / 改判） | MySQL `jiuan` 库的 `poc_review_decisions` | 外壳 | 外壳、新前端 | 不回写汇联易 |
-| 知识库页的缓存（操作清单、制度清单、详情） | MySQL `jiuan` 库的 `poc_kb_cache` | 外壳（问过知识库 Agent 后） | 外壳 | 只存成功的回复；「刷新清单」、写操作之后才重新问 Agent |
+| 单据、原件页文字、AI 建议的各轮、流水线状态 | 九安的 PostgreSQL（容器 `jiuan-pg`）`jiuan` 库（九安的表） | 九安（从假汇联易同步、流水线、任务服务） | 九安、外壳、新前端 | 端到端测试每次重建这个库 |
+| 「Agent 接入」的启用记录（含调用密钥） | `jiuan` 库，状态表 `analysis_sync_states` 里一行，九安用数据密钥 `JIUAN_DATA_KEY` 加密 | 九安（管理员启用时） | 九安的适配层、外壳 | 按租户编号 `fake-tenant-jiuan07` 存；重置测试台时导出再写回 |
+| 人工复核（采纳 / 改判） | `jiuan` 库的 `poc_review_decisions`（外壳启动时建） | 外壳 | 外壳、新前端 | 不回写汇联易 |
+| 知识库页的缓存（操作清单、制度清单、详情） | `jiuan` 库的 `poc_kb_cache`（外壳启动时建） | 外壳（问过知识库 Agent 后） | 外壳 | 只存成功的回复；「刷新清单」、写操作之后才重新问 Agent |
 | 「Agent 接入」页连 Nexus 的凭证、我的规则、上传暂存与上传历史、种子时间锚点 | 实例上的 `/var/lib/jiuan/` | 外壳 | 外壳 | 都在根卷上 |
 | 制度规则、向量、上传登记、检索日志 | PG `nexus` 库：`approval_rules`（有效的）、`approval_rules_archive`（下线的）、`kb_documents`、`kb_search_log` 等 | PG 知识库 Agent 的工具；`kb/deploy.sh` 的入库 | 审核 Agent（经数据连接器只读）、PG 知识库 Agent | 现在有效的是审批风险判断卡 `risk-cards` 449 条 |
 | Agent 的提示词、发布、调用记录、会话 | Nexus | `audit-agent/apply.py`、PG 知识库 Agent 的导入脚本、Nexus 网页 | Nexus | 每次改审核 Agent 的线上提示词都在 `audit-agent/prompt-history/` 留底 |
-| 启动配置（两个账号的口令、MySQL 的两个口令、数据密钥） | 本机 `poc/infra/secrets.env` → 构件桶（服务端加密）→ 实例 `/etc/andon-finance/secrets.env`（root 0600）→ 拆成服务读的文件 | `deploy.sh`（缺了才补，已有的永不改） | MySQL 容器、外壳 | 当面交接；丢了数据密钥，库里的启用记录就解不开 |
+| 启动配置（两个账号的口令、PostgreSQL 的两个口令、数据密钥；切换前 MySQL 的两个口令留着给回退） | 本机 `poc/infra/secrets.env` → 构件桶（服务端加密）→ 实例 `/etc/andon-finance/secrets.env`（root 0600）→ 拆成服务读的文件 | `deploy.sh`（缺了才补，已有的永不改） | PostgreSQL 容器、外壳 | 当面交接；丢了数据密钥，库里的启用记录就解不开 |
 
 **往外发的数据**：每一轮 AI 建议都会把单据事实（金额、公司、费用说明、原件的脱敏页文字）发给 Nexus 和它后面的模型。测试台只有虚构数据；接真实单据之前要过九安的数据治理和客户的合规（[客户部署路线](delivery/customer-rollout.md)前置 4）。
 
@@ -221,7 +222,7 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 |---|---|---|---|
 | PG 与知识库后端 | 测试台实例上的容器 `nexus-pgvector`，`poc/infra/kb.sh` 从栈里取配置驱动 `kb/` | 客户自己的主机，用自己的 SSH 密钥部署，最先做 | `kb/deploy.sh` |
 | Nexus 上的 Agent 与发布 | `nxs-beine1013` 上的两个发布 | 生产用的线上 Nexus AI（<https://d3u3hj2us186y.cloudfront.net/>），第二步做 | `audit-agent/setup.py`、`apply.py`；`customer-deploy/knowledgebase-writer-agent-pg/` |
-| 前端 | 测试台实例上的外壳、九安副本、MySQL，经 CloudFront 对外 | 九安自己的系统，形式待定（前置 1），专人分批部署 | `poc/infra/deploy.sh` |
+| 前端 | 测试台实例上的外壳、九安副本、九安的 PostgreSQL，经 CloudFront 对外 | 九安自己的系统，形式待定（前置 1），专人分批部署 | `poc/infra/deploy.sh` |
 
 换机器、迁域名用 `poc/infra/migrate-data.sh`（2026-11-02 从 t3.large 搬到 m7g.xlarge 时实际走过一遍）。每块怎么部署见[交付指南](delivery/delivery-guide.md)。
 
@@ -231,10 +232,10 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 
 | 部分 | 代码 | 测试 |
 |---|---|---|
-| 测试台外壳 `poc/app` | 约 3,400 | 约 5,800（单元 205 条，端到端 26 条） |
+| 测试台外壳 `poc/app` | 约 3,400 | 约 5,800（单元 205 条，连库的几条另在真 PG 上跑；端到端 27 条） |
 | 新前端 `poc/web` | 约 6,200 | 约 5,500（333 条） |
-| 基础设施 `poc/infra` | 约 1,500 | 约 2,600（110 条） |
-| 九安补丁 `patches/jiuan-v0.7.10` | 约 1,900（7 个补丁） | 由外壳的测试和端到端覆盖 |
+| 基础设施 `poc/infra` | 约 1,850 | 约 3,000（130 多条） |
+| 九安补丁 `patches/jiuan-v0.7.10` | 约 7,100（17 个补丁；换库的 0008–0017 约 5,300） | 外壳的测试和端到端；九安自带的测试在真 PG 上 2,475 条过（换库前过的都还过），测试的改动另在 `tests/` 下 10 个补丁、约 6,500 行，只在跑九安的测试时打 |
 | 知识库 `kb` | 约 5,600 | 约 4,900（Python 142 条，其中 52 条要连真 PG；SSH 通道的 shell 测试 23 项） |
 | 审核 Agent `audit-agent` | 约 750（提示词 + 下发脚本） | 56 条 |
 | PG 知识库 Agent | 约 1,200 | 契约测试、本机测试（要 PGlite） |
@@ -249,18 +250,18 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 | 审核 Agent，改提示词之后 | 134 | 9.5 秒 / 15 秒 | 0.04 美元 | 27 次失败都在 11-01：Bedrock 第一次调用常报 `ValidationException`，九安的重试接住；11-02 起 65 次全部成功 |
 | PG 知识库 Agent | 200 | 8 秒 / 12 秒 | 0.04 美元 | 200 次全部成功（多数是清单、详情、检索）；入库更久（解析、对比、生成向量），上限 5 分钟 |
 | 知识库页打开 | — | 加缓存前 19 秒，加缓存后约 2 秒 | — | 2026-11-03 起操作清单、制度清单存在库里 |
-| 端到端测试（26 条） | — | 约 6 分钟 | 每次约 1–3 美元 | 真实调用 Nexus，会先重置测试台的库 |
+| 端到端测试（27 条） | — | 约 6 分钟 | 每次约 1–3 美元 | 真实调用 Nexus，会先重置测试台的库 |
 
 ## 10. 技术评估
 
 ### 10.1 做得好的
 
-1. **对九安的侵入最小、可重放**：只有 7 个补丁，都是针对开发包的明确改动，打不上就停。契约文件只改了一处：补丁 0006 把 `review_advice@1` 的时限从 120 秒放到 180 秒，契约目录的 `SOURCE.md` 里注明了这个文件的 sha256 因此不同。九安自己的测试不随副本复制（`build-jiuan.sh` 不带 `tests/`），要在九安的代码线上跑。拿到真实代码线后，迁移成本主要是重打补丁，不是重写。
+1. **对九安的侵入最小、可重放**：17 个补丁，都是针对开发包的明确改动，打不上就停；其中 0008–0017 是 2026-11-06 换 PostgreSQL 的，按模块分开，调用方几乎不用改（适配层照 mysql2 的返回形状、类型和错误码）。契约文件只改了一处：补丁 0006 把 `review_advice@1` 的时限从 120 秒放到 180 秒，契约目录的 `SOURCE.md` 里注明了这个文件的 sha256 因此不同。九安自己的测试不随副本进构件（`build-jiuan.sh` 不带 `tests/`）；换库时用 `--with-tests` 在实例上一次性的测试库里跑过（`remote-jiuan-tests.sh`）。拿到真实代码线后，迁移成本主要是重打补丁，不是重写。
 2. **契约把 AI 的不确定性关在笼子里**：请求信封、结果格式、时限都由契约定；适配层检查、修正一次，不合格就记 `AI_INVALID_RESPONSE`，不会写坏单据。换模型、改提示词都在这个边界内。
 3. **知识库只有一份实现**：入库和检索的逻辑在 `kb/lib`，PG 知识库 Agent 的工具逐文件复用它（打包时记提交号）；向量只在库里生成，一个库只能有一种模型的向量（防混用检查）。审核 Agent 和知识库 Agent 看到的是同一份规则。
 4. **密钥治理到位**：调用密钥只经页面、加密存库，仓库和交付包里没有真实密钥，出包时自动扫描；管理通道钉住主机公钥。
 5. **可验证**：五套单元测试，加一套真实调用 Nexus 的端到端测试；部署脚本、模板本身也有测试。出包前重跑其中四套（部署脚本与栈模板、外壳、知识库、审核 Agent），哪一项没过就不出包；新前端的测试在 `deploy.sh` 里跑；端到端要人在部署后跑。每次线上提示词改动都有改前、改后、比对和下发记录。
-6. **部署可重复**：三块各自幂等，能演练的先演练；2026-11-02 从零在 m7g 上建栈、搬数据、迁域名、改名，都靠脚本完成，事后端到端全过。
+6. **部署可重复**：三块各自幂等，能演练的先演练；2026-11-02 从零在 m7g 上建栈、搬数据、迁域名、改名，都靠脚本完成，事后端到端全过；2026-11-06 九安的库从 MySQL 换成 PostgreSQL 也是：先演练、逐表核对，正式切换停站约 2 分 10 秒，104,538 行一行不差。
 
 ### 10.2 风险与技术债
 
@@ -270,7 +271,7 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 | 2 | 审核 Agent 的数据连接器账号有写权限 | 提示词出错或被注入时理论上能改规则库 | 提示词只让做 SELECT | 换成只读账号，再绑给连接器 | 上生产前必须 |
 | 3 | 补丁基于测试环境开发包 | 真实代码线不一致时补丁打不上或运行出错 | 等九安给基线（前置 2） | 拿到基线后在真实代码线上重打、跑九安自己的测试 | 上生产前必须 |
 | 4 | 九安上游 `review_advice@1` 的时限是 120 秒 | 慢的一轮出不来建议 | 测试台用补丁放到 180 / 200 秒；改提示词后九成在 15 秒内 | 请九安在契约里调高；提示词继续写死查询次数 | 高 |
-| 5 | 一切都在一台实例的根卷上 | 实例被替换、根卷故障就丢 MySQL、PG 和状态目录 | 手动 `backup.sh` 做快照 | 测试台加定时快照；正式环境 PG 用托管服务或独立主机，MySQL 由九安自己的环境负责 | 高 |
+| 5 | 一切都在一台实例的根卷上 | 实例被替换、根卷故障就丢九安的 PostgreSQL、知识库的 PG 和状态目录 | 手动 `backup.sh` 做快照 | 测试台加定时快照；正式环境 PG 用托管服务或独立主机，九安的库由九安自己的环境负责 | 高 |
 | 6 | 健康检查看不出 AI 通路坏了 | 调用密钥失效、Nexus 出错时 `/poc/healthz` 照样通 | 靠人看单据池 | 加一个定时的合成检查（每小时模拟来单一张或调一次请求信封测试），失败就告警 | 高 |
 | 7 | 构件和健康检查不带提交号 | 线上跑的是哪个提交只能靠时间对 | 代码已进私有仓库 | 打包时写入 `git rev-parse HEAD`，健康检查回它 | 中 |
 | 8 | 知识库 Agent 的固定操作也走整轮模型 | 每次 8 秒、0.04 美元；读操作已经靠缓存避开，入库、检索、下线还是这么慢 | 2026-11-03 加了 `poc_kb_cache` | 给它换更快、更便宜的模型（规则请求是机械操作），或者如果 Nexus 支持就不经模型、直接调工具 | 中 |
@@ -283,12 +284,14 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 | 15 | CloudFront 等源站最多 60 秒 | 启用时验密钥（最长 200 秒）、知识库的同步操作（最长 2 分钟）超过 60 秒时浏览器先拿到超时，后台其实还在跑 | 平时几秒到十几秒，很少碰到 | 把这些改成和入库一样先回 202、页面轮询；或者调高源站读超时 | 中 |
 | 16 | 实例角色还留着 Titan v2 的调用权限 | 多一个用不到的模型权限 | 换 Cohere v4 时留作回退 | 确认不再回退后从 `KbBedrockPolicy` 去掉 | 低 |
 | 17 | 交接仓库被公司的代码安全工具判为未批准的公开仓库 | 推送被拦，交接内容可能已经公开 | 2026-11-03 手动推送过 | 确认审批状态；不该公开就改成私有或换到批准的位置 | 流程上要尽快确认 |
+| 18 | 九安原来就有的一个竞态（换库前 MySQL 上也有） | 两个流程同时发布同一份审核要素草稿时，输的一方偶尔报 `ELEMENT_FAMILY_RETIRED` 而不是 `FAMILY_CONFLICT`，大约五次里一次；只影响报错的种类，不影响数据 | `element-lifecycle.mjs` 先读状态、再另读是否生效过；换库没改它（不在范围） | 交项目负责人定要不要改 | 低 |
+| 19 | 切换前的 MySQL 还留着 | 多一个停着的容器、数据目录和两项口令要管 | 2026-11-06 切换后停着、不删，留着做回退 | 项目负责人说删就删：容器、`/var/lib/jiuan-mysql`、`secrets.env` 里两项 MySQL 口令和实例上的两个口令文件（[运维](delivery/operations.md)第 2.6 节） | 低 |
 
 ### 10.3 建议的路线
 
 1. **上生产前**（挡路的）：第 1、2、3 条；生产 Nexus 上的两个发布单独签发调用密钥；开发测试期间用过的密钥统一清理（[交接文档](delivery/handover.md)第 2.5 节）。
 2. **试运行期间**：第 4、5、6 条，盯住每天的调用量、失败率（`AI_*` 错误码）、单次时长、人工改判率（工作台上有）。
-3. **之后**：第 7–11、15 条，主要是可运维性和成本。
+3. **之后**：第 7–11、15 条，主要是可运维性和成本；第 18、19 条等项目负责人定。
 
 ## 11. 代码地图
 
@@ -305,7 +308,7 @@ pgvector 是 PostgreSQL 的一个扩展：给表加一种 `vector(n)` 列，能�
 | `poc/app/lib/` | A2A 0.3 流式客户端、发布与名片、调 nexus-ai-operator、口令登录、HTTP 小工具 |
 | `poc/web/` | 新前端 |
 | `patches/jiuan-v0.7.10/`、`poc/bench/build-jiuan.sh` | 九安副本的补丁和构建 |
-| `poc/infra/` | 栈模板 `andon-finance-poc.yaml`、`deploy.sh`、`kb.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`、`destroy.sh`、`lib/remote.sh`（SSM / SSH / Instance Connect）、`bench/`（实例上的配置、重置、MySQL 脚本） |
+| `poc/infra/` | 栈模板 `andon-finance-poc.yaml`、`deploy.sh`、`kb.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`、`destroy.sh`、`lib/remote.sh`（SSM / SSH / Instance Connect）、`bench/`（实例上的配置、重置、PostgreSQL 脚本）；换库用过的 `pg-prepare.sh`、`migrate-mysql-to-pg.sh`、`remote-jiuan-tests.sh` |
 | `kb/` | 知识库部署工具和共享核心 `kb/lib`（解析、入库、检索、管理） |
 | `audit-agent/` | 审核 Agent 的提示词、下发脚本、历次改动 |
 | `knowledgebase-writer-agent-pg/`、`customer-deploy/` | PG 知识库 Agent 的源码和客户部署件 |

@@ -1,6 +1,6 @@
 ---
 subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
-date: 2026-11-05
+date: 2026-11-06
 status: 交付版（写的是现在的做法，外加一份工作流评估）
 scope: 单据审核、Agent 接入、知识库、开发与变更、提示词、部署、换环境、交付与交接、日常运维
 audience: 应用开发、Agent 开发、运维、项目负责人
@@ -97,7 +97,7 @@ audience: 应用开发、Agent 开发、运维、项目负责人
 
 ## 5. 开发与变更
 
-![一次变更：改代码（先写会失败的测试）→ 本机测试 → deploy.sh --code-only → 端到端 26 条 → 项目负责人确认 → 推送 → 出包、导出交接仓库；任何一步没过就回去改](assets/diagrams/dev-workflow.svg)
+![一次变更：改代码（先写会失败的测试）→ 本机测试 → deploy.sh --code-only → 端到端 27 条 → 项目负责人确认 → 推送 → 出包、导出交接仓库；任何一步没过就回去改](assets/diagrams/dev-workflow.svg)
 
 **规矩**：
 - 先写会失败的测试，再改代码；
@@ -112,7 +112,7 @@ audience: 应用开发、Agent 开发、运维、项目负责人
 |---|---|---|
 | 本机测试 | `cd poc/infra && node --test "test/**/*.test.mjs"`；`cd poc/app && node --test "test/unit/**/*.test.mjs"`；`cd poc/web && npm test`；kb 和 audit-agent 的测试；`docs/build-html.sh --check` | 全过 |
 | 部署到测试台 | `DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/infra/deploy.sh --code-only` | 脚本自己再跑一遍测试和构建，装到实例上、重启，健康检查通过 |
-| 端到端 | `DEPLOY_ENV=… KB_E2E_DOCX=<风险判断卡 .docx> bash poc/app/test/e2e/run.sh` | 26 条全过（网页 15 条、接口 11 条），约 6 分钟、1–3 美元；会先重置测试台的库，「Agent 接入」的启用记录保留 |
+| 端到端 | `DEPLOY_ENV=… KB_E2E_DOCX=<风险判断卡 .docx> bash poc/app/test/e2e/run.sh` | 27 条全过（网页 15 条、接口 12 条；没给 `KB_E2E_DOCX` 时网页的上传那条跳过），约 6 分钟、1–3 美元；会先重置测试台的库，「Agent 接入」的启用记录保留 |
 | 推送 | 项目负责人确认后 `git push` | 开发仓库 main 和远端一致 |
 
 不同的变更（代码、提示词、规则、栈参数、模板、密钥）各怎么改、怎么测、怎么退，见[部署与迭代规范](delivery/deploy-iteration.md)第 4、6 节。
@@ -153,6 +153,8 @@ audience: 应用开发、Agent 开发、运维、项目负责人
 6. 迁域名：最后同步一次（`migrate-data.sh --skip-pg`），旧栈把站点名改成别的、腾出别名，新栈接上；站点停约 5 分钟。
 
 旧栈没删之前，`kb.sh connector` 用旧环境的配置再跑一次就能让 Nexus 指回旧 PG。
+
+2026-11-06 起九安的库是 PostgreSQL（容器 `jiuan-pg`）：现在 `migrate-data.sh` 搬它用 `pg_dump` / `pg_restore`，两边都得是换库之后的构件。
 
 **要知道的**：栈模板里实例的用户数据哪怕只改一行注释，栈更新时实例也会停机再开一次，容器都重启（11-02 晚上改名时站点因此停了约 28 分钟）；只改资源的逻辑编号用 CloudFormation 的 stack refactor，不重建资源。
 

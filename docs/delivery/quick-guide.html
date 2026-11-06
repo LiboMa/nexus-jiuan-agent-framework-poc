@@ -139,11 +139,11 @@ href="https://jiuan-v0710.tinyboat.blog">https://jiuan-v0710.tinyboat.blog</a>�
 <a href="../assets/diagrams/bench-overview.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/bench-overview.svg" loading="lazy"
-alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
+alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
 <figcaption>系统总览：浏览器经 CloudFront
-到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的
-PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库
-Agent，两个 Agent 都经数据连接器到 PG</figcaption>
+到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的
+PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经
+A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG</figcaption>
 </figure>
 <h1 id="2-你是谁从哪开始">2. 你是谁、从哪开始</h1>
 <div class="table-wrap">
@@ -408,7 +408,7 @@ Agent：<code>python3 audit-<wbr>agent/<wbr>setup.<wbr>py -<wbr>-<wbr>env &lt;�
 <tr>
 <td>验收</td>
 <td><code>DEPLOY_<wbr>ENV=… KB_<wbr>E2E_<wbr>DOCX=&lt;风险判断卡 .<wbr>docx&gt; bash poc/<wbr>app/<wbr>test/<wbr>e2e/<wbr>run.<wbr>sh</code></td>
-<td>26 条全过</td>
+<td>27 条全过</td>
 </tr>
 </tbody>
 </table>

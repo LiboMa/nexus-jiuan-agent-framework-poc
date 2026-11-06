@@ -2,7 +2,7 @@ flowchart TD
   change["改代码 · 先写会失败的测试"]
   unit["本机测试<br/>poc/infra · 外壳 · 新前端 · kb · audit-agent · build-html.sh --check"]
   deploy["deploy.sh --code-only<br/>（又跑一遍测试、构建，装到测试台）"]
-  e2e["run.sh 端到端<br/>26 条，真实调用 Nexus"]
+  e2e["run.sh 端到端<br/>27 条，真实调用 Nexus"]
   owner["项目负责人确认"]
   push["提交 · 推送开发仓库"]
   pkg["make-package.sh<br/>检查没过就不出包 · 只带进了 git 的文件 · 脱敏 · 扫密钥"]

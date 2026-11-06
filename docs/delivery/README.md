@@ -8,7 +8,7 @@ audience: 所有接手的人
 
 # 交付文档索引
 
-![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
+![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](../assets/diagrams/bench-overview.svg)
 
 **Finance-Audit-Nexus-PoC v0.7.10**（2026-10-26 封板；2026-11-02 起只留新 UI）。现在的状态：
 - **九安 v0.7.10 测试台**是唯一的一套：首页 `/` 是新前端 `poc/web`（工作台、单据池、知识库、我的规则、Agent 接入、设置），后面是外壳 `poc/app` 和九安 v0.7.10 的副本；九安原来的页面在 `/analysis.html`。原来并排的 v0.5.3 PoC 2026-11-02 从代码里拿掉了（[变更记录](../../CHANGELOG.md)）。

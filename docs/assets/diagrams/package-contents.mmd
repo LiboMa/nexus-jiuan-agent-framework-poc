@@ -4,7 +4,7 @@ flowchart TB
     direction TB
     web["poc/web/<br/>新前端（React）"]
     app["poc/app/<br/>外壳 · lib/ · 单元与端到端测试"]
-    bench["poc/bench/ · patches/jiuan-v0.7.10/<br/>build-jiuan.sh · 补丁 0001–0007"]
+    bench["poc/bench/ · patches/jiuan-v0.7.10/<br/>build-jiuan.sh · 补丁 0001–0017<br/>mysql-to-pg.mjs（一次性的搬迁工具）"]
     infra["poc/infra/<br/>模板 · deploy.sh · test/ · bench/（不含 secrets.env）"]
   end
   subgraph back["② PG 与知识库后端"]
@@ -27,7 +27,7 @@ flowchart TB
     o1["secrets.env（含测试台密钥）：当面交接"]
     o2["九安开发包 v0.7.10：按版本号从九安取"]
     o3["~/.nexus：接手人用自己的"]
-    o4["实例上的 MySQL、PG 和 /var/lib/jiuan：留在实例"]
+    o4["实例上九安的 PG、知识库的 PG、<br/>停着的 MySQL 和 /var/lib/jiuan：留在实例"]
   end
   pkg ==> front
   pkg ==> back

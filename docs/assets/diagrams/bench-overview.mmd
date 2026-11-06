@@ -4,8 +4,8 @@ flowchart TB
   subgraph ec2["一台 EC2（m7g.xlarge · arm64 · Amazon Linux 2023）"]
     direction TB
     shell["测试台外壳 poc/app<br/>服务 andon-jiuan · 用户 jiuan · 0.0.0.0:4180<br/>/ 新前端 web · /analysis.html 九安原页面 · /poc/*"]
-    jiuan["九安 v0.7.10 副本（开发包 + 补丁 0001–0007）<br/>单据池 · 流水线 · Agent 接入 · 任务服务 · A2A 适配层"]
-    mysql["MySQL 8.0 容器 jiuan-mysql<br/>127.0.0.1:3306 · 库 jiuan"]
+    jiuan["九安 v0.7.10 副本（开发包 + 补丁 0001–0017）<br/>单据池 · 流水线 · Agent 接入 · 任务服务 · A2A 适配层"]
+    jdb["PostgreSQL 17 容器 jiuan-pg<br/>127.0.0.1:5433 · 库 jiuan"]
     pg["PG + pgvector 容器 nexus-pgvector<br/>私网 IP:5432 · 库 nexus · kb_search"]
   end
   subgraph nx["Nexus（nxs-beine1013）"]
@@ -17,7 +17,7 @@ flowchart TB
   browser e1@== HTTPS ==> cf
   cf e2@== "HTTP :4180（安全组只放 CloudFront 回源）" ==> shell
   shell --- jiuan
-  jiuan --- mysql
+  jiuan --- jdb
   jiuan e3@== "A2A：AI 独立建议" ==> audit
   shell e4@== "A2A：知识库页" ==> kbagent
   audit -. 只读查 .-> conn
@@ -28,6 +28,6 @@ flowchart TB
   e3@{ animate: true }
   e4@{ animate: true }
   class browser,cf,shell poc
-  class jiuan,mysql jiuan
+  class jiuan,jdb jiuan
   class pg poc
   class audit,kbagent,conn nexus

@@ -95,7 +95,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
 v0.7.10</span>工作流</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-11-05</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-06</td></tr>
     <tr><th scope="row">状态</th><td>交付版（写的是现在的做法，外加一份工作流评估）</td></tr>
     <tr><th scope="row">范围</th><td>单据审核、Agent
 接入、知识库、开发与变更、提示词、部署、换环境、交付与交接、日常运维</td></tr>
@@ -392,9 +392,9 @@ href="architecture.html">架构与技术评估</a>第 6 节。</p>
 <a href="assets/diagrams/dev-workflow.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="assets/diagrams/dev-workflow.svg" loading="lazy"
-alt="一次变更：改代码（先写会失败的测试）→ 本机测试 → deploy.sh --code-only → 端到端 26 条 → 项目负责人确认 → 推送 → 出包、导出交接仓库；任何一步没过就回去改" /></a>
+alt="一次变更：改代码（先写会失败的测试）→ 本机测试 → deploy.sh --code-only → 端到端 27 条 → 项目负责人确认 → 推送 → 出包、导出交接仓库；任何一步没过就回去改" /></a>
 <figcaption>一次变更：改代码（先写会失败的测试）→ 本机测试 → deploy.sh
---code-only → 端到端 26 条 → 项目负责人确认 → 推送 →
+--code-only → 端到端 27 条 → 项目负责人确认 → 推送 →
 出包、导出交接仓库；任何一步没过就回去改</figcaption>
 </figure>
 <p><strong>规矩</strong>：</p>
@@ -434,8 +434,9 @@ alt="一次变更：改代码（先写会失败的测试）→ 本机测试 → 
 <tr>
 <td>端到端</td>
 <td><code>DEPLOY_<wbr>ENV=… KB_<wbr>E2E_<wbr>DOCX=&lt;风险判断卡 .<wbr>docx&gt; bash poc/<wbr>app/<wbr>test/<wbr>e2e/<wbr>run.<wbr>sh</code></td>
-<td>26 条全过（网页 15 条、接口 11 条），约 6 分钟、1–3
-美元；会先重置测试台的库，「Agent 接入」的启用记录保留</td>
+<td>27 条全过（网页 15 条、接口 12 条；没给
+<code>KB_<wbr>E2E_<wbr>DOCX</code> 时网页的上传那条跳过），约 6
+分钟、1–3 美元；会先重置测试台的库，「Agent 接入」的启用记录保留</td>
 </tr>
 <tr>
 <td>推送</td>
@@ -520,6 +521,10 @@ md5（那次 199 项一致）。</li>
 </ol>
 <p>旧栈没删之前，<code>kb.sh connector</code>
 用旧环境的配置再跑一次就能让 Nexus 指回旧 PG。</p>
+<p>2026-11-06 起九安的库是 PostgreSQL（容器
+<code>jiuan-pg</code>）：现在 <code>migrate-data.sh</code> 搬它用
+<code>pg_dump</code> /
+<code>pg_restore</code>，两边都得是换库之后的构件。</p>
 <p><strong>要知道的</strong>：栈模板里实例的用户数据哪怕只改一行注释，栈更新时实例也会停机再开一次，容器都重启（11-02
 晚上改名时站点因此停了约 28 分钟）；只改资源的逻辑编号用 CloudFormation
 的 stack refactor，不重建资源。</p>

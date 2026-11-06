@@ -1,8 +1,8 @@
 # Finance-Audit-Nexus-PoC v0.7.10
 
-九安审核平台 × Nexus AI 的 PoC。九安自助审核平台 v0.7.10 的原服务端跑在测试台上（九安真实运行时 + 本机 MySQL），前面是新前端，AI 能力在 Nexus 上，经 A2A 调用；数据全部虚构。
+九安审核平台 × Nexus AI 的 PoC。九安自助审核平台 v0.7.10 的原服务端跑在测试台上（九安真实运行时 + 本机的 PostgreSQL；2026-11-06 从 MySQL 换过来），前面是新前端，AI 能力在 Nexus 上，经 A2A 调用；数据全部虚构。
 
-![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](docs/assets/diagrams/bench-overview.svg)
+![系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG](docs/assets/diagrams/bench-overview.svg)
 
 - **新前端**（首页 `/`）：工作台、单据池（抽屉里看 AI 建议、原件、单据信息、历史，采纳或改判）、知识库、我的规则、Agent 接入、设置。九安原来的页面在 `/analysis.html`。
 - **AI 独立建议**：单据池里的单据读完原件后，九安经 A2A 调管理员指定的审批 Agent「九安审核AI」（`review_advice@1`）；它经 Nexus 的数据连接器只读查 PG 知识库（库内语义检索 `kb_search`，Cohere Embed v4）。
@@ -35,11 +35,12 @@
 
 正式环境按 1 → 2 → 3 部署，前端分批上；测试阶段三块在一台 m7g.xlarge（arm64）上。
 
-## 现在的环境（2026-11-02）
+## 现在的环境（2026-11-06）
 
 | | |
 |---|---|
 | 站点 | <https://jiuan-v0710.tinyboat.blog>（栈 `andon-finance-m7g`，一台 m7g.xlarge；经 SSH + EC2 Instance Connect 端点管理） |
+| 九安的库 | 实例上的 PostgreSQL 容器 `jiuan-pg`（127.0.0.1:5433，库 `jiuan`）；2026-11-06 从 MySQL 切过来。MySQL 容器 `jiuan-mysql` 停着、不删，留着做回退，项目负责人说删再删（[运维](docs/delivery/operations.md)第 2.6 节） |
 | Nexus | `nxs-beine1013`：审核 Agent 发布 `pub_5c53e70d8dc7ddea`，PG 知识库 Agent 发布 `pub_6ea5f0855dff6c1b`；生产用另一套线上 Nexus AI <https://d3u3hj2us186y.cloudfront.net/> |
 | 旧栈 | `andon-finance-poc`（t3.large）先留几天，等项目负责人说再删 |
 
@@ -49,9 +50,9 @@
 |---|---|
 | `poc/web/` | 新前端（React + Vite + Tailwind，哈希路由）；`npm test`、`npm run build` |
 | `poc/app/` | 测试台外壳：口令登录、假汇联易、出网守卫、「Agent 接入」与知识库页的后端、新前端用的接口；`lib/` 共用模块；`test/unit/` 单元测试，`test/e2e/` 端到端测试（`run.sh`、`web.e2e.mjs`、`api.e2e.mjs`） |
-| `poc/bench/` | `build-jiuan.sh`：开发包 + 补丁 + `mysql2` → 九安 v0.7.10 副本 |
-| `patches/jiuan-v0.7.10/` | 打进九安副本的补丁 0001–0007（「Agent 接入」、审批 Agent、制度知识库页、我的规则、两处时限） |
-| `poc/infra/` | 栈模板（默认 m7g.xlarge）、`deploy.sh`、`kb.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`、`lib/remote.sh`（SSH / Instance Connect / SSM）、`bench/`（实例上的脚本：`bench-configure.sh`、`bench-reset.sh`、`mysql-install.sh`、服务单元）、`env/example.env`、`secrets.env.example`；`test/` |
+| `poc/bench/` | `build-jiuan.sh`：开发包 + 补丁 + 锁定版本的 `pg` → 九安 v0.7.10 副本；`mysql-to-pg.mjs`：一次性的 MySQL → PostgreSQL 搬迁工具（2026-11-06 用过，以后一般用不到）；`pg-port/`：换库前后九安自带测试的结果 |
+| `patches/jiuan-v0.7.10/` | 打进九安副本的补丁 0001–0017：0001–0007 是「Agent 接入」、审批 Agent、制度知识库页、我的规则、两处时限；0008–0017 把九安的数据层换成 PostgreSQL |
+| `poc/infra/` | 栈模板（默认 m7g.xlarge）、`deploy.sh`、`kb.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh`、`lib/remote.sh`（SSH / Instance Connect / SSM）、`bench/`（实例上的脚本：`bench-configure.sh`、`bench-reset.sh`、`pg-install.sh`、`pg-database.sh`、服务单元）；换库用过的一次性脚本 `pg-prepare.sh`、`migrate-mysql-to-pg.sh`、`remote-jiuan-tests.sh`、`env/example.env`、`secrets.env.example`；`test/` |
 | `kb/` | 知识库部署工具（preflight、db、network、egress、connector、ingest、agent、verify）；`convert/risk-cards/` 把审批风险判断卡转成可入库的 .docx |
 | `audit-agent/` | 审核 Agent 的提示词与下发脚本；`prompt-history/` 每次改线上提示词的留底 |
 | `knowledgebase-writer-agent-pg/` | PG 知识库 Agent 的源码：工具、提示词、打包与导入脚本、A2A 命令行 |
@@ -75,7 +76,7 @@ DEPLOY_ENV=poc/infra/env/<环境名>.env KB_E2E_DOCX=<转好的风险判断卡 .
 
 ## 不在仓库里、另行交接
 
-- `poc/infra/secrets.env`（两个账号的口令和三项测试台密钥，当面交接；样例 `poc/infra/secrets.env.example`）、`poc/infra/env/<环境名>.env`、`kb/deploy.env`、`poc/infra/.state/`。
+- `poc/infra/secrets.env`（两个账号的口令和测试台密钥，当面交接；样例 `poc/infra/secrets.env.example`）、`poc/infra/env/<环境名>.env`、`kb/deploy.env`、`poc/infra/.state/`。
 - 九安开发包 `source/九安自助审核平台-测试环境开发包-v0.7.10/`（按版本号向九安取）。
 - 各人的 Nexus API 密钥（各人在自己的 Nexus 网页上生成）；两个发布的调用密钥（发布者本人在网页上签发，管理员在「Agent 接入」页粘贴）。
 - 测试证据 `evidence/` 只在交付包里。
