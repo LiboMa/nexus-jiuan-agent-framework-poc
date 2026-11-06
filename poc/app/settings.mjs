@@ -40,8 +40,9 @@ export function readSettings(env = process.env) {
     operatorScript: absolute(env, 'NEXUS_OPERATOR'), nexusHome: absolute(env, 'POC_NEXUS_HOME', '/var/lib/jiuan/nexus'),
     // 服务自己的数据目录：种子时间锚点（seed-anchor.json）等
     stateDir,
-    database: { host: env.POC_MYSQL_HOST || '127.0.0.1', port: portOf(env, 'POC_MYSQL_PORT', 3306),
-      database: env.POC_MYSQL_DATABASE || 'jiuan', user: env.POC_MYSQL_USER || 'jiuan_app' },
+    // 九安的库：测试台的 PostgreSQL（容器 jiuan-pg，只听 127.0.0.1:5433）
+    database: { host: env.POC_DB_HOST || '127.0.0.1', port: portOf(env, 'POC_DB_PORT', 5433),
+      database: env.POC_DB_NAME || 'jiuan', user: env.POC_DB_USER || 'jiuan_app' },
     kb: kbSettings(env, stateDir),
     // 「我的规则」：每人上传的自定义规则，两种知识库方式都有
     customRulesDir: path.join(stateDir, 'custom-rules'),
@@ -83,8 +84,8 @@ export function jiuanConfig(settings, { tenantId, connectionId, companies }) {
     connectionId, origin: settings.origin,
     scope: { tenantId, companyId: companyIds[0], allCompaniesInTenant: true },
     source: { kind: 'huilianyi-stage-oauth', appIdFile: secret('hly_app_id'), appSecretFile: secret('hly_app_secret') },
-    database: { engine: 'mysql', ...settings.database },
-    secretFiles: { databasePassword: secret('mysql_app_password'), dataKey: secret('analysis_data_key') },
+    database: { engine: 'postgres', ...settings.database },
+    secretFiles: { databasePassword: secret('db_app_password'), dataKey: secret('analysis_data_key') },
     automaticSync: true, syncIntervalMs: 60_000,
     accounts: [account('poc-reviewer', '审核员（虚构）', 'admin'), account('poc-checker', '复核人（虚构）', 'analyst')],
     agents: { nexusOrigin: settings.nexusOrigin, tasks: { review_advice: { enabled: true, version: 1, routes: [] } } },

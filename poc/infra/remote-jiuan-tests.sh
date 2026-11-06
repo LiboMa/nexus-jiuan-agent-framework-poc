@@ -7,9 +7,10 @@
 #   退出码 0 只表示跑完了；及格与否用 compare-jiuan-results.mjs 和基线比。
 # 用法：DEPLOY_ENV=poc/infra/env/<环境>.env bash poc/infra/remote-jiuan-tests.sh --engine mysql|pg|both [--only '<glob>'] [--patches <目录>] [--junit <报告.xml>] --out <结果.json>
 #   --junit：另存一份原始 junit 报告（失败的报错原文在里面，查原因用）。
+#   --shell-tests：外壳（poc/app）也传过去，连库的那几个单元测试（pg-stores、reviews、kb-cache）一起跑（JIUAN_DIR 指到这份九安副本；真 PG 的那几条要它）。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-ENGINE="" ONLY='tests/*.test.mjs' PATCHES="" OUT="" JUNIT=""
+ENGINE="" ONLY='tests/*.test.mjs' PATCHES="" OUT="" JUNIT="" SHELL_TESTS=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --engine) ENGINE="$2"; shift 2 ;;
@@ -17,6 +18,7 @@ while [[ $# -gt 0 ]]; do
     --patches) PATCHES="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --junit) JUNIT="$2"; shift 2 ;;
+    --shell-tests) SHELL_TESTS=true; shift ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -39,6 +41,11 @@ build_args=(--with-tests --out "$local_work/jiuan")
 [[ -z "$PATCHES" ]] || build_args+=(--patches "$PATCHES")
 bash "$HERE/../bench/build-jiuan.sh" "${build_args[@]}" >/dev/null
 cp "$HERE/bench/test-databases.sh" "$local_work/jiuan/test-databases.sh"
+SHELL_GLOB=""
+if $SHELL_TESTS; then
+  rsync -a --exclude 'node_modules/' --exclude '.DS_Store' --exclude 'test/e2e/' "$HERE/../app/" "$local_work/jiuan/shell/"
+  SHELL_GLOB='shell/test/unit/{pg-stores,reviews,kb-cache}.test.mjs'
+fi
 # 上传：打包经 SSH 传到实例上新建的临时目录（chmod 0700），回传目录名
 remote_dir="$(COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -C "$local_work/jiuan" -czf - . \
   | ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'd=$(mktemp -d /var/tmp/jiuan-pgtest.XXXXXX) && chmod 0700 "$d" && tar -C "$d" -xzf - && echo "$d"')"
@@ -60,8 +67,9 @@ case '$ENGINE' in
   both) export MYSQL_TEST_URL="\$url_mysql" PG_TEST_URL="\$url_pg" ;;
 esac
 cd "\$d"
+export JIUAN_DIR="\$d"
 shopt -s nullglob
-files=( $ONLY )
+files=( $ONLY $SHELL_GLOB )
 (( \${#files[@]} > 0 )) || { echo "没有匹配的测试文件：$ONLY" >&2; exit 1; }
 # 一个文件的测试跑完就退出（哪怕还有连接没关）；整轮最多 55 分钟（经 EC2 Instance Connect 的 SSH 一小时就断）
 timeout 3300 node --test --test-force-exit --test-concurrency=1 --test-timeout=180000 --test-reporter=junit --test-reporter-destination="\$d/junit.xml" "\${files[@]}" >/dev/null 2>"\$d/stderr.txt"
