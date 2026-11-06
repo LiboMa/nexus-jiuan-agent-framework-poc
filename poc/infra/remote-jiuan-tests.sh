@@ -63,7 +63,8 @@ cd "\$d"
 shopt -s nullglob
 files=( $ONLY )
 (( \${#files[@]} > 0 )) || { echo "没有匹配的测试文件：$ONLY" >&2; exit 1; }
-node --test --test-concurrency=1 --test-timeout=180000 --test-reporter=junit --test-reporter-destination="\$d/junit.xml" "\${files[@]}" >/dev/null 2>"\$d/stderr.txt"
+# 一个文件的测试跑完就退出（哪怕还有连接没关）；整轮最多 55 分钟（经 EC2 Instance Connect 的 SSH 一小时就断）
+timeout 3300 node --test --test-force-exit --test-concurrency=1 --test-timeout=180000 --test-reporter=junit --test-reporter-destination="\$d/junit.xml" "\${files[@]}" >/dev/null 2>"\$d/stderr.txt"
 echo "===JUNIT==="
 cat "\$d/junit.xml"
 SH

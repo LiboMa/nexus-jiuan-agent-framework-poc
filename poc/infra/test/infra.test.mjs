@@ -303,7 +303,7 @@ test('远端跑九安测试（remote-jiuan-tests.sh）：本机构建带测试�
   const script = await readFile(infra('remote-jiuan-tests.sh'), 'utf8');
   for (const expected of ['--with-tests', 'ssh_setup', 'remote_root', 'mktemp -d /var/tmp/jiuan-pgtest.XXXXXX', 'chmod 0700', 'test-databases.sh" create',
     '--test-concurrency=1', '--test-timeout=180000', '--test-reporter=junit', 'MYSQL_TEST_URL', 'PG_TEST_URL', 'cat /etc/andon-finance/test/', 'compare-jiuan-results.mjs', 'rm -rf',
-    '@127.0.0.1:3307/jiuan_test', '@127.0.0.1:5434/jiuan_test', 'test-databases.sh" drop', 'flock -w 7200 9']) {
+    '@127.0.0.1:3307/jiuan_test', '@127.0.0.1:5434/jiuan_test', 'test-databases.sh" drop', 'flock -w 7200 9', '--test-force-exit', 'timeout 3300 node --test']) {
     assert.ok(script.includes(expected), `remote-jiuan-tests.sh 应包含 ${expected}`);
   }
   assert.ok(script.indexOf('flock -w 7200 9') < script.indexOf('test-databases.sh" create'), '两次远端测试不同时跑：先拿实例上的锁再建测试库');
