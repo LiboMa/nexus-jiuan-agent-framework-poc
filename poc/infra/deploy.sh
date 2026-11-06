@@ -110,9 +110,9 @@ if [[ ! -f "$SECRETS" ]]; then
 REVIEWER_PASSWORD=$(openssl rand -base64 18)
 CHECKER_PASSWORD=$(openssl rand -base64 18)
 SECRETSFILE
-  echo "已生成 ${SECRETS}：两个账号的随机口令（测试台的五项密钥接着补上）"
+  echo "已生成 ${SECRETS}：两个账号的随机口令（测试台的三项密钥接着补上）"
 fi
-# 测试台（PostgreSQL、切换前的 MySQL 与九安存储）的密钥：缺了才补、已有的永远不改（lib/bench-secrets.sh）
+# 测试台（PostgreSQL 与九安存储）的密钥：缺了才补、已有的永远不改（lib/bench-secrets.sh）
 ensure_bench_secrets "$SECRETS"
 chmod 600 "$SECRETS"
 

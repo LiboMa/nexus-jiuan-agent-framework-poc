@@ -6,7 +6,7 @@
 #   2. /etc/andon-finance/jiuan/：从 secrets.env 取库口令（db_app_password）、数据密钥和两个账号的口令写成文件（root:jiuan 0640），
 #      实例上已有的数据密钥只认原值；虚构的汇联易凭据（假汇联易不校验）；服务的 env 文件（外壳连库的设置 POC_DB_*）；
 #   3. PostgreSQL：装好或确认容器 jiuan-pg（pg-install.sh），在里面建库 jiuan 和它的属主 jiuan_app（pg-database.sh，口令只经标准输入进容器）。
-#      MySQL 不再由这里管：切换前的 MySQL 容器和它的口令文件 mysql_app_password 留着给回退（上一版构件还连 MySQL），这里不碰；
+#      MySQL 2026-11-06 删了：实例上留下的两个 MySQL 口令文件（mysql_app_password、bench/mysql_root_password）每次都清掉；
 #   4. /etc/hosts 堵掉九安代码里写死的外部地址（整段带标记，可以整段删）；
 #   5. systemd 单元 andon-jiuan.service：外壳直接听 0.0.0.0:4180（安全组只放 CloudFront 回源）。
 # 用法：bench-configure.sh <站点主机名> <Nexus 地址> [<kb 方式> [<知识库 Agent 发布编号>]]。不打印任何密钥。AI 独立建议发给哪个发布不在这里配：由「Agent 接入」页上的启用记录决定。
@@ -69,6 +69,8 @@ for pair in "${SECRET_FILES[@]}"; do
 done
 [[ "$(secret_value JIUAN_DATA_KEY)" =~ ^[A-Za-z0-9+/]{43}=$ ]] || { echo "secrets.env 里的 JIUAN_DATA_KEY 不是 32 字节的 base64" >&2; exit 1; }
 [[ "$(secret_value JIUAN_PG_APP_PASSWORD)" =~ ^[0-9a-f]{32}$ ]] || { echo "secrets.env 里的 JIUAN_PG_APP_PASSWORD 应是 32 位十六进制" >&2; exit 1; }
+# 2026-11-06 删了 MySQL：它留下的两个口令文件（没有也不出错）
+rm -f "$DIR/mysql_app_password" /etc/andon-finance/bench/mysql_root_password
 write_secret() {   # 文件名 值：root:jiuan 0640，先写临时文件再改名
   ( umask 077; printf '%s' "$2" > "$DIR/$1.new" )
   chown root:jiuan "$DIR/$1.new"; chmod 0640 "$DIR/$1.new"; mv "$DIR/$1.new" "$DIR/$1"

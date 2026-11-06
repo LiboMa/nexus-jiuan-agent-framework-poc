@@ -39,7 +39,7 @@ test('配置脚本：服务以 jiuan 用户跑（读不到 secrets.env）、直�
   assert.doesNotMatch(script, /usermod[^\n]*andon|-G andon/);
   const database = script.slice(script.indexOf('# >>> jiuan-database'), script.indexOf('# <<< jiuan-database'));
   assert.equal(database, '# >>> jiuan-database\nbash "$HERE/pg-install.sh"\nbash "$HERE/pg-database.sh" jiuan\n');
-  assert.doesNotMatch(script, /mysql-install|jiuan-mysql|mysql_root|GRANT ALL|docker exec/, '库和账号只经 pg-database.sh 建；MySQL 不再由它管');
+  assert.doesNotMatch(script, /mysql-install|jiuan-mysql|mysql_root\(\)|GRANT ALL|docker exec/, '库和账号只经 pg-database.sh 建；MySQL 不再由它管');
   // 外壳连库的设置写进 env：测试台的 PG（127.0.0.1:5433 / jiuan / jiuan_app），口令在 db_app_password
   for (const line of ['POC_DB_HOST=127.0.0.1', 'POC_DB_PORT=5433', 'POC_DB_NAME=jiuan', 'POC_DB_USER=jiuan_app']) assert.ok(script.split('\n').includes(line), `env 里缺 ${line}`);
   for (const host of BLACKHOLE) assert.ok(script.includes(host), `/etc/hosts 没堵 ${host}`);
@@ -70,13 +70,15 @@ test('配置脚本：2026-11-02 之前的名字（andon-jiuan07、jiuan07……�
   assert.doesNotMatch(script, /RENAME TABLE|RENAME USER|schema_count|jiuan07_app|JIUAN_DB_RENAMED/);
 });
 
-test('配置脚本：数据密钥只认原值，和 secrets.env 不同就一个文件都不写；库口令写成 db_app_password（PG 的账号口令每次部署按 secrets.env 重设，所以不用钉住）；切换前的 mysql_app_password 不写也不删（回退到上一版构件时还要用）', async () => {
+test('配置脚本：数据密钥只认原值，和 secrets.env 不同就一个文件都不写；库口令写成 db_app_password（PG 的账号口令每次部署按 secrets.env 重设，所以不用钉住）；MySQL 删了以后留下的两个口令文件清掉', async () => {
   const script = await readFile(infra('bench/bench-configure.sh'), 'utf8');
   assert.match(script, /^SECRET_FILES=\(JIUAN_PG_APP_PASSWORD:db_app_password JIUAN_DATA_KEY:analysis_data_key REVIEWER_PASSWORD:reviewer_password CHECKER_PASSWORD:checker_password\)$/m);
   assert.match(script, /^PINNED=\(analysis_data_key\)$/m);
   assert.match(script, /拒绝替换/);
   assert.match(script, /\[\[ "\$\(secret_value JIUAN_PG_APP_PASSWORD\)" =~ \^\[0-9a-f\]\{32\}\$ \]\] \|\| \{ echo "secrets\.env 里的 JIUAN_PG_APP_PASSWORD 应是 32 位十六进制"/);
-  assert.doesNotMatch(script, /^[^#\n]*(mysql_app_password|JIUAN_MYSQL_APP_PASSWORD)/m, '代码里不再碰 MySQL 的口令（注释里可以说明为什么留着）');
+  assert.doesNotMatch(script, /JIUAN_MYSQL_APP_PASSWORD/, '不再写 MySQL 的口令');
+  // 2026-11-06 删了 MySQL：实例上留下的两个 MySQL 口令文件每次部署都清掉（没有也不出错）
+  assert.match(script, /^rm -f "\$DIR\/mysql_app_password" \/etc\/andon-finance\/bench\/mysql_root_password$/m);
   const reset = await readFile(infra('bench/bench-reset.sh'), 'utf8');
   assert.match(reset, /DROP DATABASE IF EXISTS jiuan WITH \(FORCE\)/);
   assert.doesNotMatch(reset, /jiuan_analysis/, '重置 v0.7.10 不碰 PoC 的库');
@@ -250,7 +252,7 @@ test('deploy.sh：构建 v0.7.10 副本、把 app 和副本打进发布包；先
   assert.match(deploy, /rsync -a --exclude test --exclude scripts --exclude node_modules --exclude \.DS_Store "\$POC_DIR\/app\/" "\$STAGE\/release\/app\/"/);
   assert.match(deploy, /rsync -a --exclude \.DS_Store "\$POC_DIR\/\.\.\/\.build\/jiuan\/" "\$STAGE\/release\/jiuan\/"/);
   assert.match(deploy, /^ensure_bench_secrets "\$SECRETS"$/m);
-  assert.match(await readFile(infra('lib/bench-secrets.sh'), 'utf8'), /for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY BENCH_PG_SUPERUSER_PASSWORD JIUAN_PG_APP_PASSWORD; do/);
+  assert.match(await readFile(infra('lib/bench-secrets.sh'), 'utf8'), /for name in JIUAN_DATA_KEY BENCH_PG_SUPERUSER_PASSWORD JIUAN_PG_APP_PASSWORD; do/);
   // 整个 bench/ 进构件：bench-configure.sh 调的 pg-install.sh、pg-database.sh 都在
   assert.match(deploy, /^rsync -a --exclude \.DS_Store "\$HERE\/bench\/" "\$STAGE\/release\/bench\/"$/m);
   const install = deploy.slice(deploy.indexOf('# >>> install'), deploy.indexOf('# <<< install'));

@@ -166,7 +166,7 @@ test('Agent 的密钥不经过 secrets.env：deploy.sh 新建的 secrets.env 里
   assert.doesNotMatch(deploy, /调用密钥留空|填好后再运行/);
 });
 
-test('测试台的密钥只补不换（ensure_bench_secrets，deploy.sh 和 pg-prepare.sh 共用）：已有的 JIUAN_DATA_KEY 保持原样，缺的补上且格式正确（含 PostgreSQL 的两项）；不再生成 v0.5.3 的几项', async t => {
+test('测试台的密钥只补不换（ensure_bench_secrets，deploy.sh 和 pg-prepare.sh 共用）：已有的 JIUAN_DATA_KEY 保持原样，缺的补上且格式正确（PostgreSQL 的两项）；不再生成 v0.5.3 的几项和 MySQL 的两项（2026-11-06 删了 MySQL），文件里还有就删掉（连同上面那行注释）', async t => {
   const deploy = await readFile(infra('deploy.sh'), 'utf8');
   assert.match(deploy, /^source "\$HERE\/lib\/bench-secrets\.sh"$/m);
   assert.match(deploy, /^ensure_bench_secrets "\$SECRETS"$/m);
@@ -183,10 +183,11 @@ test('测试台的密钥只补不换（ensure_bench_secrets，deploy.sh 和 pg-p
   const text = await readFile(secrets, 'utf8');
   const value = name => [...text.matchAll(new RegExp(`^${name}=(.*)$`, 'gm'))].map(match => match[1]);
   assert.deepEqual(value('JIUAN_DATA_KEY'), [existing]);
-  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'BENCH_PG_SUPERUSER_PASSWORD', 'JIUAN_PG_APP_PASSWORD']) {
+  for (const name of ['BENCH_PG_SUPERUSER_PASSWORD', 'JIUAN_PG_APP_PASSWORD']) {
     assert.equal(value(name).length, 1, name);
     assert.match(value(name)[0], /^[0-9a-f]{32}$/, name);
   }
+  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD']) assert.deepEqual(value(name), [], `${name} 不再生成`);
   // 已有的 PG 口令也不换
   const pgBefore = value('JIUAN_PG_APP_PASSWORD')[0];
   await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
@@ -194,13 +195,21 @@ test('测试台的密钥只补不换（ensure_bench_secrets，deploy.sh 和 pg-p
   await writeFile(secrets, 'REVIEWER_PASSWORD=x\n');
   await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
   assert.match((await readFile(secrets, 'utf8')).match(/^JIUAN_DATA_KEY=(.*)$/m)[1], /^[A-Za-z0-9+/]{43}=$/);
-  // 2026-11-02 之前的文件里叫 JIUAN07_…：原地改名、值不变，不另生成（换了数据密钥九安的库就打不开）
+  // 2026-11-02 之前的文件里叫 JIUAN07_…：原地改名、值不变，不另生成（换了数据密钥九安的库就打不开）；JIUAN07_MYSQL_APP_PASSWORD 是 MySQL 的，删掉
   await writeFile(secrets, `REVIEWER_PASSWORD=x\nJIUAN07_MYSQL_APP_PASSWORD=0123456789abcdef0123456789abcdef\nJIUAN07_DATA_KEY=${existing}\n`);
   const { stdout } = await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
   const migrated = await readFile(secrets, 'utf8');
   assert.deepEqual([...migrated.matchAll(/^JIUAN_DATA_KEY=(.*)$/gm)].map(match => match[1]), [existing]);
-  assert.deepEqual([...migrated.matchAll(/^JIUAN_MYSQL_APP_PASSWORD=(.*)$/gm)].map(match => match[1]), ['0123456789abcdef0123456789abcdef']);
+  assert.doesNotMatch(migrated, /MYSQL/);
   assert.doesNotMatch(migrated, /^JIUAN07_/m);
+  // 以前补上的两项 MySQL 口令（各带一行「# 测试台：只补不换（…）」）：连同注释删掉，别的行一字不动
+  const kept = `REVIEWER_PASSWORD=x\n# 测试台：只补不换（BENCH_MYSQL_ROOT_PASSWORD）\nBENCH_MYSQL_ROOT_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n# 测试台：只补不换（JIUAN_MYSQL_APP_PASSWORD）\nJIUAN_MYSQL_APP_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nJIUAN_DATA_KEY=${existing}\n# 测试台：只补不换（BENCH_PG_SUPERUSER_PASSWORD）\nBENCH_PG_SUPERUSER_PASSWORD=cccccccccccccccccccccccccccccccc\n# 测试台：只补不换（JIUAN_PG_APP_PASSWORD）\nJIUAN_PG_APP_PASSWORD=dddddddddddddddddddddddddddddddd\n`;
+  await writeFile(secrets, kept);
+  const removed = await run('bash', ['-c', `set -euo pipefail\nSECRETS=${JSON.stringify(secrets)}\n${block}`]);
+  assert.equal(await readFile(secrets, 'utf8'), `REVIEWER_PASSWORD=x\nJIUAN_DATA_KEY=${existing}\n# 测试台：只补不换（BENCH_PG_SUPERUSER_PASSWORD）\nBENCH_PG_SUPERUSER_PASSWORD=cccccccccccccccccccccccccccccccc\n# 测试台：只补不换（JIUAN_PG_APP_PASSWORD）\nJIUAN_PG_APP_PASSWORD=dddddddddddddddddddddddddddddddd\n`);
+  assert.match(removed.stdout, /BENCH_MYSQL_ROOT_PASSWORD/);
+  assert.ok(!removed.stdout.includes('aaaaaaaa') && !removed.stdout.includes('bbbbbbbb'), '不打印值');
+  assert.equal((await stat(secrets)).mode & 0o777, 0o600);
   assert.ok(!stdout.includes(existing), '不打印密钥的值');
   assert.equal((await stat(secrets)).mode & 0o777, 0o600);
 });
