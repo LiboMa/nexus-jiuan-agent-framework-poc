@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # 把测试台的数据从一个环境搬到另一个环境（换机器用）：
-#   MySQL 里九安 v0.7.10 的库 jiuan（单据、AI 建议、复核、「Agent 接入」的启用记录……）、
+#   九安 v0.7.10 的库 jiuan（容器 jiuan-pg 里的 PostgreSQL：单据、AI 建议、复核、「Agent 接入」的启用记录……整库）、
 #   知识库的 PG 库 nexus（规则、上传历史、检索日志、向量模型登记……整库）、
 #   实例上的状态目录 /var/lib/jiuan（「我的规则」、上传暂存、种子单据的时间锚点、Nexus 登录）。
 # 用法：
 #   FROM_ENV=poc/infra/env/<旧环境>.env DEPLOY_ENV=poc/infra/env/<新环境>.env bash poc/infra/migrate-data.sh [--dry-run] [--skip-pg]
 #   --dry-run  只读：两边核对一遍、列出要搬什么、新环境上要换掉什么，什么都不改
-#   --skip-pg  PG 不动（只搬 MySQL 和状态目录）。Nexus 的连接器已经切到新环境的 PG 之后再同步，就要加它：那时新 PG 才是在用的那份
+#   --skip-pg  知识库的 PG 库 nexus 不动（只搬九安的库和状态目录）。Nexus 的连接器已经切到新环境的知识库 PG 之后再同步，就要加它：那时新的才是在用的那份
 # 旧环境经 SSM，只读（导出、打包、加密、上传；旧实例上的服务和库都不停、不改）。新环境经 SSH（它的配置要写 SSH_KEY_FILE）。
-# 新环境要先部署好（deploy.sh：容器 jiuan-mysql 在）；不加 --skip-pg 时还要先跑过知识库的 db 阶段（kb.sh db：容器 nexus-pgvector 在、装了 PL/Python）。
+# 两边都要已经换成 PostgreSQL（2026-11 之后的构件）。新环境要先部署好（deploy.sh：容器 jiuan-pg 在、账号 jiuan_app 在）；
+# 不加 --skip-pg 时还要先跑过知识库的 db 阶段（kb.sh db：容器 nexus-pgvector 在、装了 PL/Python）。
 # 两边实例上的 /etc/andon-finance/secrets.env 要是同一份（同一个本机 secrets.env 部署的）：九安的库和 Agent 接入记录是用里面的密钥加密的，不同就停。
-# 新环境上：停服务 → 换掉 MySQL 的库 jiuan →（不加 --skip-pg 时）删掉 PG 库 nexus、从导出重建 → 换掉状态目录（顶层的点文件不动）→
-#   逐表数行数（PG 的规则表另比整表的 md5；起服务之前数）→ 起服务 → 等健康检查 → 和旧环境导出前一刻数的比，对不上就报错。
+# 新环境上：停服务 → 删掉九安的库 jiuan、按原参数重建（bench/pg-database.sh）、pg_restore →（不加 --skip-pg 时）删掉知识库的库 nexus、从导出重建 →
+#   换掉状态目录（顶层的点文件不动）→ 逐表数行数（知识库的规则表另比整表的 md5；起服务之前数）→ 起服务 → 等健康检查 → 和旧环境导出前一刻数的比，对不上就报错。
 # 加密：旧实例上随机生成 AES-256 密钥加密整包，这个密钥用本机这次运行的一次性 RSA 公钥加密后回给本机（SSM 的命令历史里只有密文）。
 #   整包经预签名 URL（15 分钟有效）放进新环境的构件桶 migration/ 下，新实例取下来校验 sha256、解密；搬完就删。
 # 不打印任何密码、密钥和数据内容。
@@ -31,18 +32,16 @@ for arg in "$@"; do
     *) echo "不认识的参数：${arg}（只有 --dry-run、--skip-pg）" >&2; exit 2 ;;
   esac
 done
-MYSQL_DBS="jiuan"
 PG_FLAG="$($SKIP_PG && echo 0 || echo 1)"
 
-# 两边都用的一段：逐表数行数（MySQL 的库、PG 库 nexus 的 public 表、PG 规则表整表的 md5、状态目录的文件数和字节数），一行一项，tab 分隔。
-# 以 root 在实例上跑；PG 那段在 COUNT_PG=1 时才数
+# 两边都用的一段：逐表数行数（九安的库 jiuan 的 public 表、知识库的库 nexus 的 public 表、规则表整表的 md5、状态目录的文件数和字节数），
+# 一行一项，tab 分隔。以 root 在实例上跑；知识库那段在 COUNT_PG=1 时才数
 COUNTS="$(cat <<'SH'
-mysql_q() { docker exec -i jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" exec mysql -uroot -N -B'; }
-for db in $MYSQL_DBS; do
-  if [ "$(echo "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='$db'" | mysql_q)" != 1 ]; then printf 'mysql.%s\tmissing\n' "$db"; continue; fi
-  echo "SELECT table_name FROM information_schema.tables WHERE table_schema='$db' AND table_type='BASE TABLE' ORDER BY table_name" | mysql_q \
-    | while read -r t; do printf "SELECT 'mysql.%s.%s', COUNT(*) FROM \`%s\`.\`%s\`;\n" "$db" "$t" "$db" "$t"; done | mysql_q
-done
+jiuan_q() { docker exec -i -u postgres jiuan-pg psql -X -At -F "$(printf '\t')" -d "$1" -v ON_ERROR_STOP=1; }
+if [ "$(echo "SELECT count(*) FROM pg_database WHERE datname = 'jiuan'" | jiuan_q postgres)" != 1 ]; then printf 'jiuan\tmissing\n'
+else
+  echo "SELECT format('SELECT %L, count(*) FROM %I.%I;', 'jiuan.' || tablename, schemaname, tablename) FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename" | jiuan_q jiuan | jiuan_q jiuan
+fi
 if [ "${COUNT_PG:-1}" = 1 ]; then
   pg_q() { docker exec -i nexus-pgvector psql -X -At -F "$(printf '\t')" -U postgres -d nexus -v ON_ERROR_STOP=1; }
   echo "SELECT format('SELECT %L, count(*) FROM %I.%I;', 'pg.' || tablename, schemaname, tablename) FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename" | pg_q | pg_q
@@ -65,8 +64,8 @@ SH
 )"
 EXPORT_MAIN="$(cat <<'SH'
 counts > "$w/counts.txt"
-# 一致的快照：InnoDB 用 --single-transaction；PG 的 pg_dump 本身就在一个快照里
-docker exec jiuan-mysql sh -c "MYSQL_PWD=\"\$(cat /run/bench-secrets/mysql_root_password)\" exec mysqldump -uroot --single-transaction --routines --triggers --events --add-drop-database --set-gtid-purged=OFF --databases $MYSQL_DBS" > "$w/b/mysql.sql"
+# 一致的快照：pg_dump 本身就在一个快照里
+docker exec -u postgres jiuan-pg pg_dump -Fc jiuan > "$w/b/jiuan.pgdump"
 $SKIP_PG || docker exec nexus-pgvector pg_dump -U postgres -Fc nexus > "$w/b/nexus.pgdump"
 tar -C /var/lib -cf "$w/b/files.tar" --exclude 'jiuan/.*' jiuan
 openssl rand -hex 32 > "$w/k"
@@ -88,7 +87,9 @@ curl -fsS -o "$w/bundle.bin" "$GET_URL"
 printf '%s\n' "$KEY" > "$w/k"
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "file:$w/k" -in "$w/bundle.bin" | tar -xzf - -C "$w/b"
 systemctl stop andon-jiuan.service
-docker exec -i jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" exec mysql -uroot' < "$w/b/mysql.sql"
+docker exec -u postgres jiuan-pg psql -X -q -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS jiuan WITH (FORCE)'
+bash /opt/andon-finance/current/bench/pg-database.sh jiuan
+docker exec -i -u postgres jiuan-pg pg_restore -d jiuan --exit-on-error < "$w/b/jiuan.pgdump"
 if ! $SKIP_PG; then
   docker exec nexus-pgvector psql -X -q -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS nexus WITH (FORCE)' -c 'CREATE DATABASE nexus OWNER nexus'
   docker exec -i nexus-pgvector pg_restore -U postgres -d nexus --exit-on-error < "$w/b/nexus.pgdump"
@@ -109,13 +110,13 @@ SH
 )"
 # export_script <公钥 base64> <预签名 PUT URL>
 export_script() {
-  printf 'MYSQL_DBS=%q\nSKIP_PG=%s\nCOUNT_PG=%s\nPUB_B64=%q\nPUT_URL=%q\n%s\ncounts() {\n%s\n}\n%s\n' \
-    "$MYSQL_DBS" "$SKIP_PG" "$PG_FLAG" "$1" "$2" "$EXPORT_PRE" "$COUNTS" "$EXPORT_MAIN"
+  printf 'SKIP_PG=%s\nCOUNT_PG=%s\nPUB_B64=%q\nPUT_URL=%q\n%s\ncounts() {\n%s\n}\n%s\n' \
+    "$SKIP_PG" "$PG_FLAG" "$1" "$2" "$EXPORT_PRE" "$COUNTS" "$EXPORT_MAIN"
 }
 # import_script <预签名 GET URL> <整包 sha256> <AES 密钥>
 import_script() {
-  printf 'MYSQL_DBS=%q\nSKIP_PG=%s\nGET_URL=%q\nSHA=%q\nKEY=%q\nCOUNT_PG=%s\ncounts() {\n%s\n}\n%s\n' \
-    "$MYSQL_DBS" "$SKIP_PG" "$1" "$2" "$3" "$PG_FLAG" "$COUNTS" "$IMPORT_MAIN"
+  printf 'SKIP_PG=%s\nGET_URL=%q\nSHA=%q\nKEY=%q\nCOUNT_PG=%s\ncounts() {\n%s\n}\n%s\n' \
+    "$SKIP_PG" "$1" "$2" "$3" "$PG_FLAG" "$COUNTS" "$IMPORT_MAIN"
 }
 # --print-scripts：只打印拼出来的导出、导入脚本（占位的值），不读配置、不连任何东西（单元测试拿它查语法）
 if $PRINT_SCRIPTS; then
@@ -151,13 +152,14 @@ trap cleanup EXIT
 # 旧实例上以 root 跑（经 SSM，lib/remote.sh 的 ssm_root），回标准输出；不成功就停
 src_root() { ssm_root "$SRC_INSTANCE" "$1" "$2" "$SRC_REGION" || { echo "旧实例 $SRC_INSTANCE 上的命令没有成功" >&2; exit 1; }; }
 
-say "旧环境 ${SRC_STACK}（${SRC_INSTANCE}，经 SSM）→ 新环境 ${STACK}（${TGT_INSTANCE}，${TGT_IP}，经 SSH）$($SKIP_PG && echo '；PG 不动')"
+say "旧环境 ${SRC_STACK}（${SRC_INSTANCE}，经 SSM）→ 新环境 ${STACK}（${TGT_INSTANCE}，${TGT_IP}，经 SSH）$($SKIP_PG && echo '；知识库的 PG 不动')"
 ssh_setup "$TGT_IP" "$TGT_INSTANCE" && ssh_wait 6 || exit 1
 
 say "核对两边"
-# 新实例上要有的容器（不加 --skip-pg 时还有 PG 容器和 PL/Python）
+# 新实例上要有的容器和脚本（不加 --skip-pg 时还有知识库的 PG 容器和 PL/Python）
 TGT_READY="$(cat <<'SH'
-docker inspect -f '{{.State.Running}}' jiuan-mysql 2>/dev/null | grep -qx true || { echo "新实例上没有运行中的 jiuan-mysql：先跑 deploy.sh" >&2; exit 3; }
+docker inspect -f '{{.State.Running}}' jiuan-pg 2>/dev/null | grep -qx true || { echo "新实例上没有运行中的 jiuan-pg：先跑 deploy.sh" >&2; exit 3; }
+[ -f /opt/andon-finance/current/bench/pg-database.sh ] || { echo "新实例上的构件还没换成 PostgreSQL（没有 bench/pg-database.sh）：先跑 deploy.sh --code-only" >&2; exit 3; }
 if [ "$COUNT_PG" = 1 ]; then
   docker inspect -f '{{.State.Running}}' nexus-pgvector 2>/dev/null | grep -qx true || { echo "新实例上没有运行中的 nexus-pgvector：先跑 kb.sh db" >&2; exit 3; }
   [ "$(docker exec nexus-pgvector psql -X -At -U postgres -d postgres -c "SELECT count(*) FROM pg_available_extensions WHERE name = 'plpython3u'")" = 1 ] \
@@ -166,21 +168,21 @@ fi
 SH
 )"
 # 第一行是 secrets.env 的 sha256（只比两边是否相同），后面是 COUNTS 的行
-check_script() { printf 'MYSQL_DBS=%q\nCOUNT_PG=%s\nset -euo pipefail\n%s\nsha256sum /etc/andon-finance/secrets.env | cut -c1-64\n%s\n' "$MYSQL_DBS" "$1" "$2" "$COUNTS"; }
+check_script() { printf 'COUNT_PG=%s\nset -euo pipefail\n%s\nsha256sum /etc/andon-finance/secrets.env | cut -c1-64\n%s\n' "$1" "$2" "$COUNTS"; }
 src_check="$(src_root "$(check_script "$PG_FLAG" '')" 120)"
 tgt_check="$(remote_root "$(check_script "$PG_FLAG" "$TGT_READY")")" || exit 1
 [[ "$(head -1 <<< "$src_check")" == "$(head -1 <<< "$tgt_check")" ]] \
   || { echo "两边的 /etc/andon-finance/secrets.env 不是同一份：九安的库和 Agent 接入记录解不开。用同一个本机 secrets.env 部署新环境（deploy.sh --code-only）再来" >&2; exit 1; }
 echo "两边的密钥配置相同"
-summary() { awk -F'\t' '$1 ~ /^mysql\./ { split($1, p, "."); if ($2 == "missing") m[p[2]] = "（没有这个库）"; else { n[p[2]]++; r[p[2]] += $2 } }
+summary() { awk -F'\t' '$1 == "jiuan" && $2 == "missing" { jm = 1 } $1 ~ /^jiuan\./ { jn++; jr += $2 }
   $1 ~ /^pg\./ && $1 !~ /md5$/ { pn++; pr += $2 } $1 ~ /^files\./ { f[$1] = $2 " 个文件，" $3 " 字节" }
-  END { for (d in n) printf "  MySQL %s：%d 张表，%d 行\n", d, n[d], r[d]; for (d in m) printf "  MySQL %s%s\n", d, m[d];
-        if (pn) printf "  PG nexus：%d 张表，%d 行\n", pn, pr; for (k in f) printf "  %s：%s\n", substr(k, 7), f[k] }' | sort; }
+  END { if (jm) print "  九安的库 jiuan（没有这个库）"; else printf "  九安的库 jiuan：%d 张表，%d 行\n", jn, jr;
+        if (pn) printf "  知识库的库 nexus：%d 张表，%d 行\n", pn, pr; for (k in f) printf "  %s：%s\n", substr(k, 7), f[k] }' | sort; }
 echo "旧环境（要搬过去的）："; tail -n +2 <<< "$src_check" | summary
 echo "新环境（会被换掉的）："; tail -n +2 <<< "$tgt_check" | summary
 if $DRY_RUN; then
   echo
-  echo "[dry-run] 实跑时：旧实例只读导出 → 加密 → 预签名 URL 放进 s3://$TGT_BUCKET/migration/（搬完删）→ 新实例上停服务、换掉上面列的$($SKIP_PG || echo '（含 PG 库 nexus）')、起服务 → 逐表核对"
+  echo "[dry-run] 实跑时：旧实例只读导出 → 加密 → 预签名 URL 放进 s3://$TGT_BUCKET/migration/（搬完删）→ 新实例上停服务、换掉上面列的$($SKIP_PG || echo '（含知识库的库 nexus）')、起服务 → 逐表核对"
   exit 0
 fi
 
@@ -201,7 +203,7 @@ sed -n 's/^SEALED_KEY //p' <<< "$exported" | base64 -d > "$WORK/key.sealed"
 [[ "$(wc -c < "$WORK/key" | tr -d ' ')" == 65 ]] || { echo "解不开旧实例回来的密钥" >&2; exit 1; }
 echo "已上传加密的整包（$BYTES 字节）：s3://$TGT_BUCKET/$OBJECT"
 
-say "新实例上换掉数据（停服务 → MySQL$($SKIP_PG || echo ' → PG') → 状态目录 → 起服务 → 健康检查）"
+say "新实例上换掉数据（停服务 → 九安的库$($SKIP_PG || echo ' → 知识库的库') → 状态目录 → 起服务 → 健康检查）"
 GET_URL="$(aws s3 presign --region "$REGION" "s3://$TGT_BUCKET/$OBJECT" --expires-in 900)"
 imported="$(remote_root "$(import_script "$GET_URL" "$SHA" "$(cat "$WORK/key")")")" || { echo "新实例上换数据没有成功（见上面的输出）。旧环境没动；新环境的服务可能停着：再跑一次本脚本，或 deploy.sh --code-only" >&2; exit 1; }
 grep -qx IMPORT_OK <<< "$imported" || { echo "新实例上没有走完" >&2; exit 1; }

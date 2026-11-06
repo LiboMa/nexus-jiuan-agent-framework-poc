@@ -330,6 +330,21 @@ test('检索日志（pg 方式）：这次测试期间审核 Agent 审单时经�
   assert.ok(agentCount >= 1, `测试开始以来 kb_search_log 里没有审核 Agent 的检索（caller = agent，页面那次不算）：${reply}`);
 });
 
+test('数据库：测试台的九安连的是 PostgreSQL（经 SSM 或 SSH 只读查：容器 jiuan-pg 在跑、jiuan-mysql 停了或不存在、外壳的 env 里 POC_DB_PORT=5433；这次重置后新建的库 jiuan 里有服务跑迁移建出来的表）', async () => {
+  const reply = await ssm([
+    "printf 'pg=%s\\n' \"$(docker inspect -f '{{.State.Running}}' jiuan-pg 2>/dev/null || echo missing)\"",
+    "printf 'mysql=%s\\n' \"$(docker inspect -f '{{.State.Running}}' jiuan-mysql 2>/dev/null || echo missing)\"",
+    "printf 'port=%s\\n' \"$(sed -n 's/^POC_DB_PORT=//p' /etc/andon-finance/jiuan/env)\"",
+    "printf 'tables=%s\\n' \"$(docker exec -u postgres -e 'PGOPTIONS=-c default_transaction_read_only=on' jiuan-pg psql -X -At -d jiuan -c \"SELECT count(*) FROM pg_tables WHERE schemaname = 'public'\")\"",
+  ].join('\n'), 'e2e database engine check (read-only)');
+  const facts = Object.fromEntries(reply.split('\n').map(line => line.split('=')));
+  console.log(`数据库：jiuan-pg ${facts.pg}，jiuan-mysql ${facts.mysql}，POC_DB_PORT=${facts.port}，库 jiuan 里 ${facts.tables} 张表`);
+  assert.equal(facts.pg, 'true', `jiuan-pg 没在跑：${reply}`);
+  assert.ok(['false', 'missing'].includes(facts.mysql), `jiuan-mysql 还在跑：${reply}`);
+  assert.equal(facts.port, '5433', `外壳的 env 里 POC_DB_PORT 不是 5433：${reply}`);
+  assert.ok(Number(facts.tables) > 0, `库 jiuan 里没有表（服务没在 PG 上跑迁移？）：${reply}`);
+});
+
 test('调用记录：每张对公付款单的这一轮都在调用记录里，发给审批 Agent、结论和这一轮的建议一致（「Agent 接入」页上的测试在 web.e2e.mjs）', async () => {
   assert.ok(publication, '前面的用例没找到可用的审核 Agent');
   const calls = (await api('/platform/agent-access/calls')).json?.data?.items ?? [];

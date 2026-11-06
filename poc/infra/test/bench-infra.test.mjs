@@ -22,7 +22,7 @@ const block = (text, name) => {
 const BLACKHOLE = ['api.huilianyi.com', 'apistage.huilianyi.com', 'huoshantstapi.huilianyi.com', 'helioscloud-uat.huilianyi.com', 'oss-huilianyi.jiuan.com',
   'oapi.dingtalk.com', 'api.openai.com', 'finmcp.jiuan.local', 'sap-mcp.local', 'sub1api.jiuan.com', 'sub1api.theunifiedcare.com'];
 
-test('配置脚本：服务以 jiuan 用户跑（读不到 secrets.env）、直接听 0.0.0.0:4180（安全组只放 CloudFront）、屏蔽实例元数据；库账号只看 jiuan 库；堵住写死的外部地址；先停掉以前的 v0.5.3 PoC 服务', async () => {
+test('配置脚本：服务以 jiuan 用户跑（读不到 secrets.env）、直接听 0.0.0.0:4180（安全组只放 CloudFront）、屏蔽实例元数据；库是 PostgreSQL 的 jiuan（pg-install.sh 起容器、pg-database.sh 建库和账号），不再管 MySQL；堵住写死的外部地址；先停掉以前的 v0.5.3 PoC 服务', async () => {
   const script = await readFile(infra('bench/bench-configure.sh'), 'utf8');
   const unit = await readFile(infra('bench/andon-jiuan.service'), 'utf8');
   assert.match(unit, /^User=jiuan$/m);
@@ -37,8 +37,11 @@ test('配置脚本：服务以 jiuan 用户跑（读不到 secrets.env）、直�
   assert.doesNotMatch(unit, /andon-finance-poc/);
   assert.match(script, /useradd --system [^\n]*jiuan/);
   assert.doesNotMatch(script, /usermod[^\n]*andon|-G andon/);
-  assert.match(script, /GRANT ALL PRIVILEGES ON \\`jiuan\\`\.\* TO 'jiuan_app'@'%'/);   // 不加引号的 heredoc 里反引号要转义
-  assert.doesNotMatch(script, /ON \*\.\*/);
+  const database = script.slice(script.indexOf('# >>> jiuan-database'), script.indexOf('# <<< jiuan-database'));
+  assert.equal(database, '# >>> jiuan-database\nbash "$HERE/pg-install.sh"\nbash "$HERE/pg-database.sh" jiuan\n');
+  assert.doesNotMatch(script, /mysql-install|jiuan-mysql|mysql_root|GRANT ALL|docker exec/, '库和账号只经 pg-database.sh 建；MySQL 不再由它管');
+  // 外壳连库的设置写进 env：测试台的 PG（127.0.0.1:5433 / jiuan / jiuan_app），口令在 db_app_password
+  for (const line of ['POC_DB_HOST=127.0.0.1', 'POC_DB_PORT=5433', 'POC_DB_NAME=jiuan', 'POC_DB_USER=jiuan_app']) assert.ok(script.split('\n').includes(line), `env 里缺 ${line}`);
   for (const host of BLACKHOLE) assert.ok(script.includes(host), `/etc/hosts 没堵 ${host}`);
   // 以前的 v0.5.3 PoC（占着 4180、按 Host 转发）：最先停掉、删掉单元和补充配置、转发设置；不再写转发
   const legacy = script.slice(script.indexOf('# >>> legacy-poc'), script.indexOf('# <<< legacy-poc'));
@@ -53,7 +56,7 @@ test('配置脚本：服务以 jiuan 用户跑（读不到 secrets.env）、直�
   assert.doesNotMatch(script, /NEXUS_REVIEW_ADVICE_PUBLICATION|PUBLISH|pub_[0-9a-f]/, '不写死发布');
 });
 
-test('配置脚本：2026-11-02 之前的名字（andon-jiuan07、jiuan07……）原地改成现在的：先停旧服务，用户、组、目录改名；库整库 RENAME TABLE 搬、空了才删旧库；账号改名后收回旧权限；新名字已在就不动', async () => {
+test('配置脚本：2026-11-02 之前的名字（andon-jiuan07、jiuan07……）原地改成现在的：先停旧服务，用户、组、目录改名；新名字已在就不动；MySQL 里的库和账号改名那段拿掉了（m7g 上早已改完，MySQL 不再由它管）', async () => {
   const script = await readFile(infra('bench/bench-configure.sh'), 'utf8');
   const start = script.indexOf('# >>> legacy-07');
   const legacy = script.slice(start, script.indexOf('# <<< legacy-07'));
@@ -64,29 +67,25 @@ test('配置脚本：2026-11-02 之前的名字（andon-jiuan07、jiuan07……�
     /usermod -d \/var\/lib\/jiuan jiuan/, /\[\[ -d \/etc\/andon-finance\/jiuan07 && ! -e \/etc\/andon-finance\/jiuan \]\]; then mv \/etc\/andon-finance\/jiuan07 \/etc\/andon-finance\/jiuan/]) {
     assert.match(legacy, line);
   }
-  // 库：装好 MySQL 之后、建库授权之前；只在旧库在、新库不在时搬；旧库还有表就停（数据两边都在），空了才删
-  const db = script.slice(script.indexOf('mysql_root() '), script.indexOf('CREATE DATABASE IF NOT EXISTS'));
-  assert.ok(script.indexOf('bash "$HERE/mysql-install.sh"') < script.indexOf('mysql_root() '), '先装好 MySQL');
-  assert.match(db, /if \[\[ "\$\(schema_count jiuan07\)" == 1 && "\$\(schema_count jiuan\)" == 0 \]\]; then/);
-  assert.match(db, /RENAME TABLE \\`jiuan07\\`\.\\`', table_name, '\\` TO \\`jiuan\\`\.\\`/);
-  assert.ok(db.indexOf('还有没搬走的表') > 0 && db.indexOf('还有没搬走的表') < db.indexOf('DROP DATABASE `jiuan07`'), '没搬空不删旧库');
-  assert.match(db, /RENAME USER 'jiuan07_app'@'%' TO 'jiuan_app'@'%'; REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'jiuan_app'@'%';/);
+  assert.doesNotMatch(script, /RENAME TABLE|RENAME USER|schema_count|jiuan07_app|JIUAN_DB_RENAMED/);
 });
 
-test('配置脚本：实例上已有的库密码和数据密钥只认原值，和 secrets.env 不同就一个文件都不写', async () => {
+test('配置脚本：数据密钥只认原值，和 secrets.env 不同就一个文件都不写；库口令写成 db_app_password（PG 的账号口令每次部署按 secrets.env 重设，所以不用钉住）；切换前的 mysql_app_password 不写也不删（回退到上一版构件时还要用）', async () => {
   const script = await readFile(infra('bench/bench-configure.sh'), 'utf8');
-  assert.match(script, /JIUAN_MYSQL_APP_PASSWORD:mysql_app_password/);
-  assert.match(script, /JIUAN_DATA_KEY:analysis_data_key/);
+  assert.match(script, /^SECRET_FILES=\(JIUAN_PG_APP_PASSWORD:db_app_password JIUAN_DATA_KEY:analysis_data_key REVIEWER_PASSWORD:reviewer_password CHECKER_PASSWORD:checker_password\)$/m);
+  assert.match(script, /^PINNED=\(analysis_data_key\)$/m);
   assert.match(script, /拒绝替换/);
+  assert.match(script, /\[\[ "\$\(secret_value JIUAN_PG_APP_PASSWORD\)" =~ \^\[0-9a-f\]\{32\}\$ \]\] \|\| \{ echo "secrets\.env 里的 JIUAN_PG_APP_PASSWORD 应是 32 位十六进制"/);
+  assert.doesNotMatch(script, /^[^#\n]*(mysql_app_password|JIUAN_MYSQL_APP_PASSWORD)/m, '代码里不再碰 MySQL 的口令（注释里可以说明为什么留着）');
   const reset = await readFile(infra('bench/bench-reset.sh'), 'utf8');
-  assert.match(reset, /DROP DATABASE IF EXISTS `jiuan`/);
+  assert.match(reset, /DROP DATABASE IF EXISTS jiuan WITH \(FORCE\)/);
   assert.doesNotMatch(reset, /jiuan_analysis/, '重置 v0.7.10 不碰 PoC 的库');
 });
 
 test('重置脚本：保留管理员在「Agent 接入」页上的启用记录（先导出、重建库跑完迁移后写回，再正式起服务），不读也不写任何调用密钥文件', async () => {
   const reset = await readFile(infra('bench/bench-reset.sh'), 'utf8');
-  const steps = ["scope_key LIKE 'agent-enablement:%'", 'DROP DATABASE IF EXISTS', 'systemctl start andon-jiuan.service', 'systemctl stop andon-jiuan.service',
-    'mysql -uroot jiuan', 'systemctl start andon-jiuan.service'];
+  const steps = ["scope_key LIKE 'agent-enablement:%'", 'DROP DATABASE IF EXISTS jiuan', 'bash "$HERE/pg-database.sh" jiuan', 'systemctl start andon-jiuan.service', 'systemctl stop andon-jiuan.service',
+    'COPY analysis_sync_states FROM STDIN', 'systemctl start andon-jiuan.service'];
   let at = -1;
   for (const step of steps) {
     const next = reset.indexOf(step, at + 1);
@@ -96,15 +95,153 @@ test('重置脚本：保留管理员在「Agent 接入」页上的启用记录�
   assert.doesNotMatch(reset, /secrets\.env|NEXUS_A2A_KEY|nxa_/);
 });
 
-test('重置脚本中途失败：服务照样起来，导出的启用记录留着（0600）并说出路径；导出用 --hex-blob（密文原样回得去）', async () => {
+test('重置脚本中途失败：服务照样起来，导出的启用记录留着（0600）并说出路径；导出用 COPY 的文本格式（bytea 成 \\x 十六进制，密文原样回得去）；表在却导不出来就停，不删库', async () => {
   const script = await readFile(infra('bench/bench-reset.sh'), 'utf8');
   assert.match(script, /trap finish EXIT/);
   const finish = script.slice(script.indexOf('finish() {'), script.indexOf('trap finish EXIT'));
   assert.match(finish, /systemctl start andon-jiuan\.service \|\| true/);
   assert.match(finish, /if \[\[ "\$rc" == 0 \]\]; then rm -rf "\$KEEP"/);
-  assert.match(finish, /启用记录导出在 \$KEEP\/enablement\.sql，没删/);
-  assert.match(script, /mysqldump -uroot --no-create-info --skip-triggers --compact --complete-insert --hex-blob jiuan analysis_sync_states/);
-  assert.match(script, /chmod 0600 "\$KEEP\/enablement\.sql"/);
+  assert.match(finish, /启用记录导出在 \$KEEP\/enablement\.copy，没删/);
+  assert.ok(script.includes(`COPY (SELECT * FROM analysis_sync_states WHERE scope_key LIKE 'agent-enablement:%') TO STDOUT`));
+  assert.match(script, /chmod 0600 "\$KEEP\/enablement\.copy"/);
+  assert.doesNotMatch(script, /\|\| : > "\$KEEP/, '导出失败不能当成「没有启用记录」接着删库');
+  assert.doesNotMatch(script, /mysql|MYSQL/);
+});
+
+// 照原样跑 bench-reset.sh：docker / systemctl / curl 换成只记账的桩（PATH 最前面），旁边的 pg-database.sh 换成桩；
+// fail 给了就让对应的那一步失败。回 { code, stdout, stderr, calls, restored, keep }
+async function runReset(t, { fail = '', dbExists = '1', hasTable = 't', rows = 'agent-enablement:v1:t\\\\x0a0b\t2026-11-06 01:02:03.456\n' } = {}) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'bench-reset-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'bin'), bench = path.join(dir, 'bench'), log = path.join(dir, 'calls.log');
+  await mkdir(bin); await mkdir(bench);
+  await writeFile(path.join(bench, 'bench-reset.sh'), await readFile(infra('bench/bench-reset.sh'), 'utf8'));
+  const stub = body => `#!/usr/bin/env bash\n${body}\n`;
+  await writeFile(path.join(bench, 'pg-database.sh'), stub(`echo "pg-database.sh $*" >> "$LOG"; [[ "$FAIL" != create ]]`));
+  await writeFile(path.join(bin, 'systemctl'), stub(`echo "systemctl $*" >> "$LOG"`), { mode: 0o755 });
+  await writeFile(path.join(bin, 'curl'), stub('printf ok'), { mode: 0o755 });
+  await writeFile(path.join(bin, 'docker'), stub([
+    'echo "docker $*" >> "$LOG"',
+    'case "$*" in',
+    '  *pg_database*) printf \'%s\\n\' "$DB_EXISTS" ;;',
+    '  *to_regclass*) printf \'%s\\n\' "$HAS_TABLE" ;;',
+    '  *"TO STDOUT"*) [[ "$FAIL" != export ]] || exit 1; printf \'%s\' "$ROWS" ;;',
+    '  *"FROM STDIN"*) cat > "$LOG.restored"; [[ "$FAIL" != restore ]] ;;',
+    '  *DROP*) [[ "$FAIL" != drop ]] ;;',
+    'esac'].join('\n')), { mode: 0o755 });
+  const env = { ...childEnv(), PATH: `${bin}:${process.env.PATH}`, LOG: log, FAIL: fail, DB_EXISTS: dbExists, HAS_TABLE: hasTable, ROWS: rows };
+  let result;
+  try { result = { code: 0, ...(await run('bash', [path.join(bench, 'bench-reset.sh')], { env })) }; }
+  catch (error) { result = { code: error.code, stdout: error.stdout, stderr: error.stderr }; }
+  const keep = (result.stderr.match(/(\/var\/tmp\/jiuan-reset\.[A-Za-z0-9]+)\/enablement\.copy/) || [])[1];
+  if (keep) t.after(() => rm(keep, { recursive: true, force: true }));
+  return { ...result, keep, calls: (await readFile(log, 'utf8')).split('\n').filter(Boolean),
+    restored: await readFile(`${log}.restored`, 'utf8').catch(() => null) };
+}
+const RESET_EXPORT = `docker exec -u postgres jiuan-pg psql -X -q -v ON_ERROR_STOP=1 -d jiuan -c COPY (SELECT * FROM analysis_sync_states WHERE scope_key LIKE 'agent-enablement:%') TO STDOUT`;
+
+test('重置脚本照原样跑：停服务 → 表在就用 COPY 导出启用记录 → 删库 → pg-database.sh 按原参数建库 → 起服务跑迁移 → 停服务 → COPY 写回（字节不差）→ 起服务', async t => {
+  const result = await runReset(t);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /JIUAN_ENABLEMENT_KEPT\nJIUAN_RESET_OK/);
+  assert.deepEqual(result.calls, [
+    'systemctl stop andon-jiuan.service',
+    "docker exec -u postgres jiuan-pg psql -X -At -d postgres -c SELECT count(*) FROM pg_database WHERE datname = 'jiuan'",
+    "docker exec -u postgres jiuan-pg psql -X -At -d jiuan -c SELECT to_regclass('public.analysis_sync_states') IS NOT NULL",
+    RESET_EXPORT,
+    'docker exec -u postgres jiuan-pg psql -X -q -v ON_ERROR_STOP=1 -d postgres -c DROP DATABASE IF EXISTS jiuan WITH (FORCE)',
+    'pg-database.sh jiuan',
+    'systemctl start andon-jiuan.service',
+    'systemctl stop andon-jiuan.service',
+    'docker exec -i -u postgres jiuan-pg psql -X -q -v ON_ERROR_STOP=1 -d jiuan -c COPY analysis_sync_states FROM STDIN',
+    'systemctl start andon-jiuan.service',
+    'systemctl start andon-jiuan.service']);
+  assert.equal(result.restored, 'agent-enablement:v1:t\\\\x0a0b\t2026-11-06 01:02:03.456\n');
+  assert.equal(result.keep, undefined);
+});
+
+test('重置脚本：库或表还不在（第一次部署）就没有要留的，照常重建、不写回；表在却导不出来就停（库不删），服务照样起来', async t => {
+  for (const state of [{ dbExists: '0' }, { dbExists: '1', hasTable: 'f' }]) {
+    const result = await runReset(t, state);
+    assert.equal(result.code, 0, result.stderr);
+    assert.ok(!result.calls.includes(RESET_EXPORT) && !result.calls.some(call => call.includes('FROM STDIN')), JSON.stringify(result.calls));
+    assert.ok(result.calls.includes('pg-database.sh jiuan'));
+    assert.match(result.stdout, /JIUAN_RESET_OK/);
+    assert.doesNotMatch(result.stdout, /JIUAN_ENABLEMENT_KEPT/);
+  }
+  for (const fail of ['export']) {
+    const failed = await runReset(t, { fail });
+    assert.notEqual(failed.code, 0);
+    assert.ok(!failed.calls.some(call => call.includes('DROP DATABASE')), '导不出来就不删库');
+    assert.equal(failed.calls.at(-1), 'systemctl start andon-jiuan.service');
+  }
+});
+
+test('重置脚本：写回失败（或建库失败）时服务照样起来，导出的启用记录留在 0600 的文件里并说出路径', async t => {
+  for (const fail of ['restore', 'create']) {
+    const result = await runReset(t, { fail });
+    assert.notEqual(result.code, 0, fail);
+    assert.equal(result.calls.at(-1), 'systemctl start andon-jiuan.service', fail);
+    assert.ok(result.keep, `${fail}：${result.stderr}`);
+    const { stat } = await import('node:fs/promises');
+    const file = `${result.keep}/enablement.copy`;
+    assert.equal((await stat(file)).mode & 0o777, 0o600, fail);
+    assert.equal(await readFile(file, 'utf8'), 'agent-enablement:v1:t\\\\x0a0b\t2026-11-06 01:02:03.456\n', fail);
+  }
+});
+
+// pg-database.sh 照原样跑，docker 换成桩：记下参数和送进 psql 的 SQL（标准输入）
+async function runPgDatabase(t, args, { password = '0123456789abcdef0123456789abcdef' } = {}) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'pg-database-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'bin'), log = path.join(dir, 'calls.log'), secrets = path.join(dir, 'secrets.env');
+  await mkdir(bin);
+  await writeFile(secrets, `REVIEWER_PASSWORD=x\n${password === null ? '' : `JIUAN_PG_APP_PASSWORD=${password}\n`}`);
+  await writeFile(path.join(bin, 'docker'), `#!/usr/bin/env bash\necho "docker $*" >> "$LOG"\ncat > "$LOG.sql"\n`, { mode: 0o755 });
+  const env = { ...childEnv(), PATH: `${bin}:${process.env.PATH}`, LOG: log, BENCH_SECRETS_FILE: secrets };
+  let result;
+  try { result = { code: 0, ...(await run('bash', [infra('bench/pg-database.sh'), ...args], { env })) }; }
+  catch (error) { result = { code: error.code, stdout: error.stdout, stderr: error.stderr }; }
+  return { ...result, calls: await readFile(log, 'utf8').then(text => text.split('\n').filter(Boolean), () => []), sql: await readFile(`${log}.sql`, 'utf8').catch(() => '') };
+}
+
+test('pg-database.sh：在 jiuan-pg 里建账号 jiuan_app（没有才建，不是超级用户、不能建库建角色）、口令按 secrets.env 重设；库没有才建（属主 jiuan_app、UTF8 / C、template0），已有的核对编码和排序；只有属主连得上；库的时区是上海；口令只经标准输入、不打印', async t => {
+  for (const [args, db] of [[[], 'jiuan'], [['jiuan'], 'jiuan'], [['jiuan_rehearsal'], 'jiuan_rehearsal']]) {
+    const result = await runPgDatabase(t, args);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, `JIUAN_PG_DATABASE_READY ${db}\n`);
+    assert.deepEqual(result.calls, [`docker exec -i -u postgres jiuan-pg psql -X -q -v ON_ERROR_STOP=1 -v db=${db} -d postgres`]);
+    const sql = result.sql;
+    const order = ['SET log_min_error_statement = panic;',
+      "SELECT 'CREATE ROLE jiuan_app' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'jiuan_app') \\gexec",
+      "ALTER ROLE jiuan_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '0123456789abcdef0123456789abcdef';",
+      "SELECT format('CREATE DATABASE %I OWNER jiuan_app ENCODING %L LC_COLLATE %L LC_CTYPE %L TEMPLATE template0', :'db', 'UTF8', 'C', 'C')",
+      "WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db') \\gexec",
+      `datname = '${db}' AND (pg_encoding_to_char(encoding) <> 'UTF8' OR datcollate <> 'C' OR datctype <> 'C')`,
+      'ALTER DATABASE :"db" OWNER TO jiuan_app;', `ALTER DATABASE :"db" SET timezone = 'Asia/Shanghai';`, 'REVOKE CONNECT ON DATABASE :"db" FROM PUBLIC;'];
+    let at = -1;
+    for (const line of order) {
+      const next = sql.indexOf(line, at + 1);
+      assert.ok(next > at, `${db}：SQL 里缺少或顺序不对：${line}\n${sql}`);
+      at = next;
+    }
+    assert.ok(!result.stdout.includes('0123456789abcdef0123456789abcdef') && !result.stderr.includes('0123456789abcdef0123456789abcdef'), '不打印口令');
+    assert.ok(!result.calls[0].includes('0123456789abcdef'), '口令不上命令行');
+  }
+});
+
+test('pg-database.sh：库名只认 jiuan 或 jiuan_<小写字母数字>（退出 2），口令不是 32 位十六进制或没有（退出 1）；两种都不碰 docker', async t => {
+  for (const name of ['postgres', 'Jiuan', 'jiuan;drop', 'jiuan_', 'jiuan-x', "jiuan'", 'nexus']) {
+    const result = await runPgDatabase(t, [name]);
+    assert.equal(result.code, 2, name);
+    assert.deepEqual(result.calls, [], name);
+  }
+  for (const password of [null, '', 'short', '0123456789ABCDEF0123456789ABCDEF', "0123456789abcdef0123456789abcde'"]) {
+    const result = await runPgDatabase(t, ['jiuan'], { password });
+    assert.equal(result.code, 1, String(password));
+    assert.match(result.stderr, /JIUAN_PG_APP_PASSWORD 应是 32 位十六进制/);
+    assert.deepEqual(result.calls, [], String(password));
+  }
 });
 
 test('deploy.sh：构建 v0.7.10 副本、把 app 和副本打进发布包；先配置测试台再重启 v0.7.10；密钥只补不换', async () => {
@@ -114,6 +251,8 @@ test('deploy.sh：构建 v0.7.10 副本、把 app 和副本打进发布包；先
   assert.match(deploy, /rsync -a --exclude \.DS_Store "\$POC_DIR\/\.\.\/\.build\/jiuan\/" "\$STAGE\/release\/jiuan\/"/);
   assert.match(deploy, /^ensure_bench_secrets "\$SECRETS"$/m);
   assert.match(await readFile(infra('lib/bench-secrets.sh'), 'utf8'), /for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY BENCH_PG_SUPERUSER_PASSWORD JIUAN_PG_APP_PASSWORD; do/);
+  // 整个 bench/ 进构件：bench-configure.sh 调的 pg-install.sh、pg-database.sh 都在
+  assert.match(deploy, /^rsync -a --exclude \.DS_Store "\$HERE\/bench\/" "\$STAGE\/release\/bench\/"$/m);
   const install = deploy.slice(deploy.indexOf('# >>> install'), deploy.indexOf('# <<< install'));
   const order = ['bench-configure.sh" $SITE_DOMAIN', 'systemctl restart andon-jiuan.service'].map(text => install.indexOf(text));
   assert.ok(order.every(index => index > 0) && order[0] < order[1], `安装顺序不对：${order}`);

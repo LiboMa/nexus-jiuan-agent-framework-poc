@@ -142,12 +142,12 @@ test('secrets.env.example 随交接内容走：键都在、值都是假的；.gi
   const out = await exportTo(t);
   const example = await readFile(path.join(out, 'poc/infra/secrets.env.example'), 'utf8');
   const keys = [...example.matchAll(/^(# )?([A-Z][A-Za-z0-9_]*)=(.*)$/gm)];
-  for (const name of ['REVIEWER_PASSWORD', 'CHECKER_PASSWORD', 'BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
+  for (const name of ['REVIEWER_PASSWORD', 'CHECKER_PASSWORD', 'BENCH_PG_SUPERUSER_PASSWORD', 'JIUAN_PG_APP_PASSWORD', 'BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
     assert.ok(keys.some(([, , key]) => key === name), `样例里要有 ${name}`);
   }
   // 照抄样例不能上线一套公开的口令：没注释掉的值一律留空；要 deploy.sh 自动生成的几项保持注释
   for (const [, commented, key, value] of keys) assert.equal(value, '', `${key}${commented ? '（注释里）' : ''} 不能带值`);
-  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
+  for (const name of ['BENCH_PG_SUPERUSER_PASSWORD', 'JIUAN_PG_APP_PASSWORD', 'BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
     assert.match(example, new RegExp(`^# ${name}=$`, 'm'), `${name} 要保持注释，让 deploy.sh 自动生成`);
   }
   assert.match(example, /\/etc\/andon-finance\/secrets\.env/);

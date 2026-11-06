@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DEPLOY_ENV_KEYS, childEnv } from './helpers/child-env.mjs';
 
-// poc/infra 的部署脚本、栈模板、测试台脚本（九安 v0.7.10 测试台：新前端 + 外壳 + 九安副本，一台实例上还有 MySQL 和知识库的 PG）
+// poc/infra 的部署脚本、栈模板、测试台脚本（九安 v0.7.10 测试台：新前端 + 外壳 + 九安副本，一台实例上还有九安的 PG（jiuan-pg）和知识库的 PG）
 const execFileAsync = promisify(execFile);
 // 子进程不继承部署的环境（DEPLOY_ENV 和环境配置的键，见 helpers/child-env.mjs）；自己给了 env 的调用照它给的
 const run = (file, args, options = {}) => execFileAsync(file, args, { env: childEnv(), ...options });
@@ -101,7 +102,7 @@ test('在 macOS 上打包时不带 AppleDouble 与扩展属性（否则实例上
 test('shell 脚本里变量名后面不能紧跟中文等非 ASCII 字符（bash 会把它们算进变量名，set -u 下直接报错）；要写成 ${VAR}', async () => {
   for (const file of [infra('deploy.sh'), infra('destroy.sh'), infra('backup.sh'), infra('upgrade-instance.sh'), infra('kb.sh'), infra('migrate-data.sh'),
     infra('lib/remote.sh'), infra('lib/deploy-env.sh'), infra('lib/bench-secrets.sh'), infra('pg-prepare.sh'), infra('remote-jiuan-tests.sh'),
-    bench('mysql-install.sh'), bench('pg-install.sh'), bench('test-databases.sh'), bench('bench-configure.sh'), bench('bench-reset.sh'),
+    bench('mysql-install.sh'), bench('pg-install.sh'), bench('pg-database.sh'), bench('test-databases.sh'), bench('bench-configure.sh'), bench('bench-reset.sh'),
     fileURLToPath(new URL('../../bench/build-jiuan.sh', import.meta.url)), e2eFile('run.sh'),
     repo('docs/delivery/make-package.sh'), repo('docs/build-html.sh')]) {
     const offenders = (await readFile(file, 'utf8')).split('\n').map((line, index) => [index + 1, line])
@@ -241,7 +242,7 @@ test('实例上：解开新构件 → 新构件里的 bench-configure.sh → 换
 
 // ---------- 测试台脚本（poc/infra/bench）
 test('测试台脚本语法正确，里面没有写死的密码', async () => {
-  for (const name of ['mysql-install.sh', 'pg-install.sh', 'test-databases.sh', 'bench-configure.sh', 'bench-reset.sh']) {
+  for (const name of ['mysql-install.sh', 'pg-install.sh', 'pg-database.sh', 'test-databases.sh', 'bench-configure.sh', 'bench-reset.sh']) {
     await run('bash', ['-n', bench(name)]);
     const text = await readFile(bench(name), 'utf8');
     assert.doesNotMatch(text, /PASSWORD=(?!\$|")[^\s"]+/, `${name} 不能有密码字面量`);
@@ -249,7 +250,7 @@ test('测试台脚本语法正确，里面没有写死的密码', async () => {
   }
 });
 
-test('MySQL 固定用 mysql:8.0，只听本机，参数和九安自己的测试编排一致；只建 root（九安 v0.7.10 的库和账号由 bench-configure.sh 建），root 密码只认原值', async () => {
+test('切换前的 MySQL（mysql-install.sh，切换后连同容器留着给回退，不再由 bench-configure.sh 调）：固定用 mysql:8.0，只听本机，参数和九安自己的测试编排一致；只建 root，root 密码只认原值', async () => {
   const script = await readFile(bench('mysql-install.sh'), 'utf8');
   for (const expected of ['mysql:8.0', '127.0.0.1:3306:3306', '--skip-log-bin', '--character-set-server=utf8mb4', '--collation-server=utf8mb4_unicode_ci', 'TZ=Asia/Shanghai',
     '/var/lib/jiuan-mysql:/var/lib/mysql', 'MYSQL_ROOT_PASSWORD_FILE=/run/bench-secrets/mysql_root_password', '"$DIR":/run/bench-secrets:ro']) {
@@ -266,7 +267,7 @@ test('MySQL 固定用 mysql:8.0，只听本机，参数和九安自己的测试�
   assert.match(script, /docker rm -f jiuan-mysql >\/dev\/null\n  echo "BENCH_MYSQL_CONTAINER_REPLACED"/);
   assert.doesNotMatch(script, /rm -rf \/var\/lib\/jiuan-mysql/);
   const configure = await readFile(bench('bench-configure.sh'), 'utf8');
-  assert.ok(configure.indexOf('bash "$HERE/mysql-install.sh"') > 0 && configure.indexOf('bash "$HERE/mysql-install.sh"') < configure.indexOf('CREATE DATABASE IF NOT EXISTS'), '先装好 MySQL 再建库');
+  assert.ok(!configure.includes('mysql-install.sh'), 'bench-configure.sh 不再装 MySQL');
 });
 
 test('PostgreSQL（九安的库）：容器 jiuan-pg 用 postgres:17，只绑 127.0.0.1:5433，上海时区，数据目录 /var/lib/jiuan-pg；超级用户口令只从文件读、只认原值；容器在且参数对就不重建，参数不对只换容器、数据目录不动', async () => {
@@ -340,8 +341,18 @@ test('换型脚本只做「停机再开」：变更集里实例要被替换就�
   assert.match(script, /\[\[ "\$IMAGE_ARCH" == "\$TYPE_ARCH" \]\] \|\| \{/);
 });
 
-test('备份脚本：只做根卷快照（MySQL、PG 和 /var/lib/jiuan 都在根卷上），不登实例', async () => {
+test('栈模板：说明里不再说 MySQL（九安的库是 PostgreSQL）；实例的用户数据和换库之前逐字相同（改用户数据会让实例重启，里面那句注释里的 MySQL 留着）', async () => {
+  const template = await readFile(infra('andon-finance-poc.yaml'), 'utf8');
+  const userData = template.slice(template.indexOf('      UserData:\n'), template.indexOf('\n  ElasticIp:\n'));
+  assert.equal(createHash('sha256').update(userData).digest('hex'), '17f9bf5efdb7c573794fe69268be9ba3f7b5532dc9fd4bb86f45345eda05d2e4');
+  const outside = template.replace(userData, '');
+  assert.doesNotMatch(outside, /MySQL/);
+  assert.match(outside, /Jiuan's PostgreSQL/);
+});
+
+test('备份脚本：只做根卷快照（九安的 PG、知识库的 PG、切换前留着的 MySQL 和 /var/lib/jiuan 都在根卷上），不登实例', async () => {
   const script = await readFile(infra('backup.sh'), 'utf8');
+  assert.match(script, /九安的 PostgreSQL（\/var\/lib\/jiuan-pg）/);
   assert.match(script, /create-snapshot/);
   assert.match(script, /snapshot-completed/);
   assert.doesNotMatch(script, /send-command|ssh |\/var\/lib\/andon-finance/);
@@ -432,11 +443,14 @@ test('交付包和交接仓库只带 poc/infra/env/example.env（各环境的配
   assert.match(pack, /cd "\$ROOT\/poc\/infra" && node --test "test\/\*\*\/\*\.test\.mjs"/);
 });
 
-test('搬数据（migrate-data.sh）：旧环境只读导出、整包加密、预签名 URL 15 分钟、搬完删掉；新环境先核对密钥配置相同、换完逐表核对；--skip-pg 不动 PG', async () => {
+test('搬数据（migrate-data.sh）：旧环境只读导出、整包加密、预签名 URL 15 分钟、搬完删掉；新环境先核对密钥配置相同、换完逐表核对；--skip-pg 不动知识库的 PG；九安的库在 jiuan-pg 里（pg_dump -Fc / pg_restore），不再碰 MySQL', async () => {
   const script = await readFile(infra('migrate-data.sh'), 'utf8');
   await run('bash', ['-n', infra('migrate-data.sh')]);
   assert.doesNotMatch(script, /set -x|set -euxo/);
-  assert.match(script, /mysqldump -uroot --single-transaction/);
+  assert.doesNotMatch(script, /mysqldump|jiuan-mysql|mysql -uroot|mysql_root_password|MYSQL_DBS/);
+  assert.match(script, /docker exec -u postgres jiuan-pg pg_dump -Fc jiuan > "\$w\/b\/jiuan\.pgdump"/);
+  assert.match(script, /docker exec -i -u postgres jiuan-pg pg_restore -d jiuan --exit-on-error < "\$w\/b\/jiuan\.pgdump"/);
+  assert.match(script, /docker inspect -f '\{\{\.State\.Running\}\}' jiuan-pg 2>\/dev\/null \| grep -qx true \|\| \{ echo "新实例上没有运行中的 jiuan-pg/);
   assert.match(script, /pg_dump -U postgres -Fc nexus/);
   assert.match(script, /openssl enc -aes-256-cbc -pbkdf2/);
   assert.match(script, /ExpiresIn=900/);
@@ -453,6 +467,10 @@ test('搬数据（migrate-data.sh）：旧环境只读导出、整包加密、�
   for (const text of [exportScript, importScript]) await run('bash', ['-n', '-c', text]);
   assert.match(exportScript, /\ncounts\(\) \{\n[\s\S]*\n\}\ncounts > "\$w\/counts\.txt"\n/);
   assert.doesNotMatch(exportScript, /systemctl stop|DROP DATABASE|pg_restore|rm -rf \/var\/lib/);
+  // 新环境：停服务之后才删、重建九安的库（参数同 bench/pg-database.sh：属主 jiuan_app、UTF8 / C、上海时区、只有属主连得上），再 pg_restore
+  assert.match(importScript, /systemctl stop andon-jiuan\.service\n[^\n]*DROP DATABASE IF EXISTS jiuan WITH \(FORCE\)[^\n]*\nbash \/opt\/andon-finance\/current\/bench\/pg-database\.sh jiuan\n[^\n]*pg_restore -d jiuan/);
+  // 逐表数行数：九安的库按 jiuan.<表名>，知识库的按 pg.<表名>
+  assert.match(exportScript, /'jiuan\.' \|\| tablename/);
   // 新环境在起服务之前数（服务一起来九安的同步就会写批次表），数完再起、再等健康检查
   assert.match(importScript, /systemctl stop andon-jiuan\.service[\s\S]*\ncounts > "\$w\/counts\.txt"\nsystemctl start [\s\S]*echo IMPORT_OK\ncat "\$w\/counts\.txt"\n/);
   // 密钥只经文件和变量，不 echo
