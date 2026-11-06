@@ -19,6 +19,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$HERE/lib/deploy-env.sh"
 load_deploy_env
 source "$HERE/lib/remote.sh"
+source "$HERE/lib/bench-secrets.sh"
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/secrets.env"
@@ -111,23 +112,8 @@ CHECKER_PASSWORD=$(openssl rand -base64 18)
 SECRETSFILE
   echo "已生成 ${SECRETS}：两个账号的随机口令（测试台的三项密钥接着补上）"
 fi
-# >>> bench-secrets
-# 测试台（MySQL 与九安存储）的三项密钥：缺了才补，已有的永远不改。换了 JIUAN_DATA_KEY，九安的库就打不开了。
-# 2026-11-02 之前的文件里后两项叫 JIUAN07_…：先原地改名（值不变），免得当成缺了另生成。
-for name in JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY; do
-  legacy="JIUAN07_${name#JIUAN_}"
-  if grep -q "^${legacy}=" "$SECRETS" && ! grep -q "^${name}=" "$SECRETS"; then
-    ( umask 077; sed "s/^${legacy}=/${name}=/" "$SECRETS" > "$SECRETS.new" ) && mv "$SECRETS.new" "$SECRETS"
-    echo "已把 ${SECRETS} 里的 ${legacy} 改名为 ${name}（值不变）"
-  fi
-done
-for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY; do
-  grep -q "^${name}=" "$SECRETS" && continue
-  if [[ "$name" == *_DATA_KEY ]]; then value="$(openssl rand -base64 32)"; else value="$(openssl rand -hex 16)"; fi
-  printf '%s\n' "# 测试台：只补不换（${name}）" "${name}=${value}" >> "$SECRETS"
-  echo "已在 ${SECRETS} 里补上 ${name}"
-done
-# <<< bench-secrets
+# 测试台（MySQL、PostgreSQL 与九安存储）的密钥：缺了才补、已有的永远不改（lib/bench-secrets.sh）
+ensure_bench_secrets "$SECRETS"
 chmod 600 "$SECRETS"
 
 say "打包并上传构件"

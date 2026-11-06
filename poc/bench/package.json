@@ -1,8 +1,9 @@
 {
   "name": "andon-finance-bench-deps",
   "private": true,
-  "description": "测试台上九安副本的运行时依赖：版本和九安开发包的 package.json 一致；安装一律 --ignore-scripts",
+  "description": "测试台上九安副本的运行时依赖：版本和九安开发包的 package.json 一致；安装一律 --ignore-scripts。pg 给九安副本，mysql2 只给 MySQL → PostgreSQL 的搬迁工具",
   "dependencies": {
-    "mysql2": "3.14.3"
+    "mysql2": "3.14.3",
+    "pg": "8.16.3"
   }
 }

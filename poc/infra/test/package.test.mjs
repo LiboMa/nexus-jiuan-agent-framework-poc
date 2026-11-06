@@ -71,6 +71,8 @@ test('make-package.sh --export：只带提交进 git 的文件：白名单目录
   const repo = fileURLToPath(new URL('../../../', import.meta.url));
   const drafts = ['docs/package-test-draft.md', 'kb/package-test-draft.txt', 'poc/infra/package-test-草稿.md'];
   for (const draft of drafts) await plant(t, path.join(repo, draft));
+  // 一整个没进 git 的目录（例如别人放的大目录）：拷的时候就跳过，只报一次目录，不逐个文件列
+  for (const name of ['a.txt', 'deep/b.txt']) await plant(t, path.join(repo, 'docs/package-test-dir', name));
   const out = await mkdtemp(path.join(tmpdir(), 'guide-repo-'));
   t.after(() => rm(out, { recursive: true, force: true }));
   const { stdout } = await run('bash', [SCRIPT, '--skip-checks', '--export', out], { maxBuffer: 16 * 1024 * 1024 });
@@ -79,6 +81,11 @@ test('make-package.sh --export：只带提交进 git 的文件：白名单目录
     assert.ok(stdout.includes(draft), `要列出没带上的 ${draft}`);
   }
   for (const keep of ['docs/delivery/delivery-guide.md', 'kb/deploy.sh', 'poc/infra/deploy.sh']) assert.ok(await exists(path.join(out, keep)), `应该有 ${keep}`);
+  assert.equal(await exists(path.join(out, 'docs/package-test-dir')), false);
+  assert.ok(stdout.includes('docs/package-test-dir/'), '要列出没带上的目录');
+  assert.ok(!stdout.includes('docs/package-test-dir/deep/b.txt'), '目录只报一次，不逐个文件列');
+  const script = await readFile(SCRIPT, 'utf8');
+  assert.match(script, /ls-files -z --others --directory/, '拷之前就按 git 收好的目录跳过');
 });
 
 test('make-package.sh 的检查：哪一项没过就停下、不出包（不能写成「… && echo 通过」，那样没过也接着出包）；知识库工具的单元测试装上依赖再跑；PACKAGE-INFO 只写真跑了的检查', async () => {

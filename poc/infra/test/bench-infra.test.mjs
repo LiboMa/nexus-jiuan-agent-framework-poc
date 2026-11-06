@@ -112,7 +112,8 @@ test('deploy.sh：构建 v0.7.10 副本、把 app 和副本打进发布包；先
   assert.match(deploy, /bench\/build-jiuan\.sh/);
   assert.match(deploy, /rsync -a --exclude test --exclude scripts --exclude node_modules --exclude \.DS_Store "\$POC_DIR\/app\/" "\$STAGE\/release\/app\/"/);
   assert.match(deploy, /rsync -a --exclude \.DS_Store "\$POC_DIR\/\.\.\/\.build\/jiuan\/" "\$STAGE\/release\/jiuan\/"/);
-  assert.match(deploy, /for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY; do/);
+  assert.match(deploy, /^ensure_bench_secrets "\$SECRETS"$/m);
+  assert.match(await readFile(infra('lib/bench-secrets.sh'), 'utf8'), /for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY BENCH_PG_SUPERUSER_PASSWORD JIUAN_PG_APP_PASSWORD; do/);
   const install = deploy.slice(deploy.indexOf('# >>> install'), deploy.indexOf('# <<< install'));
   const order = ['bench-configure.sh" $SITE_DOMAIN', 'systemctl restart andon-jiuan.service'].map(text => install.indexOf(text));
   assert.ok(order.every(index => index > 0) && order[0] < order[1], `安装顺序不对：${order}`);

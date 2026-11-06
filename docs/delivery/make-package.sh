@@ -79,7 +79,24 @@ NOT_HANDOVER=(--exclude /docs/specs --exclude /docs/plans --exclude /docs/superp
   --exclude /docs/delivery/sanitize.conf
   # 客户的制度原文（知识库的来源文档）只在本机和测试台的知识库里，不进交接仓库和交付包
   --exclude /docs/sample-docs)
-copy() { mkdir -p "$stage/$(dirname "$1")"; rsync -a "${EXCLUDES[@]}" "${@:2}" "$ROOT/$1" "$stage/$(dirname "$1")/"; }
+# 只带进了 git 的（提交过或 git add 过）：没进 git 的 git 会把整个目录收成一项（例如 docs/foo/），拷的时候就跳过，
+# 免得先把大目录拷进暂存再一个个删。evidence/ 本来就不进 git、只进交付包，不按这个跳。（bash 3.2 也能跑：不用 mapfile）
+UNTRACKED=(); SKIPPED=()
+while IFS= read -r -d '' item; do UNTRACKED+=("$item"); done < <(git -C "$ROOT" ls-files -z --others --directory)
+copy() {
+  local src="$1" parent item rel; shift
+  parent="$(dirname "$src")"
+  local skip=()
+  if [[ "$src" != evidence ]]; then
+    for item in ${UNTRACKED[@]+"${UNTRACKED[@]}"}; do
+      [[ "$item" == "$src/"* ]] || continue
+      if [[ "$parent" == . ]]; then rel="$item"; else rel="${item#"$parent/"}"; fi
+      skip+=(--exclude "/$rel"); SKIPPED+=("$item")
+    done
+  fi
+  mkdir -p "$stage/$parent"
+  rsync -a "${EXCLUDES[@]}" ${skip[@]+"${skip[@]}"} "$@" "$ROOT/$src" "$stage/$parent/"
+}
 copy README.md
 copy VERSION
 copy CHANGELOG.md
@@ -139,13 +156,23 @@ __pycache__/
 .DS_Store
 EOF
 
-# 只带进了 git 的文件（提交过或 git add 过）：白名单目录里没进 git 的（草稿、本机的笔记）从暂存目录拿掉，列出名字。
-# evidence/ 本来就不进 git、只进交付包；.gitignore 是上面写的。
+# 拷的时候跳过的（没进 git 的草稿、笔记、别人放的目录）列出来；工具和缓存目录（隐藏目录、node_modules、__pycache__）只报个数
+shown=() tools=0
+for item in ${SKIPPED[@]+"${SKIPPED[@]}"}; do
+  name="$(basename "$item")"
+  if [[ "$name" == .* || "$name" == node_modules || "$name" == __pycache__ ]]; then tools=$((tools + 1)); else shown+=("$item"); fi
+done
+if (( ${#shown[@]} > 0 )); then
+  echo "没进 git（没有 git add 过），不带："
+  printf '  %s\n' "${shown[@]}"
+fi
+(( tools == 0 )) || echo "另有 ${tools} 个没进 git 的工具、缓存目录也没带"
+# 兜底：暂存目录里还有没进 git 的文件（不该有）就拿掉并列出；evidence/ 本来就不进 git、只进交付包；.gitignore 是上面写的
 tracked="$work/tracked.txt"; untracked="$work/untracked.txt"
 git -C "$ROOT" -c core.quotePath=false ls-files | LC_ALL=C sort > "$tracked"
 (cd "$stage" && find . -type f ! -path './evidence/*' ! -path './.gitignore' | sed 's|^\./||' | LC_ALL=C sort) | LC_ALL=C comm -23 - "$tracked" > "$untracked"
 if [[ -s "$untracked" ]]; then
-  echo "没进 git（没有 git add 过），不带："
+  echo "暂存目录里还有没进 git 的文件，不带："
   while IFS= read -r file; do echo "  $file"; rm -f "$stage/$file"; done < "$untracked"
   find "$stage" -mindepth 1 -type d -empty -delete
 fi
