@@ -2,7 +2,8 @@
 # 构建测试台用的九安 v0.7.10 副本：按清单复制开发包里运行时要的文件 → 按文件名顺序打补丁（patches/jiuan-v0.7.10）→ 装上锁定版本的依赖。
 # 清单照九安自己的 .dockerignore，但不带 scripts/ 和 seeds/：启动由 PoC 的外壳负责（poc/app），种子用我们的虚构版。
 # seeds/（未脱敏的银行账号等）、database/、tests/、deploy/ 一律不进构件；source/ 下的开发包只读，只从它复制。
-# --with-tests（只给远端跑九安自带的测试用，不进构件）：再带上开发包的 tests/，并打 patches/…/tests/*.patch（测试的改动；普通构建不打）。
+# --with-tests（只给远端跑九安自带的测试用，不进构件）：带上整个开发包（tests/、seeds/、scripts/、deploy/、根目录的文件，九安的测试要读；
+#   .env 和密钥类文件照样不带），并打 patches/…/tests/*.patch（测试的改动；普通构建不打）。
 # 先在临时目录里构建，全部成功才换到输出目录；任何一步失败，输出目录保持原样。
 # 用法：build-jiuan.sh [--out <目录>] [--patches <目录>] [--with-tests]
 set -euo pipefail
@@ -34,6 +35,11 @@ rsync -a --exclude '.env' --exclude '.env.*' --exclude 'secrets/' --exclude '*.p
   --exclude '/public/index.html' --exclude '/public/app.js' --exclude '/public/styles.css' --exclude '/public/stage.*' --exclude '/public/attachment-viewer.*' \
   --include '/src/***' --include '/providers/***' --include '/public/***' --exclude '*' \
   "$SOURCE/" "$WORK/"
+if $WITH_TESTS; then
+  rsync -a --ignore-existing --exclude '.env' --exclude '.env.*' --exclude 'secrets/' --exclude '*.pem' --exclude '*.key' --exclude '*.pfx' --exclude '*.dpapi' \
+    --exclude '*.enc.json' --exclude '*.log' --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' --exclude '/node_modules/' \
+    "$SOURCE/" "$WORK/"
+fi
 
 if [[ -d "$PATCHES" ]]; then
   while IFS= read -r file; do
@@ -41,7 +47,6 @@ if [[ -d "$PATCHES" ]]; then
   done < <(find "$PATCHES" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort)
 fi
 if $WITH_TESTS; then
-  rsync -a --exclude '.DS_Store' --exclude '__pycache__/' "$SOURCE/tests/" "$WORK/tests/"
   if [[ -d "$PATCHES/tests" ]]; then
     while IFS= read -r file; do
       patch -p1 -N -s -d "$WORK" -i "$file" || { echo "测试补丁打不上：$file" >&2; exit 1; }

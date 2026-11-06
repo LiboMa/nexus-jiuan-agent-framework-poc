@@ -12,7 +12,23 @@
     "production advice, list cards and session stay identical to the pre-change baseline": "pass"
   },
   "tests/advisory-ui.test.mjs": {
-    "tests/advisory-ui.test.mjs": "fail"
+    "review cards expose separate rule and advisory panels": "pass",
+    "advisory UI only renders findings after a completed run": "pass",
+    "advisory requests and polling retain context and source-version guards": "pass",
+    "structured findings and server evidence references are rendered safely": "pass",
+    "completed advisory suggestions expose auditable adopt, modify and reject actions": "pass",
+    "document lists explain failed or partial source refreshes before review": "pass",
+    "review cards distinguish optional evidence gaps from blocking checks": "pass",
+    "failed source refresh is shown as a technical block on each review card": "pass",
+    "review cards expose confirmed differences and review tasks before opening a document": "pass",
+    "worklist counters use issue confirmation and blocking instead of raw category totals": "pass",
+    "list cards describe evidence and technical gaps as review tasks rather than violations": "pass",
+    "cards separate blocking key evidence from optional supporting data": "pass",
+    "expanded checks label evidence scope without turning missing data into a violation": "pass",
+    "optional non-applicable checks are never relabeled as missing when expanded": "pass",
+    "confirmed contract scope is shown alongside the unchanged source scenario and original fee type": "pass",
+    "mixed PDF extraction reports both text and scanned-page recognition without marking partial work complete": "pass",
+    "recheck comparison explains historical evidence and safely escapes before and after facts": "pass"
   },
   "tests/advisory-version.test.mjs": {
     "a new rent run or changed file/page/check evidence expires a completed independent suggestion > new run": "pass",
@@ -61,10 +77,62 @@
     "V10 loadContract refuses a contract it cannot fully honour": "pass"
   },
   "tests/agent-definition.test.mjs": {
-    "tests/agent-definition.test.mjs": "fail"
+    "exports the frozen v1 schema tables and reuses corporate q1-q7 without platform": "pass",
+    "normalizes strings and set arrays while preserving element order": "pass",
+    "normalization removes empty optional values, recognizes normalized all, and lowercases seed hashes": "pass",
+    "normalization removes empty string items from value sets": "pass",
+    "rejects unknown keys but silently drops declared client-derived keys": "pass",
+    "derives evidence from method and trusted field metadata only": "pass",
+    "hash is canonical for object keys and normalized sets but preserves element display order": "pass",
+    "loads the real leaf reject-code column without inventing codes": "pass",
+    "valid fixture has no draft errors and pending meanings are warnings": "pass",
+    "all eleven judgment methods accept their minimum valid parameter shape": "pass",
+    "rejects prototype method names with a coded lint issue": "pass",
+    "value-in-set enforces one non-empty source and protects hash-only fields": "pass",
+    "value-in-set requires values to be a bounded array and rejects mixed sources": "pass",
+    "question set lookup rejects prototype names without throwing": "pass",
+    "method field constraints reject wrong types, cross-entity comparisons, and out-of-range options": "pass",
+    "decimal fields compare and use numeric set values": "pass",
+    "preconditions reject hash-only fields and strong controls include precondition fields": "pass",
+    "agent and method scope rules protect expense-type line ranges": "pass",
+    "corporate duplicate scope and module boundaries are linted": "pass",
+    "AI parameters cannot carry parameter keys and corporate payee type needs confirmation": "pass",
+    "rejects unknown fields, incompatible types, missing codes, and unknown codes": "pass",
+    "enforces nearest subclasses, reminder semantics, question scope, segment scope, and stable ids": "pass",
+    "requires a reason when the author changes the seed control level": "pass",
+    "conflict resolutions validate decision, reason, and canonical quote value": "pass",
+    "seed source references must be non-null and structurally valid": "pass",
+    "normalizes and validates rule-card fields without adding absent fields": "pass",
+    "rejects invalid audit-card fields at their nested paths": "pass",
+    "disposition follows the two-verdict counting semantics": "pass",
+    "definition hash stays byte-for-byte stable when new fields are absent": "pass",
+    "reports element readiness and threshold source requirements in fixed order": "pass",
+    "covers reject codes across definitions and flags decision-layer conflicts": "pass",
+    "allows hash-only duplicate checks but rejects model use and display comparisons": "pass",
+    "allows hash-only presence checks but rejects mismatched literal types and mixed source variants": "pass",
+    "strong controls may cite Huilianyi check fields but may not re-judge ordinary fields": "pass",
+    "meaning confirmation escalates only counting elements at confirm stage": "pass",
+    "unregistered parameters warn in draft and become errors on submit": "pass",
+    "warns when manual reminders exceed the current non-blocking limit": "pass",
+    "all lint messages contain no banned user term": "pass",
+    "canonical quote values support full-width numbers, grouping, decimals, and extended units": "pass",
+    "canonical quote values preserve arbitrary slash units from real standard candidates": "pass",
+    "real seed hotel amounts conflict and block submit": "pass",
+    "real seed per-hundred-kilometre amount compares as a per-kilometre value": "pass",
+    "per-hundred-kilometre quotes have distinct canonical units and order-independent conflicts": "pass",
+    "百公里 detection is limited to the immediate numeric prefix": "pass",
+    "standard conflict comparison coerces numeric strings and keeps tight tolerance": "pass",
+    "real seed subsidy amount is extracted from the source text": "pass",
+    "grouped amounts stay intact and standards outside the agent segments count as absent": "pass",
+    "identical parameter and quote pairs are reported once per element": "pass",
+    "detects every unresolved quoted amount against all values for its parameter": "pass",
+    "does not report a conflict when the quote matches any standard value": "pass",
+    "submit blocks unresolved conflicts and accepts explicit per-value resolutions": "pass",
+    "conflict detection ignores resolutions with invalid decisions or oversized reasons": "pass",
+    "ELM-1c leaves the lint results of existing travel fixtures unchanged": "pass"
   },
   "tests/agent-enablement.integration.test.mjs": {
-    "E8 real MySQL: the state row never holds the key in clear; E9 a racing write is a conflict": "fail"
+    "E8 real MySQL: the state row never holds the key in clear; E9 a racing write is a conflict": "pass"
   },
   "tests/agent-enablement.test.mjs": {
     "E1 enabling verifies on the spot, stores the key encrypted-only, and shows a fingerprint": "fail",
@@ -142,15 +210,15 @@
     "corporate dictionary is additive and keeps the pending payee type meaning": "pass"
   },
   "tests/agent-reference-store.integration.test.mjs": {
-    "reference store imports and serves only the latest source snapshot": "fail"
+    "reference store imports and serves only the latest source snapshot": "pass"
   },
   "tests/agent-reference-store.test.mjs": {
     "reference store imports a seed idempotently and exposes only reference collections": "pass"
   },
   "tests/agent-task-service.integration.test.mjs": {
-    "I1 real store: racing runs on one document send one request; the other is busy (409); the row stays sealed": "fail",
-    "I2 real store: a late answer does not overwrite the newer round; recover() fails only expired running rounds": "fail",
-    "I3 the card runs through the real runner: only open corporate payments with a read detail, once per version": "fail"
+    "I1 real store: racing runs on one document send one request; the other is busy (409); the row stays sealed": "pass",
+    "I2 real store: a late answer does not overwrite the newer round; recover() fails only expired running rounds": "pass",
+    "I3 the card runs through the real runner: only open corporate payments with a read detail, once per version": "pass"
   },
   "tests/agent-task-service.test.mjs": {
     "T1 both switches must be on: the task setting and the instance feature; system:pipeline only on the test instance": "pass",
@@ -169,22 +237,22 @@
     "T8 recover() fails expired running rounds with AGENT_STEP_INTERRUPTED and leaves live ones alone": "pass",
     "T9 an assembly failure is a failed round with the assembler's code; nothing is routed or sent": "pass",
     "T11 agents.tasks is read strictly; agents is still refused in production": "fail",
-    "T12 startup: the task service exists only where Agent enablement does, recovers on start, and NX-4a wires the real assembler where the element runtime exists": "fail",
+    "T12 startup: the task service exists only where Agent enablement does, recovers on start, and NX-4a wires the real assembler where the element runtime exists": "pass",
     "T5b a MySQL deadlock on the first write (two runs racing on a new key) is the same busy answer": "pass",
     "T6c a late answer arriving while the newer round is still out is dropped; the newer round still lands": "pass",
     "T13 NX-4a: the assembler's rule map is checked, kept with the round and returned by view; a malformed one sends nothing": "pass"
   },
   "tests/ai-advice-adapter.integration.test.mjs": {
-    "real MySQL runtime and adapter pre-audit three read-detail test documents once": "fail",
-    "real wiring: a quota stop or a pause ends the round and the rest run next round": "fail",
+    "real MySQL runtime and adapter pre-audit three read-detail test documents once": "pass",
+    "real wiring: a quota stop or a pause ends the round and the rest run next round": "pass",
     "real wiring: a restart mid-run leaves the interrupted document to run again, not failed for good": "fail",
-    "real runner: a 200-document round stores an untruncated summary and observability weights every document": "fail",
-    "real wiring: a busy AI gateway stops the round, and next round all three documents are pre-audited": "fail",
-    "real wiring: three unfinished automatic attempts stop the retries, and a manual retry still runs": "fail"
+    "real runner: a 200-document round stores an untruncated summary and observability weights every document": "pass",
+    "real wiring: a busy AI gateway stops the round, and next round all three documents are pre-audited": "pass",
+    "real wiring: three unfinished automatic attempts stop the retries, and a manual retry still runs": "pass"
   },
   "tests/ai-advice-adapter.test.mjs": {
     "catalog only activates automatic advice on the test instance": "pass",
-    "startup constructs the automatic advice adapter only for the test instance": "fail",
+    "startup constructs the automatic advice adapter only for the test instance": "pass",
     "test advice adapter selects only unrecorded current versions in finance-first order": "pass",
     "test advice adapter enforces Shanghai daily limit and per-document timeout": "pass",
     "daily usage starts at the Shanghai calendar boundary": "pass",
@@ -196,7 +264,7 @@
     "aborting a running advice cancels the service task and ends the wait promptly": "pass",
     "manual advice runs preserve a manual trigger and requeue only failed versions": "pass",
     "candidates are open approvals only, finance audit first, then the newest": "pass",
-    "the candidate query binds connection and tenant, and all-company selection stays tenant-scoped": "fail",
+    "the candidate query binds connection and tenant, and all-company selection stays tenant-scoped": "pass",
     "the per-document limit runs from the recorded start, not from queueing, and a timeout records its real duration": "pass",
     "queue wait counts from selection, including the time before a worker reaches the document": "pass",
     "a 200-document round keeps its summary inside the run-row limit and its metrics weight every document": "pass",
@@ -382,8 +450,8 @@
     "a raw detail row with null status is not-fetched, while an empty row is unavailable": "pass"
   },
   "tests/analysis-documents-admin.integration.test.mjs": {
-    "document data reset clears synced documents and derived state, keeps rules and unknown state, and refuses shared databases": "fail",
-    "HOTFIX-074: the summary shows who holds the full-sync and agent locks, and never a statement": "fail"
+    "document data reset clears synced documents and derived state, keeps rules and unknown state, and refuses shared databases": "pass",
+    "HOTFIX-074: the summary shows who holds the full-sync and agent locks, and never a statement": "pass"
   },
   "tests/analysis-ecs-http.test.mjs": {
     "the entry page loads with DingTalk launch parameters while other assets stay exact": "pass",
@@ -397,7 +465,7 @@
     "W2 (condition 3) a card and the page give the same conclusion for the same document": "pass",
     "W3 a provider that cannot answer is a platform gap on both, never a silent pass": "pass",
     "W4 the state provider: only corporate payments on an instance where the task is on are required": "pass",
-    "W5 (condition 2) startup hands the provider only to an instance with the task service (test instance only)": "fail"
+    "W5 (condition 2) startup hands the provider only to an instance with the task service (test instance only)": "pass"
   },
   "tests/analysis-evidence-binding.test.mjs": {
     "detail binds the same source facts without replacing the imported source hash": "pass",
@@ -553,10 +621,10 @@
     "rejects thenable runtimes without leaving a creation marker": "pass"
   },
   "tests/analysis-runtime-services.test.mjs": {
-    "startup wiring supplies live department accounts to every runtime consumer": "fail",
+    "startup wiring supplies live department accounts to every runtime consumer": "pass",
     "effective config recognizes department actors in authorize and authorizeReader and revokes both": "pass",
     "runtime registry forwards offline advice enqueue without creating a record or calling the model": "pass",
-    "production wiring never passes an advice offline override": "fail",
+    "production wiring never passes an advice offline override": "pass",
     "runtime advice stays local to one formal scope, stores bound records and reuses current cache without source calls": "pass",
     "runtime falls back to the full document type when a store head omits type": "pass",
     "runtime serves an authorized tenant company outside the configured sync anchor": "pass",
@@ -592,9 +660,9 @@
     "reading the originals after advice was saved invalidates the card and the detail the same way, without a model call": "pass"
   },
   "tests/analysis-state-conflict.integration.test.mjs": {
-    "C1 real MySQL: two concurrent first writes of one key deadlock in InnoDB; one wins, the other gets 409": "fail",
-    "C2 real MySQL: a lock wait timeout (1205) is not turned into a conflict": "fail",
-    "C3 real MySQL: two admins enabling the first record at once get one success and one conflict notice (was a 500)": "fail"
+    "C1 real MySQL: two concurrent first writes of one key deadlock in InnoDB; one wins, the other gets 409": "pass",
+    "C2 real MySQL: a lock wait timeout (1205) is not turned into a conflict": "pass",
+    "C3 real MySQL: two admins enabling the first record at once get one success and one conflict notice (was a 500)": "pass"
   },
   "tests/analysis-store.test.mjs": {
     "store requires production key and pool, and explicit migration before use": "pass",
@@ -741,7 +809,27 @@
     "V4: the offline note never says the document should not pass, nor uses banned terms": "pass"
   },
   "tests/api.test.mjs": {
-    "tests/api.test.mjs": "fail"
+    "server sessions require authentication, resist identity spoofing, and invalidate on logout": "pass",
+    "company scope protects lists, dashboards, rules, exports, details, attachments and mutations": "pass",
+    "system administrators see readiness metadata but never receive implicit finance access": "pass",
+    "shared finance can read authorized companies but cannot approve another source assignee task": "pass",
+    "an applicant cannot approve their own source-assigned reimbursement": "pass",
+    "stale versions cannot review or decide; duplicate decisions are idempotent": "pass",
+    "rejections and risk approvals require a meaningful reason": "pass",
+    "natural-language drafts require a valid test and independent authorized publisher": "pass",
+    "unknown instructions never silently become enforceable rules; group baselines stay protected": "pass",
+    "group rule trials cannot expose combined company counts through shared rules or administrator audit": "pass",
+    "source withdrawal and resubmission invalidate old decisions and require review of the current version": "pass",
+    "source reassignment changes decision authority while preserving the company boundary": "pass",
+    "a prior version idempotency receipt cannot bypass a new source submission": "pass",
+    "sync retry confirms an unknown source outcome without duplicate submission; failed writes stay incomplete": "pass",
+    "a source withdrawal resolves an unknown approval outcome instead of leaving it stuck": "pass",
+    "untrusted input remains JSON data and export stays within the authorized company": "pass",
+    "CSV neutralizes spreadsheet formulas and HTML escapes executable markup": "pass",
+    "revocation is enforced on existing sessions across documents, attachments, rules and exports": "pass",
+    "access managers cannot grant another company, elevate administrators, or change their own access": "pass",
+    "expired temporary access is rejected even when a session cookie remains valid": "pass",
+    "decisions, rules and audit survive database reopening": "pass"
   },
   "tests/app-version-api.test.mjs": {
     "health includes only safe version fields even when the database is unavailable": "pass",
@@ -759,13 +847,20 @@
     "S2 the three document child tables are cleared before audit_documents, the department table is not": "pass"
   },
   "tests/approval-identity-store.integration.test.mjs": {
-    "SYNC-06a MySQL approval identities": "fail"
+    "SYNC-06a MySQL approval identities > I1 candidates are the documents without an index for their current version, by id": "pass",
+    "SYNC-06a MySQL approval identities > I2 writing actors empties the candidates, keeps job numbers plain and names sealed": "pass",
+    "SYNC-06a MySQL approval identities > I3 a new version reopens the document; a stale write changes nothing; a current write replaces": "pass",
+    "SYNC-06a MySQL approval identities > I4 handled documents: operator or named approver, passed or rejected only, company filter when asked": "pass",
+    "SYNC-06a MySQL approval identities > I5 documents by department: the index department, with the company filter when asked": "pass",
+    "SYNC-06a MySQL approval identities > I8 waiting for me: only the named approver of a current node; unassigned nodes are counted apart": "pass",
+    "SYNC-06a MySQL approval identities > I6 every malformed write or query is refused before the database changes": "pass",
+    "SYNC-06a MySQL approval identities > I7 clearing the document data clears the three child tables and keeps the departments": "pass"
   },
   "tests/approval-identity.integration.test.mjs": {
     "X11 current nodes only, exactly the pending contract, nothing else read": "pass",
     "X15 a current node already finished by its approver is not waiting for them": "pass",
-    "X9 one round indexes the stored documents; a second round finds nothing; a new version is indexed alone": "fail",
-    "X13 one unreadable document sorted first does not stop the round: the others are indexed, it is a gap once": "fail"
+    "X9 one round indexes the stored documents; a second round finds nothing; a new version is indexed alone": "pass",
+    "X13 one unreadable document sorted first does not stop the round: the others are indexed, it is a gap once": "pass"
   },
   "tests/approval-identity.test.mjs": {
     "X1 four histories: operator, top-level number, a proxy approval, no job number; a string is a gap": "pass",
@@ -774,7 +869,7 @@
     "X4 the document department: a UUID in the department field, else departmentOID, else none": "pass",
     "X5 malformed source: never throws, counts the gap; a missing document id is a TypeError": "pass",
     "X6 perspective by node name: finance keywords, everything else business, blank is none": "pass",
-    "X10 the test instance keeps approval writeback on and production has no such field": "fail",
+    "X10 the test instance keeps approval writeback on and production has no such field": "pass",
     "X7 one indexing round: batches, stale and failed writes, error codes only, and it always ends": "pass",
     "X8 the service waits two minutes after start, then runs every fifteen, one round at a time": "pass",
     "X12 an unreadable candidate gets an empty index row with a gap, and the round goes on": "pass",
@@ -793,7 +888,15 @@
     "UI-2c: an approver's runs, fetches and trials on a document waiting on them are 404 before any service": "pass"
   },
   "tests/approval-view-store.integration.test.mjs": {
-    "UI-2 MySQL approval views and approval relation": "fail"
+    "UI-2 MySQL approval views and approval relation > V1 待我审批 returns full list items in arrival order with the nodes waiting on me": "pass",
+    "UI-2 MySQL approval views and approval relation > V2 我审过的 counts passed and rejected, as operator or named approver, never a withdrawal": "pass",
+    "UI-2 MySQL approval views and approval relation > V3 本部门全部 is the documents of departments I manage, nothing for anyone else": "pass",
+    "UI-2 MySQL approval views and approval relation > V4 a company filter only narrows the view": "pass",
+    "UI-2 MySQL approval views and approval relation > V5 the cap says when there is more than it read": "pass",
+    "UI-2 MySQL approval views and approval relation > V6 approvalRelation answers per document, per employee, and only for this connection": "pass",
+    "UI-2 MySQL approval views and approval relation > V7 inputs are validated": "pass",
+    "UI-2 MySQL approval views and approval relation > V8 job numbers match exactly: case and trailing spaces count": "pass",
+    "UI-2 MySQL approval views and approval relation > V9 the company list finds the applicant inside its authorized company scope": "pass"
   },
   "tests/approval-writeback-ui.test.mjs": {
     "WB01 UI requires a bound verdict and preserves zero summary counts": "pass",
@@ -802,12 +905,12 @@
     "VER-2b: with nothing but platform gaps the rejection reason starts empty": "skip"
   },
   "tests/approval-writeback.integration.test.mjs": {
-    "WB01 real MySQL status then pass records two successful gateway calls and permits the write": "fail",
-    "WB01 real MySQL unique claim, encrypted payload, failed retry, audit and summary": "fail",
-    "WB01 real MySQL HTTP status, decision and status again write every call log row and no request is refused": "fail",
-    "WB01 real MySQL reconciliation uses the node sealed before writing, and a retry may change the decision": "fail",
-    "WB01 real MySQL a retry still writing in one process is not reconciled by another, and a missing change record is replayed": "fail",
-    "WB01 real MySQL a late answer of an attempt another process reconciled or re-claimed never overwrites the newer state": "fail"
+    "WB01 real MySQL status then pass records two successful gateway calls and permits the write": "pass",
+    "WB01 real MySQL unique claim, encrypted payload, failed retry, audit and summary": "pass",
+    "WB01 real MySQL HTTP status, decision and status again write every call log row and no request is refused": "pass",
+    "WB01 real MySQL reconciliation uses the node sealed before writing, and a retry may change the decision": "pass",
+    "WB01 real MySQL a retry still writing in one process is not reconciled by another, and a missing change record is replayed": "pass",
+    "WB01 real MySQL a late answer of an attempt another process reconciled or re-claimed never overwrites the newer state": "pass"
   },
   "tests/approval-writeback.test.mjs": {
     "WB01 v13 is additive and audit_status remains a visible ordinary column": "pass",
@@ -847,7 +950,15 @@
     "WB01 every write attempt carries its own run id, so one lost call log line does not block the retry": "pass"
   },
   "tests/attachment-viewer-ui.test.mjs": {
-    "tests/attachment-viewer-ui.test.mjs": "fail"
+    "attachment links reject duplicate, missing, foreign and malformed location fields before any request": "pass",
+    "detail view only offers original links with explicit access and escapes supplier filenames and messages": "pass",
+    "page first shows current identity and text filenames and only fetches original after a user action": "pass",
+    "stale versions, incorrect report, revoked permission and absent attachments never read an original": "pass",
+    "revoked access or stale source removes prior content and identity and requires details to be checked again": "pass",
+    "unsupported content and upstream failures never create a viewable object or reveal technical messages": "pass",
+    "leaving during metadata or original body loading aborts and late responses cannot restore private content": "pass",
+    "rechecking details invalidates pending requests and releases a previously loaded original": "pass",
+    "image success follows the actual load event and a stale image cannot change the current message": "pass"
   },
   "tests/audit-terms.test.mjs": {
     "browser and server audit terminology are identical": "pass",
@@ -878,7 +989,7 @@
     "the session lists companies through the directory with the visible company ids": "pass",
     "on the test instance the directory read goes through the governed connector and is logged under its own agent": "pass",
     "on the production instance the governed connector offers no directory read": "pass",
-    "MySQL: a production refresh seals codes taken from real documents, and the session list reads them back sorted": "fail",
+    "MySQL: a production refresh seals codes taken from real documents, and the session list reads them back sorted": "pass",
     "both company dropdowns in the workspace label their options with the code": "pass"
   },
   "tests/corporate-verdict-baseline.test.mjs": {
@@ -890,7 +1001,7 @@
     "missing or invalid date values render a neutral placeholder": "pass"
   },
   "tests/department-directory.integration.test.mjs": {
-    "D7 candidates, the 24-hour window, a failed read over a good row, managed departments, a sealed name": "fail"
+    "D7 candidates, the 24-hour window, a failed read over a good row, managed departments, a sealed name": "pass"
   },
   "tests/department-directory.test.mjs": {
     "D1 one round: a manager, no manager, a department that is gone; every call under its own agent": "pass",
@@ -917,7 +1028,11 @@
     "workbench: an AI activity state keeps four characters a line when the activity cannot be read": "skip"
   },
   "tests/diagnostics-access.test.mjs": {
-    "tests/diagnostics-access.test.mjs": "fail"
+    "connection diagnostics are restricted to administrator and access-manager settings": "pass",
+    "diagnostic results and company scope are reauthorized after an asynchronous reader": "pass",
+    "logout during diagnostic reading invalidates the in-flight response": "pass",
+    "default application diagnostics stay null and reader errors do not leak details": "pass",
+    "health and package metadata consistently report the package version": "pass"
   },
   "tests/diagnostics-reader.test.mjs": {
     "diagnostics reader returns only approved public fields and rebuilds messages from status": "pass",
@@ -947,7 +1062,7 @@
     "an unauthorized or unknown document is 404 and its source is never read": "pass",
     "a store without the source read answers 503, and a missing source answers 404": "pass",
     "the preview serves the two fixture documents as page models": "pass",
-    "MySQL: getDocumentSource reads the list raw of exactly that version, within the given companies": "fail"
+    "MySQL: getDocumentSource reads the list raw of exactly that version, within the given companies": "pass"
   },
   "tests/document-page-history.test.mjs": {
     "sortHistoryItems reverses the complete history and keeps all current items first": "pass",
@@ -1099,7 +1214,11 @@
     "an empty or missing view is an empty page": "pass"
   },
   "tests/dump-manifest.test.mjs": {
-    "tests/dump-manifest.test.mjs": "fail"
+    "rows are counted per tuple, whatever the values hold": "pass",
+    "the manifest counts key tables of the application databases from the dump, gz or plain": "pass",
+    "a dump without its closing line gets no manifest, and the run says why": "pass",
+    "a real mysqldump: the manifest counts what COUNT(*) counts, binary and quoted values included": "skip",
+    "the shared test database still migrates from scratch for the next files": "pass"
   },
   "tests/ecs-deployment.test.mjs": {
     "ECS config must state instance and source": "pass",
@@ -1111,12 +1230,15 @@
     "postgres permits ssl true but rejects an ssl object, and mysql permits ssl null": "pass",
     "createAnalysisDatabase passes the ECS CA contract through to mysql2": "pass",
     "RDS internal host is accepted while the placeholder host is rejected": "pass",
-    "the shipped ECS template loads once its placeholders are filled": "fail",
+    "the shipped ECS template loads once its placeholders are filled": "pass",
     "ECS rejects each database URL environment override while local mode preserves MYSQL_URL": "pass",
     "ECS accepts DingTalk accounts bound by employee number and rejects ambiguous ones": "pass"
   },
   "tests/element-candidates.test.mjs": {
-    "tests/element-candidates.test.mjs": "fail"
+    "corporate candidates produce a stable seven-element template and seed reminders": "pass",
+    "corporate template lints at draft and submit stages": "pass",
+    "corporate candidates refuse a missing or malformed seed file hash": "pass",
+    "C6 (payee must be a person) applies only to expense types with individual income tax withheld": "pass"
   },
   "tests/element-check-adapter.test.mjs": {
     "A1 the candidate query reads open corporate payments with a read detail of the current version": "pass",
@@ -1142,10 +1264,17 @@
     "B2-I1 v16: an agent family stores v1 or v2 and the format column follows the definition": "pass",
     "B2-I2 v16 reads back without drift, v14 no longer expects the replaced checks, and an older program refuses the database": "pass",
     "B2-I4 a database at v15 (where B1 leaves it) reads back clean and upgrades to v16": "pass",
-    "B2-I3 the editor save validates the directive, keeps the tree position, and shows old drafts as v2": "fail"
+    "B2-I3 the editor save validates the directive, keeps the tree position, and shows old drafts as v2": "pass"
   },
   "tests/element-directive.test.mjs": {
-    "tests/element-directive.test.mjs": "fail"
+    "B2-1 every stored v1 fingerprint still verifies: v1 hashes are byte-identical to the pre-v2 code": "pass",
+    "B2-2 the v2 fingerprint covers the directive and nothing else changes it": "pass",
+    "B2-3 normalizeDirective fills defaults, keeps entry order and refuses unknown keys at every level": "pass",
+    "B2-4 every directive limit accepts its maximum and rejects one more": "pass",
+    "B2-5 resource bindings are limited to this platform’s own sources (口径第 55 条)": "pass",
+    "B2-6 lint accepts both formats; a v1 definition is read as v2 with the default directive": "pass",
+    "B2-7 store-and-preview fields never change a verdict: the same batch evaluates identically under any directive (口径第 53 条)": "pass",
+    "B2-8 review rl1019: values the normalisation canonicalises are valid (choices and resources are checked after trimming)": "pass"
   },
   "tests/element-lifecycle.integration.test.mjs": {
     "author can start at revision zero and publish in one step, as both submitter and publisher": "pass",
@@ -1201,10 +1330,10 @@
     "C4 review rl1019: marks are read as of the draft revision that was read, so a mark saved after it is not applied": "pass"
   },
   "tests/element-preview.integration.test.mjs": {
-    "B4-1 the preview is built from the saved draft by default, or from the version in effect, and marks every store-only section": "fail",
-    "B4-2 the preview is read-only, for authors only, and its text keeps the platform wording rules": "fail",
+    "B4-1 the preview is built from the saved draft by default, or from the version in effect, and marks every store-only section": "pass",
+    "B4-2 the preview is read-only, for authors only, and its text keeps the platform wording rules": "pass",
     "B4-3 optional sections appear only when set; a v1 definition previews with the default directive": "pass",
-    "F-0 the page vocabulary comes from the server: labels, limits, questions, fields, reject codes without banned wording": "fail"
+    "F-0 the page vocabulary comes from the server: labels, limits, questions, fields, reject codes without banned wording": "pass"
   },
   "tests/element-preview.test.mjs": {
     "C3-1 two elements that differ only by field read differently, and each names its field": "pass",
@@ -1214,32 +1343,32 @@
     "C3-5 an unknown field is named as unreadable, never as empty or passed": "pass"
   },
   "tests/element-publish.integration.test.mjs": {
-    "B3-1 a named author publishes in one step: a new version is in effect at once, with the publisher recorded": "fail",
-    "B3-2 only named authors in scope can publish; a local account never can; a stale or racing publish wins once": "fail",
-    "B3-3 restoring a published version makes it the draft only; publishing it again puts it back in effect": "fail",
-    "B3-4 retiring replaces deletion: one step by an author, with a reason, kept in history; the family is then read-only": "fail",
-    "B3-5 submit, confirm, return and withdraw are gone; a legacy pending version is withdrawn by the next publish and its history stays readable": "fail",
-    "B3-6 acceptance: a published 约束红线 counts toward the verdict, an 执行指南 only reminds, and store-only fields change nothing": "fail",
+    "B3-1 a named author publishes in one step: a new version is in effect at once, with the publisher recorded": "pass",
+    "B3-2 only named authors in scope can publish; a local account never can; a stale or racing publish wins once": "pass",
+    "B3-3 restoring a published version makes it the draft only; publishing it again puts it back in effect": "pass",
+    "B3-4 retiring replaces deletion: one step by an author, with a reason, kept in history; the family is then read-only": "pass",
+    "B3-5 submit, confirm, return and withdraw are gone; a legacy pending version is withdrawn by the next publish and its history stays readable": "pass",
+    "B3-6 acceptance: a published 约束红线 counts toward the verdict, an 执行指南 only reminds, and store-only fields change nothing": "pass",
     "B3-7 the store and the database both keep a published version to its own author, put into effect in the call that wrote it": "pass",
-    "B3-8 review rl1019: a draft trial is identified by the definition it evaluated (discard marks applied), and a never-effective legacy version cannot be tried": "fail",
-    "D2 review rl1019b: the rule library uses the Huilianyi source scope like /session, so a company outside it is neither listed nor writable": "fail"
+    "B3-8 review rl1019: a draft trial is identified by the definition it evaluated (discard marks applied), and a never-effective legacy version cannot be tried": "pass",
+    "D2 review rl1019b: the rule library uses the Huilianyi source scope like /session, so a company outside it is neither listed nor writable": "pass"
   },
   "tests/element-registry.integration.test.mjs": {
-    "B1-1 the tree shows 集团通用 and every permitted company, and the legacy family sits at 集团通用 → 对公付款单 → 通用要点": "fail",
-    "B1-2 an author adds an expense type under a document type; names come from Huilianyi by OID and one OID has one family": "fail",
-    "B1-3 family routes resolve by id: a new family keeps its own draft, the legacy family is untouched, unknown ids are 404": "fail",
+    "B1-1 the tree shows 集团通用 and every permitted company, and the legacy family sits at 集团通用 → 对公付款单 → 通用要点": "pass",
+    "B1-2 an author adds an expense type under a document type; names come from Huilianyi by OID and one OID has one family": "pass",
+    "B1-3 family routes resolve by id: a new family keeps its own draft, the legacy family is untouched, unknown ids are 404": "pass",
     "B1-4 registry rows keep the expense-type name encrypted and bound to their row": "pass",
     "B1-5 the expense-type catalog scans only the document type, newest name first, and caches per company set": "pass",
     "B1-6 review rl1019 P1: every corporate-payment form counts, classified like the platform does, and other payment forms do not": "pass",
-    "B1-7 review rl1019 P2: the tree lists authorized companies from the company directory too, like /session, not only companies with documents": "fail",
+    "B1-7 review rl1019 P2: the tree lists authorized companies from the company directory too, like /session, not only companies with documents": "pass",
     "D1 review rl1019b: the catalog reads every document of the type, filtered by the store, until the store has no more": "pass",
     "D1 review rl1019b: a scan stopped by the page cap says so, and never claims to be complete": "pass"
   },
   "tests/element-routes.integration.test.mjs": {
     "W1/W2 formal closure and startup validation are enforced through the real app": "pass",
-    "W3/W7/W13/W16 use real MySQL storage and HTTP for the full checklist chain": "fail",
-    "W8/W9/W11 draft, version, retirement, and history routes use the lifecycle seam": "fail",
-    "W5 trial reads the scoped source and evaluates a published version or the saved draft without writes": "fail"
+    "W3/W7/W13/W16 use real MySQL storage and HTTP for the full checklist chain": "pass",
+    "W8/W9/W11 draft, version, retirement, and history routes use the lifecycle seam": "pass",
+    "W5 trial reads the scoped source and evaluates a published version or the saved draft without writes": "pass"
   },
   "tests/element-routes.test.mjs": {
     "element history resolves a department author from live accounts after construction": "pass",
@@ -1252,7 +1381,61 @@
     "D1 review rl1019b: creating a family for an expense type missing from an incomplete catalog says the catalog is incomplete": "pass"
   },
   "tests/element-store.integration.test.mjs": {
-    "tests/element-store.integration.test.mjs": "fail"
+    "element store on real MySQL > A3 v14 is additive: an older program starts against v14, and fails once the declaration is removed": "pass",
+    "element store on real MySQL > A2 v14 reads back with zero drift and repeated migration is idempotent": "pass",
+    "element store on real MySQL > A4/S5 MySQL reports the exact named CHECK for every v14 constraint": "pass",
+    "element store on real MySQL > A5 frozen versions are unchanged by later draft saves": "pass",
+    "element store on real MySQL > listChecklist: trial is the submitted frozen version itself, never the draft": "pass",
+    "element store on real MySQL > A5 tampered ciphertext, tampered hash and a moved ciphertext fail closed without throwing": "pass",
+    "element store on real MySQL > A5/S6 no plaintext definition, return reason, or edit note appears in any stored column": "pass",
+    "element store on real MySQL > history lists events in lifecycle order even when they share a timestamp": "pass",
+    "element store on real MySQL > A6 optimistic locks choose exactly one winner for drafts and transitions, repeatedly": "pass",
+    "element store on real MySQL > A6 first saves of many new families in parallel never deadlock on a shared index gap": "pass",
+    "element store on real MySQL > A6 two families competing for one expense type: exactly one claim, release permits reacquire": "pass",
+    "element store on real MySQL > A6b a claim is promoted only to the version confirmed in the same call, also when it moves to a new version": "pass",
+    "element store on real MySQL > A6c a new version must bring its own id, so the heads pointer can name it": "pass",
+    "element store on real MySQL > A6 a claim is always recorded under the family of the transition": "pass",
+    "element store on real MySQL > A7 each save writes exactly one matching edit row, and a failed edit row leaves the draft untouched": "pass",
+    "element store on real MySQL > A8 editors since the last effective version: later edits count, earlier do not, local edits included, dedupe by account": "pass",
+    "element store on real MySQL > A9 agent families select by Shanghai submission date, drop same-day replacements, and require a date": "pass",
+    "element store on real MySQL > A10/S9 retirement keeps the original confirmer and ends the version the day before the retirement date": "pass",
+    "element store on real MySQL > A11 retired, superseded, withdrawn and returned versions cannot be revived and nothing is written": "pass",
+    "element store on real MySQL > A12 the effective cache reuses decrypted values until any transition, and sees transitions from another store": "pass",
+    "element store on real MySQL > S4 saving unchanged content with a void or restore intent records the intent and drives draft.status": "pass",
+    "element store on real MySQL > S5 intent pairing is validated before anything is written": "pass",
+    "element store on real MySQL > S6 an edit note moved to another row reads as a mismatch without throwing, and 501 characters are rejected": "pass",
+    "element store on real MySQL > S7 a failing edit row rolls back the draft, its revision, and the note": "pass",
+    "element store on real MySQL > S8 draftEdits returns the whole timeline in revision order with decrypted notes": "pass",
+    "element store on real MySQL > confirming or applying needs a named confirmer, and only those transitions accept one": "pass",
+    "element store on real MySQL > insertVersion always starts pending, under the family identity, with the fingerprint the store computes": "pass",
+    "element store on real MySQL > head pointers must name a version of this family in the matching state": "pass",
+    "element store on real MySQL > malformed actors and unknown families become store errors, not raw constraint failures": "pass",
+    "element store on real MySQL > R1 transition times come only from the store clock: a caller-supplied time is refused and nothing is written": "pass",
+    "element store on real MySQL > R2a a retire request never becomes effective": "pass",
+    "element store on real MySQL > R2b an activation is never applied": "pass",
+    "element store on real MySQL > R2c a version is superseded only together with a successor confirmed in the same transaction": "pass",
+    "element store on real MySQL > R2d a superseded version without a successor is not selected from the day it was superseded": "pass",
+    "element store on real MySQL > R3 a retired version followed later by a new version leaves a gap with no version between them": "pass",
+    "element store on real MySQL > R4 event reasons share the 500-character cap and error of draft notes, and never surface a MySQL error": "pass",
+    "element store on real MySQL > R5 history reports an event reason that cannot be read back as noteIntegrity mismatch, never a silent null": "pass",
+    "element store on real MySQL > R6 a failed first save or first transition of a new family leaves no heads row behind": "pass",
+    "element store on real MySQL > R6 concurrent first saves of one new family, one of them failing, give one winner and only store errors": "pass",
+    "element store on real MySQL > V1 a new version number must exceed the highest number the family has used, in any state": "pass",
+    "element store on real MySQL > V2 a successor must carry a higher version number than the version it supersedes": "pass",
+    "element store on real MySQL > D1 a submission names the draft revision it froze: a save made after that read refuses it": "pass",
+    "element store on real MySQL > D2 the draft revision is compared under the family lock, so a save committed while the submission waits refuses it": "pass",
+    "element store on real MySQL > D3 a retired family takes no further draft edits, whatever revision the caller names": "pass",
+    "element store on real MySQL > D4 a draft save waiting for the family lock while the family is retired is refused once it gets the lock": "pass",
+    "element store on real MySQL > D5 an activation must name the draft revision it froze; a retire request need not; a refused one writes nothing": "pass",
+    "element store on real MySQL > S16 listChecklist reports headsRevision: 0 without a heads row, then one more after every successful transition": "pass",
+    "element store on real MySQL > E1 a caller eventId that already exists is a family conflict, never a raw duplicate-key error": "pass",
+    "element store on real MySQL > R2e a retired row without ended_on is not selected from the day its status changed": "pass",
+    "element store on real MySQL > R7 a retirement and its retire request are applied in one transition or not at all": "pass",
+    "element store on real MySQL > R8 the applied retire request must name the version it retires, or nothing changes": "pass",
+    "element store on real MySQL > R6 a heads-row race lost on every attempt ends as ELEMENT_FAMILY_CONFLICT after three attempts, leaving nothing": "pass",
+    "element store on real MySQL > clock: each store write reads the strictly increasing test clock, so an edit right after a confirmation counts": "pass",
+    "element store on real MySQL > K1 a draft save that waited for the family lock is stamped after the confirmation that held it, so its editor counts": "pass",
+    "element store on real MySQL > K2 a transition that waited for the family lock is stamped after the transition committed before it": "pass"
   },
   "tests/element-store.test.mjs": {
     "element definition hash is independent of object key order": "pass",
@@ -1261,7 +1444,7 @@
     "S1 v14 element_draft_edits carries intent, an encrypted note, and three named intent checks": "pass",
     "A5/S10 static scan: frozen tables are append-only and version updates touch only lifecycle columns": "pass",
     "A9 the loader reuses resolvePublishedPolicies from policy-lifecycle": "pass",
-    "A13 only the milestone runtime constructs the store: besides it, only the module, its schema, and the migration list mention element-store": "fail",
+    "A13 only the milestone runtime constructs the store: besides it, only the module, its schema, and the migration list mention element-store": "pass",
     "the store exposes exactly the reader and writer verbs of the contract": "pass",
     "R1 the store clock is a function (or has now()); anything else is a configuration error": "pass",
     "MS-10 the row-to-DTO loader rejects dingtalk-employee and self confirmations, but not unconfirmed pending rows": "pass"
@@ -1286,12 +1469,12 @@
     "no person name from the real workbook reaches the extracted or committed seed": "skip"
   },
   "tests/extract-hly-config.synthetic.test.mjs": {
-    "extractor source has no fixed cell coordinates or row-number tuples": "fail",
+    "extractor source has no fixed cell coordinates or row-number tuples": "pass",
     "extractor accepts synthetic cells and follows moved headers without leaking names": "skip"
   },
   "tests/extract-hly-config.test.mjs": {
     "extractor emits deterministic whitelisted cell lineage and splits audit elements": "skip",
-    "committed seed pins the reviewed source counts without reading the workbook": "fail"
+    "committed seed pins the reviewed source counts without reading the workbook": "pass"
   },
   "tests/first-review-assembler.test.mjs": {
     "A1 the rule text carries the element's title and question; no directive field reaches the request": "pass",
@@ -1314,13 +1497,32 @@
     "reference import leaves a visible latest collection and an operation change": "pass"
   },
   "tests/full-sync-huilianyi.test.mjs": {
-    "tests/full-sync-huilianyi.test.mjs": "fail"
+    "splitWindow divides an inclusive second range without gaps and stops at one hour": "pass",
+    "rangeCovered keeps legacy date-only manifests and uses second precision for child windows": "pass",
+    "business refusals split around the source timestamp and leave the rest completed": "pass",
+    "split budget records the remaining segment and does not loop": "pass",
+    "network and HTTP failures remain whole-window failures": "pass",
+    "a rerun after the source recovers removes the prior refused segment": "pass",
+    "a window that has not ended when the run starts stays open and is read again next run": "pass",
+    "a caller that passes no openAfterMs keeps the old closed-window behaviour": "pass",
+    "a window recorded as completed before it ended is read again (review REV-SYNC02 item 3)": "pass",
+    "a smaller minimum narrows a refused window to the second (owner request 2026-10-11)": "pass",
+    "a replaced manifest hands over its unresolved refusals; a reusable one is kept (review 2026-10-11)": "pass",
+    "scheduled refusals are handed to history without overwriting an existing key": "pass",
+    "scheduled refusals create a minimal history manifest with the refusal date span": "pass",
+    "splitting a refused window removes only the coarse refusal": "pass",
+    "only one full sync per connection holds the database lock at a time (review 2026-10-11)": "pass",
+    "business refusal messages use the public vendor message policy": "pass",
+    "a held lock exposes a verify operation": "pass",
+    "verify detects a lock connection killed by another connection": "pass",
+    "window loop verifies the lock before each window and preserves prior progress": "pass"
   },
   "tests/full-sync-main.test.mjs": {
-    "tests/full-sync-main.test.mjs": "fail"
+    "the full-sync lock is released when setup fails after it was taken (review REV-V050 item 4)": "pass",
+    "a scheduled run with only an injected manifest path hands refusals to the history file beside it (review REV-V050 item 4)": "pass"
   },
   "tests/healthcheck-version.test.mjs": {
-    "the post-deploy health check passes only for the expected version and commit": "fail",
+    "the post-deploy health check passes only for the expected version and commit": "pass",
     "the health check fails when the app is unhealthy or answers without a version": "pass"
   },
   "tests/huilianyi-production-mcp.test.mjs": {
@@ -1392,7 +1594,30 @@
     "WB01 stage pending query surfaces a 120003 refusal and a page without a list instead of an empty list": "pass"
   },
   "tests/huilianyi-validation.test.mjs": {
-    "tests/huilianyi-validation.test.mjs": "fail"
+    "validation prefers an employee reimbursement discovered after a full corporate page": "pass",
+    "validation queries corporateFlag=true when only supported corporate tasks are found": "pass",
+    "unsupported forms, completed tasks, other entity types and missing codes never trigger a detail query": "pass",
+    "discovery is bounded to three pages even when metadata indicates more results": "pass",
+    "missing, blank and expired token responses fail authentication without reading pending data > invalid token shape expires_in-3600-0": "pass",
+    "missing, blank and expired token responses fail authentication without reading pending data > invalid token shape access_token-expires_in-3600-0": "pass",
+    "missing, blank and expired token responses fail authentication without reading pending data > invalid token shape access_token-expires_in-3600-3": "pass",
+    "missing, blank and expired token responses fail authentication without reading pending data > invalid token shape access_token-expires_in-0-27": "pass",
+    "missing, blank and expired token responses fail authentication without reading pending data > invalid token shape access_token-expires_in-invalid-27": "pass",
+    "a mismatched report number or missing report identifier is never reported as a successful detail verification > different report": "pass",
+    "a mismatched report number or missing report identifier is never reported as a successful detail verification > missing report id": "pass",
+    "public diagnostics contain no report details and persisted samples are authenticated ciphertext without credentials": "pass",
+    "vendor error codes and text are sanitized instead of exposing arbitrary confidential strings > authentication": "pass",
+    "vendor error codes and text are sanitized instead of exposing arbitrary confidential strings > pending": "pass",
+    "vendor error codes and text are sanitized instead of exposing arbitrary confidential strings > detail": "pass",
+    "network failures and invalid JSON remain failures with fixed public messages > network": "pass",
+    "network failures and invalid JSON remain failures with fixed public messages > invalid-json": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 1": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 2": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 3": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 4": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 5": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 6": "pass",
+    "unconfirmed environments, mismatched endpoints and missing credentials never send requests > unconfigured variant 7": "pass"
   },
   "tests/image-ocr.test.mjs": {
     "native Windows OCR reads Chinese company, date and amount from a synthetic PNG bill": "skip",
@@ -1406,25 +1631,57 @@
   "tests/legacy-rules-removed.test.mjs": {
     "C2 the legacy rule, proposal and draft-trial routes answer 404 in both instances, whatever the server is handed": "pass",
     "C2 the session offers no rule trial, rule workspace or legacy read-only flag": "pass",
-    "C2 the workspace, draft evidence and old executor modules are gone and nothing formal names them": "fail",
+    "C2 the workspace, draft evidence and old executor modules are gone and nothing formal names them": "pass",
     "W6 registers the three static assets in both instances and the page imports them": "pass"
   },
   "tests/list-sync-company-move.integration.test.mjs": {
-    "HOTFIX-075 a document moved to another company keeps the page syncing and keeps every earlier row": "fail",
-    "HOTFIX-075 moving back to the first company reclaims the source identity without touching history": "fail",
-    "HOTFIX-075 a document that stays in its company is upserted exactly as before": "fail"
+    "HOTFIX-075 a document moved to another company keeps the page syncing and keeps every earlier row": "pass",
+    "HOTFIX-075 moving back to the first company reclaims the source identity without touching history": "pass",
+    "HOTFIX-075 a document that stays in its company is upserted exactly as before": "pass"
   },
   "tests/migration-drift.test.mjs": {
-    "tests/migration-drift.test.mjs": "fail"
+    "migrateMySql rejects a changed checksum before applying new migrations": "pass",
+    "migrateMySql rejects a legacy record when its expected structure is missing": "pass",
+    "every migration exposes structural expectations for legacy readback": "pass",
+    "release 0.5.3 migration checksums for versions 1-12 remain pinned": "pass",
+    "migration expectation parser keeps columns, keys, foreign keys, and checks": "pass",
+    "migration expectations retain precise type, extra, foreign-action, and check metadata": "pass",
+    "ALTER migrations must declare explicit expectations": "pass",
+    "inspectMigrationSchema rejects a signed column where the migration requires unsigned": "pass",
+    "migrateMySql rejects a recorded version that is absent from the code": "pass",
+    "shared migration classifier tolerates only newer additive records": "pass",
+    "additive migrations accept only CREATE TABLE IF NOT EXISTS statements": "pass",
+    "migration report uses the shared additive-ahead classification": "pass",
+    "real MySQL permits a newer additive schema but rejects non-additive and middle versions": "pass",
+    "migration checksum normalizes CRLF": "pass",
+    "a later drift prevents every earlier legacy record from being adopted": "pass",
+    "expectation union covers the complete application schema": "pass",
+    "real MySQL inventory exactly matches the migration expectation union": "pass",
+    "gold schema readback matches every expected column, foreign key, check, and table attribute": "pass",
+    "read-only report distinguishes adoptable legacy records from pending migrations": "pass",
+    "migration drift report is read-only and its process exit code is a deployment gate": "pass",
+    "real MySQL rejects representative key and constraint mutations, then returns green after repair": "pass",
+    "migration lock is isolated by database name": "pass",
+    "v14 element-store tables read back exactly: columns, named checks, zero drift, idempotent re-migration": "pass",
+    "additive migrations refuse foreign keys and copied tables, however they are written": "pass",
+    "the stricter additive check accepts v18 approval-identity": "pass",
+    "an image without v19 still starts on a database migrated through v19": "pass"
   },
   "tests/migration-plan.test.mjs": {
-    "tests/migration-plan.test.mjs": "fail"
+    "only additive migrations pending: nothing non-additive": "pass",
+    "a pending migration without additive: true is non-additive, in version order": "pass",
+    "everything applied: all lists empty": "pass",
+    "an applied version the program does not know is drift unless it is a newer additive one": "pass",
+    "invalid input is refused rather than guessed": "pass",
+    "the default catalogue is the program's own migrations": "pass",
+    "MySQL: applied migrations are read without migrating; a missing table means none": "pass",
+    "MySQL: check-deployment --plan-migrations prints the plan and migrates nothing": "pass"
   },
   "tests/milestone-runtime.test.mjs": {
     "formal instances close the milestone without reading the data key": "pass",
     "test instances reject an unusable data key without exposing it": "pass",
-    "test runtime builds the shared corporate family through injected seams": "fail",
-    "NX-4a the runtime also hands out the registry and element store it built, for the first_review assembler": "fail"
+    "test runtime builds the shared corporate family through injected seams": "pass",
+    "NX-4a the runtime also hands out the registry and element store it built, for the first_review assembler": "pass"
   },
   "tests/moved-documents-api.test.mjs": {
     "MOVED-1: 待我审批, its counts and the workbench leave a moved document out": "pass",
@@ -1436,18 +1693,18 @@
     "MOVED-1: a moved card says 这张单已转到另一家公司，以新单为准 and opens its successor only when named": "skip"
   },
   "tests/moved-documents.integration.test.mjs": {
-    "MOVED-1 the moved document leaves the company list and its count; its number brings it back with its successor": "fail",
-    "MOVED-1 the approval views mark the moved document and never name its successor": "fail",
-    "MOVED-1 a moved document takes none of an approval view's 200 places and does not make it capped": "fail",
-    "MOVED-1 moved twice, both earlier rows name the last one, and only inside the companies asked about": "fail",
-    "MOVED-1 moving back hands the mark to the other row; the list follows": "fail"
+    "MOVED-1 the moved document leaves the company list and its count; its number brings it back with its successor": "pass",
+    "MOVED-1 the approval views mark the moved document and never name its successor": "pass",
+    "MOVED-1 a moved document takes none of an approval view's 200 places and does not make it capped": "pass",
+    "MOVED-1 moved twice, both earlier rows name the last one, and only inside the companies asked about": "pass",
+    "MOVED-1 moving back hands the mark to the other row; the list follows": "pass"
   },
   "tests/mysql-analysis-store-versions.integration.test.mjs": {
-    "MySQL keeps the newest document head and counts only newly inserted versions": "fail",
-    "MySQL serializes concurrent writes for one new document and keeps one head": "fail",
-    "repairDocumentHeads reads an existing schema without store migration": "fail",
-    "repairDocumentHeads replays collected order, previews without writes, and repairs both heads": "fail",
-    "D1 review rl1019b: listDocuments can filter by the stored document type, and refuses a malformed type": "fail"
+    "MySQL keeps the newest document head and counts only newly inserted versions": "pass",
+    "MySQL serializes concurrent writes for one new document and keeps one head": "pass",
+    "repairDocumentHeads reads an existing schema without store migration": "pass",
+    "repairDocumentHeads replays collected order, previews without writes, and repairs both heads": "pass",
+    "D1 review rl1019b: listDocuments can filter by the stored document type, and refuses a malformed type": "pass"
   },
   "tests/mysql-attachment-store.test.mjs": {
     "attachment fetch queue is idempotent and claim uses a lease": "pass",
@@ -1469,7 +1726,7 @@
     "attachment queue migration replaces the legacy identity index atomically": "pass",
     "report detail v9 migration defines the queue table and lease columns": "pass",
     "report detail v10 migration defines projection tables with versioned row keys": "pass",
-    "real MySQL applies v1-to-latest migrations twice without SQL errors": "fail",
+    "real MySQL applies v1-to-latest migrations twice without SQL errors": "pass",
     "createMySqlPool does not create a pool without an explicit URL": "pass",
     "core entity helpers use MySQL upserts and accept native JSON driver values": "pass",
     "MySQL analysis store reads the queued historical document version": "pass",
@@ -1478,7 +1735,7 @@
     "MySQL analysis store writes a document head with matching insert parameters": "pass"
   },
   "tests/mysql-integration.test.mjs": {
-    "MySQL migration runner is clean, FK-safe, and idempotent": "fail"
+    "MySQL migration runner is clean, FK-safe, and idempotent": "pass"
   },
   "tests/navigation-ui.test.mjs": {
     "route state round trips list, decision and platform views without losing addressable state": "pass",
@@ -1524,7 +1781,7 @@
     "G1 production sends nothing to Nexus, even handed an origin and a bound key": "pass",
     "G2 the connector page says why Nexus is paused, in both instances": "pass",
     "G3 /platform/agent-access is 404 on production, for admins too, even with records wired": "pass",
-    "G5 production startup builds no Agent enablement and no Nexus client": "fail"
+    "G5 production startup builds no Agent enablement and no Nexus client": "pass"
   },
   "tests/nexus-verify-hardening.test.mjs": {
     "a key is valid only for the two JSON-RPC 2.0 task-not-found responses > task not found": "pass",
@@ -1636,18 +1893,18 @@
     "P1d three network failures in a row retain automatic recovery": "pass",
     "V2 repeated 15-minute network retries never permanently suspend the lane": "pass",
     "P2 a partial detail result with successful work still chains projection": "pass",
-    "P2b three scheduled rounds project every stored detail; a document at its retry limit stays terminal": "fail",
-    "P3 a document that keeps getting 503 becomes a terminal failure at maxRetries": "fail",
-    "P3b automatic detail runs preserve terminal failures while manual runs requeue them": "fail",
-    "P4 with a form filter, other forms are counted as skipped": "fail",
-    "P4b a large sweep with a form filter records out-of-range documents as skipped, not queued": "fail",
-    "P5 employee list sync runs while the corporate detail chain is still busy": "fail",
-    "P5b a later scheduled tick still runs the employee lane while the first detail chain is blocked; busy chains are backfilled": "fail",
-    "P6 analytics uses Beijing months and separates currencies": "fail",
+    "P2b three scheduled rounds project every stored detail; a document at its retry limit stays terminal": "pass",
+    "P3 a document that keeps getting 503 becomes a terminal failure at maxRetries": "pass",
+    "P3b automatic detail runs preserve terminal failures while manual runs requeue them": "pass",
+    "P4 with a form filter, other forms are counted as skipped": "pass",
+    "P4b a large sweep with a form filter records out-of-range documents as skipped, not queued": "pass",
+    "P5 employee list sync runs while the corporate detail chain is still busy": "pass",
+    "P5b a later scheduled tick still runs the employee lane while the first detail chain is blocked; busy chains are backfilled": "pass",
+    "P6 analytics uses Beijing months and separates currencies": "pass",
     "P7 a source change only restarts the current daily window": "pass",
     "V3 a watermark more than 90 days behind is capped and remains runnable": "pass",
-    "batch enqueue reads only this run's candidates, not the whole detail history": "fail",
-    "scale enqueue stays linear and a second unchanged enqueue is constant work": "fail"
+    "batch enqueue reads only this run's candidates, not the whole detail history": "pass",
+    "scale enqueue stays linear and a second unchanged enqueue is constant work": "pass"
   },
   "tests/platform-admin-write.test.mjs": {
     "admin can update agent settings and the route rejects non-admins and nested secret keys": "pass",
@@ -1669,17 +1926,17 @@
     "protected automaticSync=false remains stronger than enabled override": "pass",
     "scheduler ignores an out-of-range persisted interval and reports why": "pass",
     "scheduler status exposes the effective persisted interval": "pass",
-    "real MySQL writes settings and audit changes atomically": "fail",
+    "real MySQL writes settings and audit changes atomically": "pass",
     "HTTP writes enforce CSRF and audit authenticated 403s while pre-auth rejects stay in memory": "pass",
     "audit write failure does not change a successful login result": "pass",
     "authenticated read denials are audited even when a platform route returns 403 directly": "pass",
     "local ticket exchange writes one safe auth audit row": "pass",
     "real MySQL records one safe local exchange auth row": "pass",
     "real MySQL records one safe auth row for successful and refused DingTalk login": "pass",
-    "real MySQL admin operations persist manual runs, probes, and tested middleware revisions": "fail"
+    "real MySQL admin operations persist manual runs, probes, and tested middleware revisions": "pass"
   },
   "tests/platform-agent-catalog.test.mjs": {
-    "agent catalog declares all cards, stable versions, lifecycle states, and script ownership": "fail",
+    "agent catalog declares all cards, stable versions, lifecycle states, and script ownership": "pass",
     "projection support follows the detail queue keyword predicate": "pass",
     "the company directory card exists only on the test instance, where the tenant directory can be read": "pass",
     "D6 the department directory card exists only on the test instance, with the two stage reads": "pass"
@@ -1813,7 +2070,7 @@
     "connector registry lazily caches raw clients and never constructs a paused connector": "pass",
     "ai relay requires and normalizes a company variant": "pass",
     "public connector views expose binding state without secret-shaped fields or values": "pass",
-    "static connector guard keeps the migration list exact": "fail",
+    "static connector guard keeps the migration list exact": "pass",
     "static connector guard rejects every direct transport syntax": "pass"
   },
   "tests/platform-detail-adapters.integration.test.mjs": {
@@ -1831,19 +2088,19 @@
     "36 detail adapter rejects an out-of-range maxRounds before enqueueing": "pass"
   },
   "tests/platform-list-sync-adapter.integration.test.mjs": {
-    "15 two lanes use independent corporate flags, run lanes, and checkpoints": "fail",
-    "25 the test instance list sync accepts stage pages and production keeps refusing them (MERGE-01 review)": "fail",
-    "26 an incremental run that fails on the store keeps the short cause in its run record (HOTFIX-074)": "fail",
-    "27 a history run that fails on the store keeps the short cause too (HOTFIX-074)": "fail",
-    "16 incremental plan and run share initial, watermark, capped, and resume ranges": "fail",
-    "17 checkpoint keys preserve legacy formula without namespace and isolate history": "fail",
-    "18 legacy_ref is visible while a list-sync batch is running": "fail",
-    "19 interrupted history resumes page two, then advances to the next window": "fail",
-    "20 history coverage requires every day and matching date field": "fail",
-    "21 legacy manifest import is exact, idempotent, and preview sees imported windows": "fail",
-    "22 budget and pause stop the real sync at the next page with a resumable checkpoint": "fail",
-    "23 list counts match current-company progress when tenant scope includes another company": "fail",
-    "24 previews and dry-run manifest import leave every relevant table unchanged": "fail"
+    "15 two lanes use independent corporate flags, run lanes, and checkpoints": "pass",
+    "25 the test instance list sync accepts stage pages and production keeps refusing them (MERGE-01 review)": "pass",
+    "26 an incremental run that fails on the store keeps the short cause in its run record (HOTFIX-074)": "pass",
+    "27 a history run that fails on the store keeps the short cause too (HOTFIX-074)": "pass",
+    "16 incremental plan and run share initial, watermark, capped, and resume ranges": "pass",
+    "17 checkpoint keys preserve legacy formula without namespace and isolate history": "pass",
+    "18 legacy_ref is visible while a list-sync batch is running": "pass",
+    "19 interrupted history resumes page two, then advances to the next window": "pass",
+    "20 history coverage requires every day and matching date field": "pass",
+    "21 legacy manifest import is exact, idempotent, and preview sees imported windows": "pass",
+    "22 budget and pause stop the real sync at the next page with a resumable checkpoint": "pass",
+    "23 list counts match current-company progress when tenant scope includes another company": "pass",
+    "24 previews and dry-run manifest import leave every relevant table unchanged": "pass"
   },
   "tests/platform-manual-run.test.mjs": {
     "a manual run lifts the lane's suspension first; its own outcome then counts": "pass",
@@ -1887,32 +2144,35 @@
     "all adapters satisfy the adapter dependency prohibition": "pass"
   },
   "tests/platform-pipeline-progress.integration.test.mjs": {
-    "detail progress uses current versions, precedence, reason groups, and company scope": "fail",
-    "detail progress separates audit-missing documents, orphaned queue rows, and stale current versions": "fail",
-    "projection progress checks projector version, retry age, exhausted failures, and field gaps": "fail",
-    "projection progress uses detail fetched time when a retryable failure has no retry time": "fail",
-    "reset projection failures are immediately pending instead of stuck": "fail",
-    "list sync counts current documents by normalized form family and recent failed runs": "fail",
-    "50 seeded fixture groups match an independent per-row oracle and preserve the partition invariant": "fail",
-    "detail progress over 10,000 documents uses a constant number of SQL calls and stays under ten seconds": "fail",
-    "projection progress skips unsupported forms and treats digest drift as pending": "fail",
-    "document pipeline skips unsupported forms before detail succeeds": "fail",
-    "progress deduplicates superseded and orphaned documents and scopes every card by analysis company": "fail",
-    "document pipeline and progress share a custom stuck threshold": "fail",
-    "NULL leases classify recent runs as running and old unstarted runs as expired": "fail",
-    "recent stale rows defer to failed and skipped priority": "fail"
+    "detail progress uses current versions, precedence, reason groups, and company scope": "pass",
+    "detail progress separates audit-missing documents, orphaned queue rows, and stale current versions": "pass",
+    "projection progress checks projector version, retry age, exhausted failures, and field gaps": "pass",
+    "projection progress uses detail fetched time when a retryable failure has no retry time": "pass",
+    "reset projection failures are immediately pending instead of stuck": "pass",
+    "list sync counts current documents by normalized form family and recent failed runs": "pass",
+    "50 seeded fixture groups match an independent per-row oracle and preserve the partition invariant": "pass",
+    "detail progress over 10,000 documents uses a constant number of SQL calls and stays under ten seconds": "pass",
+    "projection progress skips unsupported forms and treats digest drift as pending": "pass",
+    "document pipeline skips unsupported forms before detail succeeds": "pass",
+    "progress deduplicates superseded and orphaned documents and scopes every card by analysis company": "pass",
+    "document pipeline and progress share a custom stuck threshold": "pass",
+    "NULL leases classify recent runs as running and old unstarted runs as expired": "pass",
+    "recent stale rows defer to failed and skipped priority": "pass"
   },
   "tests/platform-rewire-hly.integration.test.mjs": {
-    "tests/platform-rewire-hly.integration.test.mjs": "fail"
+    "payment collection keeps a captured attribution re-entry around deferred work": "pass",
+    "real gateway attribution covers every FND-03b HLY and DingTalk route": "pass",
+    "full-sync CLI exits 4 and makes no HLY call when the resident gateway owns the lock": "pass",
+    "full-sync CLI exits 4 before touching the store or the gateway when another full sync holds the lock": "pass"
   },
   "tests/platform-rewire-hly.test.mjs": {
     "secret source exposes presence without exposing values": "pass",
     "hly transport is the only production pinned transport factory": "pass",
-    "secret values are read through the connector registry only": "fail"
+    "secret values are read through the connector registry only": "pass"
   },
   "tests/platform-routes.integration.test.mjs": {
-    "platform GET routes use the real MySQL progress scope and expose read-only item fields": "fail",
-    "platform item routes preserve all four states for detail and projection cards": "fail"
+    "platform GET routes use the real MySQL progress scope and expose read-only item fields": "pass",
+    "platform item routes preserve all four states for detail and projection cards": "pass"
   },
   "tests/platform-routes.test.mjs": {
     "platform routes expose a GET handler and leave non-platform paths untouched": "pass",
@@ -1971,7 +2231,7 @@
   "tests/platform-secret-source.test.mjs": {
     "docker secret source reads mounted files and never opens legacy files": "pass",
     "local secret source prefers protected values and reports plaintext fallback": "pass",
-    "source and scripts never invoke bare PowerShell names": "fail",
+    "source and scripts never invoke bare PowerShell names": "pass",
     "docker connector descriptions report only protected binding states": "pass"
   },
   "tests/platform-store.integration.test.mjs": {
@@ -1994,7 +2254,7 @@
     "writeSettings maps an InnoDB deadlock to a settings conflict": "pass",
     "abandonStale only updates expired running rows": "pass",
     "listAgentRuns filters the persisted history by lane": "pass",
-    "platform change log is append-only across all executable source": "fail",
+    "platform change log is append-only across all executable source": "pass",
     "real MySQL platform store rejects stale settings revisions without a change row": "pass",
     "real MySQL reserves exactly ten of one hundred concurrent daily budget claims": "pass"
   },
@@ -2033,7 +2293,13 @@
     "effective dates reject malformed ranges and personal proposals": "pass"
   },
   "tests/policy-evidence-api.test.mjs": {
-    "tests/policy-evidence-api.test.mjs": "fail"
+    "AI evidence rule travels from selected sample through independent publication review to a separate live execution": "pass",
+    "personal proposals and incomplete evidence definitions cannot become AI execution rules": "pass",
+    "rule reviewer has only submitted sample review access; foreign document users cannot call AI trials or read results": "pass",
+    "rule ambiguity and unavailable evidence cannot satisfy the publication trial requirement": "pass",
+    "model, source and quoted results changed after trial invalidate independent publication review": "pass",
+    "authentication revoked during model work prevents saving a publishable trial": "pass",
+    "failed source cannot start a trial; document re-execution rejects stale versions and result injection": "pass"
   },
   "tests/policy-evidence-integration.test.mjs": {
     "current published evidence fills only its configured rule and retains original citation, actual, expected and semantic attribution": "pass",
@@ -2100,7 +2366,15 @@
     "trial conflicts outside sampled companies remain private and unknown dates remain technical": "pass"
   },
   "tests/policy-impact.test.mjs": {
-    "tests/policy-impact.test.mjs": "fail"
+    "preview compares a published threshold with its draft without trial, mutation or approval": "pass",
+    "old source snapshots retain diagnostic results with explicit recovery action": "pass",
+    "preview requires current maintenance scope and only uses canonical visible report fields": "pass",
+    "draft, predecessor and pagination versions cannot silently drift": "pass",
+    "changed field scope shows removed and added coverage using all source lines": "pass",
+    "published enterprise exceptions and new group conflicts are evaluated as governance concerns": "pass",
+    "AI requirements never reuse old or draft model results and manual rules stay manual": "pass",
+    "first fixed-control configuration and disabled recovery are never shown as no prior control": "pass",
+    "HTTP impact preview is read-only, version bound and denied to publication-only and ordinary accounts": "pass"
   },
   "tests/policy-lifecycle.test.mjs": {
     "Shanghai submission date selects old and future versions on inclusive boundaries": "pass",
@@ -2112,7 +2386,14 @@
     "separate families and subjects never contaminate each other": "pass"
   },
   "tests/policy-maintenance.test.mjs": {
-    "tests/policy-maintenance.test.mjs": "fail"
+    "new and adopted rules assign a current maintenance account without changing grants": "pass",
+    "publication-only, ordinary, inactive, foreign and duplicated identities cannot be appointed": "pass",
+    "maintainer and another account bound to the same person cannot independently review": "pass",
+    "maintainer suspension or rebinding invalidates release and cannot be repaired by a stale identity resolver": "pass",
+    "responsibility transfer creates a versioned draft and invalidates its prior trial and review": "pass",
+    "legacy responsibility is visible as unassigned and cannot be silently used to release a new version": "pass",
+    "maintenance loss is a rule operations concern, while business evaluation keeps its published requirements": "pass",
+    "HTTP exposes appointment choices only to managers and rejects injected names or unauthorized assignments": "pass"
   },
   "tests/policy-overrides.test.mjs": {
     "company override uses Shanghai submission day with inclusive start and end dates": "pass",
@@ -2141,7 +2422,14 @@
     "editing a live version starts a fresh contributor set and original rule stays active throughout independent review": "pass"
   },
   "tests/policy-reviewer-api.test.mjs": {
-    "tests/policy-reviewer-api.test.mjs": "fail"
+    "policy reviewer has only scoped publication review capability and read-only current sample evidence": "pass",
+    "policy reviewer API rejects document pools, exports, organization, model calls and every rule maintenance action": "pass",
+    "independent policy reviewer approves only the review; a manager still performs publication": "pass",
+    "reviewer disable, source-person invalidation or reduced company scope invalidates prior approval before publication": "pass",
+    "review mutation rechecks current identity and scope inside the committing transaction": "pass",
+    "same person under a second policy review account cannot review their authored or submitted rule": "pass",
+    "changed or failed source and changed trials hide sample replay and never replace stored trial evidence": "pass",
+    "review rejection requires a reason and leaves rule draft available only for its existing review scope": "pass"
   },
   "tests/policy-structure-service.test.mjs": {
     "private proposal authoring never reads financial reports or discloses an unsubmitted proposal to another reviewer": "pass",
@@ -2151,12 +2439,50 @@
     "submission and approval changes require a fresh current-version structure before adoption": "pass"
   },
   "tests/policy-ui.test.mjs": {
-    "tests/policy-ui.test.mjs": "fail"
+    "publication buttons require current server review permission even after a successful trial": "pass",
+    "publication commands bind the displayed review id and avoid updates after switching context": "pass",
+    "publication-only reviewer opens rules and sees review actions without maintenance or document routes": "pass",
+    "publication evidence reads current samples without mutations and discards a closed panel response": "pass",
+    "Agent progress separates executable rules, manual checklists and revisions with safe authorized links": "pass",
+    "progress refresh is read-only and cannot replace a closed or switched proposal": "pass",
+    "opening a linked rule rechecks visibility and never trusts cached progress permissions": "pass",
+    "field-match form round trips allowed values, scope, basis and auxiliary handling": "pass",
+    "mode changes preserve draft content while requests include only fields for the active mode": "pass",
+    "field-match input requires bounded allow lists and explicit applicability": "pass",
+    "reference templates fill local drafts without saving, publishing or changing entity": "pass",
+    "proposal lifecycle locks submitted and approved content while rejected proposals can be revised and resubmitted": "pass",
+    "promotion copies the displayed approved version to the chosen entity and opens the resulting draft": "pass",
+    "trial results expose source freshness and safely render publication blocks and conflicts": "pass",
+    "group exception form captures entity, inclusive dates, values and evidence without posting until saved": "pass",
+    "rent control selection fixes the correct field and full expense scope without saving": "pass",
+    "fixed-control payload requires group mandatory matching field, both rent types and basis": "pass",
+    "incompatible form changes clear the binding and keep ordinary rule editing available": "pass",
+    "bound rules preserve enterprise overrides and templates explicitly create independent drafts": "pass",
+    "cards identify control binding and distinguish draft, published and disabled states": "pass",
+    "published controls and revision or recovery drafts retain the original control in the editor": "pass",
+    "locked-control form changes retain scope and keep editable values, basis and company exceptions": "pass",
+    "reference-template actions cannot remove an established control binding or overwrite a revision": "pass",
+    "AI evidence editor restricts business scope and requires actionable evidence rules while preserving manual proposals": "pass",
+    "AI evidence trial first reads authorized samples and submits only an explicitly selected sample with displayed version": "pass",
+    "AI evidence trial loading and completion cannot overwrite a switched or closed dialog": "pass",
+    "AI evidence trial requires complete source, configured model and matching current rule before submission": "pass",
+    "trial and independent publication review show comparisons, literal references and actions as escaped AI evidence": "pass",
+    "document AI evidence panel shows source-bound results, failed states and no historical passing claims": "pass",
+    "document AI evidence rerun sends exact source version and discards stale or switched responses": "pass",
+    "impact preview is restricted to saved maintainable company or group drafts": "pass",
+    "impact UI renders the real service contract including stale reasons and AI pending requirements": "pass",
+    "maintenance editor preserves the selected existing administrator and sends only the account identity": "pass",
+    "maintenance card distinguishes inactive responsibility from business document deficiencies": "pass",
+    "impact preview renders escaped before and after requirements without exposing technical ids or mutation actions": "pass",
+    "stale impact diagnostics keep AI and fixed control work pending and show publication blocks": "pass",
+    "impact preview rejects a mismatched rule packet and changes to the locally displayed version or permissions": "pass",
+    "impact requests discard data after a context, modal object, or request change": "pass",
+    "impact pagination reads the same saved version, clears old rows while loading and rechecks context": "pass"
   },
   "tests/pool-starvation.integration.test.mjs": {
-    "a detail read with every connector lock held leaves /api/health answering": "fail",
-    "the analysis pool gives up on a full pool and on a slow query instead of waiting forever": "fail",
-    "agent runs started together after a deploy leave /api/health answering": "fail"
+    "a detail read with every connector lock held leaves /api/health answering": "pass",
+    "the analysis pool gives up on a full pool and on a slow query instead of waiting forever": "pass",
+    "agent runs started together after a deploy leave /api/health answering": "pass"
   },
   "tests/precheck.test.mjs": {
     "missing or absent data never passes and does not become zero, normal or first payment": "pass",
@@ -2207,7 +2533,7 @@
     "credential words mask any non-empty ASCII value and preserve error codes": "pass"
   },
   "tests/release-package-contents.test.mjs": {
-    "tests/release-package-contents.test.mjs": "fail"
+    "startup seed files travel in the release export, the Docker build context and the image": "fail"
   },
   "tests/rent-audit.test.mjs": {
     "quoted amount agreement is required for both pass and business-difference claims": "pass",
@@ -2230,7 +2556,10 @@
     "restoration requires a new draft from the current disabled control and cannot revive an older branch": "pass"
   },
   "tests/rent-scenario-flow.test.mjs": {
-    "tests/rent-scenario-flow.test.mjs": "fail"
+    "mis-selected expense enters contract classification, executes the published rule and exposes one proved difference in list and detail": "pass",
+    "uncertain, other-business and failed extraction finish with a responsible prerequisite and no business return": "pass",
+    "source values, rule changes and revoked tasks during classification cannot execute the payment review": "pass",
+    "a changed source submission date or invalid line sum stops before attachment and model requests": "pass"
   },
   "tests/rent-scenario.test.mjs": {
     "a misselected rent purpose appears in the shared precheck without becoming a business violation": "pass",
@@ -2258,14 +2587,43 @@
     "scope routing preserves disabled bindings and mandatory company-rule conflicts": "pass"
   },
   "tests/repair-analysis-document-heads.integration.test.mjs": {
-    "tests/repair-analysis-document-heads.integration.test.mjs": "fail"
+    "repair script gates confirmation and full-sync lock without changing heads, then repairs two documents": "pass",
+    "a repair token works once: replaying it after the repair is refused and changes nothing": "pass",
+    "a token from before a version change (same count) is refused and changes nothing": "pass",
+    "execution refuses REPAIR_SET_CHANGED when an approved document gets another version before it runs": "pass",
+    "execution refuses REPAIR_SET_CHANGED when a third document needs repair before it runs, without writing any row": "pass",
+    "the store still stops at maxRepairs with REPAIR_COUNT_EXCEEDED when no approved set is given": "pass",
+    "a lost full-sync lock stops the repair before the next document is committed": "pass",
+    "an approved document whose versions move after the store check and before its write is skipped": "pass",
+    "an approved document whose starting version moves after the store check, with the same target, is skipped": "pass",
+    "execution refuses REPAIR_SET_CHANGED when the store check has a failed document, even with the approved set unchanged": "pass",
+    "without the new parameters the store returns exactly what baseline b2aed6a returned": "pass"
   },
   "tests/repair-analysis-document-heads.test.mjs": {
-    "tests/repair-analysis-document-heads.test.mjs": "fail"
+    "repair script previews without migrating or leaking document details": "pass",
+    "repair script executes after matching confirmation, expected count and preview token": "pass",
+    "repair script refuses execute without matching confirmation and does not touch the store": "pass",
+    "repair script refuses a bad token before changing data": "pass",
+    "repair script rejects a token for a different expected count before changing data": "pass",
+    "repair script rejects a token for fewer repairs than the current preview": "pass",
+    "repair script compares all sixteen token characters": "pass",
+    "repair token changes when the approved document set changes": "pass",
+    "repair rejects a preview with failed documents before executing": "pass",
+    "repair reports the approved count before exceeding it": "pass",
+    "repair token uses an HKDF subkey instead of the data key directly": "pass",
+    "execution hands the store the previewed set, the approved count and a lock check": "pass",
+    "repair script reports REPAIR_SET_CHANGED from the store as a refusal with exit code 2": "pass",
+    "repair script keeps the store's early stop when the lock was lost during the loop": "pass",
+    "repair script reports busy when the full-sync lock is unavailable": "pass",
+    "repair script reports lock lost before touching the store": "pass",
+    "repair script keeps the committed result when the lock is lost afterwards": "pass",
+    "repair script rejects an empty connection id": "pass",
+    "repair script never invokes migration": "pass",
+    "repair script reports an explicit not-migrated error when required tables are absent": "pass"
   },
   "tests/report-detail-projection.integration.test.mjs": {
     "classifies mysql2 connection, rollback, transient, data, constraint, crypto and unknown errors": "pass",
-    "projectStoredDetails replaces one detail version idempotently and keeps PII out of plaintext columns": "fail",
+    "projectStoredDetails replaces one detail version idempotently and keeps PII out of plaintext columns": "pass",
     "analysis store exposes exact-version detail summaries in one list query and head without decrypting": "pass",
     "binds projection status and receipt counts to the requested document version": "pass",
     "detail summaries count only non-empty check results for the exact content version": "pass",
@@ -2281,29 +2639,46 @@
     "reprojects when the stored detail digest changes and rolls back partial writes": "pass"
   },
   "tests/report-detail-queue.integration.test.mjs": {
-    "real MySQL enqueues a detail item with its batch foreign key": "fail",
-    "default detail scope includes non-travel forms and null store filter omits the form predicate": "fail",
-    "real MySQL marks superseded queued versions stale and claims the current version": "fail",
-    "real MySQL claim scan stales an obsolete item even before the new version is enqueued": "fail",
-    "real MySQL re-enqueues a stale version when the source returns to it": "fail",
-    "real MySQL schedules one retry and continues to the next report": "fail",
-    "real MySQL records the initial claim in the terminal retry count": "fail",
-    "worker sends corporateFlag derived from employee, corporate, and unknown form types": "fail",
-    "real MySQL gives one queued detail to concurrent claimers": "fail",
-    "real MySQL does not claim a retry scheduled after the injected clock": "fail",
-    "real MySQL recovers an expired running detail and the worker requests it once": "fail",
-    "real MySQL finishes a detail batch as partial with terminal counts": "fail",
-    "real MySQL finishes a wholly failed detail batch as failed": "fail",
-    "candidate versions are the immutable source versions used by the queue": "fail",
-    "real MySQL leaves a batch running while queued items remain after a limited worker run": "fail",
-    "real MySQL claims an expired retry before a newer queued item": "fail",
-    "real MySQL marks queued items with a missing analysis document separately": "fail"
-  },
-  "?": {
-    "": "fail"
+    "real MySQL enqueues a detail item with its batch foreign key": "pass",
+    "default detail scope includes non-travel forms and null store filter omits the form predicate": "pass",
+    "real MySQL marks superseded queued versions stale and claims the current version": "pass",
+    "real MySQL claim scan stales an obsolete item even before the new version is enqueued": "pass",
+    "real MySQL re-enqueues a stale version when the source returns to it": "pass",
+    "real MySQL schedules one retry and continues to the next report": "pass",
+    "real MySQL records the initial claim in the terminal retry count": "pass",
+    "worker sends corporateFlag derived from employee, corporate, and unknown form types": "pass",
+    "real MySQL gives one queued detail to concurrent claimers": "pass",
+    "real MySQL does not claim a retry scheduled after the injected clock": "pass",
+    "real MySQL recovers an expired running detail and the worker requests it once": "pass",
+    "real MySQL finishes a detail batch as partial with terminal counts": "pass",
+    "real MySQL finishes a wholly failed detail batch as failed": "pass",
+    "candidate versions are the immutable source versions used by the queue": "pass",
+    "real MySQL leaves a batch running while queued items remain after a limited worker run": "pass",
+    "real MySQL claims an expired retry before a newer queued item": "pass",
+    "real MySQL marks queued items with a missing analysis document separately": "pass"
   },
   "tests/report-detail-queue.test.mjs": {
-    "tests/report-detail-queue.test.mjs": "fail"
+    "reportDetailCorporateFlag maps forms and marks unknown forms as defaulted": "pass",
+    "detail queue form keyword and projection support agree for supported and unsupported forms": "pass",
+    "analysisContentVersion ignores approval history, status, timestamps and signed URL parameters": "pass",
+    "enqueueReportDetails is idempotent and reports missing expense type/company as skipped": "pass",
+    "reportDetailProgress separates stale items and groups skipped work by reason": "pass",
+    "enqueueReportDetails leaves new work immediately claimable and timestamps it with the injected clock": "pass",
+    "enqueueReportDetails clears retry time when re-enqueuing a failed item": "pass",
+    "claimReportDetail uses the injected clock for delayed retries": "pass",
+    "enqueueReportDetails uses the normalized store expense type and never queries audit_documents itself": "pass",
+    "report detail CLI dry-run is injectable, read-only, and uses --batch-id for execution": "pass",
+    "report detail CLI exits 3 when the resident gateway owns the lock": "pass",
+    "report detail CLI holds its gateway and worker locks on the lock pool and closes both pools": "pass",
+    "report detail CLI closes both pools when the gateway refuses the connector": "pass",
+    "worker schedules a retry after one transient failure and does not retry the same item in this run": "pass",
+    "worker schedules one retry after a 5xx failure and exposes the error code": "pass",
+    "worker gives maxRetries retries after the initial claim and records every attempt": "pass",
+    "worker recovers an expired running item and resumes the same version once": "pass",
+    "worker binds fetched detail before inserting and records identity mismatches as failed": "pass",
+    "worker treats UPSTREAM_ERROR as a terminal failure": "pass",
+    "worker stops on CONNECTOR_GATEWAY_CLOSED and leaves all remaining work queued": "pass",
+    "worker stops on PLATFORM_BUDGET_EXHAUSTED without counting a failure": "pass"
   },
   "tests/review-advice-api.test.mjs": {
     "RA-H1 the page view of a corporate payment: suggestion, note and basis (redacted, known kinds only), read-only, runnable by an admin or analyst": "pass",
@@ -2401,7 +2776,12 @@
     "an empty attachment list is reported without a banned term": "pass"
   },
   "tests/run-agent.test.mjs": {
-    "tests/run-agent.test.mjs": "fail"
+    "run-agent dry-run calls preview only and never starts a run": "pass",
+    "run-agent parses only bounded platform arguments": "pass",
+    "detail adapter scope derives company ids from the shared scope helper": "pass",
+    "run-agent dry-run leaves every platform, analysis, and audit table unchanged in MySQL": "pass",
+    "run-agent holds its long locks on the lock pool, keeps dry-run on one pool, and closes both": "pass",
+    "run-agent closes the store and both pools when building the runtime fails": "pass"
   },
   "tests/sap-mcp-client.test.mjs": {
     "production receipts query binds plant, material, dates and stable source keys": "pass",
@@ -2480,13 +2860,68 @@
     "single-quoted literals inside SQL strings contain no question mark": "pass"
   },
   "tests/stage-api.test.mjs": {
-    "tests/stage-api.test.mjs": "fail"
+    "publication API requires independent bound identity and rejects another account belonging to the author": "pass",
+    "publication API rechecks reviewer revocation and exposes read-only current trial evidence": "pass",
+    "recheck history is limited to the current authorized document and withdrawn after source or task changes": "pass",
+    "saved personal text is structured, reviewed and adopted through scoped API as a complete draft collection": "pass",
+    "personal proposal becomes a versioned entity field rule through actual API and remains tenant isolated": "pass",
+    "policy API allows diagnostic trials on failed snapshots but refuses publication until a current unchanged trial": "pass",
+    "group exception API stores approved scope and dates, trials the exact branch and exposes only relevant evidence": "pass",
+    "fixed control API validates explicit binding and preserves a paused control while restoration is drafted": "pass",
+    "precheck queue counts authorized matches before pagination and risk filter, and never invents a pass": "pass",
+    "failed source synchronization becomes a technical audit issue, not a business rejection": "pass",
+    "list and detail combine authorized current AI findings without changing the rule channel": "pass",
+    "AI advisory route keeps the rule result separate and enforces the source version": "pass",
+    "model-backed preview routes apply a per-session target budget before fan-out": "pass",
+    "AI advisory feedback binds a completed run, records an encrypted audit event, and is idempotent": "pass",
+    "precheck-filtered exports use the same selection and do not export another risk bucket": "pass",
+    "local notes persist separately, repeat safely, keep precheck unchanged and detect changed source": "pass",
+    "local notes reject invalid input and recheck live entity and assignee scope inside the write": "pass",
+    "reviewers keep their own notes on a shared document and idempotent retries return their own note": "pass",
+    "supplier context uses this report contract and only authorized same-currency applications": "pass",
+    "running stage server accepts external owner tickets and enforces external revocation without restart": "pass",
+    "stage sessions require real local authentication and one-time tickets only bind owner": "pass",
+    "employee-id login requires one active vendor person, enabled reviewer account, and valid grant": "pass",
+    "employee sessions enforce live company and task scope, grant revocation and account disabling": "pass",
+    "explicitly provisioned named administrator uses employee login with all workspace pages while ordinary grants stay isolated": "pass",
+    "named administrator loses existing access after revocation or source-person departure and cannot use owner tickets": "pass",
+    "employee-created accounts stay manageable without a username and can later add password login": "pass",
+    "unmarked legacy sessions report unknown login method rather than guessing from their role": "pass",
+    "assigned grants enforce company and current source-task identity on lists, details and metadata": "pass",
+    "stage never allows self approval, another task approval, or imported demo actions": "pass",
+    "owner grants and revocations apply immediately to existing sessions and reject stale versions": "pass",
+    "company exports share list filtering, omit quarantine and neutralize formulas": "pass",
+    "only verified active vendor people can obtain accounts or grants, and accounts alone confer no access": "pass",
+    "account resets invalidate old sessions and password setup cannot alter another identity": "pass",
+    "owner permission is rechecked after asynchronous password hashing before account creation": "pass",
+    "sync queues asynchronously, rejects overlap, and leaves supplier approval untouched": "pass",
+    "queued sync rechecks owner session before asynchronous importer begins": "pass",
+    "manual queue leaves an already running background synchronization and its permissions untouched": "pass",
+    "an expired queued request cannot fail or clear permissions of a newer background batch": "pass",
+    "unexpected queued importer failure clears only its own task authority and exposes a fixed error": "pass",
+    "an importer exception cannot overwrite a newer batch published before it rejects": "pass",
+    "authentication is rate-limited and rejects cross-origin and prototype-bearing requests": "pass",
+    "DingTalk configuration is public and bounded, while unconfigured code login stays closed": "pass",
+    "DingTalk code login requires an explicit unique verified binding and does not grant business access": "pass",
+    "DingTalk binding rejects foreign or inactive identities and rechecks owner after verification": "pass",
+    "DingTalk-only accounts can receive unique local credentials and invalidate prior sessions": "pass",
+    "DingTalk sessions recheck that the original binding remains active and unchanged": "pass"
   },
   "tests/stage-attachments.test.mjs": {
-    "tests/stage-attachments.test.mjs": "fail"
+    "原件从当前详情解析，下载前后核对源版本且不持久化正文或签名链接": "pass",
+    "同步失败、旧源版本、已结束待办和非本单附件均在外呼前拒绝": "pass",
+    "源单主体、身份、状态、类型及修改时间不符不得读取任何附件": "pass",
+    "下载期间失权、公司停用、源单改版和关停均不返回已下载内容": "pass",
+    "有歧义的同ID附件、改名和外域地址均拒绝，不泄漏链接": "pass",
+    "与同步展示一致的附件容器可取得原件而非只有付款行附件": "pass",
+    "并发原件读取有界且完成后释放读取名额": "pass",
+    "不支持或超出上限的原件明确提示格式大小，下载故障使用不同状态": "pass",
+    "原件HTTP接口重验登录、主体、待办和版本，成功记录哈希审计且返回禁缓存文件": "pass",
+    "未登录、跨主体、发布复核人、跨站以及伪造查询均不触发文件读取": "pass",
+    "原件请求下载期间账号撤销后不返回内容或成功审计": "pass"
   },
   "tests/stage-badge-wording.test.mjs": {
-    "no badge on the old workspace page uses a banned term": "fail"
+    "no badge on the old workspace page uses a banned term": "pass"
   },
   "tests/stage-policies.test.mjs": {
     "built-in catalog is read-only basic checks and contains no fabricated limits": "pass",
@@ -2525,10 +2960,15 @@
     "precheck preserves synchronization diagnosis without reclassifying it as a business issue": "pass"
   },
   "tests/stage-runtime.test.mjs": {
-    "tests/stage-runtime.test.mjs": "fail"
+    "scheduled stage sync accepts safe intervals and disables unsafe values": "pass",
+    "startup recovery clears interrupted task authority and keeps original batch evidence without a network claim": "pass",
+    "startup recovery cannot replace a completed or progressed batch": "pass",
+    "transient sync failures use bounded exponential retry metadata while permanent errors do not retry": "pass"
   },
   "tests/stage-shutdown.test.mjs": {
-    "tests/stage-shutdown.test.mjs": "fail"
+    "runtime shutdown cancels queued AI work immediately while source, model, sync and HTTP drain": "pass",
+    "shutdown before queued jobs start permits no source or model calls": "pass",
+    "a failing service close still stops other queues and waits for all shutdown work": "pass"
   },
   "tests/stage-store.test.mjs": {
     "stage store persists encrypted data and isolates caller-owned snapshots": "pass",
@@ -2551,7 +2991,15 @@
     "startup resumes a persisted future retry and stopping clears advertised retry time": "pass"
   },
   "tests/stage-sync-ui.test.mjs": {
-    "tests/stage-sync-ui.test.mjs": "fail"
+    "two browser tabs only GET local snapshots; running-state polling never starts a source sync": "pass",
+    "paused automatic sync remains read-only in the browser and hides a stale retry timestamp": "pass",
+    "sync screen displays the server interval and only an actual enabled retry timestamp": "pass",
+    "sync screen exposes a bounded connection diagnosis without credentials or batch internals": "pass",
+    "a queued poll and an in-flight bootstrap cannot overwrite a new user context": "pass",
+    "logout invalidates an earlier read before its source response returns": "pass",
+    "automatic refresh defers open editor forms and ignores replies when a form opens mid-read": "pass",
+    "a page read begun by a background refresh cannot replace data after a modal opens": "pass",
+    "manual sync retains one explicit POST action": "pass"
   },
   "tests/stage-sync.test.mjs": {
     "stage sync rebuilds current tasks and preserves local grants/accounts without confusing source company and legal entity": "pass",
@@ -2583,20 +3031,20 @@
     "advisory evidence includes only the latest same-report same-company review and applicable rules": "pass"
   },
   "tests/start-analysis-wiring.test.mjs": {
-    "production analysis startup wires the reference store into the app": "fail",
-    "long-held named locks live on their own pool, not the request pool": "fail",
+    "production analysis startup wires the reference store into the app": "pass",
+    "long-held named locks live on their own pool, not the request pool": "pass",
     "W15 mounts milestone routes after session and CSRF checks while preserving later routes": "pass",
     "W15 keeps formal instances at the existing 404 for the same path": "pass",
     "W16 element response wiring uses explicit safe DTO fields": "pass",
-    "startup validates configuration before touching secrets": "fail",
-    "SYNC-RT: the manual sync on the admin page gets a range (it answered SYNC_UNAVAILABLE since 812d4cc)": "fail",
-    "W1 the approval identity index starts with the service and closes before the store": "fail",
-    "W2 the department directory is built only for the stage source and closes before the store": "fail"
+    "startup validates configuration before touching secrets": "pass",
+    "SYNC-RT: the manual sync on the admin page gets a range (it answered SYNC_UNAVAILABLE since 812d4cc)": "pass",
+    "W1 the approval identity index starts with the service and closes before the store": "pass",
+    "W2 the department directory is built only for the stage source and closes before the store": "pass"
   },
   "tests/startup-smoke.test.mjs": {
-    "startup smoke boots the production deployment shape": "fail",
-    "startup smoke boots the test deployment shape": "fail",
-    "the startup smoke gives each shape the AI variables its real container gets": "fail",
+    "startup smoke boots the production deployment shape": "pass",
+    "startup smoke boots the test deployment shape": "pass",
+    "the startup smoke gives each shape the AI variables its real container gets": "pass",
     "deny-outbound refuses every way out, http.get included, and still allows loopback": "pass"
   },
   "tests/supplier-context.test.mjs": {
@@ -2610,7 +3058,13 @@
     "supplier application scope normalizes IDs and tolerates an absent review context": "pass"
   },
   "tests/supplier-contract-review.test.mjs": {
-    "tests/supplier-contract-review.test.mjs": "fail"
+    "supplier analysis uses current contract evidence while preserving unknown paid history and contract lifetime limits": "pass",
+    "shared advisory context receives the same current contract result instead of contradictory unavailable text": "pass",
+    "foreign, stale, failed or duplicate contract checks cannot update supplier conclusions": "pass",
+    "unanchored, unparsed or wrong-page citations cannot become a current contract match": "pass",
+    "a current contract concern shows the exact advice and quote without inventing paid totals or an approval": "pass",
+    "supplier UI displays current contract evidence safely and hides conclusions when the source version changes": "pass",
+    "document and supplier API routes expose identical current contract evidence and invalidate it after source changes": "pass"
   },
   "tests/supplier-identity.test.mjs": {
     "supplier identity/name/code are selected as one source group without recipient fallback": "pass",
@@ -2645,7 +3099,16 @@
     "production code has no call-site imports for the test-only candidate module": "pass"
   },
   "tests/v02.test.mjs": {
-    "tests/v02.test.mjs": "fail"
+    "rule revisions preserve the live version until publication and retain prior review evidence": "pass",
+    "draft editing requires its author and current version, invalidates trials, and keeps unknown drafts inactive": "pass",
+    "rule actions reject stale displayed versions even after the edited draft has been tested again": "pass",
+    "rule revision and history endpoints enforce company scope and group baseline protection": "pass",
+    "concurrent revision and publish requests cannot create multiple active versions of one rule family": "pass",
+    "a revision cannot publish after its parent was disabled even when its trial already passed": "pass",
+    "filtered CSV exports all matching authorized rows in the same order as the document list": "pass",
+    "pagination preserves totals and deterministic sort order, including risk ties and empty pages": "pass",
+    "invalid list and export filters fail consistently instead of silently broadening the selection": "pass",
+    "my task filtering uses current source authority and excludes self approvals and stale source versions": "pass"
   },
   "tests/verdict-precheck-off.test.mjs": {
     "term 71 with term 48: a production document with the advice offline is held as the platform's gap": "pass",

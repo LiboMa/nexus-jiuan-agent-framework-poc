@@ -79,7 +79,7 @@ test('构建不改 source/ 下的开发包', async t => {
   assert.equal(await digestTree(SOURCE), before);
 });
 
-test('--with-tests：多带开发包的 tests/，再打 patches/…/tests/*.patch；不带时没有 tests/、tests 补丁不打也不报错；两种都不带 seeds/、database/', async t => {
+test('--with-tests：带上整个开发包（tests/、seeds/、scripts/、deploy/、根目录的文件——九安的测试要读），再打 patches/…/tests/*.patch；不带时只有运行要的、没有 tests/；两种都不带 .env 和密钥类文件', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'jiuan-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   // 补丁目录：真的那几个代码补丁，再加一个只改测试文件的探针补丁
@@ -97,7 +97,11 @@ test('--with-tests：多带开发包的 tests/，再打 patches/…/tests/*.patc
   assert.equal(await exists(path.join(plain, 'tests')), false, '普通构建不带 tests/');
   assert.match(await readFile(path.join(withTests, target), 'utf8'), /^\/\/ probe from tests patch$/m, 'tests 补丁打上了');
   assert.ok((await readdir(path.join(withTests, 'tests'))).filter(name => name.endsWith('.test.mjs')).length > 200);
-  for (const out of [plain, withTests]) for (const name of ['seeds', 'database', 'deploy']) assert.equal(await exists(path.join(out, name)), false, `${out} 不该有 ${name}`);
+  for (const name of ['seeds', 'database', 'deploy', 'scripts', 'server.mjs']) {
+    assert.equal(await exists(path.join(plain, name)), false, `普通构建不该有 ${name}`);
+    assert.equal(await exists(path.join(withTests, name)), true, `带测试的构建要有 ${name}`);
+  }
+  for (const out of [plain, withTests]) assert.equal(await exists(path.join(out, 'deploy', 'ecs', '.env.example')), false, `${out} 不带 .env*`);
 });
 
 // 页面测试用的最小 DOM：只够 platform-ops.js 画「Agent 接入」页、点按钮

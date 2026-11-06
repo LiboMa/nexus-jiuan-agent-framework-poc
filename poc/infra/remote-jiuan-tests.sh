@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 在测试台实例上跑九安 v0.7.10 自带的测试（换库用；不碰正在跑的服务，不碰库 jiuan）：
-#   本机 build-jiuan.sh --with-tests → 打包经 SSH 传到实例上的临时目录（只有登录用户能读）→ 实例上以 root：test-databases.sh create（每次都是空库），
+#   本机 build-jiuan.sh --with-tests → 打包经 SSH 传到实例上的临时目录（只有登录用户能读）→ 实例上以 root：test-databases.sh create
+#   （单独两个用完即删的测试库容器：MySQL 127.0.0.1:3307、PG 127.0.0.1:5434，每次都是空库；跑完 drop），
 #   用 /etc/andon-finance/test/ 下的口令拼测试库地址（不经本机），node --test 一个一个文件跑，junit 报告（每条测试带文件名）→ 取回，
 #   本机转成 { "tests/x.test.mjs": { "<测试名>": "pass"|"fail"|"skip" } } 写到 --out → 删掉远端目录。
 #   退出码 0 只表示跑完了；及格与否用 compare-jiuan-results.mjs 和基线比。
@@ -46,9 +47,13 @@ remote_dir="$(COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -C "$local_wo
 SCRIPT="$(cat <<SH
 set -uo pipefail
 d='$remote_dir'; trap 'rm -rf "\$d"' EXIT
+# 同一时间只跑一组：测试库容器是共用的，另一组在跑就等它跑完（最多两小时）
+exec 9>/var/lock/jiuan-remote-tests.lock
+flock -w 7200 9 || { echo "另一组远端测试一直没跑完" >&2; exit 1; }
+trap 'bash "\$d/test-databases.sh" drop >/dev/null 2>&1; rm -rf "\$d"' EXIT
 bash "\$d/test-databases.sh" create >/dev/null || { echo "测试库没建好" >&2; exit 1; }
-url_pg="postgres://jiuan_test:\$(cat /etc/andon-finance/test/pg_test_password)@127.0.0.1:5433/jiuan_test"
-url_mysql="mysql://jiuan_test:\$(cat /etc/andon-finance/test/mysql_test_password 2>/dev/null)@127.0.0.1:3306/jiuan_test"
+url_pg="postgres://jiuan_test:\$(cat /etc/andon-finance/test/pg_test_password)@127.0.0.1:5434/jiuan_test"
+url_mysql="mysql://jiuan_test:\$(cat /etc/andon-finance/test/mysql_test_password)@127.0.0.1:3307/jiuan_test"
 case '$ENGINE' in
   mysql) export MYSQL_TEST_URL="\$url_mysql" ;;
   pg) export PG_TEST_URL="\$url_pg" ;;

@@ -284,34 +284,40 @@ test('PostgreSQL（九安的库）：容器 jiuan-pg 用 postgres:17，只绑 12
   assert.ok(replace > 0 && replace < script.indexOf('docker run -d --name jiuan-pg'), '参数不对先换容器再建');
 });
 
-test('测试库（test-databases.sh，只给远端测试用）：PG 和 MySQL 各一个 jiuan_test，create 先删再建，PG 那边 UTF8 / C / 上海时区；口令只在实例上的 root 0600 文件里，经标准输入进容器；不碰库 jiuan', async () => {
+test('测试库（test-databases.sh，只给远端测试用）：单独两个用完即删的容器（数据在内存里）——MySQL 在 127.0.0.1:3307（九安测试认的隔离端口）、PG 在 127.0.0.1:5434，各有一个 jiuan_test 和同名账号（PG 那边 UTF8 / C / 上海时区，账号不是超级用户）；口令只在实例上的 root 0600 文件里，经文件进容器；不碰在用的 jiuan-mysql、jiuan-pg', async () => {
   const script = await readFile(bench('test-databases.sh'), 'utf8');
-  for (const expected of ['jiuan_test', '/etc/andon-finance/test', 'pg_test_password', 'mysql_test_password', 'TEST_DATABASES_READY', 'TEST_DATABASES_DROPPED',
-    "ALTER DATABASE jiuan_test SET timezone = 'Asia/Shanghai'", "ENCODING 'UTF8'", "LC_COLLATE 'C'", 'TEMPLATE template0', 'DROP DATABASE IF EXISTS jiuan_test',
-    'DROP DATABASE IF EXISTS `jiuan_test`', 'umask 077']) {
+  for (const expected of ['jiuan-test-mysql', 'jiuan-test-pg', '127.0.0.1:3307:3306', '127.0.0.1:5434:5432', '--tmpfs /var/lib/mysql', '--tmpfs /var/lib/postgresql/data',
+    'mysql:8.0', 'postgres:17', '-e TZ=Asia/Shanghai', '-c timezone=Asia/Shanghai', 'MYSQL_ROOT_PASSWORD_FILE=', 'MYSQL_PASSWORD_FILE=', 'POSTGRES_PASSWORD_FILE=',
+    'MYSQL_DATABASE=jiuan_test', 'MYSQL_USER=jiuan_test', "CREATE ROLE jiuan_test LOGIN", "CREATE DATABASE jiuan_test OWNER jiuan_test ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0",
+    "ALTER DATABASE jiuan_test SET timezone = 'Asia/Shanghai'", '/etc/andon-finance/test', 'pg_test_password', 'mysql_test_password', 'umask 077',
+    'TEST_DATABASES_READY', 'TEST_DATABASES_DROPPED', 'docker rm -f jiuan-test-mysql jiuan-test-pg']) {
     assert.ok(script.includes(expected), `test-databases.sh 应包含 ${expected}`);
   }
-  assert.ok(script.indexOf('DROP DATABASE IF EXISTS jiuan_test') < script.indexOf('CREATE DATABASE jiuan_test'), 'create 先删再建');
-  assert.doesNotMatch(script, /DROP DATABASE[^\n]*\bjiuan\b(?!_test)/, '不碰库 jiuan');
-  assert.doesNotMatch(script, /docker exec[^\n]*-e [A-Z_]*PASSWORD/, '口令不上命令行');
+  assert.ok(script.indexOf('docker rm -f jiuan-test-mysql jiuan-test-pg') < script.indexOf('docker run -d --name jiuan-test-mysql'), 'create 先删再建');
+  assert.doesNotMatch(script, /docker (exec|rm|stop|restart)[^\n]*\bjiuan-(mysql|pg)\b/, '不碰在用的容器');
+  assert.doesNotMatch(script, /--restart/, '测试容器不随机器重启');
+  assert.doesNotMatch(script, /-e [A-Z_]*PASSWORD=/, '口令不上命令行');
 });
 
 test('远端跑九安测试（remote-jiuan-tests.sh）：本机构建带测试的副本，传到实例上的临时目录（只有自己能读），在实例上用 root 的口令文件拼测试库地址，按文件一个一个跑（junit 报告带文件名），取回结果、删掉远端目录；不碰正在跑的服务', async () => {
   const script = await readFile(infra('remote-jiuan-tests.sh'), 'utf8');
   for (const expected of ['--with-tests', 'ssh_setup', 'remote_root', 'mktemp -d /var/tmp/jiuan-pgtest.XXXXXX', 'chmod 0700', 'test-databases.sh" create',
-    '--test-concurrency=1', '--test-timeout=180000', '--test-reporter=junit', 'MYSQL_TEST_URL', 'PG_TEST_URL', 'cat /etc/andon-finance/test/', 'compare-jiuan-results.mjs', 'rm -rf']) {
+    '--test-concurrency=1', '--test-timeout=180000', '--test-reporter=junit', 'MYSQL_TEST_URL', 'PG_TEST_URL', 'cat /etc/andon-finance/test/', 'compare-jiuan-results.mjs', 'rm -rf',
+    '@127.0.0.1:3307/jiuan_test', '@127.0.0.1:5434/jiuan_test', 'test-databases.sh" drop', 'flock -w 7200 9']) {
     assert.ok(script.includes(expected), `remote-jiuan-tests.sh 应包含 ${expected}`);
   }
+  assert.ok(script.indexOf('flock -w 7200 9') < script.indexOf('test-databases.sh" create'), '两次远端测试不同时跑：先拿实例上的锁再建测试库');
   assert.doesNotMatch(script, /systemctl (stop|restart) andon-jiuan/);
   assert.doesNotMatch(script, /secrets\.env/, '不碰 secrets.env');
 });
 
-test('准备 PostgreSQL（pg-prepare.sh）：先补密钥，再和 deploy.sh 一样经构件桶把 secrets.env 装到实例（root 0600），起 jiuan-pg、建测试库；不重启服务、不改外壳的配置', async () => {
+test('准备 PostgreSQL（pg-prepare.sh）：先补密钥，再和 deploy.sh 一样经构件桶把 secrets.env 装到实例（root 0600），起 jiuan-pg；测试库不在这里建（远端测试每次自己起）；不重启服务、不改外壳的配置', async () => {
   const script = await readFile(infra('pg-prepare.sh'), 'utf8');
   for (const expected of ['ensure_bench_secrets "$SECRETS"', '--sse AES256', 's3://$BUCKET/secrets/secrets.env', 'chmod 0600 /etc/andon-finance/secrets.env.new',
-    'pg-install.sh', 'test-databases.sh', 'create', 'BENCH_PG_READY', 'TEST_DATABASES_READY']) {
+    'pg-install.sh', 'BENCH_PG_READY']) {
     assert.ok(script.includes(expected), `pg-prepare.sh 应包含 ${expected}`);
   }
+  assert.doesNotMatch(script, /test-databases\.sh/);
   assert.doesNotMatch(script, /systemctl (stop|restart|start) andon-jiuan|bench-configure\.sh/);
 });
 
