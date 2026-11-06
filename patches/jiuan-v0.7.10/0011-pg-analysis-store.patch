@@ -1,0 +1,487 @@
+补丁 0011：分析主库的查询改成 PostgreSQL（src/mysql-analysis-store.mjs、src/agent-reference-store.mjs、src/full-sync-lock.mjs；适配层 src/pg-database.mjs 补两处）。
+改了哪几类写法：
+- ON DUPLICATE KEY UPDATE → ON CONFLICT (<主键>) DO UPDATE SET … EXCLUDED.…；「有就不动」的和 INSERT IGNORE → ON CONFLICT DO NOTHING。
+- audit_attachments 的两个唯一键都会单独撞（同一个文件在两个类别里；同一个附件出了新版本）：先按附件编号、再按「单据 + 源附件 + 版本」
+  找到那一行就更新，找不到才插——和 MySQL 的 ON DUPLICATE KEY UPDATE 一样。别的多唯一键表这里撞的都是主键（见 0010 的清单）。
+- 命名锁：GET_LOCK / RELEASE_LOCK / IS_USED_LOCK = CONNECTION_ID() → acquireNamedLock / releaseNamedLock / isNamedLockUsed === threadId；DATABASE() → current_database()。
+- 用户搜索、表单名筛选的 LIKE → ILIKE（MySQL 的 unicode_ci 列不分大小写）；ESCAPE '\\' → ESCAPE '\'（PG 的字符串里反斜杠不转义）。
+- 去掉 COLLATE utf8mb4_0900_bin（库是 C 排序，= 本来就逐字节比）。
+- SELECT 里的布尔式 → ::int；MAX(布尔) → MAX((…)::int)；SUM(条件) → SUM((条件)::int)；写进 smallint 列的 FALSE → 0。
+- 驼峰别名加双引号（PG 不加引号会转成小写，row.documentId 就读不到了）。
+- 可空列的排序同 MySQL：降序 NULLS LAST、升序 NULLS FIRST。
+- JSON_ARRAYAGG → json_agg；REGEXP → ~；DECIMAL(65,20) → numeric(65,20)；DATE_FORMAT(DATE_ADD(x, INTERVAL 8 HOUR),'%Y-%m') →
+  to_char(x + interval '8 hours','YYYY-MM')；CURRENT_TIMESTAMP(6) → LOCALTIMESTAMP(6)。
+- 推不出类型的单独参数加 ::text（? IS NULL、? <> ''）。
+- 状态的首次写入（compareAndWriteState）：已有的行先锁住再覆盖；没有就普通 INSERT，两个同时首次写入时后到的撞唯一键 → 409
+  （MySQL 那边是 InnoDB 死锁 1213，结果一样）。
+- 适配层：true / false 参数当 1 / 0 送（同 mysql2；库里的标志位都是 smallint）；迁移的事务改用 query('BEGIN') 等。
+src/analysis-store.mjs（旧的 jiuan_analysis 库的存储）不动：本来就是 PG 写法，运行时没有模块引用它。
+
+diff --git a/src/agent-reference-store.mjs b/src/agent-reference-store.mjs
+index bf2d954..5ebbef0 100644
+--- a/src/agent-reference-store.mjs
++++ b/src/agent-reference-store.mjs
+@@ -39,7 +39,7 @@ function validateSeed(seed) {
+ }
+ 
+ export function createAgentReferenceStore({ pool }) {
+-  if (!pool || typeof pool.query !== 'function') throw Object.assign(new Error('A MySQL pool is required.'), { code: 'CONFIGURATION' });
++  if (!pool || typeof pool.query !== 'function') throw Object.assign(new Error('A database pool is required.'), { code: 'CONFIGURATION' });
+   async function importSeed(seed) {
+     validateSeed(seed);
+     const version = seedVersion(seed);
+@@ -68,7 +68,7 @@ export function createAgentReferenceStore({ pool }) {
+           const payload = { ...record, record_key: undefined };
+           delete payload.record_key;
+           const [result] = await connection.query(
+-            `INSERT IGNORE INTO ${table} (seed_version, source_sha256, record_key, payload) VALUES (?, ?, ?, ?)`,
++            `INSERT INTO ${table} (seed_version, source_sha256, record_key, payload) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+             [version, seed.source_sha256, recordKey, JSON.stringify(payload)],
+           );
+           if (Number(result?.affectedRows) === 1) imported += 1; else skipped += 1;
+diff --git a/src/full-sync-lock.mjs b/src/full-sync-lock.mjs
+index cecb776..de02bf5 100644
+--- a/src/full-sync-lock.mjs
++++ b/src/full-sync-lock.mjs
+@@ -1,7 +1,8 @@
+ import { createHash } from 'node:crypto';
++import { acquireNamedLock, isNamedLockUsed, releaseNamedLock } from './pg-database.mjs';
+ 
+-/** The lock's name for one connection. MySQL lock names are limited to 64 characters; hash the
+- * connection id. The ops summary asks who holds it (HOTFIX-074). */
++/** The lock's name for one connection (a PostgreSQL advisory lock, keyed by the name; the name stays
++ * short and hashed as it was for MySQL). The ops summary asks who holds it (HOTFIX-074). */
+ export const fullSyncLockName = connectionId => `jiuan:full-sync:${createHash('sha256').update(String(connectionId)).digest('hex').slice(0, 32)}`;
+ 
+ /** One full sync, or one document reset, per connection at a time, across processes and
+@@ -12,19 +13,17 @@ export async function acquireFullSyncLock(pool, connectionId) {
+   const name = fullSyncLockName(connectionId);
+   const connection = await pool.getConnection();
+   try {
+-    const [rows] = await connection.query('SELECT GET_LOCK(?, 0) AS acquired', [name]);
+-    if (Number(rows[0]?.acquired) !== 1) { connection.release(); return null; }
++    if (!(await acquireNamedLock(connection, name, 0))) { connection.release(); return null; }
+   } catch (error) { connection.release(); throw error; }
+   return Object.freeze({
+     name,
+     async verify() {
+       try {
+-        const [rows] = await connection.query('SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS held', [name]);
+-        return Number(rows[0]?.held) === 1;
++        return (await isNamedLockUsed(connection, name)) === connection.threadId;
+       } catch {
+         return false;
+       }
+     },
+-    async release() { try { await connection.query('SELECT RELEASE_LOCK(?)', [name]); } finally { connection.release(); } },
++    async release() { try { await releaseNamedLock(connection, name); } finally { connection.release(); } },
+   });
+ }
+diff --git a/src/mysql-analysis-store.mjs b/src/mysql-analysis-store.mjs
+index 046cdf8..d5fcaa1 100644
+--- a/src/mysql-analysis-store.mjs
++++ b/src/mysql-analysis-store.mjs
+@@ -1,7 +1,7 @@
+ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+ import { analysisScope, normalizeAnalysisReport, normalizeStoredAnalysisReport, redactAnalysisText } from './analysis-normalize.mjs';
+ import { buildAnalysisAttachmentManifest } from './analysis-attachment-evidence.mjs';
+-import { migratePg } from './pg-database.mjs';
++import { acquireNamedLock, migratePg, releaseNamedLock } from './pg-database.mjs';
+ import { normalizeDetailProjectionSummary } from './analysis-detail-projection-summary.mjs';
+ 
+ function problem(code, message = '正式分析存储操作未完成。') { return Object.assign(new Error(message), { code }); }
+@@ -24,7 +24,7 @@ const movedRow = alias => `${alias}.source_document_id=CONCAT('moved:',${alias}.
+ const movedFilter = (alias, number) => {
+   if (number === undefined) return { sql: '', params: [] };
+   if (typeof number !== 'string' || number.length > 200) throw problem('ANALYSIS_VALIDATION');
+-  return { sql: ` AND (NOT ${movedRow(alias)} OR (?<>'' AND EXISTS(SELECT 1 FROM analysis_documents n WHERE n.connection_id=${alias}.source_connection_id AND n.id=${alias}.document_id AND n.number LIKE ? ESCAPE '\\\\')))`,
++  return { sql: ` AND (NOT ${movedRow(alias)} OR (?::text<>'' AND EXISTS(SELECT 1 FROM analysis_documents n WHERE n.connection_id=${alias}.source_connection_id AND n.id=${alias}.document_id AND n.number ILIKE ? ESCAPE '\\')))`,
+     params: [number, pattern(number)] };
+ };
+ const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+@@ -41,10 +41,10 @@ const approvalCompanies = value => {
+   if (!Array.isArray(value)) throw problem('ANALYSIS_VALIDATION');
+   return companies(value);
+ };
+-// A job number matches byte for byte (security review 10-21): the columns' unicode_ci collation would
+-// let a001 match A001 and pad 'A001 ' to 'A001'. The plain equality keeps the index; the
+-// NO PAD binary collation decides. Each use binds the job number twice.
+-const exactEmployee = column => `(${column}=? AND ${column} COLLATE utf8mb4_0900_bin=?)`;
++// A job number matches byte for byte (security review 10-21): a001 must not match A001, nor 'A001 '
++// 'A001'. The database's C collation compares bytes, so plain equality decides. Each use still binds
++// the job number twice (the callers' parameter lists are unchanged from MySQL).
++const exactEmployee = column => `(${column}=? AND ${column}=?)`;
+ const approvalPage = (limit, offset) => { pageNumber(limit, 200); if (limit < 1) throw problem('ANALYSIS_VALIDATION'); pageNumber(offset, 10000); };
+ 
+ function checkPool(pool) {
+@@ -111,13 +111,13 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+   const ensureAuditContext = async (client, scope, batchId, collectedAt, query = null) => {
+     const context = auditContext(scope, batchId, collectedAt, query);
+     await client.query(`INSERT INTO audit_source_connections(source_connection_id,provider,environment,tenant_id,account_id,scope_hash,adapter_version,mapping_version,status)
+-      VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id),scope_hash=VALUES(scope_hash),status=VALUES(status)`,
++      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (source_connection_id) DO UPDATE SET tenant_id=EXCLUDED.tenant_id,scope_hash=EXCLUDED.scope_hash,status=EXCLUDED.status`,
+     [connectionId, 'huilianyi', 'prod', scope.tenantId, 'formal-analysis', context.scopeHash, 'huilianyi-production-mcp-v1', 'analysis-normalize-v1', 'active']);
+     await client.query(`INSERT INTO audit_permission_snapshots(permission_snapshot_id,tenant_id,account_id,company_id,scope_hash,granted_at,valid_until)
+-      VALUES (?,?,?,?,?,?,NULL) ON DUPLICATE KEY UPDATE scope_hash=VALUES(scope_hash),valid_until=NULL`,
++      VALUES (?,?,?,?,?,?,NULL) ON CONFLICT (permission_snapshot_id) DO UPDATE SET scope_hash=EXCLUDED.scope_hash,valid_until=NULL`,
+     [context.permissionSnapshotId, scope.tenantId, 'formal-analysis', scope.allCompaniesInTenant === true ? null : scope.companyId, context.scopeHash, mysqlDateTime(collectedAt)]);
+     await client.query(`INSERT INTO audit_sync_batches(batch_id,source_connection_id,tenant_id,scope_hash,permission_snapshot_id,idempotency_key,query_hash,status,completeness_state,started_at)
+-      VALUES (?,?,?,?,?,?,?,'running','partial',?) ON DUPLICATE KEY UPDATE permission_snapshot_id=VALUES(permission_snapshot_id),query_hash=COALESCE(VALUES(query_hash),query_hash),status='running'`,
++      VALUES (?,?,?,?,?,?,?,'running','partial',?) ON CONFLICT (batch_id) DO UPDATE SET permission_snapshot_id=EXCLUDED.permission_snapshot_id,query_hash=COALESCE(EXCLUDED.query_hash,audit_sync_batches.query_hash),status='running'`,
+     [context.auditBatchId, connectionId, scope.tenantId, context.scopeHash, context.permissionSnapshotId, context.idempotencyKey, context.queryHash, mysqlDateTime(collectedAt)]);
+     return context;
+   };
+@@ -133,7 +133,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+   const writeSearchNames = async (client, doc) => {
+     const { payeeName, applicantName } = documentSearchNames(doc);
+     await client.query(`INSERT INTO analysis_document_search(connection_id,document_id,document_version,payee_name,applicant_name)
+-      VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE document_version=VALUES(document_version),payee_name=VALUES(payee_name),applicant_name=VALUES(applicant_name)`,
++      VALUES (?,?,?,?,?) ON CONFLICT (connection_id,document_id) DO UPDATE SET document_version=EXCLUDED.document_version,payee_name=EXCLUDED.payee_name,applicant_name=EXCLUDED.applicant_name`,
+     [connectionId, doc.id, doc.version, payeeName, applicantName]);
+   };
+   const updateDocumentHeads = async (client, { doc, auditBatchId, permissionSnapshotId, collectedAtSql, snapshotFingerprint, completeness }) => {
+@@ -205,7 +205,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       if (closed) throw problem('ANALYSIS_NOT_READY');
+       await migratePg(pool);
+       await transaction(async client => {
+-        await client.query('INSERT INTO analysis_connections(connection_id,environment,schema_version,key_check) VALUES (?,\'prod\',1,?) ON DUPLICATE KEY UPDATE connection_id=VALUES(connection_id)', [connectionId, seal({ connectionId, environment: 'prod', schemaVersion: 1 }, 'key-check')]);
++        await client.query('INSERT INTO analysis_connections(connection_id,environment,schema_version,key_check) VALUES (?,\'prod\',1,?) ON CONFLICT (connection_id) DO NOTHING', [connectionId, seal({ connectionId, environment: 'prod', schemaVersion: 1 }, 'key-check')]);
+         const [rows] = await client.query('SELECT * FROM analysis_connections WHERE connection_id=?', [connectionId]);
+         const row = rows[0];
+         if (!row) throw problem('ANALYSIS_CONFIGURATION');
+@@ -218,13 +218,12 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       ready(); pageNumber(limit, 200); if (limit < 1) throw problem('ANALYSIS_VALIDATION');
+       if (searchBackfill) return searchBackfill;
+       searchBackfill = (async () => {
+-        // MySQL named locks keep overlapping service processes to one batch runner.
++        // A named (advisory) lock keeps overlapping service processes to one batch runner.
+         const lockClient = await pool.getConnection(); let lockName, locked = false;
+         try {
+-          const [[database]] = await lockClient.query('SELECT DATABASE() AS name');
++          const [[database]] = await lockClient.query('SELECT current_database() AS name');
+           lockName = `jiuan:search:${digest([database.name, connectionId]).slice(0, 48)}`;
+-          const [[lock]] = await lockClient.query('SELECT GET_LOCK(?,5) AS acquired', [lockName]);
+-          if (Number(lock.acquired) !== 1) throw problem('ANALYSIS_SEARCH_BACKFILL_LOCK');
++          if (!(await acquireNamedLock(lockClient, lockName, 5))) throw problem('ANALYSIS_SEARCH_BACKFILL_LOCK');
+           locked = true;
+           const missing = `FROM analysis_documents d LEFT JOIN analysis_document_search s
+             ON s.connection_id=d.connection_id AND s.document_id=d.id AND s.document_version=d.version`;
+@@ -247,7 +246,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+           const [[pending]] = await lockClient.query(`SELECT COUNT(*) AS count ${missing} WHERE d.connection_id=? AND s.document_id IS NULL`, [connectionId]);
+           return { updated, remaining: count(pending.count) };
+         } finally {
+-          if (locked) { try { await lockClient.query('SELECT RELEASE_LOCK(?)', [lockName]); } catch { lockClient.destroy(); } }
++          if (locked) { try { await releaseNamedLock(lockClient, lockName); } catch { lockClient.destroy(); } }
+           lockClient.release();
+         }
+       })().finally(() => { searchBackfill = null; });
+@@ -262,7 +261,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       if (companyIds?.length === 0) return [];
+       const filters = ['a.source_connection_id=?'];
+       const params = [connectionId];
+-      if (formNameIncludes !== null) { filters.push(`d.form_name LIKE ? ESCAPE '\\\\'`); params.push(pattern(formNameIncludes)); }
++      if (formNameIncludes !== null) { filters.push(`d.form_name ILIKE ? ESCAPE '\\'`); params.push(pattern(formNameIncludes)); }
+       if (companyIds !== undefined) { filters.push(`a.company_id IN (${placeholders(companyIds)})`); params.push(...companyIds); }
+       if (afterId !== null) { filters.push('a.document_id>?'); params.push(afterId); }
+       params.push(limit);
+@@ -348,7 +347,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`, [documentId, event.eventKey, version, event.operatorEmployeeId, event.approverEmployeeId, event.operatorDepartmentOid, event.nodeName, event.operation, event.category, mysqlDateTime(event.occurredAt), seal(event.names, `approval-actor:${documentId}:${event.eventKey}`)]);
+         await client.query(`INSERT INTO audit_approval_actor_index
+           (document_id,source_version,document_department_oid,event_count,actor_gap_count,indexed_at)
+-          VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE source_version=VALUES(source_version),document_department_oid=VALUES(document_department_oid),event_count=VALUES(event_count),actor_gap_count=VALUES(actor_gap_count),indexed_at=VALUES(indexed_at)`, [documentId, version, departmentOid, checkedEvents.length, gapCount, indexedAtSql]);
++          VALUES (?,?,?,?,?,?) ON CONFLICT (document_id) DO UPDATE SET source_version=EXCLUDED.source_version,document_department_oid=EXCLUDED.document_department_oid,event_count=EXCLUDED.event_count,actor_gap_count=EXCLUDED.actor_gap_count,indexed_at=EXCLUDED.indexed_at`, [documentId, version, departmentOid, checkedEvents.length, gapCount, indexedAtSql]);
+         return { written: true, events: checkedEvents.length, pending: checkedPending.length };
+       });
+     },
+@@ -358,11 +357,11 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       if (companyIds !== 'all' && !companyIds.length) return [];
+       const companyFilter = companyIds === 'all' ? '' : ` AND a.company_id IN (${placeholders(companyIds)})`;
+       const params = [connectionId, ...(companyIds === 'all' ? [] : companyIds), employeeId, employeeId, employeeId, employeeId, ...moved.params, limit, offset];
+-      const [rows] = await pool.query(`SELECT x.document_id AS documentId,MAX(x.occurred_at) AS lastActedAt,MAX(${movedRow('a')}) AS moved
++      const [rows] = await pool.query(`SELECT x.document_id AS "documentId",MAX(x.occurred_at) AS "lastActedAt",MAX((${movedRow('a')})::int) AS moved
+         FROM audit_approval_actors x JOIN audit_documents a ON a.document_id=x.document_id
+         WHERE a.source_connection_id=?${companyFilter} AND (${exactEmployee('x.operator_employee_id')} OR ${exactEmployee('x.approver_employee_id')})
+           AND x.category IN ('passed','rejected')${moved.sql}
+-        GROUP BY x.document_id ORDER BY MAX(x.occurred_at) DESC,x.document_id LIMIT ? OFFSET ?`, params);
++        GROUP BY x.document_id ORDER BY MAX(x.occurred_at) DESC NULLS LAST,x.document_id LIMIT ? OFFSET ?`, params);
+       return rows.map(row => ({ documentId: row.documentId, lastActedAt: timestamp(row.lastActedAt), moved: Number(row.moved) === 1 }));
+     },
+     async listPendingDocuments({ employeeId, companyIds, limit = 50, offset = 0, movedNumber } = {}) {
+@@ -371,11 +370,11 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       if (companyIds !== 'all' && !companyIds.length) return [];
+       const companyFilter = companyIds === 'all' ? '' : ` AND a.company_id IN (${placeholders(companyIds)})`;
+       const params = [connectionId, ...(companyIds === 'all' ? [] : companyIds), employeeId, employeeId, ...moved.params, limit, offset];
+-      const [rows] = await pool.query(`SELECT p.document_id AS documentId,JSON_ARRAYAGG(p.node_name) AS nodeNames,
+-        MAX(p.activated_at) AS arrivedAt,a.collected_at AS collectedAt,MAX(${movedRow('a')}) AS moved
++      const [rows] = await pool.query(`SELECT p.document_id AS "documentId",json_agg(p.node_name) AS "nodeNames",
++        MAX(p.activated_at) AS "arrivedAt",a.collected_at AS "collectedAt",MAX((${movedRow('a')})::int) AS moved
+         FROM audit_approval_pending p JOIN audit_documents a ON a.document_id=p.document_id
+         WHERE a.source_connection_id=?${companyFilter} AND ${exactEmployee('p.approver_employee_id')}${moved.sql}
+-        GROUP BY p.document_id,a.collected_at ORDER BY MAX(p.activated_at) DESC,p.document_id LIMIT ? OFFSET ?`, params);
++        GROUP BY p.document_id,a.collected_at ORDER BY MAX(p.activated_at) DESC NULLS LAST,p.document_id LIMIT ? OFFSET ?`, params);
+       const nodeNames = value => [...new Set((typeof value === 'string' ? JSON.parse(value) : value || []).filter(name => typeof name === 'string'))].sort();
+       return rows.map(row => ({ documentId: row.documentId, nodeNames: nodeNames(row.nodeNames), arrivedAt: timestamp(row.arrivedAt), collectedAt: timestamp(row.collectedAt), moved: Number(row.moved) === 1 }));
+     },
+@@ -397,7 +396,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       if (!departmentOids.length || companyIds !== 'all' && !companyIds.length) return [];
+       const companyFilter = companyIds === 'all' ? '' : ` AND a.company_id IN (${placeholders(companyIds)})`;
+       const params = [connectionId, ...(companyIds === 'all' ? [] : companyIds), ...departmentOids, ...moved.params, limit, offset];
+-      const [rows] = await pool.query(`SELECT i.document_id AS documentId,${movedRow('a')} AS moved
++      const [rows] = await pool.query(`SELECT i.document_id AS "documentId",(${movedRow('a')})::int AS moved
+         FROM audit_approval_actor_index i JOIN audit_documents a ON a.document_id=i.document_id
+         WHERE a.source_connection_id=?${companyFilter} AND i.document_department_oid IN (${placeholders(departmentOids)})${moved.sql}
+         ORDER BY a.collected_at DESC,a.document_id LIMIT ? OFFSET ?`, params);
+@@ -435,12 +434,12 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+     // it waits on them, they passed or rejected it, or a department they manage submitted it.
+     async approvalRelation({ documentId, employeeId } = {}) {
+       ready(); requireText(documentId); employeeId = approvalEmployee(employeeId);
+-      const [rows] = await pool.query(`SELECT a.company_id AS companyId,
+-          EXISTS(SELECT 1 FROM audit_approval_pending p WHERE p.document_id=a.document_id AND ${exactEmployee('p.approver_employee_id')}) AS pending,
++      const [rows] = await pool.query(`SELECT a.company_id AS "companyId",
++          EXISTS(SELECT 1 FROM audit_approval_pending p WHERE p.document_id=a.document_id AND ${exactEmployee('p.approver_employee_id')})::int AS pending,
+           EXISTS(SELECT 1 FROM audit_approval_actors x WHERE x.document_id=a.document_id AND (${exactEmployee('x.operator_employee_id')} OR ${exactEmployee('x.approver_employee_id')})
+-            AND x.category IN ('passed','rejected')) AS handled,
++            AND x.category IN ('passed','rejected'))::int AS handled,
+           EXISTS(SELECT 1 FROM audit_approval_actor_index i JOIN hly_departments h ON h.connection_id=a.source_connection_id AND h.department_oid=i.document_department_oid
+-            WHERE i.document_id=a.document_id AND ${exactEmployee('h.manager_employee_id')} AND h.refresh_state='ok') AS managed
++            WHERE i.document_id=a.document_id AND ${exactEmployee('h.manager_employee_id')} AND h.refresh_state='ok')::int AS managed
+         FROM audit_documents a WHERE a.document_id=? AND a.source_connection_id=?`, [...Array(8).fill(employeeId), documentId, connectionId]);
+       const row = rows[0];
+       return row ? { companyId: row.companyId, pending: Number(row.pending) === 1, handled: Number(row.handled) === 1, managed: Number(row.managed) === 1 } : null;
+@@ -482,15 +481,15 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       }
+       if (state === 'failed') {
+         await pool.query(`INSERT INTO hly_departments(connection_id,department_oid,refresh_state,refreshed_at) VALUES (?,?,'failed',?)
+-          ON DUPLICATE KEY UPDATE connection_id=connection_id`, [connectionId, departmentOid, refreshedAtSql]);
++          ON CONFLICT (connection_id,department_oid) DO NOTHING`, [connectionId, departmentOid, refreshedAtSql]);
+         return { state };
+       }
+       const ok = state === 'ok';
+       await pool.query(`INSERT INTO hly_departments
+         (connection_id,department_oid,parent_department_oid,cust_dept_number,name,path,status,manager_user_oid,manager_employee_id,manager_ciphertext,refresh_state,refreshed_at)
+-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE parent_department_oid=VALUES(parent_department_oid),cust_dept_number=VALUES(cust_dept_number),
+-          name=VALUES(name),path=VALUES(path),status=VALUES(status),manager_user_oid=VALUES(manager_user_oid),manager_employee_id=VALUES(manager_employee_id),
+-          manager_ciphertext=VALUES(manager_ciphertext),refresh_state=VALUES(refresh_state),refreshed_at=VALUES(refreshed_at)`,
++        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (connection_id,department_oid) DO UPDATE SET parent_department_oid=EXCLUDED.parent_department_oid,cust_dept_number=EXCLUDED.cust_dept_number,
++          name=EXCLUDED.name,path=EXCLUDED.path,status=EXCLUDED.status,manager_user_oid=EXCLUDED.manager_user_oid,manager_employee_id=EXCLUDED.manager_employee_id,
++          manager_ciphertext=EXCLUDED.manager_ciphertext,refresh_state=EXCLUDED.refresh_state,refreshed_at=EXCLUDED.refreshed_at`,
+         [connectionId, departmentOid, row.parent, row.number, row.name, row.path, row.status, row.managerOid, ok ? managerEmployeeId : null,
+           ok && managerName ? seal({ managerName }, `department-manager:${departmentOid}`) : null, state, refreshedAtSql]);
+       return { state };
+@@ -525,13 +524,13 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+           const params = [connectionId, doc.id, doc.tenantId, doc.companyId, doc.companyName, doc.sourceId, doc.number, doc.formName, doc.type, doc.status, doc.amount, doc.currency, mysqlDateTime(doc.modifiedAt), collectedAtSql, doc.version, doc.historyCount, doc.rejectionCount, doc.withdrawalCount];
+           const [headsBefore] = await client.query('SELECT version,modified_at,collected_at FROM analysis_documents WHERE connection_id=? AND id=? FOR UPDATE', [connectionId, doc.id]);
+           await client.query(`INSERT INTO analysis_documents(connection_id,id,environment,tenant_id,company_id,company_name,source_id,number,form_name,document_type,status,amount,currency,modified_at,collected_at,version,history_count,rejection_count,withdrawal_count)
+-            VALUES (?,?,'prod',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=VALUES(id)`, params);
++            VALUES (?,?,'prod',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`, params);
+           const [heads] = await client.query('SELECT version,modified_at,collected_at FROM analysis_documents WHERE connection_id=? AND id=? FOR UPDATE', [connectionId, doc.id]);
+           const head = heads[0];
+           const [versionRows] = await client.query('SELECT version FROM analysis_document_versions WHERE connection_id=? AND document_id=? AND version=? FOR UPDATE', [connectionId, doc.id, doc.version]);
+-          await client.query('INSERT INTO analysis_document_versions(connection_id,document_id,version,modified_at,collected_at,batch_id,payload) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE version=VALUES(version)', [connectionId, doc.id, doc.version, mysqlDateTime(doc.modifiedAt), collectedAtSql, batchId, seal({ raw, document: doc }, `document:${doc.id}:${doc.version}`)]);
++          await client.query('INSERT INTO analysis_document_versions(connection_id,document_id,version,modified_at,collected_at,batch_id,payload) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING', [connectionId, doc.id, doc.version, mysqlDateTime(doc.modifiedAt), collectedAtSql, batchId, seal({ raw, document: doc }, `document:${doc.id}:${doc.version}`)]);
+           insertedVersions += Number(versionRows.length === 0);
+-          for (const event of doc.history) await client.query('INSERT IGNORE INTO analysis_events(connection_id,document_id,id,version,operation,category,at,node_type,payload) VALUES (?,?,?,?,?,?,?,?,?)', [connectionId, doc.id, event.id, doc.version, event.operation, event.category, mysqlDateTime(event.at), event.nodeType, seal(event, `event:${doc.id}:${doc.version}:${event.id}`)]);
++          for (const event of doc.history) await client.query('INSERT INTO analysis_events(connection_id,document_id,id,version,operation,category,at,node_type,payload) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING', [connectionId, doc.id, event.id, doc.version, event.operation, event.category, mysqlDateTime(event.at), event.nodeType, seal(event, `event:${doc.id}:${doc.version}:${event.id}`)]);
+           // HOTFIX-075: the document id includes the company of the document; the mirror keeps one row per
+           // source document. A document moved to another company in Huilianyi arrives under a new id.
+           // The earlier row stays with its versions, events and attachments and hands the source
+@@ -539,24 +538,32 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+           await client.query("UPDATE audit_documents SET source_document_id=CONCAT('moved:',document_id) WHERE source_connection_id=? AND source_document_id=? AND document_id<>?",
+             [connectionId, doc.sourceId, doc.id]);
+           await client.query(`INSERT INTO audit_documents(document_id,source_connection_id,source_document_id,tenant_id,company_id,legal_entity_id,source_type,document_number,source_status,source_version,amount,currency,source_modified_at,collected_at,sync_batch_id,permission_snapshot_id,snapshot_fingerprint,coverage_state)
+-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE source_document_id=VALUES(source_document_id)`,
++            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (document_id) DO UPDATE SET source_document_id=EXCLUDED.source_document_id`,
+           [doc.id, connectionId, doc.sourceId, doc.tenantId, doc.companyId, doc.sourceCompanyId || null, doc.type, doc.number, doc.status, doc.version, doc.amount, doc.currency, mysqlDateTime(doc.modifiedAt), collectedAtSql, audit.auditBatchId, audit.permissionSnapshotId, snapshotFingerprint, completeness]);
+           await client.query(`INSERT INTO audit_document_versions(document_id,source_version,sync_batch_id,permission_snapshot_id,payload_ciphertext,payload_sha256,completeness_state,source_modified_at,captured_at)
+-            VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE source_version=VALUES(source_version)`,
++            VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+             [doc.id, doc.version, audit.auditBatchId, audit.permissionSnapshotId, auditPayload, hashBytes(auditPayload), completeness, mysqlDateTime(doc.modifiedAt), collectedAtSql]);
+           for (const event of doc.history) {
+             const auditEventId = digest([doc.id, doc.version, event.id]);
+             const eventPayload = seal(event, `audit-event:${doc.id}:${doc.version}:${auditEventId}`);
+             await client.query(`INSERT INTO audit_approval_events(event_id,document_id,source_connection_id,source_event_id,source_version,sync_batch_id,permission_snapshot_id,operation,category,occurred_at,node_name,node_type,payload_ciphertext,payload_sha256)
+-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE event_id=VALUES(event_id)`,
++              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+             [auditEventId, doc.id, connectionId, event.sourceId || null, doc.version, audit.auditBatchId, audit.permissionSnapshotId, event.operation, event.category, mysqlDateTime(event.at), event.nodeName, event.nodeType, eventPayload, hashBytes(eventPayload)]);
+           }
+           for (const item of manifest.items) {
+             const sourceAttachmentId = item.sourceId && item.sourceId.length <= 191 ? item.sourceId : item.id;
+             const manifestFingerprint = digest(manifest);
+-            await client.query(`INSERT INTO audit_attachments(attachment_id,document_id,source_attachment_id,source_version,detail_version,name,media_type,declared_bytes,metadata_state,content_state,content_available,coverage_state,manifest_fingerprint,failure_code)
+-              VALUES (?,?,?,?,?,?,?,? ,?,'not_requested',FALSE,'metadata_only',?,?) ON DUPLICATE KEY UPDATE source_version=VALUES(source_version),detail_version=VALUES(detail_version),name=VALUES(name),media_type=VALUES(media_type),declared_bytes=VALUES(declared_bytes),metadata_state=VALUES(metadata_state),coverage_state=CASE WHEN content_state IN ('downloaded','fetching','queued') THEN coverage_state ELSE VALUES(coverage_state) END,manifest_fingerprint=VALUES(manifest_fingerprint),failure_code=VALUES(failure_code)`,
+-            [item.id, doc.id, sourceAttachmentId, doc.version, manifest.detailVersion || null, item.name, auditMediaType(item.format), item.size, auditAttachmentState(item.metadataState), manifestFingerprint, item.metadataState === 'available' ? null : item.metadataState]);
++            // audit_attachments has two unique keys (attachment_id; document + source attachment + version) and
++            // either one can collide alone: one file listed in two categories, or a new version of the same file.
++            // MySQL's ON DUPLICATE KEY UPDATE updated the row whichever key hit (the id first); so does this.
++            const values = [doc.version, manifest.detailVersion || null, item.name, auditMediaType(item.format), item.size, auditAttachmentState(item.metadataState), manifestFingerprint, item.metadataState === 'available' ? null : item.metadataState];
++            const [existing] = await client.query(`SELECT attachment_id FROM audit_attachments WHERE attachment_id=? OR (document_id=? AND source_attachment_id=? AND source_version=?)
++              ORDER BY (attachment_id=?) DESC LIMIT 1 FOR UPDATE`, [item.id, doc.id, sourceAttachmentId, doc.version, item.id]);
++            const refresh = `source_version=?,detail_version=?,name=?,media_type=?,declared_bytes=?,metadata_state=?,coverage_state=CASE WHEN content_state IN ('downloaded','fetching','queued') THEN coverage_state ELSE 'metadata_only' END,manifest_fingerprint=?,failure_code=?`;
++            if (existing.length) await client.query(`UPDATE audit_attachments SET ${refresh} WHERE attachment_id=?`, [...values, existing[0].attachment_id]);
++            else await client.query(`INSERT INTO audit_attachments(attachment_id,document_id,source_attachment_id,source_version,detail_version,name,media_type,declared_bytes,metadata_state,content_state,content_available,coverage_state,manifest_fingerprint,failure_code)
++              VALUES (?,?,?,?,?,?,?,?,?,'not_requested',0,'metadata_only',?,?) ON CONFLICT (attachment_id) DO UPDATE SET source_version=EXCLUDED.source_version,detail_version=EXCLUDED.detail_version,name=EXCLUDED.name,media_type=EXCLUDED.media_type,declared_bytes=EXCLUDED.declared_bytes,metadata_state=EXCLUDED.metadata_state,coverage_state=CASE WHEN audit_attachments.content_state IN ('downloaded','fetching','queued') THEN audit_attachments.coverage_state ELSE EXCLUDED.coverage_state END,manifest_fingerprint=EXCLUDED.manifest_fingerprint,failure_code=EXCLUDED.failure_code`,
++            [item.id, doc.id, sourceAttachmentId, ...values.slice(0, 6), ...values.slice(6)]);
+           }
+           const insertedHead = headsBefore.length === 0 && head.version === doc.version;
+           const sameVersion = !insertedHead && head.version === doc.version;
+@@ -719,15 +726,16 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       if (!companyIds.length) return { items: [], total: 0 };
+       // MOVED-1: a moved document stays out of the list and its count, unless the search is its number.
+       const moved = `EXISTS(SELECT 1 FROM audit_documents m WHERE m.document_id=d.id AND m.source_connection_id=d.connection_id AND ${movedRow('m')})`;
+-      const companySql = placeholders(companyIds); const where = `d.connection_id=? AND d.company_id IN (${companySql}) AND (d.number LIKE ? ESCAPE '\\\\' OR d.form_name LIKE ? ESCAPE '\\\\' OR d.company_name LIKE ? ESCAPE '\\\\' OR s.payee_name LIKE ? ESCAPE '\\\\' OR s.applicant_name LIKE ? ESCAPE '\\\\') AND (? IS NULL OR d.status=?) AND (? IS NULL OR d.document_type=?)
+-        AND (NOT ${moved} OR (?<>'' AND d.number LIKE ? ESCAPE '\\\\'))`;
++      // The search is case insensitive, as it was under MySQL's unicode_ci columns (ILIKE).
++      const companySql = placeholders(companyIds); const where = `d.connection_id=? AND d.company_id IN (${companySql}) AND (d.number ILIKE ? ESCAPE '\\' OR d.form_name ILIKE ? ESCAPE '\\' OR d.company_name ILIKE ? ESCAPE '\\' OR s.payee_name ILIKE ? ESCAPE '\\' OR s.applicant_name ILIKE ? ESCAPE '\\') AND (?::text IS NULL OR d.status=?) AND (?::text IS NULL OR d.document_type=?)
++        AND (NOT ${moved} OR (?::text<>'' AND d.number ILIKE ? ESCAPE '\\'))`;
+       const base = [connectionId, ...companyIds, pattern(q), pattern(q), pattern(q), pattern(q), pattern(q), status, status, type, type, q, pattern(q)];
+       // Its successor is named only when it sits in one of the companies asked about.
+       const successor = `CASE WHEN ${moved} THEN (SELECT s.id FROM analysis_documents s JOIN audit_documents c ON c.document_id=s.id AND c.source_connection_id=s.connection_id
+         WHERE s.connection_id=d.connection_id AND s.tenant_id=d.tenant_id AND s.source_id=d.source_id AND s.id<>d.id AND c.source_document_id=s.source_id AND s.company_id IN (${companySql}) ORDER BY s.id LIMIT 1) END`;
+       const searchJoin = 'LEFT JOIN analysis_document_search s ON s.connection_id=d.connection_id AND s.document_id=d.id AND s.document_version=d.version';
+       const [totalRows] = await pool.query(`SELECT COUNT(*) AS count FROM analysis_documents d ${searchJoin} WHERE ${where}`, base);
+-      const [rows] = await pool.query(`SELECT d.*,v.payload,${moved} AS moved,${successor} AS current_id FROM analysis_documents d JOIN analysis_document_versions v ON v.connection_id=d.connection_id AND v.document_id=d.id AND v.version=d.version ${searchJoin} WHERE ${where} ORDER BY d.collected_at DESC,d.id LIMIT ? OFFSET ?`, [...companyIds, ...base, limit, offset]);
++      const [rows] = await pool.query(`SELECT d.*,v.payload,(${moved})::int AS moved,${successor} AS current_id FROM analysis_documents d JOIN analysis_document_versions v ON v.connection_id=d.connection_id AND v.document_id=d.id AND v.version=d.version ${searchJoin} WHERE ${where} ORDER BY d.collected_at DESC,d.id LIMIT ? OFFSET ?`, [...companyIds, ...base, limit, offset]);
+       const summaries = await readDetailProjectionSummaries(rows.map(row => ({ id: row.id, version: row.version })));
+       return { items: rows.map(row => documentListItem(row, summaries)), total: count(totalRows[0].count) };
+     },
+@@ -736,7 +744,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       const [rows] = await pool.query(`SELECT d.*,v.payload FROM analysis_documents d JOIN analysis_document_versions v ON v.connection_id=d.connection_id AND v.document_id=d.id AND v.version=d.version WHERE d.connection_id=? AND d.id=? AND d.company_id IN (${placeholders(companyIds)})`, [connectionId, id, ...companyIds]);
+       const row = rows[0]; if (!row) return null;
+       const document = currentDocument(row);
+-      const [eventRows] = await pool.query(`SELECT e.id,e.version,e.payload,v.collected_at,v.modified_at FROM analysis_events e JOIN analysis_document_versions v ON v.connection_id=e.connection_id AND v.document_id=e.document_id AND v.version=e.version WHERE e.connection_id=? AND e.document_id=? ORDER BY e.id,v.modified_at DESC,v.collected_at DESC,v.version`, [connectionId, id]);
++      const [eventRows] = await pool.query(`SELECT e.id,e.version,e.payload,v.collected_at,v.modified_at FROM analysis_events e JOIN analysis_document_versions v ON v.connection_id=e.connection_id AND v.document_id=e.document_id AND v.version=e.version WHERE e.connection_id=? AND e.document_id=? ORDER BY e.id,v.modified_at DESC NULLS LAST,v.collected_at DESC,v.version`, [connectionId, id]);
+       const currentIds = new Set(document.history.map(event => event.id));
+       const observedHistory = [];
+       for (const eventRow of eventRows) {
+@@ -782,12 +790,12 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+     async listCompanies({ companyIds } = {}) {
+       ready(); if (companyIds !== undefined) companyIds = companies(companyIds); if (companyIds?.length === 0) return [];
+       const filter = companyIds === undefined ? '' : ` AND company_id IN (${placeholders(companyIds)})`;
+-      const [rows] = await pool.query(`SELECT company_id AS id,tenant_id AS tenantId,MAX(company_name) AS name,COUNT(*) AS count FROM analysis_documents WHERE connection_id=?${filter} GROUP BY company_id,tenant_id ORDER BY name,company_id`, [connectionId, ...(companyIds || [])]);
++      const [rows] = await pool.query(`SELECT company_id AS id,tenant_id AS "tenantId",MAX(company_name) AS name,COUNT(*) AS count FROM analysis_documents WHERE connection_id=?${filter} GROUP BY company_id,tenant_id ORDER BY name,company_id`, [connectionId, ...(companyIds || [])]);
+       return rows.map(row => ({ ...row, count: count(row.count) }));
+     },
+     async getPaymentCompanyBinding({ tenantId, companyId } = {}) {
+       ready(); tenantId = requireText(tenantId); companyId = requireText(companyId);
+-      const [rows] = await pool.query(`SELECT d.id,d.version,d.company_id,d.tenant_id,d.source_id,v.payload FROM analysis_documents d JOIN analysis_document_versions v ON v.connection_id=d.connection_id AND v.document_id=d.id AND v.version=d.version WHERE d.connection_id=? AND d.tenant_id=? AND d.company_id=? ORDER BY d.modified_at DESC,d.collected_at DESC,d.id LIMIT 1`, [connectionId, tenantId, companyId]);
++      const [rows] = await pool.query(`SELECT d.id,d.version,d.company_id,d.tenant_id,d.source_id,v.payload FROM analysis_documents d JOIN analysis_document_versions v ON v.connection_id=d.connection_id AND v.document_id=d.id AND v.version=d.version WHERE d.connection_id=? AND d.tenant_id=? AND d.company_id=? ORDER BY d.modified_at DESC NULLS LAST,d.collected_at DESC,d.id LIMIT 1`, [connectionId, tenantId, companyId]);
+       const row = rows[0]; if (!row) return null;
+       const document = currentDocument(row), data = unseal(row.payload, `document:${row.id}:${row.version}`), code = data.raw?.docCompanyCode;
+       if (typeof code !== 'string' || !code || code !== code.trim() || code.length > 160 || /[\u0000-\u001f\u007f*?%]/u.test(code)) return null;
+@@ -796,10 +804,10 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+     async overview({ companyIds } = {}) {
+       ready(); companyIds = companies(companyIds); if (!companyIds.length) return { documentCount: 0, companiesCount: 0, historyReportCount: 0, eventCount: 0, rejectionCount: 0, withdrawalCount: 0, passedEventCount: 0, byForm: [], historicalVersionsAvailable: false };
+       const sql = placeholders(companyIds); const args = [connectionId, ...companyIds];
+-      const [summaryRows] = await pool.query(`SELECT COUNT(*) AS documents,COUNT(DISTINCT company_id) AS companies,SUM(history_count>0) AS histories FROM analysis_documents WHERE connection_id=? AND company_id IN (${sql})`, args);
+-      const [eventRows] = await pool.query(`SELECT COUNT(*) AS events,SUM(category='rejected') AS rejected,SUM(category='withdrawn') AS withdrawn,SUM(category='passed') AS passed FROM (
++      const [summaryRows] = await pool.query(`SELECT COUNT(*) AS documents,COUNT(DISTINCT company_id) AS companies,SUM((history_count>0)::int) AS histories FROM analysis_documents WHERE connection_id=? AND company_id IN (${sql})`, args);
++      const [eventRows] = await pool.query(`SELECT COUNT(*) AS events,SUM((category='rejected')::int) AS rejected,SUM((category='withdrawn')::int) AS withdrawn,SUM((category='passed')::int) AS passed FROM (
+         SELECT document_id,id,category FROM (
+-          SELECT e.document_id,e.id,e.category,ROW_NUMBER() OVER (PARTITION BY e.document_id,e.id ORDER BY v.modified_at DESC,v.collected_at DESC,v.version DESC) AS event_rank
++          SELECT e.document_id,e.id,e.category,ROW_NUMBER() OVER (PARTITION BY e.document_id,e.id ORDER BY v.modified_at DESC NULLS LAST,v.collected_at DESC,v.version DESC) AS event_rank
+           FROM analysis_events e JOIN analysis_documents d ON d.connection_id=e.connection_id AND d.id=e.document_id
+           JOIN analysis_document_versions v ON v.connection_id=e.connection_id AND v.document_id=e.document_id AND v.version=e.version
+           WHERE d.connection_id=? AND d.company_id IN (${sql})
+@@ -812,18 +820,19 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+     async analytics({ companyIds } = {}) {
+       ready(); companyIds = companies(companyIds); if (!companyIds.length) return { byCompany: [], byStatus: [], byType: [], byMonth: [], byCurrency: [], byForm: [], aiRecordCount: 0, amountUnavailable: 0, undatedCount: 0, rejectedDocumentCount: 0, withdrawnDocumentCount: 0 };
+       const sql = placeholders(companyIds), where = `WHERE connection_id=? AND company_id IN (${sql})`, args = [connectionId, ...companyIds];
+-      const numeric = "CASE WHEN amount REGEXP '^[-]{0,1}[0-9]+([.][0-9]+){0,1}$' THEN CAST(amount AS DECIMAL(65,20)) END";
+-      const month = "DATE_FORMAT(DATE_ADD(modified_at, INTERVAL 8 HOUR),'%Y-%m')";
++      const numeric = "CASE WHEN amount ~ '^[-]{0,1}[0-9]+([.][0-9]+){0,1}$' THEN CAST(amount AS numeric(65,20)) END";
++      // modified_at is the UTC wall clock; the month is the Shanghai one
++      const month = "to_char(modified_at + interval '8 hours','YYYY-MM')";
+       const group = async query => (await pool.query(query, args))[0];
+       const [byCompany, byStatus, byType, byMonth, byCurrency, byForm, aiRows, totalsRows] = await Promise.all([
+         group(`SELECT company_id AS id,MAX(company_name) AS name,COUNT(*) AS count FROM analysis_documents ${where} GROUP BY company_id ORDER BY count DESC,company_id`),
+         group(`SELECT status AS name,COUNT(*) AS count FROM analysis_documents ${where} GROUP BY status ORDER BY count DESC,status`),
+         group(`SELECT document_type AS name,COUNT(*) AS count FROM analysis_documents ${where} GROUP BY document_type ORDER BY count DESC,document_type`),
+         group(`SELECT ${month} AS name,COALESCE(currency,'') AS currency,COUNT(*) AS count,SUM(${numeric}) AS amount FROM analysis_documents ${where} AND modified_at IS NOT NULL GROUP BY ${month},currency ORDER BY name,currency`),
+-        group(`SELECT COALESCE(currency,'') AS name,COUNT(*) AS count,SUM(${numeric}) AS amount FROM analysis_documents ${where} GROUP BY currency ORDER BY count DESC,currency`),
++        group(`SELECT COALESCE(currency,'') AS name,COUNT(*) AS count,SUM(${numeric}) AS amount FROM analysis_documents ${where} GROUP BY currency ORDER BY count DESC,currency NULLS FIRST`),
+         group(`SELECT form_name AS name,COALESCE(currency,'') AS currency,COUNT(*) AS count,SUM(${numeric}) AS amount FROM analysis_documents ${where} GROUP BY form_name,currency ORDER BY count DESC,form_name,currency`),
+         pool.query(`SELECT COUNT(*) AS runs FROM analysis_sync_states WHERE connection_id=? AND scope_key LIKE 'formal-evidence%'`, [connectionId]).then(result => result[0]),
+-        group(`SELECT SUM(${numeric} IS NULL) AS unavailable,SUM(modified_at IS NULL) AS undated,SUM(rejection_count>0) AS rejected,SUM(withdrawal_count>0) AS withdrawn FROM analysis_documents ${where}`),
++        group(`SELECT SUM((${numeric} IS NULL)::int) AS unavailable,SUM((modified_at IS NULL)::int) AS undated,SUM((rejection_count>0)::int) AS rejected,SUM((withdrawal_count>0)::int) AS withdrawn FROM analysis_documents ${where}`),
+       ]);
+       const series = rows => rows.map(row => ({ name: row.name, ...(row.currency !== undefined ? { currency: row.currency } : {}), count: count(row.count), amount: row.amount === null || row.amount === undefined ? null : String(row.amount) }));
+       const totals = totalsRows[0] || {}, ai = aiRows[0] || {};
+@@ -874,7 +883,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+       for (const row of rows) { if (!Object.hasOwn(values, row.scope_key)) throw problem('ANALYSIS_SCOPE_MISMATCH'); try { values[row.scope_key] = unseal(row.payload, `state:${row.scope_key}`); } catch { Object.defineProperty(errors, row.scope_key, { value: 'ANALYSIS_DECRYPTION', enumerable: true }); } }
+       return { values, errors };
+     },
+-    async writeState(scopeKey, value) { ready(); requireText(scopeKey); if (value === undefined) throw problem('ANALYSIS_VALIDATION'); await pool.query('INSERT INTO analysis_sync_states(connection_id,scope_key,payload) VALUES (?,?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload),updated_at=CURRENT_TIMESTAMP(6)', [connectionId, scopeKey, seal(value, `state:${scopeKey}`)]); },
++    async writeState(scopeKey, value) { ready(); requireText(scopeKey); if (value === undefined) throw problem('ANALYSIS_VALIDATION'); await pool.query('INSERT INTO analysis_sync_states(connection_id,scope_key,payload) VALUES (?,?,?) ON CONFLICT (connection_id,scope_key) DO UPDATE SET payload=EXCLUDED.payload,updated_at=LOCALTIMESTAMP(6)', [connectionId, scopeKey, seal(value, `state:${scopeKey}`)]); },
+     async compareAndWriteState(scopeKey, { expectedRevision, value, authorize = () => true } = {}) {
+       ready(); requireText(scopeKey); if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER || !value || typeof value !== 'object' || Array.isArray(value) || value.revision !== expectedRevision + 1 || typeof authorize !== 'function') throw problem('ANALYSIS_VALIDATION');
+       try {
+@@ -882,13 +891,16 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+           const allowed = async () => { if (await authorize() === false) throw problem('ANALYSIS_SCOPE_MISMATCH'); }; await allowed();
+           const [rows] = await client.query('SELECT payload FROM analysis_sync_states WHERE connection_id=? AND scope_key=? FOR UPDATE', [connectionId, scopeKey]); const prior = rows[0] ? unseal(rows[0].payload, `state:${scopeKey}`) : null;
+           if (prior && (!Number.isSafeInteger(prior.revision) || prior.revision < 1)) throw problem('ANALYSIS_VALIDATION'); if ((prior?.revision ?? 0) !== expectedRevision) throw Object.assign(problem('ANALYSIS_STATE_CONFLICT'), { status: 409 }); await allowed();
+-          await client.query('INSERT INTO analysis_sync_states(connection_id,scope_key,payload) VALUES (?,?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload),updated_at=CURRENT_TIMESTAMP(6)', [connectionId, scopeKey, seal(value, `state:${scopeKey}`)]); await allowed(); return { revision: value.revision };
++          // An existing row is locked above, so overwriting it is safe; a first write is a plain insert, so of two first
++          // writers the second finds the key taken (no ON CONFLICT to turn it into a silent overwrite)
++          await client.query(`INSERT INTO analysis_sync_states(connection_id,scope_key,payload) VALUES (?,?,?)${rows[0] ? ' ON CONFLICT (connection_id,scope_key) DO UPDATE SET payload=EXCLUDED.payload,updated_at=LOCALTIMESTAMP(6)' : ''}`, [connectionId, scopeKey, seal(value, `state:${scopeKey}`)]);
++          await allowed(); return { revision: value.revision };
+         });
+       } catch (error) {
+-        // Two first writes of one key both hold the gap lock of the absent row; InnoDB rolls one back
+-        // as a deadlock (1213). Another writer got there first: that is the same conflict. A lock
+-        // wait timeout (1205) says nothing about who wrote, so it stays what it is.
+-        if (error?.code === 'ER_LOCK_DEADLOCK' || error?.errno === 1213) throw Object.assign(problem('ANALYSIS_STATE_CONFLICT'), { status: 409, cause: error });
++        // Two first writes of one key: the second insert waits for the first and then finds the key taken (1062); a deadlock
++        // (1213) says the same. Another writer got there first: that is the conflict. A lock wait timeout (1205) says nothing
++        // about who wrote, so it stays what it is.
++        if (error?.code === 'ER_LOCK_DEADLOCK' || error?.errno === 1213 || error?.code === 'ER_DUP_ENTRY') throw Object.assign(problem('ANALYSIS_STATE_CONFLICT'), { status: 409, cause: error });
+         throw error;
+       }
+     },
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+index e2002cd..03b5671 100644
+--- a/src/pg-database.mjs
++++ b/src/pg-database.mjs
+@@ -145,6 +145,8 @@ function prepareParam(value) {
+     return utcWallClock(value);
+   }
+   if (value === undefined) return null;
++  // mysql2 sent true / false as 1 / 0; the flag columns are smallint, and '1' / '0' still read as true / false where SQL wants a boolean
++  if (typeof value === 'boolean') return value ? 1 : 0;
+   if (typeof value === 'bigint') return value.toString();
+   if (Array.isArray(value)) return value.map(prepareParam);
+   if (value && typeof value === 'object' && !Buffer.isBuffer(value) && !ArrayBuffer.isView(value)) {
+@@ -429,7 +431,7 @@ function orderedMigrations(migrations) {
+  */
+ async function expectedEntries(conn, migrations) {
+   const scratch = `jiuan_expected_${randomBytes(6).toString('hex')}`;
+-  await conn.beginTransaction();
++  await conn.query('BEGIN');
+   try {
+     await conn.query(`CREATE SCHEMA ${scratch}`);
+     await conn.query(`SET LOCAL search_path = ${scratch}`);
+@@ -437,7 +439,7 @@ async function expectedEntries(conn, migrations) {
+     for (const migration of migrations) for (const statement of splitSqlStatements(migration.sql)) await conn.query(statement);
+     return await schemaListingEntries(conn, scratch);
+   } finally {
+-    await conn.rollback();
++    await conn.query('ROLLBACK');
+   }
+ }
+ 
+@@ -499,13 +501,13 @@ export async function migratePg(pool, { migrations = PG_MIGRATIONS, lockName = S
+     const applied = [];
+     for (const migration of ordered) {
+       if (records.has(migration.version)) continue;
+-      await connection.beginTransaction();
++      await connection.query('BEGIN');
+       try {
+         for (const statement of splitSqlStatements(migration.sql)) await connection.query(statement);
+         await connection.query('INSERT INTO schema_migrations (version, name, checksum, adopted_by, additive) VALUES (?, ?, ?, ?, ?)', [migration.version, migration.name, migrationChecksum(migration), 'applied', migration.additive === true ? 1 : 0]);
+-        await connection.commit();
++        await connection.query('COMMIT');
+       } catch (error) {
+-        try { await connection.rollback(); } catch { /* the error that matters is the migration's */ }
++        try { await connection.query('ROLLBACK'); } catch { /* the error that matters is the migration's */ }
+         throw error;
+       }
+       applied.push(migration.version);

@@ -1,0 +1,906 @@
+补丁 0011 的测试。
+- 改成连 PG（PG_TEST_URL、createPgPool、migratePg、parsePgUrl；隔离端口 3307 → 5434；清库改成 DROP SCHEMA public CASCADE 再建）：
+  agent-reference-store、approval-view-store、department-directory、document-search、list-sync-company-move、moved-documents、
+  mysql-analysis-store-versions、repair-analysis-document-heads、analysis-state-conflict、agent-enablement、approval-identity 的集成测试，
+  以及 company-directory.test、document-page-api.test 里连真库的那一条。
+- 新 tests/pg-analysis-store.integration.test.mjs：两个唯一键的附件、空值排序、只改「还在跑」的批次；pg-database.test 加布尔参数。
+- 动了的断言：analysis-state-conflict C1 输家的原因 1213（InnoDB 死锁）→ 1062（唯一键），输赢和 409 不变；
+  agent-reference-store.test 查的 SQL 文字 INSERT IGNORE → INSERT … ON CONFLICT DO NOTHING。
+- 去掉的（poc/bench/pg-port/removed-tests.json）：document-search 的 P3「v18 回填」、P9「v19 只新增表」——测的是 MySQL 的 v18 → v19 升级，PG 从基线 19 起。
+- document-search 看锁等待：SHOW PROCESSLIST → pg_stat_activity；C2 的锁等待上限：innodb_lock_wait_timeout=1 → lock_timeout = 1000。
+
+diff --git a/tests/agent-enablement.integration.test.mjs b/tests/agent-enablement.integration.test.mjs
+index 1432381..f9f9c43 100644
+--- a/tests/agent-enablement.integration.test.mjs
++++ b/tests/agent-enablement.integration.test.mjs
+@@ -3,7 +3,7 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { randomBytes } from 'node:crypto';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { loadContract } from '../src/agent-contract/checks.mjs';
+ import { createAgentClient } from '../providers/nexus-a2a.mjs';
+@@ -18,13 +18,13 @@ const KEY_A = `nxa_${'A'.repeat(30)}`;
+ const KEY_B = `nxa_${'B'.repeat(30)}`;
+ const ADMIN = { principal: 'admin-1', role: 'admin' };
+ 
+-test('E8 real MySQL: the state row never holds the key in clear; E9 a racing write is a conflict', { skip: !process.env.MYSQL_TEST_URL }, async t => {
+-  const config = parseMySqlUrl(process.env.MYSQL_TEST_URL);
+-  assert.equal(config.port, 3307);
++test('E8 real MySQL: the state row never holds the key in clear; E9 a racing write is a conflict', { skip: !process.env.PG_TEST_URL }, async t => {
++  const config = parsePgUrl(process.env.PG_TEST_URL);
++  assert.equal(config.port, 5434);
+   assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 4 });
++  const pool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 4 });
+   t.after(() => pool.end());
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: randomBytes(32), connectionId: CONNECTION });
+   await store.migrate();
+   await pool.query('DELETE FROM analysis_sync_states WHERE connection_id=?', [CONNECTION]);
+diff --git a/tests/agent-reference-store.integration.test.mjs b/tests/agent-reference-store.integration.test.mjs
+index 59ec1f2..b3fde1a 100644
+--- a/tests/agent-reference-store.integration.test.mjs
++++ b/tests/agent-reference-store.integration.test.mjs
+@@ -2,20 +2,20 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { readFile } from 'node:fs/promises';
+ import { createAgentReferenceStore } from '../src/agent-reference-store.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ 
+ test('reference store imports and serves only the latest source snapshot', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307);
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434);
+   assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const pool = createPgPool({ url: mysqlTestUrl });
+   let importedVersion = null;
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     const store = createAgentReferenceStore({ pool });
+     const seed = JSON.parse(await readFile('seeds/hly-config-seed-v1.json', 'utf8'));
+     const sourceSha256 = 'f'.repeat(64);
+diff --git a/tests/agent-reference-store.test.mjs b/tests/agent-reference-store.test.mjs
+index 0aa64cf..732ed92 100644
+--- a/tests/agent-reference-store.test.mjs
++++ b/tests/agent-reference-store.test.mjs
+@@ -29,5 +29,6 @@ test('reference store imports a seed idempotently and exposes only reference col
+   assert.equal(latest.sourceSha256, seedSource);
+   assert.equal(latest.seedVersion, null);
+   assert.deepEqual(latest.items, [{ ok: true }]);
+-  assert.ok(calls.some(([sql]) => /INSERT IGNORE INTO ref_expense_type_seed/i.test(sql)));
++  // PostgreSQL: INSERT … ON CONFLICT DO NOTHING in place of MySQL's INSERT IGNORE
++  assert.ok(calls.some(([sql]) => /INSERT INTO ref_expense_type_seed .*ON CONFLICT DO NOTHING/is.test(sql)));
+ });
+diff --git a/tests/analysis-state-conflict.integration.test.mjs b/tests/analysis-state-conflict.integration.test.mjs
+index 44572f9..4e463f6 100644
+--- a/tests/analysis-state-conflict.integration.test.mjs
++++ b/tests/analysis-state-conflict.integration.test.mjs
+@@ -3,7 +3,7 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { randomBytes, randomUUID } from 'node:crypto';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { loadContract } from '../src/agent-contract/checks.mjs';
+ import { createAgentClient } from '../providers/nexus-a2a.mjs';
+@@ -20,12 +20,12 @@ const KEY_A = `nxa_${'A'.repeat(30)}`;
+ const KEY_B = `nxa_${'B'.repeat(30)}`;
+ 
+ async function openStore(t, connectionId, { connectionLimit = 4, wrapConnection } = {}) {
+-  const config = parseMySqlUrl(process.env.MYSQL_TEST_URL);
+-  assert.equal(config.port, 3307);
++  const config = parsePgUrl(process.env.PG_TEST_URL);
++  assert.equal(config.port, 5434);
+   assert.match(config.database, /_test$/);
+-  const raw = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit });
++  const raw = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit });
+   t.after(() => raw.end());
+-  await migrateMySql(raw);
++  await migratePg(raw);
+   const pool = wrapConnection ? new Proxy(raw, {
+     get(target, prop) {
+       if (prop === 'getConnection') return async () => wrapConnection(await target.getConnection());
+@@ -60,7 +60,7 @@ function lockReadBarrier(count) {
+ 
+ const conflict = error => error?.code === 'ANALYSIS_STATE_CONFLICT' && error.status === 409;
+ 
+-test('C1 real MySQL: two concurrent first writes of one key deadlock in InnoDB; one wins, the other gets 409', { skip: !process.env.MYSQL_TEST_URL }, async t => {
++test('C1 real MySQL: two concurrent first writes of one key deadlock in InnoDB; one wins, the other gets 409', { skip: !process.env.PG_TEST_URL }, async t => {
+   const { store, pool, connectionId } = await openStore(t, `${CONNECTION}-c1`);
+   const scopeKey = `race:first:${Date.now()}`;
+   await pool.query('DELETE FROM analysis_sync_states WHERE connection_id=? AND scope_key=?', [connectionId, scopeKey]);
+@@ -74,7 +74,8 @@ test('C1 real MySQL: two concurrent first writes of one key deadlock in InnoDB;
+   assert.equal(lost.length, 1, 'exactly one first write loses');
+   assert.deepEqual(won[0].value, { revision: 1 });
+   assert.ok(conflict(lost[0].reason), `the loser gets the store conflict, got ${lost[0].reason?.code} ${lost[0].reason?.errno}`);
+-  assert.equal(lost[0].reason.cause?.errno, 1213, 'this race went through InnoDB deadlock detection');
++  // PostgreSQL: the second first insert waits for the first and then finds the key taken (1062), where InnoDB saw a deadlock (1213)
++  assert.equal(lost[0].reason.cause?.errno, 1062, 'this race went through the unique key');
+   const winner = settled.findIndex(item => item.status === 'fulfilled') === 0 ? 'a' : 'b';
+   assert.deepEqual(await store.readState(scopeKey), { revision: 1, writer: winner });
+ 
+@@ -83,10 +84,10 @@ test('C1 real MySQL: two concurrent first writes of one key deadlock in InnoDB;
+   await pool.query('DELETE FROM analysis_sync_states WHERE connection_id=? AND scope_key=?', [connectionId, scopeKey]);
+ });
+ 
+-test('C2 real MySQL: a lock wait timeout (1205) is not turned into a conflict', { skip: !process.env.MYSQL_TEST_URL }, async t => {
++test('C2 real MySQL: a lock wait timeout (1205) is not turned into a conflict', { skip: !process.env.PG_TEST_URL }, async t => {
+   const { store, pool, connectionId } = await openStore(t, `${CONNECTION}-c2`, {
+     connectionLimit: 2,
+-    wrapConnection: async client => { await client.query('SET SESSION innodb_lock_wait_timeout=1'); return client; },
++    wrapConnection: async client => { await client.query('SET lock_timeout = 1000'); return client; },
+   });
+   const scopeKey = `race:timeout:${Date.now()}`;
+   await pool.query('DELETE FROM analysis_sync_states WHERE connection_id=? AND scope_key=?', [connectionId, scopeKey]);
+@@ -108,7 +109,7 @@ test('C2 real MySQL: a lock wait timeout (1205) is not turned into a conflict',
+   await pool.query('DELETE FROM analysis_sync_states WHERE connection_id=? AND scope_key=?', [connectionId, scopeKey]);
+ });
+ 
+-test('C3 real MySQL: two admins enabling the first record at once get one success and one conflict notice (was a 500)', { skip: !process.env.MYSQL_TEST_URL }, async t => {
++test('C3 real MySQL: two admins enabling the first record at once get one success and one conflict notice (was a 500)', { skip: !process.env.PG_TEST_URL }, async t => {
+   const { store, pool, connectionId } = await openStore(t, `${CONNECTION}-c3`);
+   const tenantId = `race-tenant-${Date.now()}`;
+   const scopeKey = `agent-enablement:v1:${tenantId}`;
+diff --git a/tests/approval-identity.integration.test.mjs b/tests/approval-identity.integration.test.mjs
+index 0da43b7..04130db 100644
+--- a/tests/approval-identity.integration.test.mjs
++++ b/tests/approval-identity.integration.test.mjs
+@@ -1,7 +1,7 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { createHash } from 'node:crypto';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { extractApprovalActors, runApprovalActorIndex } from '../src/approval-identity.mjs';
+ 
+@@ -43,7 +43,7 @@ test('X15 a current node already finished by its approver is not waiting for the
+   assert.deepEqual(pending.map(item => item.approverEmployeeId), ['E-open', 'E-unflagged', 'E-string']);
+ });
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const CONN = 'approval-identity-index';
+ const scope = { tenantId: 'identity-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+ const history = (n, employeeID) => ({ id: `history-${n}`, operation: 2001, operateDate: `2026-10-1${n}T01:00:00Z`, ruleApprovalNodeName: '部门经理审批', operator: { employeeID, fullName: 'FAKE-甲' } });
+@@ -53,18 +53,16 @@ const report = (n, company, histories, extra = {}) => ({
+   paymentAmount: '1.00', paymentCurrencyCode: 'CNY', lastModifyDate: '2026-10-15T01:00:00Z', approvalHistoryDTOs: histories, ...extra,
+ });
+ 
+-test('X9 one round indexes the stored documents; a second round finds nothing; a new version is indexed alone', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async t => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++test('X9 one round indexes the stored documents; a second round finds nothing; a new version is indexed alone', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async t => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   let store;
+   t.after(async () => { await store?.close(); await pool.end(); });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await migrateMySql(pool);
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
+   store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 29), connectionId: CONN });
+   await store.migrate();
+   const chains = [{ id: 'chain-1', currentFlag: true, ruleApprovalNodeName: '财务审批', approverEmployeeID: 'E1', approverName: 'FAKE-乙', activatedDate: '2026-10-14T01:00:00Z' },
+@@ -87,18 +85,16 @@ test('X9 one round indexes the stored documents; a second round finds nothing; a
+   assert.equal((await store.listHandledDocuments({ employeeId: 'E4', companyIds: ['company-a'] })).length, 1);
+ });
+ 
+-test('X13 one unreadable document sorted first does not stop the round: the others are indexed, it is a gap once', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async t => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++test('X13 one unreadable document sorted first does not stop the round: the others are indexed, it is a gap once', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async t => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   let store;
+   t.after(async () => { await store?.close(); await pool.end(); });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await migrateMySql(pool);
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
+   store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 31), connectionId: 'approval-identity-unreadable' });
+   await store.migrate();
+   await store.upsertPage({ scope, collectedAt: '2026-10-15T02:00:00Z', reports: [report(1, 'company-a', [history(1, 'E1')]), report(2, 'company-a', [history(2, 'E2')]), report(3, 'company-b', [history(3, 'E3')])] });
+diff --git a/tests/approval-view-store.integration.test.mjs b/tests/approval-view-store.integration.test.mjs
+index 9cdd097..8c695ee 100644
+--- a/tests/approval-view-store.integration.test.mjs
++++ b/tests/approval-view-store.integration.test.mjs
+@@ -1,11 +1,11 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ 
+ // UI-2 / PAGE-2 (term 44): a person's approval views and the per-document relation that lets
+ // them open a document outside their company grant. All values here are synthetic.
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const CONN = 'approval-view-integration';
+ const scope = { tenantId: 'view-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+ const report = (company, n, modified) => ({
+@@ -19,18 +19,16 @@ const event = (key, operator, category, at, extra = {}) => ({ eventKey: key.repe
+ const chain = (key, node, approver, at) => ({ chainKey: key.repeat(64), nodeName: node, approverEmployeeId: approver, activatedAt: at, names: { approverName: 'FAKE-丁' } });
+ const department = (oid, manager) => ({ departmentOID: oid, parentDepartmentOID: null, name: 'FAKE 部门', path: 'FAKE 部门', custDeptNumber: 'D1', status: 101, managerOID: manager, managerName: 'FAKE-戊' });
+ 
+-test('UI-2 MySQL approval views and approval relation', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async t => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++test('UI-2 MySQL approval views and approval relation', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async t => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   let store, other;
+   t.after(async () => { await store?.close(); await other?.close(); await pool.end(); });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await migrateMySql(pool);
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
+   store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 71), connectionId: CONN });
+   await store.migrate();
+   await store.upsertPage({ scope, collectedAt: '2026-10-20T02:00:00Z', reports: [
+diff --git a/tests/company-directory.test.mjs b/tests/company-directory.test.mjs
+index d89b775..79c9155 100644
+--- a/tests/company-directory.test.mjs
++++ b/tests/company-directory.test.mjs
+@@ -9,7 +9,7 @@ import { COMPANY_DIRECTORY_AGENT_ID, COMPANY_DIRECTORY_STATE_KEY, companyOptions
+ import { HuilianyiStageOAuthClient, HUILIANYI_STAGE_API_URL, HUILIANYI_STAGE_TOKEN_URL } from '../providers/huilianyi-stage-oauth.mjs';
+ import { createCallGateway, currentAttribution } from '../src/platform/call-middleware.mjs';
+ import { createConnectorRegistry } from '../src/platform/connectors.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+@@ -320,18 +320,16 @@ test('on the production instance the governed connector offers no directory read
+   await gateway.close();
+ });
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-test('MySQL: a production refresh seals codes taken from real documents, and the session list reads them back sorted', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++const mysqlTestUrl = process.env.PG_TEST_URL;
++test('MySQL: a production refresh seals codes taken from real documents, and the session list reads them back sorted', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async () => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   try {
+-    const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-    await migrateMySql(pool);
++    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++    await pool.query('CREATE SCHEMA public');
++    await migratePg(pool);
+     const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 73), connectionId: 'company-directory-integration' });
+     await store.migrate();
+     const scope = { tenantId: 'directory-tenant', companyId: 'oid-kedun', allCompaniesInTenant: true };
+diff --git a/tests/department-directory.integration.test.mjs b/tests/department-directory.integration.test.mjs
+index 2ec8cf1..7b13d85 100644
+--- a/tests/department-directory.integration.test.mjs
++++ b/tests/department-directory.integration.test.mjs
+@@ -1,12 +1,12 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ 
+ // SYNC-06c: the department directory refreshes the departments that documents and approval
+ // events name, once a day; a failed read never overwrites a good row, and the manager's name is
+ // only stored sealed. All values are synthetic.
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const CONN = 'department-directory-integration';
+ const scope = { tenantId: 'department-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+ const DEPT_A = '11111111-1111-4111-8111-111111111111', DEPT_B = '22222222-2222-4222-8222-222222222222', DEPT_C = '33333333-3333-4333-8333-333333333333';
+@@ -19,18 +19,16 @@ const report = n => ({
+ const department = (oid, managerOID = null) => ({ departmentOID: oid, parentDepartmentOID: null, name: 'FAKE-部门', path: 'FAKE/部门', custDeptNumber: 'D001', status: 101, managerOID, managerName: MANAGER_NAME });
+ const rowBytes = row => Buffer.concat(Object.values(row).map(value => Buffer.isBuffer(value) ? value : Buffer.from(value instanceof Date ? value.toISOString() : String(value ?? ''), 'utf8')));
+ 
+-test('D7 candidates, the 24-hour window, a failed read over a good row, managed departments, a sealed name', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async t => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++test('D7 candidates, the 24-hour window, a failed read over a good row, managed departments, a sealed name', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async t => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   let store;
+   t.after(async () => { await store?.close(); await pool.end(); });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await migrateMySql(pool);
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
+   store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 43), connectionId: CONN });
+   await store.migrate();
+   await store.upsertPage({ scope, collectedAt: '2026-10-15T02:00:00Z', reports: [report(1), report(2)] });
+diff --git a/tests/document-page-api.test.mjs b/tests/document-page-api.test.mjs
+index a03873b..7dae8af 100644
+--- a/tests/document-page-api.test.mjs
++++ b/tests/document-page-api.test.mjs
+@@ -4,7 +4,7 @@ import { request } from 'node:http';
+ import { readFile } from 'node:fs/promises';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createWorkspacePreview } from './support/workspace-preview.mjs';
+ 
+@@ -96,17 +96,15 @@ test('the preview serves the two fixture documents as page models', async t => {
+   assert.equal((await fetch(`${base}/documents/sample-1/page`)).status, 404);
+ });
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-test('MySQL: getDocumentSource reads the list raw of exactly that version, within the given companies', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307); assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++const mysqlTestUrl = process.env.PG_TEST_URL;
++test('MySQL: getDocumentSource reads the list raw of exactly that version, within the given companies', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async () => {
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434); assert.match(config.database, /_test$/);
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   try {
+-    const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-    await migrateMySql(pool);
++    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++    await pool.query('CREATE SCHEMA public');
++    await migratePg(pool);
+     const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 91), connectionId: 'document-page-source' });
+     await store.migrate();
+     const raw = await fixture('sample-a-approving');
+diff --git a/tests/document-search.integration.test.mjs b/tests/document-search.integration.test.mjs
+index 3393338..fdad7e3 100644
+--- a/tests/document-search.integration.test.mjs
++++ b/tests/document-search.integration.test.mjs
+@@ -1,12 +1,10 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+-import { createCipheriv, randomBytes } from 'node:crypto';
+ import { setTimeout as delay } from 'node:timers/promises';
+-import { normalizeAnalysisReport } from '../src/analysis-normalize.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl, MYSQL_MIGRATIONS } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl, PG_MIGRATIONS } from '../src/pg-database.mjs';
+ import * as storeModule from '../src/mysql-analysis-store.mjs';
+ 
+-const url = process.env.MYSQL_TEST_URL;
++const url = process.env.PG_TEST_URL;
+ const scope = { tenantId: 'search-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+ const connectionId = 'search-plain';
+ const key = Buffer.alloc(32, 83);
+@@ -16,24 +14,20 @@ const raw = (changes = {}) => ({
+   paymentAmount: '42.00', paymentCurrencyCode: 'CNY', lastModifyDate: '2026-10-20T01:00:00Z',
+   corpSupplierName: 'Synthetic Acme Payee', applicantName: 'Synthetic Alice Applicant', approvalHistoryDTOs: [], ...changes,
+ });
+-async function fixture(t, { legacy = false, connectionLimit = 8 } = {}) {
+-  assert.ok(url, 'MYSQL_TEST_URL is required; these tests must contact the real test database');
+-  const config = parseMySqlUrl(url);
++async function fixture(t, { connectionLimit = 8 } = {}) {
++  assert.ok(url, 'PG_TEST_URL is required; these tests must contact the real test database');
++  const config = parsePgUrl(url);
+   assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url, connectionLimit, acquireTimeoutMs: 1000 });
++  const pool = createPgPool({ url, connectionLimit, acquireTimeoutMs: 1000 });
+   t.after(() => pool.end());
+-  const [[database]] = await pool.query('SELECT DATABASE() AS name');
++  const [[database]] = await pool.query('SELECT current_database() AS name');
+   t.diagnostic(`real database: ${database.name}`);
+-  const client = await pool.getConnection();
+-  try {
+-    const [tables] = await client.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    await client.query('SET FOREIGN_KEY_CHECKS=0');
+-    for (const row of tables) await client.query('DROP TABLE IF EXISTS `' + String(row.TABLE_NAME).replaceAll('`', '``') + '`');
+-  } finally { await client.query('SET FOREIGN_KEY_CHECKS=1'); client.release(); }
+-  await migrateMySql(pool, { migrations: legacy ? MYSQL_MIGRATIONS.filter(m => m.version <= 18) : MYSQL_MIGRATIONS });
+-  const store = await storeModule.openMySqlAnalysisStore({ pool, key, connectionId, readOnly: legacy });
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
++  const store = await storeModule.openMySqlAnalysisStore({ pool, key, connectionId });
+   t.after(() => store.close());
+-  if (!legacy) await store.migrate();
++  await store.migrate();
+   return { pool, store };
+ }
+ async function document(pool, store, source = 'search-report', companyId = 'company-a') {
+@@ -44,49 +38,23 @@ async function searchRow(pool, id) {
+   const [[row]] = await pool.query('SELECT document_version,payee_name,applicant_name FROM analysis_document_search WHERE connection_id=? AND document_id=?', [connectionId, id]);
+   return row;
+ }
+-// The previous image's on-disk snapshot format, written while only v1-v18 exist.
+-function sealLegacy(value, purpose) {
+-  const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
+-  cipher.setAAD(Buffer.from(JSON.stringify(['jiuan-analysis', 1, 'prod', connectionId, purpose])));
+-  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+-  return Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), encrypted]);
+-}
+-async function legacyWrite(pool, report) {
+-  const doc = normalizeAnalysisReport(report, { scope, connectionId });
+-  await pool.query(`INSERT INTO analysis_connections(connection_id,environment,schema_version,key_check) VALUES (?,'prod',1,?)
+-    ON DUPLICATE KEY UPDATE connection_id=VALUES(connection_id)`,
+-  [connectionId, sealLegacy({ connectionId, environment: 'prod', schemaVersion: 1 }, 'key-check')]);
+-  const client = await pool.getConnection();
+-  try {
+-    await client.query('START TRANSACTION');
+-    await client.query(`INSERT INTO analysis_documents(connection_id,id,environment,tenant_id,company_id,company_name,source_id,number,form_name,document_type,status,amount,currency,modified_at,collected_at,version,history_count,rejection_count,withdrawal_count)
+-      VALUES (?,?,'prod',?,?,?,?,?,?,?,?,?,?,?,'2026-10-22 00:00:00',?,?,?,?)
+-      ON DUPLICATE KEY UPDATE version=VALUES(version),modified_at=VALUES(modified_at)`,
+-    [connectionId, doc.id, doc.tenantId, doc.companyId, doc.companyName, doc.sourceId, doc.number, doc.formName, doc.type, doc.status, doc.amount, doc.currency,
+-      doc.modifiedAt.slice(0, 19).replace('T', ' '), doc.version, doc.historyCount, doc.rejectionCount, doc.withdrawalCount]);
+-    await client.query(`INSERT INTO analysis_document_versions(connection_id,document_id,version,modified_at,collected_at,payload) VALUES (?,?,?,?,'2026-10-22 00:00:00',?)`,
+-      [connectionId, doc.id, doc.version, doc.modifiedAt.slice(0, 19).replace('T', ' '), sealLegacy({ raw: report, document: doc }, `document:${doc.id}:${doc.version}`)]);
+-    await client.query('COMMIT');
+-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+-  return doc;
+-}
+ async function waitForLockWaiters(pool, blockingId, minimum) {
+   const until = Date.now() + 10000;
+   while (Date.now() < until) {
+     // Observe the real waiting sessions as a barrier; assertions below inspect committed rows.
+-    // SHOW PROCESSLIST exposes this test user's sessions without performance_schema privileges.
+-    const [sessions] = await pool.query('SHOW FULL PROCESSLIST');
+-    const waiting = sessions.filter(row => Number(row.Id) !== Number(blockingId) && row.db === parseMySqlUrl(url).database
+-      && row.Info?.includes('FROM analysis_documents WHERE connection_id=') && row.Info.endsWith('FOR UPDATE'));
++    // pg_stat_activity shows this test user's own sessions, their statement and what they wait on.
++    const [sessions] = await pool.query('SELECT pid, query, wait_event_type FROM pg_stat_activity WHERE datname = current_database()');
++    const waiting = sessions.filter(row => Number(row.pid) !== Number(blockingId) && row.wait_event_type === 'Lock'
++      && row.query?.includes('FROM analysis_documents WHERE connection_id=') && row.query.endsWith('FOR UPDATE'));
+     if (waiting.length >= minimum) return;
+     await delay(20);
+   }
+-  assert.fail(`expected ${minimum} real InnoDB lock waiters`);
++  assert.fail(`expected ${minimum} real row lock waiters`);
+ }
+ 
+ test('P1 new documents atomically persist the same search names as the approval card', async t => {
+   const { pool, store } = await fixture(t);
+-  assert.equal(MYSQL_MIGRATIONS.at(-1).version, 19);
++  assert.equal(PG_MIGRATIONS.at(-1).version, 19);
+   await store.upsertPage({ scope, reports: [raw()] });
+   const doc = await document(pool, store);
+   assert.deepEqual(storeModule.documentSearchNames(doc), { payeeName: 'Synthetic Acme Payee', applicantName: 'Synthetic Alice Applicant' });
+@@ -187,30 +155,6 @@ test('P10 stale search versions never match old names', async t => {
+   assert.equal((await store.listDocuments({ companyIds: ['company-a'], q: 'SEARCH-001' })).total, 1);
+ });
+ 
+-test('P3 v18 snapshots backfill in batches, resume rollback-era writes, and are idempotent', async t => {
+-  const { pool, store } = await fixture(t, { legacy: true });
+-  const first = await legacyWrite(pool, raw());
+-  const second = await legacyWrite(pool, raw({ expenseReportOID: 'legacy-two', businessCode: 'SEARCH-002' }));
+-  assert.equal(Number((await pool.query('SELECT MAX(version) AS n FROM schema_migrations'))[0][0].n), 18);
+-  assert.equal((await pool.query("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='analysis_document_search'"))[0].length, 0);
+-  await store.migrate();
+-  assert.equal(typeof store.backfillSearchNames, 'function');
+-  const snapshots = (await pool.query('SELECT document_id,version,payload FROM analysis_document_versions ORDER BY document_id,version'))[0];
+-  assert.deepEqual(await store.backfillSearchNames({ limit: 1 }), { updated: 1, remaining: 1 });
+-  assert.deepEqual(await store.backfillSearchNames({ limit: 1 }), { updated: 1, remaining: 0 });
+-  for (const doc of [first, second]) assert.deepEqual(await searchRow(pool, doc.id), { document_version: doc.version, payee_name: 'Synthetic Acme Payee', applicant_name: 'Synthetic Alice Applicant' });
+-  const before = (await pool.query('SELECT * FROM analysis_document_search ORDER BY document_id'))[0];
+-  assert.deepEqual(await store.backfillSearchNames(), { updated: 0, remaining: 0 });
+-  assert.deepEqual((await pool.query('SELECT * FROM analysis_document_search ORDER BY document_id'))[0], before);
+-  assert.deepEqual((await pool.query('SELECT document_id,version,payload FROM analysis_document_versions ORDER BY document_id,version'))[0], snapshots, 'backfill never rewrites encrypted snapshots');
+-  const rolledBack = await legacyWrite(pool, raw({ lastModifyDate: '2026-10-22T02:00:00Z', corpSupplierName: 'Rollback Payee', applicantName: 'Rollback Applicant' }));
+-  const added = await legacyWrite(pool, raw({ expenseReportOID: 'rollback-new', businessCode: 'SEARCH-003' }));
+-  assert.notEqual((await searchRow(pool, first.id)).document_version, rolledBack.version);
+-  assert.equal(await searchRow(pool, added.id), undefined);
+-  assert.deepEqual(await store.backfillSearchNames(), { updated: 2, remaining: 0 });
+-  assert.deepEqual(await searchRow(pool, first.id), { document_version: rolledBack.version, payee_name: 'Rollback Payee', applicant_name: 'Rollback Applicant' });
+-});
+-
+ test('P4 a concurrent revision wins after the backfill snapshot read and before its locked write', async t => {
+   const { pool, store } = await fixture(t);
+   assert.equal(typeof store.backfillSearchNames, 'function');
+@@ -220,7 +164,7 @@ test('P4 a concurrent revision wins after the backfill snapshot read and before
+   const blocker = await pool.getConnection();
+   let writing, filling;
+   try {
+-    const [[{ id }]] = await blocker.query('SELECT CONNECTION_ID() AS id');
++    const [[{ id }]] = await blocker.query('SELECT pg_backend_pid() AS id');
+     await blocker.query('START TRANSACTION');
+     await blocker.query('SELECT id FROM analysis_documents WHERE connection_id=? AND id=? FOR UPDATE', [connectionId, first.id]);
+     writing = store.upsertPage({ scope, reports: [raw({ lastModifyDate: '2026-10-22T02:00:00Z', corpSupplierName: 'Winning Payee', applicantName: 'Winning Applicant' })] });
+@@ -241,16 +185,6 @@ test('P4 a concurrent revision wins after the backfill snapshot read and before
+   }
+ });
+ 
+-test('P9 v19 is additive and an image knowing only v18 starts on the upgraded database', async t => {
+-  const { pool } = await fixture(t);
+-  const [[record]] = await pool.query('SELECT additive FROM schema_migrations WHERE version=19');
+-  assert.equal(Number(record.additive), 1);
+-  const older = await migrateMySql(pool, { migrations: MYSQL_MIGRATIONS.filter(m => m.version <= 18) });
+-  assert.deepEqual([older.applied, older.aheadAdditive], [[], [19]]);
+-  const [columns] = await pool.query("SELECT COLUMN_NAME,COLUMN_TYPE FROM information_schema.columns WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='analysis_document_search' ORDER BY ORDINAL_POSITION");
+-  assert.deepEqual(columns.map(row => [row.COLUMN_NAME, row.COLUMN_TYPE]), [['connection_id', 'varchar(191)'], ['document_id', 'varchar(191)'], ['document_version', 'varchar(191)'], ['payee_name', 'varchar(300)'], ['applicant_name', 'varchar(300)']]);
+-});
+-
+ test('P2 same-version and older replays restore missing names from the current saved snapshot', async t => {
+   const { pool, store } = await fixture(t);
+   await store.upsertPage({ scope, reports: [raw()] });
+@@ -280,7 +214,7 @@ test('P2 head repair refreshes search names in the same transaction and rolls ba
+   assert.equal(refused.failed, 1);
+   assert.equal((await document(pool, store)).version, first.version);
+   assert.equal((await searchRow(pool, first.id)).document_version, first.version);
+-  await pool.query('ALTER TABLE analysis_document_search DROP CHECK search_repair_failure');
++  await pool.query('ALTER TABLE analysis_document_search DROP CONSTRAINT search_repair_failure');
+   const repaired = await store.repairDocumentHeads({ dryRun: false });
+   assert.equal(repaired.repaired, 1);
+   assert.equal((await document(pool, store)).version, current.version);
+@@ -297,7 +231,7 @@ test('P3 overlapping stores serialize backfill batches and same-store calls shar
+   const blocker = await pool.getConnection();
+   let firstBatch, secondBatch;
+   try {
+-    const [[{ id }]] = await blocker.query('SELECT CONNECTION_ID() AS id');
++    const [[{ id }]] = await blocker.query('SELECT pg_backend_pid() AS id');
+     await blocker.query('START TRANSACTION');
+     await blocker.query('SELECT id FROM analysis_documents WHERE connection_id=? AND id=? FOR UPDATE', [connectionId, doc.id]);
+     firstBatch = store.backfillSearchNames(); firstBatch.catch(() => {});
+@@ -306,8 +240,8 @@ test('P3 overlapping stores serialize backfill batches and same-store calls shar
+     secondBatch = second.backfillSearchNames(); secondBatch.catch(() => {});
+     let waiting = false;
+     for (let attempt = 0; attempt < 100; attempt++) {
+-      const [sessions] = await pool.query('SHOW FULL PROCESSLIST');
+-      if (sessions.some(row => row.db === parseMySqlUrl(url).database && String(row.State).toLowerCase().includes('user lock'))) { waiting = true; break; }
++      const [sessions] = await pool.query('SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE datname = current_database()');
++      if (sessions.some(row => row.wait_event_type === 'Lock' && row.wait_event === 'advisory')) { waiting = true; break; }
+       await delay(20);
+     }
+     assert.equal(waiting, true, 'the other store waits for the database backfill lock');
+diff --git a/tests/list-sync-company-move.integration.test.mjs b/tests/list-sync-company-move.integration.test.mjs
+index dbb5f26..dfe120d 100644
+--- a/tests/list-sync-company-move.integration.test.mjs
++++ b/tests/list-sync-company-move.integration.test.mjs
+@@ -1,24 +1,19 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ 
+ // HOTFIX-075: a corporate payment whose company is changed in Huilianyi keeps its source id but gets a
+ // new document id (the id includes the document's company). The audit mirror allows one row per source
+ // document, and the page upsert used to re-key that row to the new id: a parent row its versions,
+ // events and attachments still reference, so MySQL refused with 1451 and the whole page rolled back.
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ const scope = { tenantId: 'move-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+@@ -33,12 +28,12 @@ const raw = (overrides = {}) => ({
+ const bystander = raw({ expenseReportOID: 'bystander-report', businessCode: 'DG-2', approvalHistoryDTOs: [] });
+ 
+ async function fixture() {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 8 });
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 8 });
+   await reset(pool);
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 75), connectionId: 'company-move' });
+   await store.migrate();
+   return { pool, store };
+diff --git a/tests/moved-documents.integration.test.mjs b/tests/moved-documents.integration.test.mjs
+index d1552c9..72a0cae 100644
+--- a/tests/moved-documents.integration.test.mjs
++++ b/tests/moved-documents.integration.test.mjs
+@@ -1,7 +1,7 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ 
+ // MOVED-1 on a 3307 test database. A document moved to another company in Huilianyi comes back under a
+@@ -9,8 +9,8 @@ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ // id>'. That marker, and only it, makes a document "moved": it leaves the company list, its count and
+ // the approval views, and comes back only when its number is searched; its successor (same source id,
+ // still claiming it) is named only inside the companies asked about. All values are synthetic.
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ const scope = { tenantId: 'moved-tenant', companyId: 'company-a', allCompaniesInTenant: true };
+ const raw = (overrides = {}) => ({
+@@ -22,15 +22,13 @@ const bystander = raw({ expenseReportOID: 'bystander-report', businessCode: 'DG-
+ const toB = raw({ docCompanyOID: 'company-b', docCompanyName: 'Company B', lastModifyDate: '2026-10-21T02:00:00Z', paymentAmount: '43.00' });
+ 
+ async function fixture(t) {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 8 });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await migrateMySql(pool);
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 8 });
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 76), connectionId: 'moved-1' });
+   await store.migrate();
+   t.after(async () => { await store.close(); await pool.end(); });
+diff --git a/tests/mysql-analysis-store-versions.integration.test.mjs b/tests/mysql-analysis-store-versions.integration.test.mjs
+index 969dacd..171e217 100644
+--- a/tests/mysql-analysis-store-versions.integration.test.mjs
++++ b/tests/mysql-analysis-store-versions.integration.test.mjs
+@@ -1,20 +1,15 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ const scope = { tenantId: 'versions-tenant', companyId: 'versions-company' };
+@@ -35,12 +30,12 @@ const raw = (overrides = {}) => ({
+ });
+ 
+ async function fixture(connectionId = 'mysql-version-integration', { migrateStore = true } = {}) {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 8 });
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 8 });
+   await reset(pool);
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 71), connectionId });
+   if (migrateStore) await store.migrate();
+   return { pool, store };
+diff --git a/tests/pg-analysis-store.integration.test.mjs b/tests/pg-analysis-store.integration.test.mjs
+new file mode 100644
+index 0000000..f3aba8e
+--- /dev/null
++++ b/tests/pg-analysis-store.integration.test.mjs
+@@ -0,0 +1,78 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
++import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
++
++// 正式分析库换到 PostgreSQL 以后 MySQL 自己就会做、PG 要写明白的几处（计划 Review Focus 3、4）：
++// 有两个唯一键的表照样「哪个键撞了就更新哪一行」；排序里的空值和 MySQL 一样（升序在前、降序在后）；
++// 只改「还在跑」的那一行时，第二次说没改到。
++const url = process.env.PG_TEST_URL;
++const skip = url ? false : 'PG_TEST_URL is not set; integration database was not contacted';
++const CONN = 'pg-store-integration';
++const scope = { tenantId: 'pg-tenant', companyId: 'company-a', allCompaniesInTenant: true };
++const report = (n, extra = {}) => ({
++  tenantId: scope.tenantId, docCompanyOID: 'company-a', docCompanyName: 'Company A', companyOID: 'source', expenseReportOID: `pg-report-${n}`,
++  businessCode: `PG-${n}`, formName: 'Corporate Payment', status: '1002', paymentAmount: '1.00', paymentCurrencyCode: 'CNY',
++  lastModifyDate: '2026-10-15T01:00:00Z', approvalHistoryDTOs: [], ...extra,
++});
++
++async function fixture(t) {
++  const config = parsePgUrl(url);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url, connectionLimit: 4 });
++  t.after(() => pool.end());
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
++  await migratePg(pool);
++  const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 91), connectionId: CONN });
++  t.after(() => store.close());
++  await store.migrate();
++  return { pool, store };
++}
++
++test('RF3 附件有两个唯一键：同一个文件既在表单里又在审批历史里（两个附件编号、同一个「单据 + 源附件 + 版本」）→ 整页照样写进去、只留一行；同一页再来一遍也不报错', { skip }, async t => {
++  const { pool, store } = await fixture(t);
++  const file = { attachmentOID: 'att-shared', fileName: 'shared.pdf' };
++  const raw = report(1, { custFormValues: [{ attachmentImages: [file] }],
++    approvalHistoryDTOs: [{ id: 'h1', operation: 2001, operateDate: '2026-10-14T01:00:00Z', attachmentDTOList: [file] }] });
++  await store.upsertPage({ scope, reports: [raw] });
++  await store.upsertPage({ scope, reports: [raw] });
++  const [rows] = await pool.query("SELECT attachment_id, source_version, content_available FROM audit_attachments WHERE source_attachment_id = 'att-shared'");
++  assert.equal(rows.length, 1);
++  assert.equal(rows[0].content_available, 0);
++});
++
++test('RF3 附件编号撞了、「单据 + 源附件 + 版本」没撞（单据出了新版本）→ 更新那一行，和 MySQL 一样', { skip }, async t => {
++  const { pool, store } = await fixture(t);
++  const file = { attachmentOID: 'att-1', fileName: 'one.pdf' };
++  await store.upsertPage({ scope, reports: [report(2, { custFormValues: [{ attachmentImages: [file] }] })] });
++  const [[before]] = await pool.query("SELECT attachment_id, source_version FROM audit_attachments WHERE source_attachment_id = 'att-1'");
++  // 同一个附件编号、新的版本号：直接改库里的版本号，模拟下一页带来的是「编号相同、版本不同」
++  await pool.query("UPDATE audit_attachments SET source_version = 'older' WHERE attachment_id = ?", [before.attachment_id]);
++  await store.upsertPage({ scope, reports: [report(2, { custFormValues: [{ attachmentImages: [file] }] })] });
++  const [rows] = await pool.query("SELECT attachment_id, source_version FROM audit_attachments WHERE source_attachment_id = 'att-1'");
++  assert.deepEqual(rows, [{ attachment_id: before.attachment_id, source_version: before.source_version }]);
++});
++
++test('RF5 空值排序同 MySQL：「我审过的」按最后一次处理时间倒序，没有时间的排在最后', { skip }, async t => {
++  const { store } = await fixture(t);
++  await store.upsertPage({ scope, reports: [report(3), report(4)] });
++  const docs = Object.fromEntries((await store.listApprovalIndexCandidates()).map(item => [item.raw.businessCode, item]));
++  const names = { operatorName: 'FAKE-甲', approverName: 'FAKE-乙', operatorDepartmentName: 'FAKE-丙' };
++  const event = (key, at) => ({ eventKey: key.repeat(64), operatorEmployeeId: 'E1', approverEmployeeId: null, operatorDepartmentOid: 'dept', nodeName: '审批',
++    operation: '2001', category: 'passed', occurredAt: at, names });
++  await store.writeApprovalActors({ documentId: docs['PG-3'].id, version: docs['PG-3'].version, events: [event('a', null)] });
++  await store.writeApprovalActors({ documentId: docs['PG-4'].id, version: docs['PG-4'].version, events: [event('b', '2026-10-18T01:00:00Z')] });
++  const handled = await store.listHandledDocuments({ employeeId: 'E1', companyIds: 'all' });
++  assert.deepEqual(handled.map(row => row.documentId), [docs['PG-4'].id, docs['PG-3'].id]);
++  assert.equal(handled[1].lastActedAt, null);
++});
++
++test('RF4 只改「还在跑」的批次：第一次 updated true，第二次 false（看的是改到的行数）', { skip }, async t => {
++  const { store } = await fixture(t);
++  const batch = await store.createBatch({ scope: { tenantId: scope.tenantId, companyId: 'company-a' }, query: { page: 1 } });
++  assert.deepEqual(await store.abandonBatch(batch.id), { updated: true });
++  assert.deepEqual(await store.abandonBatch(batch.id), { updated: false });
++});
+diff --git a/tests/pg-database.test.mjs b/tests/pg-database.test.mjs
+index 25c9fc7..7446863 100644
+--- a/tests/pg-database.test.mjs
++++ b/tests/pg-database.test.mjs
+@@ -131,6 +131,18 @@ test('拿连接超时：连接都占着时，等过 acquireTimeoutMs 就报 PG_P
+   assert.equal(ok.one, 1);
+ });
+ 
++test('布尔参数：true / false 照 mysql2 当 1 / 0 送（库里没有 boolean 列，标志位都是 smallint）；放在 CASE WHEN ? 里也还是真假', real, async t => {
++  const pool = await withPool(t);
++  await pool.query('DROP TABLE IF EXISTS pg_adapter_flag');
++  await pool.query('CREATE TABLE pg_adapter_flag (flag smallint NOT NULL)');
++  await pool.query('INSERT INTO pg_adapter_flag (flag) VALUES (?), (?)', [true, false]);
++  const [rows] = await pool.query('SELECT flag FROM pg_adapter_flag ORDER BY flag');
++  assert.deepEqual(rows.map(row => row.flag), [0, 1]);
++  const [[picked]] = await pool.query('SELECT CASE WHEN ? THEN 1 ELSE 0 END AS yes, CASE WHEN ? THEN 1 ELSE 0 END AS no', [true, false]);
++  assert.deepEqual([picked.yes, picked.no], [1, 0]);
++  await pool.query('DROP TABLE pg_adapter_flag');
++});
++
+ test('事务：beginTransaction / rollback 之后没写进去，commit 之后写进去了', real, async t => {
+   const pool = await withPool(t);
+   await pool.query('DROP TABLE IF EXISTS pg_adapter_tx');
+diff --git a/tests/repair-analysis-document-heads.integration.test.mjs b/tests/repair-analysis-document-heads.integration.test.mjs
+index 9ebc8ae..81fa18b 100644
+--- a/tests/repair-analysis-document-heads.integration.test.mjs
++++ b/tests/repair-analysis-document-heads.integration.test.mjs
+@@ -1,13 +1,13 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { acquireFullSyncLock } from '../src/full-sync-lock.mjs';
+ import { main } from '../scripts/repair-analysis-document-heads.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const scope = { tenantId: 'heads-script-tenant', companyId: 'heads-script-company' };
+ const connectionId = 'mysql-heads-script-integration';
+ const dataKey = Buffer.alloc(32, 71).toString('base64');
+@@ -23,22 +23,17 @@ function raw(id, amount, modified, collected) {
+ }
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ async function fixture() {
+-  const parsed = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(parsed.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(parsed.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 8 });
++  const parsed = parsePgUrl(mysqlTestUrl);
++  assert.equal(parsed.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(parsed.database, /_test$/, 'PG_TEST_URL must target a database ending in _test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 8 });
+   await reset(pool);
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 71), connectionId });
+   await store.migrate();
+   for (const id of ['heads-a', 'heads-b', 'heads-c']) {

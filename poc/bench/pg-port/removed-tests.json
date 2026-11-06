@@ -1,0 +1,5 @@
+[
+  "tests/document-search.integration.test.mjs#P3 v18 snapshots backfill in batches, resume rollback-era writes, and are idempotent",
+  "tests/document-search.integration.test.mjs#P9 v19 is additive and an image knowing only v18 starts on the upgraded database",
+  "tests/mysql-database.test.mjs#real MySQL applies v1-to-latest migrations twice without SQL errors"
+]
