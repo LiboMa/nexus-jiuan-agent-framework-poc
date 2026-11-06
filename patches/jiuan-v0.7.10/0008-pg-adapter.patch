@@ -1,0 +1,286 @@
+补丁 0008（换库到 PostgreSQL）：新增 src/pg-database.mjs，和原来 mysql2 连接池一样用法的 PostgreSQL 连接池。
+返回形状（[rows, fields]、affectedRows、insertId）、读出来的值（bigint 成数字、numeric 成字符串、timestamp 按 UTC、jsonb、bytea）、
+Date 参数按 UTC 墙上时间发、会话时区上海、? 占位符、单条查询超时（statement_timeout）、拿连接超时、错误码（SQLSTATE → mysql2 的码）都照原来。
+这个补丁只加文件，还没有地方用它；后面的补丁逐个模块换过来。
+
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+new file mode 100644
+index 0000000..54952e3
+--- /dev/null
++++ b/src/pg-database.mjs
+@@ -0,0 +1,275 @@
++import pg from 'pg';
++import { readFileSync } from 'node:fs';
++
++/**
++ * PostgreSQL connection pool for the analysis runtime, shaped like the mysql2 pool the callers were written for:
++ *   pool.query(sql | { sql, timeout }, params) → [rows, fields] for SELECT / RETURNING, otherwise [{ affectedRows, insertId, changedRows }, []]
++ *   pool.execute(...) is the same as query; pool.getConnection() → { query, execute, beginTransaction, commit, rollback, release, destroy }
++ * Values read back match mysql2's: bigint / count(*) → number (beyond 2^53 is an error, never a silent loss), numeric → string,
++ * timestamp → Date taking the stored wall clock as UTC (mysql2 timezone:'Z'), jsonb → object, bytea → Buffer.
++ * Date parameters are sent as the UTC wall clock without an offset, as mysql2 does, so PostgreSQL never shifts them by the session zone.
++ * The session zone is Asia/Shanghai, matching the MySQL server it replaces: CURRENT_TIMESTAMP / LOCALTIMESTAMP written into a
++ * timestamp column is Shanghai wall time, exactly as before.
++ * SQL keeps mysql2's ? placeholders (rewritten to $n outside strings, quoted identifiers and comments), so jsonb's ? / ?| / ?&
++ * operators must not be used (use jsonb_exists() and friends). Plain objects are rejected as parameters: mysql2 expanded them
++ * (SET ?), PostgreSQL has no such thing.
++ * Timeouts follow mysql2's pool: a one-shot pool query gets queryTimeoutMs, a connection taken with getConnection() keeps its
++ * own timing; a query that runs out of time fails with mysql2's PROTOCOL_SEQUENCE_TIMEOUT and the connection stays usable
++ * (the timeout is PostgreSQL's statement_timeout, so the server stops the query).
++ */
++const PG_CONFIGURATION = 'PG_CONFIGURATION';
++export const PG_ERROR_CODES = Object.freeze({ CONFIGURATION: PG_CONFIGURATION, MIGRATION_LOCKED: 'PG_MIGRATION_LOCKED', MIGRATION_DRIFT: 'PG_MIGRATION_DRIFT' });
++const SESSION_TIME_ZONE = 'Asia/Shanghai';
++
++function configuration(message) {
++  return Object.assign(new Error(message), { code: PG_CONFIGURATION });
++}
++
++export function parsePgUrl(value) {
++  if (typeof value !== 'string' || !value.trim()) throw configuration('PostgreSQL URL is required.');
++  let url;
++  try { url = new URL(value); } catch { throw configuration('PostgreSQL URL is invalid.'); }
++  if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !url.username || !url.password || !url.pathname || url.pathname === '/') throw configuration('PostgreSQL URL is invalid.');
++  const port = url.port ? Number(url.port) : 5432;
++  if (!Number.isInteger(port) || port < 1 || port > 65535) throw configuration('PostgreSQL URL port is invalid.');
++  let user, password, database;
++  try {
++    user = decodeURIComponent(url.username);
++    password = decodeURIComponent(url.password);
++    database = decodeURIComponent(url.pathname.slice(1));
++  } catch { throw configuration('PostgreSQL URL is invalid.'); }
++  if (!/^[A-Za-z0-9_$-]{1,63}$/.test(database)) throw configuration('PostgreSQL URL database is invalid.');
++  const ssl = ['1', 'true', 'required', 'require'].includes((url.searchParams.get('ssl') || url.searchParams.get('sslmode') || '').toLowerCase());
++  return { host: url.hostname, port, user, password, database, ssl };
++}
++
++/** The ssl part of the analysis database configuration (same rules as before: true, or { caFile, verifyIdentity }). */
++export function pgPoolOptions(database = {}) {
++  const ssl = database?.ssl;
++  if (ssl === undefined || ssl === null || ssl === false) return {};
++  if (ssl === true) return { ssl: { rejectUnauthorized: true } };
++  if (!ssl || typeof ssl !== 'object' || Array.isArray(ssl) || typeof ssl.caFile !== 'string' || (ssl.verifyIdentity !== undefined && typeof ssl.verifyIdentity !== 'boolean')) throw configuration('PostgreSQL ssl configuration is invalid.');
++  let ca;
++  try { ca = readFileSync(ssl.caFile, 'utf8'); } catch { throw configuration('PostgreSQL CA file is invalid.'); }
++  if (!ca || Buffer.byteLength(ca, 'utf8') > 128 * 1024) throw configuration('PostgreSQL CA file is invalid.');
++  return { ssl: { ca, rejectUnauthorized: true, ...(ssl.verifyIdentity === false ? { checkServerIdentity: () => undefined } : {}) } };
++}
++
++/**
++ * Rewrites ? placeholders to $1…$n. A ? inside '…' (with '' escapes), E'…' (with \ escapes), $tag$…$tag$, "…", -- comments and
++ * block comments is left alone; :: casts are not placeholders.
++ */
++export function toPgPlaceholders(sql) {
++  let out = '', count = 0, i = 0;
++  const n = sql.length;
++  while (i < n) {
++    const c = sql[i];
++    if (c === "'" || ((c === 'E' || c === 'e') && sql[i + 1] === "'" && !/[A-Za-z0-9_]/.test(sql[i - 1] ?? ''))) {
++      const escaped = c !== "'";
++      let j = escaped ? i + 2 : i + 1;
++      while (j < n) {
++        if (escaped && sql[j] === '\\') { j += 2; continue; }
++        if (sql[j] === "'") { if (sql[j + 1] === "'") { j += 2; continue; } break; }
++        j += 1;
++      }
++      out += sql.slice(i, j + 1); i = j + 1; continue;
++    }
++    if (c === '"') {
++      let j = i + 1;
++      while (j < n && !(sql[j] === '"' && sql[j + 1] !== '"')) j += sql[j] === '"' ? 2 : 1;
++      out += sql.slice(i, j + 1); i = j + 1; continue;
++    }
++    if (c === '-' && sql[i + 1] === '-') {
++      const end = sql.indexOf('\n', i);
++      const j = end < 0 ? n : end;
++      out += sql.slice(i, j); i = j; continue;
++    }
++    if (c === '/' && sql[i + 1] === '*') {
++      const end = sql.indexOf('*/', i + 2);
++      const j = end < 0 ? n : end + 2;
++      out += sql.slice(i, j); i = j; continue;
++    }
++    if (c === '$') {
++      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
++      if (tag) {
++        const end = sql.indexOf(tag[0], i + tag[0].length);
++        const j = end < 0 ? n : end + tag[0].length;
++        out += sql.slice(i, j); i = j; continue;
++      }
++    }
++    if (c === '?') { count += 1; out += `$${count}`; i += 1; continue; }
++    out += c; i += 1;
++  }
++  return { text: out, count };
++}
++
++const pad = (value, width = 2) => String(value).padStart(width, '0');
++/** A Date as mysql2 sends it with timezone:'Z': the UTC wall clock, no offset. */
++function utcWallClock(date) {
++  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}`;
++}
++function prepareParam(value) {
++  if (value instanceof Date) {
++    if (Number.isNaN(value.getTime())) throw new TypeError('Invalid Date passed as a query parameter.');
++    return utcWallClock(value);
++  }
++  if (value === undefined) return null;
++  if (typeof value === 'bigint') return value.toString();
++  if (Array.isArray(value)) return value.map(prepareParam);
++  if (value && typeof value === 'object' && !Buffer.isBuffer(value) && !ArrayBuffer.isView(value)) {
++    throw new TypeError('Plain objects are not query parameters on PostgreSQL (mysql2 expanded them for SET ?): name the columns.');
++  }
++  return value;
++}
++
++const OID = Object.freeze({ INT8: 20, TIMESTAMP: 1114, DATE: 1082, JSON: 114, JSONB: 3802 });
++function int8(text) {
++  const value = Number(text);
++  if (!Number.isSafeInteger(value)) throw new RangeError(`bigint ${text} is beyond 2^53 and cannot be read as a safe integer`);
++  return value;
++}
++const timestampAsUtc = text => (text === 'infinity' || text === '-infinity' ? text : new Date(`${text.replace(' ', 'T')}Z`));
++const dateAsUtc = text => (text === 'infinity' || text === '-infinity' ? text : new Date(`${text}T00:00:00.000Z`));
++const TYPES = Object.freeze({
++  getTypeParser(oid, format) {
++    if (format === 'text' || format === undefined) {
++      if (oid === OID.INT8) return int8;
++      if (oid === OID.TIMESTAMP) return timestampAsUtc;
++      if (oid === OID.DATE) return dateAsUtc;
++    }
++    return pg.types.getTypeParser(oid, format);
++  },
++});
++
++const SQLSTATE_TO_MYSQL = Object.freeze({
++  23505: ['ER_DUP_ENTRY', 1062],
++  '40P01': ['ER_LOCK_DEADLOCK', 1213],
++  '55P03': ['ER_LOCK_WAIT_TIMEOUT', 1205],
++  '42P01': ['ER_NO_SUCH_TABLE', 1146],
++  42703: ['ER_BAD_FIELD_ERROR', 1054],
++  57014: ['PROTOCOL_SEQUENCE_TIMEOUT', undefined],
++  '57P01': ['PROTOCOL_CONNECTION_LOST', undefined],
++  '57P02': ['PROTOCOL_CONNECTION_LOST', undefined],
++  '57P03': ['PROTOCOL_CONNECTION_LOST', undefined],
++});
++/** A pg error as an Error carrying the mysql2 code / errno callers check; the SQLSTATE stays in sqlState and the pg error in cause. */
++export function pgErrorToMysqlShape(error) {
++  if (!error || typeof error !== 'object') return error;
++  const sqlState = typeof error.code === 'string' ? error.code : undefined;
++  const mapped = sqlState ? SQLSTATE_TO_MYSQL[sqlState] : undefined;
++  if (!mapped && sqlState) return Object.assign(error, { sqlState });
++  if (!mapped) {
++    if (/timeout exceeded when trying to connect/i.test(error.message ?? '')) return Object.assign(new Error(error.message, { cause: error }), { code: 'ETIMEDOUT' });
++    if (/Connection terminated|connection.*(ended|closed)/i.test(error.message ?? '')) return Object.assign(new Error(error.message, { cause: error }), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true });
++    return error;
++  }
++  const [code, errno] = mapped;
++  return Object.assign(new Error(error.message, { cause: error }), { code, ...(errno ? { errno } : {}), sqlState, sqlMessage: error.message,
++    ...(code === 'PROTOCOL_CONNECTION_LOST' ? { fatal: true } : {}) });
++}
++
++function normalize(sql, params) {
++  const options = typeof sql === 'string' ? { sql } : sql;
++  if (!options || typeof options.sql !== 'string') throw new TypeError('Query SQL must be a string or { sql, timeout }.');
++  const { text, count } = toPgPlaceholders(options.sql);
++  const values = params === undefined ? [] : params;
++  if (!Array.isArray(values)) throw new TypeError('Query parameters must be an array.');
++  if (values.length !== count) throw new TypeError(`Query has ${count} placeholders but ${values.length} parameters.`);
++  return { text, values: values.map(prepareParam), timeout: options.timeout };
++}
++
++/** mysql2's result shapes from a pg result. */
++function shape(result) {
++  const results = Array.isArray(result) ? result : [result];
++  const last = results[results.length - 1];
++  if (last.fields?.length) return [last.rows, last.fields.map(field => ({ name: field.name, columnType: field.dataTypeID }))];
++  const affectedRows = last.rowCount ?? 0;
++  return [{ affectedRows, changedRows: affectedRows, insertId: 0 }, []];
++}
++function withInsertId(result) {
++  const results = Array.isArray(result) ? result : [result];
++  const last = results[results.length - 1];
++  const [rows, fields] = shape(result);
++  if (!/^(INSERT|UPDATE|DELETE|MERGE)$/.test(last.command ?? '') || !last.fields?.length) return [rows, fields];
++  // INSERT … RETURNING: callers that used insertId get the first returned column of the first row; the rows stay readable too
++  const first = last.rows[0];
++  const insertId = first ? Object.values(first)[0] : 0;
++  return [Object.assign(rows, { affectedRows: last.rowCount ?? rows.length, changedRows: last.rowCount ?? rows.length, insertId: insertId == null ? 0 : insertId }), fields];
++}
++
++async function run(client, sql, params, timeoutMs) {
++  const { text, values, timeout } = normalize(sql, params);
++  const limit = timeout ?? timeoutMs ?? 0;
++  if (!Number.isInteger(limit) || limit < 0) throw new TypeError('Query timeout must be a non-negative integer.');
++  try {
++    if (limit !== client.__statementTimeout) { await client.query(`SET statement_timeout = ${limit}`); client.__statementTimeout = limit; }
++    return withInsertId(await client.query({ text, values }));
++  } catch (error) {
++    throw pgErrorToMysqlShape(error);
++  }
++}
++
++function connection(pool, client) {
++  let released = false;
++  const once = action => () => { if (released) return; released = true; action(); };
++  const conn = {
++    query: (sql, params) => run(client, sql, params, typeof sql === 'object' ? sql.timeout ?? 0 : 0),
++    execute: (sql, params) => conn.query(sql, params),
++    beginTransaction: () => run(client, 'BEGIN', [], 0),
++    commit: () => run(client, 'COMMIT', [], 0),
++    rollback: () => run(client, 'ROLLBACK', [], 0),
++    release: once(() => client.release()),
++    destroy: once(() => client.release(true)),
++    get threadId() { return client.processID; },
++  };
++  return conn;
++}
++
++export function createPgPool({ url = process.env.ANALYSIS_DATABASE_URL, connectionLimit = 10, connectTimeout = 10000, acquireTimeoutMs = 0, queryTimeoutMs = 0, ssl } = {}) {
++  const config = parsePgUrl(url);
++  if (!Number.isInteger(connectionLimit) || connectionLimit < 1 || connectionLimit > 100) throw configuration('PostgreSQL connection limit is invalid.');
++  if (!Number.isInteger(connectTimeout) || connectTimeout < 100 || connectTimeout > 120000) throw configuration('PostgreSQL connect timeout is invalid.');
++  if (!Number.isInteger(acquireTimeoutMs) || acquireTimeoutMs < 0 || acquireTimeoutMs > 600000) throw configuration('PostgreSQL acquire timeout is invalid.');
++  if (!Number.isInteger(queryTimeoutMs) || queryTimeoutMs < 0 || queryTimeoutMs > 3600000) throw configuration('PostgreSQL query timeout is invalid.');
++  const effectiveSsl = ssl === undefined ? config.ssl : ssl;
++  const core = new pg.Pool({
++    host: config.host, port: config.port, user: config.user, password: config.password, database: config.database,
++    // pg-pool uses connectionTimeoutMillis both for connecting and for waiting in its queue; the wait is bounded below by
++    // acquireTimeoutMs, so the pool's own limit is the wait plus the connect (it never fires first on a queued caller)
++    max: connectionLimit, connectionTimeoutMillis: acquireTimeoutMs ? acquireTimeoutMs + connectTimeout : connectTimeout, idleTimeoutMillis: 30000, keepAlive: true,
++    options: `-c TimeZone=${SESSION_TIME_ZONE}`, types: TYPES,
++    ...(effectiveSsl === true ? { ssl: { rejectUnauthorized: true } } : effectiveSsl ? { ssl: effectiveSsl } : {}),
++  });
++  core.on('error', () => {});   // an idle client that died: the pool drops it; callers see errors on their own queries
++  // pg-pool has one timeout for connecting and for waiting on a free client; mysql2 had two. Bound the wait for a free client
++  // here (acquireTimeoutMs), and let connectionTimeoutMillis bound the connect itself. A client that arrives late goes back.
++  async function acquire() {
++    if (!acquireTimeoutMs) return core.connect();
++    let timer, late = false;
++    const waiting = core.connect();
++    const timeout = new Promise((_, reject) => {
++      timer = setTimeout(() => {
++        late = true;
++        reject(Object.assign(new Error('Timed out waiting for a free database connection.'), { code: 'PG_POOL_ACQUIRE_TIMEOUT' }));
++      }, acquireTimeoutMs);
++    });
++    waiting.then(client => { if (late) client.release(); }, () => {});
++    try { return await Promise.race([waiting, timeout]); } finally { clearTimeout(timer); }
++  }
++  const pool = {
++    async query(sql, params) {
++      const client = await acquire().catch(error => { throw pgErrorToMysqlShape(error); });
++      try { return await run(client, sql, params, queryTimeoutMs); } finally { client.release(); }
++    },
++    execute: (sql, params) => pool.query(sql, params),
++    async getConnection() {
++      const client = await acquire().catch(error => { throw pgErrorToMysqlShape(error); });
++      try { if (client.__statementTimeout !== 0) { await client.query('SET statement_timeout = 0'); client.__statementTimeout = 0; } }
++      catch (error) { client.release(true); throw pgErrorToMysqlShape(error); }
++      return connection(pool, client);
++    },
++    end: () => core.end(),
++    get core() { return core; },
++  };
++  return pool;
++}
