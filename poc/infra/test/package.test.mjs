@@ -71,6 +71,8 @@ test('make-package.sh --export：只带提交进 git 的文件：白名单目录
   const repo = fileURLToPath(new URL('../../../', import.meta.url));
   const drafts = ['docs/package-test-draft.md', 'kb/package-test-draft.txt', 'poc/infra/package-test-草稿.md'];
   for (const draft of drafts) await plant(t, path.join(repo, draft));
+  // 一整个没进 git 的目录（例如别人放的大目录）：拷的时候就跳过，只报一次目录，不逐个文件列
+  for (const name of ['a.txt', 'deep/b.txt']) await plant(t, path.join(repo, 'docs/package-test-dir', name));
   const out = await mkdtemp(path.join(tmpdir(), 'guide-repo-'));
   t.after(() => rm(out, { recursive: true, force: true }));
   const { stdout } = await run('bash', [SCRIPT, '--skip-checks', '--export', out], { maxBuffer: 16 * 1024 * 1024 });
@@ -79,6 +81,11 @@ test('make-package.sh --export：只带提交进 git 的文件：白名单目录
     assert.ok(stdout.includes(draft), `要列出没带上的 ${draft}`);
   }
   for (const keep of ['docs/delivery/delivery-guide.md', 'kb/deploy.sh', 'poc/infra/deploy.sh']) assert.ok(await exists(path.join(out, keep)), `应该有 ${keep}`);
+  assert.equal(await exists(path.join(out, 'docs/package-test-dir')), false);
+  assert.ok(stdout.includes('docs/package-test-dir/'), '要列出没带上的目录');
+  assert.ok(!stdout.includes('docs/package-test-dir/deep/b.txt'), '目录只报一次，不逐个文件列');
+  const script = await readFile(SCRIPT, 'utf8');
+  assert.match(script, /ls-files -z --others --directory/, '拷之前就按 git 收好的目录跳过');
 });
 
 test('make-package.sh 的检查：哪一项没过就停下、不出包（不能写成「… && echo 通过」，那样没过也接着出包）；知识库工具的单元测试装上依赖再跑；PACKAGE-INFO 只写真跑了的检查', async () => {
@@ -135,14 +142,15 @@ test('secrets.env.example 随交接内容走：键都在、值都是假的；.gi
   const out = await exportTo(t);
   const example = await readFile(path.join(out, 'poc/infra/secrets.env.example'), 'utf8');
   const keys = [...example.matchAll(/^(# )?([A-Z][A-Za-z0-9_]*)=(.*)$/gm)];
-  for (const name of ['REVIEWER_PASSWORD', 'CHECKER_PASSWORD', 'BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
+  for (const name of ['REVIEWER_PASSWORD', 'CHECKER_PASSWORD', 'BENCH_PG_SUPERUSER_PASSWORD', 'JIUAN_PG_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
     assert.ok(keys.some(([, , key]) => key === name), `样例里要有 ${name}`);
   }
   // 照抄样例不能上线一套公开的口令：没注释掉的值一律留空；要 deploy.sh 自动生成的几项保持注释
   for (const [, commented, key, value] of keys) assert.equal(value, '', `${key}${commented ? '（注释里）' : ''} 不能带值`);
-  for (const name of ['BENCH_MYSQL_ROOT_PASSWORD', 'JIUAN_MYSQL_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
+  for (const name of ['BENCH_PG_SUPERUSER_PASSWORD', 'JIUAN_PG_APP_PASSWORD', 'JIUAN_DATA_KEY']) {
     assert.match(example, new RegExp(`^# ${name}=$`, 'm'), `${name} 要保持注释，让 deploy.sh 自动生成`);
   }
+  assert.ok(!keys.some(([, , key]) => /MYSQL/.test(key)), 'MySQL 删了（2026-11-06），样例里不再有它的口令');
   assert.match(example, /\/etc\/andon-finance\/secrets\.env/);
   assert.match(example, /\/etc\/andon-finance\/bench\//);
   const ignore = await readFile(path.join(out, '.gitignore'), 'utf8');

@@ -95,9 +95,10 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
 v0.7.10</span>交付指南（Delivery Guide）</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-06</td></tr>
     <tr><th scope="row">状态</th><td>交付版（写的是现在的做法；2026-11-02
-在 m7g 测试台上从部署到端到端验收走过一遍）</td></tr>
+在 m7g 测试台上从部署到端到端验收走过一遍；2026-11-06 九安的库换成
+PostgreSQL）</td></tr>
     <tr><th scope="row">范围</th><td>从零部署一整套（PG 与知识库后端 →
 Nexus 上的 Agent 与发布 → 前端）、验收、日常变更与回滚、交接</td></tr>
     <tr><th scope="row">读者</th><td>部署的人（我们、九安运维）、项目负责人</td></tr>
@@ -171,7 +172,8 @@ Agent</a>、<a href="skills-guide.html">Skills 配置指南</a></td>
 <td>新前端 <code>poc/<wbr>web</code>（React）、测试台外壳
 <code>poc/<wbr>app</code>、九安 v0.7.10 副本（打
 <code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>
-的补丁）、九安的 MySQL；一台 EC2 + CloudFront</td>
+的补丁）、九安的 PostgreSQL（容器 <code>jiuan-<wbr>pg</code>）；一台 EC2
++ CloudFront</td>
 <td><code>poc/<wbr>infra/<wbr></code>（栈模板、<code>deploy.<wbr>sh</code>、<code>migrate-<wbr>data.<wbr>sh</code>、<code>backup.<wbr>sh</code>、<code>upgrade-<wbr>instance.<wbr>sh</code>）、<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code></td>
 <td><a href="../../poc/infra/README.md">部署说明</a>、<a
 href="../../poc/README.md">PoC 说明</a></td>
@@ -187,11 +189,11 @@ href="customer-rollout.html">客户部署路线</a>）。</p>
 <a href="../assets/diagrams/bench-overview.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/bench-overview.svg" loading="lazy"
-alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
+alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
 <figcaption>系统总览：浏览器经 CloudFront
-到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的
-PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库
-Agent，两个 Agent 都经数据连接器到 PG</figcaption>
+到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的
+PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经
+A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG</figcaption>
 </figure>
 <ul>
 <li>浏览器 → CloudFront（站点 <code>DomainName</code>）→ 实例的 4180
@@ -271,8 +273,8 @@ Chrome</td>
 和发布的编号（<code>AGENT_ID</code>、<code>PUBLICATION_ID</code>、<code>CONNECTOR_ID</code>、<code>KB_PG_PUBLICATION_ID</code>）部署完对应那一块再填回来。</p>
 <p><strong>密钥配置</strong>
 <code>poc/infra/secrets.env</code>：第一次跑 <code>deploy.sh</code>
-自动生成（两个账号的口令 +
-三项测试台密钥，0600），只在本机和实例上，当面交接；样例和对应关系见
+自动生成（两个账号的口令 + 三项测试台密钥：PG
+的两项和数据密钥，0600），只在本机和实例上，当面交接；样例和对应关系见
 <code>poc/infra/secrets.env.example</code>。Agent
 的调用密钥不放这里。</p>
 <h1 id="4-部署">4. 部署</h1>
@@ -291,13 +293,19 @@ href="../../kb/GUIDE.md">kb/GUIDE.md</a> 2.4）。</p></li>
 复制，0600）：<code>PG_HOST_MODE=existing</code>、<code>PG_HOST_INSTANCE_ID</code>、<code>PG_HOST_TRANSPORT=ssh</code>、<code>PG_SSH_HOST</code>、<code>PG_SSH_KEY</code>（连不到主机地址时加
 <code>PG_SSH_PROXY_COMMAND</code>）、<code>NEXUS_URL</code>
 和管理员密码来源；<code>EMBED_MODEL_ID</code> 不写就是 Cohere
-v4。</p></li>
-<li><p>照 <a href="../../kb/GUIDE.md">kb/GUIDE.md</a> 第 4 节：</p>
+v4。<strong>再写 <code>AGENT_PATCH_PROMPT=false</code></strong>：PG 先于
+Agent 部署时审核 Agent 还不存在（缺省的 <code>true</code>
+会让预检停在「Nexus 里找不到 Agent」），它的提示词由 4.2 的
+<code>audit-agent/apply.py</code> 管。</p></li>
+<li><p>只跑数据层这几个阶段（不跑 <code>all</code>：<code>all</code>
+里的 <code>ingest</code> 要一份规则 .docx，<code>agent</code> 会改审核
+Agent 的提示词；规则在 4.3 之后从知识库页上传）：</p>
 <pre class="bash"><code>cd kb
-./deploy.sh preflight          # 只读预检：工具、AWS、Nexus 登录、PG 主机（SSH 能登录、能 sudo）
-./deploy.sh all --dry-run      # 只读：每个阶段会改什么（~ 行）
-./deploy.sh all                # db 装 Docker、起容器、建 kb_search；connector 把私网地址和密码登记进 Nexus
-./deploy.sh verify             # [db] [ingest] [search] [network] [egress] [connector] [agent] 逐层核对</code></pre></li>
+./deploy.sh preflight,db,network,egress,connector --dry-run   # 只读：预检，再看每个阶段会改什么（~ 行）
+./deploy.sh preflight,db,network,egress,connector             # db 装 Docker、起容器、建 kb_search；network 开 PG 端口；egress 放行 Sandbox 出站；connector 把私网地址和密码登记进 Nexus
+./deploy.sh verify                                             # 逐层核对；规则还没上传时 [ingest] 报「规则表不存在」是预期的，上传后再跑一次</code></pre>
+<p>create 模式（工具替你建专用主机）在最前面加
+<code>host</code>。</p></li>
 </ol>
 <p><strong>测试台</strong>（PG 和前端在同一台实例上，栈先建好；kb
 的设置在 <code>poc/infra/kb.env</code>）：</p>
@@ -355,8 +363,9 @@ DEPLOY_ENV=poc/infra/env/&lt;环境名&gt;.env bash poc/infra/deploy.sh --code-o
 <code>npm ci</code> → 测试 →
 构建、外壳的单元测试，哪一步不过就停。实例上（root，经 SSM 或 SSH）：装
 <code>secrets.env</code>（只有 root 能读）→ 解开新构件 →
-<code>bench/bench-configure.sh</code>（MySQL 容器、库 <code>jiuan</code>
-和账号 <code>jiuan_app</code>、系统用户 <code>jiuan</code>、服务
+<code>bench/bench-configure.sh</code>（PostgreSQL 容器
+<code>jiuan-pg</code>、库 <code>jiuan</code> 和它的属主
+<code>jiuan_app</code>、系统用户 <code>jiuan</code>、服务
 <code>andon-jiuan</code>、<code>/etc/hosts</code>
 堵掉九安写死的外部地址）→ 换上新构件（上一版留在
 <code>previous</code>）→ 重启 → 查
@@ -369,7 +378,7 @@ IP（2026-11-02 m7g 环境的弹性 IP 在
 SSH + 自己的密钥，不用 SSM。</p></li>
 <li><p><strong>在页面上接好 Agent</strong>（管理员
 <code>poc-reviewer</code>，口令在 <code>secrets.env</code>；<a
-href="quick-guide.html">快速上手</a>第 3–9 步）：</p>
+href="quick-guide.html">快速上手</a>第 4 节）：</p>
 <ul>
 <li>「Agent 接入」页：连接 Nexus（贴管理员自己的 Nexus API 密钥）→
 两个发布各贴一次调用密钥启用 → 审核 Agent「设为审批 Agent」（要写原因）→
@@ -383,8 +392,10 @@ href="quick-guide.html">快速上手</a>第 3–9 步）：</p>
 分钟；会先重置测试台的库 <code>jiuan</code>，「Agent
 接入」的启用记录保留）：</p>
 <pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境名&gt;.env KB_E2E_DOCX=&lt;本机转好的风险判断卡 .docx&gt; bash poc/app/test/e2e/run.sh</code></pre>
-<p>先跑 <code>web.e2e.mjs</code>（新前端的页面），再跑
-<code>api.e2e.mjs</code>（接口、出网、写回、自定义规则），共 26 条。</p>
+<p>先跑 <code>web.e2e.mjs</code>（新前端的页面，15 条），再跑
+<code>api.e2e.mjs</code>（接口、出网、写回、自定义规则、库是
+PostgreSQL，12 条），共 27 条；没给 <code>KB_E2E_DOCX</code>
+时网页的上传那条跳过。</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -430,6 +441,12 @@ href="quick-guide.html">快速上手</a>第 3–9 步）：</p>
 <td>被拦下的只有九安写死的外部地址，没有 Nexus</td>
 </tr>
 <tr>
+<td>九安的库</td>
+<td>跑在 PostgreSQL 上：容器 <code>jiuan-<wbr>pg</code>
+在跑、<code>jiuan-<wbr>mysql</code> 停着或不在、外壳的
+<code>POC_<wbr>DB_<wbr>PORT=5433</code>，重置后新建的库里有迁移建出的表</td>
+</tr>
+<tr>
 <td>知识库后端</td>
 <td><code>kb.<wbr>sh verify</code>（或
 <code>kb/<wbr>deploy.<wbr>sh verify</code>）只剩已知的那一条</td>
@@ -444,6 +461,10 @@ href="../../kb/GUIDE.md">kb/GUIDE.md</a>）；<code>python3 -m unittest discover
 <p><strong>2026-11-02 的结果</strong>（m7g 测试台）：单元测试
 <code>poc/infra</code> 108 条、外壳 193 条（1 条跳过）、新前端 331
 条全过；端到端 26 条全过；<code>kb.sh verify</code> 只剩已知的一条。</p>
+<p><strong>2026-11-06 换库</strong>：外壳单元测试 205
+条、<code>poc/infra</code> 130 多条；九安自带的测试在真 PG 上 2475
+条过（换库前过的都还过）；切换和端到端的结果见<a
+href="../../CHANGELOG.md">变更记录</a>。</p>
 <h1 id="6-日常变更与回滚">6. 日常变更与回滚</h1>
 <div class="table-wrap">
 <table>
@@ -486,8 +507,8 @@ href="deploy-iteration.html">部署与迭代规范</a>第 6.1 节）</td>
 </tr>
 <tr>
 <td>备份</td>
-<td><code>backup.<wbr>sh</code>：根卷快照（MySQL、PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan</code>
-都在根卷上）</td>
+<td><code>backup.<wbr>sh</code>：根卷快照（九安的 PostgreSQL、知识库的
+PG、<code>/<wbr>var/<wbr>lib/<wbr>jiuan</code> 都在根卷上）</td>
 <td>用快照建卷换回根卷</td>
 </tr>
 <tr>
@@ -536,7 +557,7 @@ Nexus API 密钥各人在自己的 Nexus 网页上生成。</li>
 <li><strong>交给维护的人</strong>：<a
 href="handover.html">交接文档</a>（资产清单、密钥清单、未完成事项、上生产前必须改的）。</li>
 </ol>
-<p><strong>现在的环境</strong>（2026-11-02）：</p>
+<p><strong>现在的环境</strong>（2026-11-06）：</p>
 <div class="table-wrap">
 <table>
 <tbody>
@@ -555,6 +576,15 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <code>pub_<wbr>5c53e70d8dc7ddea</code>；PG 知识库 Agent 发布
 <code>pub_<wbr>6ea5f0855dff6c1b</code>；PG 数据连接器
 <code>pgvector-<wbr>andon</code>（<code>conn-<wbr>f0c7233959d9</code>）指向测试台实例的私网地址</td>
+</tr>
+<tr>
+<td>九安的库</td>
+<td>测试台实例上的 PostgreSQL 容器
+<code>jiuan-<wbr>pg</code>（127.0.0.1:5433，库
+<code>jiuan</code>），2026-11-06 20:35–20:37（UTC+8）从 MySQL
+切过来；切换前的 MySQL 当天晚上删了，回不到 MySQL 了（切换前后的数据在
+<code>pg_<wbr>dump</code> 和根卷快照里，<a
+href="operations.html">运维</a>第 2.6 节）</td>
 </tr>
 <tr>
 <td>知识库</td>
@@ -601,8 +631,12 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <td><a href="operations.html">运维与后续迭代</a></td>
 </tr>
 <tr>
-<td>管理员在「Agent 接入」页接 Agent</td>
+<td>第一次接触、管理员在「Agent 接入」页接 Agent</td>
 <td><a href="quick-guide.html">快速上手</a></td>
+</tr>
+<tr>
+<td>每件事按什么顺序做（审核、知识库、变更、部署、交接）</td>
+<td><a href="../workflows.html">工作流</a></td>
 </tr>
 <tr>
 <td>九安开发者接 Nexus 上的 Agent（契约、时限、提示词）</td>
@@ -613,8 +647,8 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <td><a href="skills-guide.html">Skills 配置指南</a></td>
 </tr>
 <tr>
-<td>架构与调用链</td>
-<td><a href="../architecture.html">架构</a></td>
+<td>架构、风险与技术债</td>
+<td><a href="../architecture.html">架构与技术评估</a></td>
 </tr>
 </tbody>
 </table>

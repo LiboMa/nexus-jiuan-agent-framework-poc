@@ -1,0 +1,198 @@
+补丁 0016 的测试。
+- approval-writeback 的集成测试改成连 PG；测试自己的 SQL：JSON_UNQUOTE(JSON_EXTRACT(c,'$.k')) → c->>'k'、DATABASE() → current_schema()；
+  「每次从一张新建的 v13 表开始」：MySQL 是删表、删 v13 记录、重跑迁移；PG 里这张表在基线 19 里，删掉就是表结构漂移（后面的测试文件也跟着坏），
+  改成迁移后把表清空（开始时一样是空表）。
+- 新 tests/pg-sap-payment.integration.test.mjs：SAP 快照刷新（暂存、整段替换、别的日期段保留、中途变了或替换失败时原样不动）和读出来的样子
+  （日期文字、驼峰字段名、收集时间），照原来要开关才跑的那条 MySQL 测试的步骤。
+
+diff --git a/tests/approval-writeback.integration.test.mjs b/tests/approval-writeback.integration.test.mjs
+index fb93310..d47662e 100644
+--- a/tests/approval-writeback.integration.test.mjs
++++ b/tests/approval-writeback.integration.test.mjs
+@@ -1,7 +1,7 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { createDecipheriv } from 'node:crypto';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createApprovalWritebackService } from '../src/approval-writeback.mjs';
+ import { createCallGateway } from '../src/platform/call-middleware.mjs';
+@@ -9,21 +9,16 @@ import { request } from 'node:http';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+ 
+-// Each run starts from a freshly created v13 table. An empty test database has no
+-// schema_migrations yet (nothing to drop then); on a migrated one only v13 is dropped
+-// and re-run, which also clears a v13 left behind by an interrupted or mutated run.
++// Each run starts from an empty decisions table. On MySQL the test dropped the table and re-ran migration v13; on
++// PostgreSQL the table is part of the v19 baseline, so dropping it would be drift: migrate, then empty the table.
+ async function rebuildApprovalWritebackTable(pool) {
+-  const [[ledger]] = await pool.query("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='schema_migrations'");
+-  if (Number(ledger.n) > 0) {
+-    await pool.query('DROP TABLE IF EXISTS audit_approval_decisions');
+-    await pool.query('DELETE FROM schema_migrations WHERE version=13');
+-  }
+-  await migrateMySql(pool);
++  await migratePg(pool);
++  await pool.query('DELETE FROM audit_approval_decisions');
+ }
+ 
+-test('WB01 real MySQL status then pass records two successful gateway calls and permits the write', { skip: !process.env.MYSQL_TEST_URL }, async () => {
+-  const config = parseMySqlUrl(process.env.MYSQL_TEST_URL); assert.equal(config.port, 3307); assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 8 });
++test('WB01 real MySQL status then pass records two successful gateway calls and permits the write', { skip: !process.env.PG_TEST_URL }, async () => {
++  const config = parsePgUrl(process.env.PG_TEST_URL); assert.equal(config.port, 5434); assert.match(config.database, /_test$/);
++  const pool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 8 });
+   const connectionId = `wb01-status-${Date.now()}`, key = Buffer.alloc(32, 62);
+   const actor = { id: 'wb01-status-actor', principalId: 'account:wb01-status-actor', role: 'analyst' };
+   const document = { id: 'wb01-status-document', number: 'WB01-STATUS-SYNTHETIC', version: 'v1' };
+@@ -60,7 +55,7 @@ test('WB01 real MySQL status then pass records two successful gateway calls and
+     // The write carries its attempt's own ULID, not the decision id; the same id is in the
+     // attempt's change record and in its sealed payload.
+     assert.match(logs[1].run_id, /^[0-9A-HJKMNP-TV-Z]{26}$/); assert.notEqual(logs[1].run_id, result.decisionId);
+-    const [[change]] = await pool.query("SELECT JSON_UNQUOTE(JSON_EXTRACT(operation_json,'$.runId')) AS run_id FROM platform_change_log WHERE actor_principal=? AND scope_kind='audit-writeback' ORDER BY change_id DESC LIMIT 1", [actor.principalId]);
++    const [[change]] = await pool.query("SELECT operation_json->>'runId' AS run_id FROM platform_change_log WHERE actor_principal=? AND scope_kind='audit-writeback' ORDER BY change_id DESC LIMIT 1", [actor.principalId]);
+     assert.equal(change.run_id, logs[1].run_id);
+     const [[stored]] = await pool.query('SELECT payload_ciphertext FROM audit_approval_decisions WHERE connection_id=?', [connectionId]);
+     const blob = stored.payload_ciphertext, decipher = createDecipheriv('aes-256-gcm', key, blob.subarray(1, 13));
+@@ -74,9 +69,9 @@ test('WB01 real MySQL status then pass records two successful gateway calls and
+   }
+ });
+ 
+-test('WB01 real MySQL unique claim, encrypted payload, failed retry, audit and summary', { skip: !process.env.MYSQL_TEST_URL }, async () => {
+-  const config = parseMySqlUrl(process.env.MYSQL_TEST_URL); assert.equal(config.port, 3307); assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 8 });
++test('WB01 real MySQL unique claim, encrypted payload, failed retry, audit and summary', { skip: !process.env.PG_TEST_URL }, async () => {
++  const config = parsePgUrl(process.env.PG_TEST_URL); assert.equal(config.port, 5434); assert.match(config.database, /_test$/);
++  const pool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 8 });
+   const connectionId = `wb01-${Date.now()}`, key = Buffer.alloc(32, 61), actor = { id: 'wb01-actor', principalId: 'account:wb01-actor', role: 'analyst' };
+   try {
+     await rebuildApprovalWritebackTable(pool);
+@@ -101,10 +96,10 @@ test('WB01 real MySQL unique claim, encrypted payload, failed retry, audit and s
+ });
+ 
+ // ---- WB-01-r1 rework: HTTP path through the real gateway, reconciliation and replay on MySQL ----
+-const mysqlSkip = { skip: !process.env.MYSQL_TEST_URL };
++const mysqlSkip = { skip: !process.env.PG_TEST_URL };
+ const testPool = () => {
+-  const config = parseMySqlUrl(process.env.MYSQL_TEST_URL); assert.equal(config.port, 3307); assert.match(config.database, /_test$/);
+-  return createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 8 });
++  const config = parsePgUrl(process.env.PG_TEST_URL); assert.equal(config.port, 5434); assert.match(config.database, /_test$/);
++  return createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 8 });
+ };
+ const until = async check => { for (let i = 0; i < 2000 && !(await check()); i += 1) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(await check(), 'condition not reached'); };
+ function governed(pool, rawClient, processTag) {
+@@ -196,7 +191,7 @@ test('WB01 real MySQL reconciliation uses the node sealed before writing, and a
+     stored = await row(); assert.deepEqual({ decision: stored.decision, status: stored.status, audit: stored.audit_status }, { decision: 'reject', status: 'succeeded', audit: 'written' });
+     await assert.rejects(a.decide(input), { code: 'APPROVAL_ALREADY_SUCCEEDED', status: 409 });
+     assert.equal(fake.state.writes, 2);
+-    const [audit] = await pool.query("SELECT JSON_UNQUOTE(JSON_EXTRACT(operation_json,'$.operation')) AS operation, outcome FROM platform_change_log WHERE actor_principal=? ORDER BY change_id", [actor.principalId]);
++    const [audit] = await pool.query("SELECT operation_json->>'operation' AS operation, outcome FROM platform_change_log WHERE actor_principal=? ORDER BY change_id", [actor.principalId]);
+     assert.deepEqual(audit.map(item => item.operation), ['passApproval', 'reconcilePending', 'rejectApproval']);
+   } finally { await pool.query('DELETE FROM audit_approval_decisions WHERE connection_id=?', [connectionId]).catch(() => {}); await pool.end(); }
+ });
+@@ -234,7 +229,7 @@ test('WB01 real MySQL a retry still writing in one process is not reconciled by
+     assert.deepEqual(await row(), { status: 'succeeded', audit_status: 'missing' });
+     assert.equal((await b.approvalStatus({ document, employeeId: input.employeeId, actor })).writebackStatus, 'succeeded');
+     assert.deepEqual(await row(), { status: 'succeeded', audit_status: 'written' });
+-    const [audit] = await pool.query("SELECT outcome, JSON_UNQUOTE(JSON_EXTRACT(result_json,'$.status')) AS status FROM platform_change_log WHERE actor_principal=? ORDER BY change_id", [actor.principalId]);
++    const [audit] = await pool.query("SELECT outcome, result_json->>'status' AS status FROM platform_change_log WHERE actor_principal=? ORDER BY change_id", [actor.principalId]);
+     assert.deepEqual(audit.map(item => [item.outcome, item.status]), [['failed', 'failed'], ['ok', 'succeeded']]);
+     assert.equal(fake.state.writes, 2);
+   } finally { await pool.query('DELETE FROM audit_approval_decisions WHERE connection_id=?', [connectionId]).catch(() => {}); await pool.end(); }
+diff --git a/tests/pg-sap-payment.integration.test.mjs b/tests/pg-sap-payment.integration.test.mjs
+new file mode 100644
+index 0000000..cfe0829
+--- /dev/null
++++ b/tests/pg-sap-payment.integration.test.mjs
+@@ -0,0 +1,89 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { mkdtemp, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { randomUUID, randomBytes } from 'node:crypto';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
++import { refreshSapPaymentSnapshot } from '../src/sap-payment-refresh.mjs';
++import { openSapPaymentStore } from '../src/sap-payment-store.mjs';
++
++// SAP 付款申请在真 PostgreSQL 上：快照刷新（暂存表、整段替换、失败回滚）和读出来的样子（日期文字、驼峰字段名）。
++// 原来只有一条要开关才跑的 MySQL 测试（RUN_SAP_STORE_INTEGRATION），这里照它的步骤在 PG 上跑。
++const url = process.env.PG_TEST_URL;
++const skip = url ? false : 'PG_TEST_URL is not set; integration database was not contacted';
++
++async function fixture(t) {
++  const config = parsePgUrl(url);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/);
++  const pool = createPgPool({ url, connectionLimit: 4 });
++  await migratePg(pool);
++  const backupDirectory = await mkdtemp(join(tmpdir(), 'sap-refresh-'));
++  t.after(() => rm(backupDirectory, { recursive: true, force: true }));
++  return { pool, backupDirectory };
++}
++
++test('快照刷新：暂存后整段替换；别的日期段的行保留；SAP 中途变了或替换失败，原来的行一条不少', { skip }, async t => {
++  const { pool, backupDirectory } = await fixture(t);
++  const connectionId = `test-sap-${randomUUID()}`, tenantId = 'test-sap', companyCode = '2001', key = randomBytes(32);
++  const scope = [connectionId, tenantId, companyCode];
++  // after hooks run in the order they were added: clean up, then close the pool, in one hook
++  t.after(async () => {
++    await pool.query('DELETE FROM sap_payment_requests WHERE connection_id=?', [connectionId]);
++    await pool.query('DELETE FROM sap_payment_sync_batches WHERE connection_id=?', [connectionId]);
++    await pool.end();
++  });
++  const source = [1, 2].map(n => ({ zfkh: 'TEST', zfkh_item: String(n).padStart(5, '0'), ebelp: '00010', ebeln: `PO${n}`, bukrs: companyCode, zdate: '2026-01-01', menge: '2', brtwr: '5', waers: 'CNY' }));
++  const client = { async queryPaymentPeriod(q) { return { rows: q.skip === 0 ? source : [], total: source.length }; } };
++  const input = { pool, key, connectionId, tenantId, companyCode, client, startDate: '2026-01-01', endDate: '2026-09-21', backupDirectory };
++  const read = async () => (await pool.query('SELECT request_number,line_item FROM sap_payment_requests WHERE connection_id=? AND tenant_id=? AND company_code=? ORDER BY line_item', scope))[0];
++  assert.equal((await refreshSapPaymentSnapshot(input)).persistedRows, 2);
++  assert.deepEqual((await read()).map(row => row.line_item), ['00001', '00002']);
++  const historical = { ...source[0], zfkh: 'HISTORY', zfkh_item: '00099', zdate: '2025-01-01' };
++  await refreshSapPaymentSnapshot({ ...input, startDate: '2025-01-01', endDate: '2025-12-31', client: { async queryPaymentPeriod(q) { return { rows: q.skip ? [] : [historical], total: 1 }; } } });
++  await refreshSapPaymentSnapshot(input);
++  const before = await read();
++  assert.equal(before.length, 3, '替换 2026 年这段，2025 年单独存的那行还在');
++  let calls = 0;
++  await assert.rejects(refreshSapPaymentSnapshot({ ...input, client: { async queryPaymentPeriod(q) { const result = await client.queryPaymentPeriod(q); if (++calls === 3) result.total = null; return result; } } }), { code: 'SAP_PAYMENT_TOTAL_REQUIRED' });
++  assert.deepEqual(await read(), before);
++  const failingPool = { async getConnection() {
++    const c = await pool.getConnection();
++    return { release: () => c.release(), get threadId() { return c.threadId; }, async query(sql, args) {
++      if (String(sql).startsWith('INSERT INTO sap_payment_requests SELECT')) throw new Error('injected promotion failure');
++      return c.query(sql, args);
++    } };
++  } };
++  source.push({ ...source[0], zfkh_item: '00003' });
++  await assert.rejects(refreshSapPaymentSnapshot({ ...input, pool: failingPool }), /injected promotion failure/);
++  assert.deepEqual(await read(), before, '替换失败，原来的快照原样留着');
++  const [[failed]] = await pool.query("SELECT COUNT(*) AS count FROM sap_payment_sync_batches WHERE connection_id=? AND status='failed' AND complete=0", [connectionId]);
++  assert.equal(Number(failed.count), 2);
++});
++
++test('读出来的样子同 MySQL：日期是 YYYY-MM-DD 文字、字段名是驼峰、最近一批的收集时间是 …T…Z', { skip }, async t => {
++  const { pool } = await fixture(t);
++  const connectionId = `test-sap-read-${randomUUID()}`, tenantId = 'test-sap-read';
++  t.after(async () => {
++    await pool.query('DELETE FROM sap_payment_requests WHERE connection_id=?', [connectionId]);
++    await pool.query('DELETE FROM sap_payment_sync_batches WHERE connection_id=?', [connectionId]);
++    await pool.end();
++  });
++  const store = openSapPaymentStore({ pool, key: randomBytes(32), connectionId, tenantId });
++  const batch = await store.startBatch({ companyCode: '3001', startDate: '2026-02-01', endDate: '2026-02-28' });
++  await store.upsertRows({ batchId: batch.id, rows: [
++    { zfkh: 'R1', zfkh_item: '00001', ebelp: '00010', ebeln: 'PO1', bukrs: '3001', butxt: '合成公司', zdate: '2026-02-03', menge: '2', brtwr: '5', waers: 'CNY' },
++    { zfkh: 'R1', zfkh_item: '00002', ebelp: '00010', ebeln: 'PO2', bukrs: '3001', butxt: '合成公司', zdate: '2026-02-09', menge: '1', brtwr: '7', waers: 'CNY' },
++  ] });
++  // 同一行再来一遍：照主键更新，不多出一行
++  await store.upsertRows({ batchId: batch.id, rows: [{ zfkh: 'R1', zfkh_item: '00002', ebelp: '00010', ebeln: 'PO2', bukrs: '3001', butxt: '合成公司', zdate: '2026-02-10', menge: '1', brtwr: '7', waers: 'CNY' }] });
++  await store.finishBatch(batch.id, { status: 'completed', complete: true, collectedAt: '2026-02-28T08:00:00.000Z', rowCount: 2, requestCount: 1, pages: 1 });
++  const actor = null;
++  assert.deepEqual((await store.listCompanies({ actor })).map(row => [row.code, row.name]), [['3001', '合成公司']]);
++  const rows = await store.readRows({ actor, companyCode: '3001' });
++  assert.deepEqual(rows.map(row => [row.date, row.companyCode, row.requestNumber, row.lineItem]), [['2026-02-03', '3001', 'R1', '00001'], ['2026-02-10', '3001', 'R1', '00002']]);
++  assert.deepEqual(await store.dateRange({ actor, companyCode: '3001' }), { startDate: '2026-02-03', endDate: '2026-02-10', count: 2 });
++  const latest = await store.latestSync({ actor, companyCode: '3001' });
++  assert.deepEqual([latest.startDate, latest.endDate, latest.status, latest.complete, latest.rows, latest.collectedAt], ['2026-02-01', '2026-02-28', 'completed', true, 2, '2026-02-28T08:00:00.000Z']);
++});

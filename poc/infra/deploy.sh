@@ -2,9 +2,9 @@
 # 部署或更新九安 v0.7.10 测试台（新前端 poc/web + 外壳 poc/app + 九安副本；栈的模板 andon-finance-poc.yaml）。
 #   infra/deploy.sh             测试 → 构建 → 建栈或更新栈 → 生成密钥（只补没有的）→ 打包上传 → 实例上装构件、配置测试台、重启 → 健康检查
 #   infra/deploy.sh --code-only 跳过建栈，只打包上传、装、重启、健康检查
-# 动 AWS 资源之前：跑 poc/infra/test 的测试，构建九安 v0.7.10 副本（poc/bench/build-jiuan.sh：按清单复制 + 补丁 + mysql2），
+# 动 AWS 资源之前：跑 poc/infra/test 的测试，构建九安 v0.7.10 副本（poc/bench/build-jiuan.sh：按清单复制 + 补丁 + 锁定版本的依赖），
 #   新前端 npm ci、测试、构建（dist/ 放进构件的 web/dist，外壳的前门在 / 给它），再跑外壳的单元测试。
-# 实例上（root）：装 secrets.env（root 0600）→ 解开新构件 → bench/bench-configure.sh（MySQL、jiuan 用户和服务；以前的 v0.5.3 PoC 服务还在就停掉删掉）
+# 实例上（root）：装 secrets.env（root 0600）→ 解开新构件 → bench/bench-configure.sh（九安的 PostgreSQL、jiuan 用户和服务；以前的 v0.5.3 PoC 服务还在就停掉删掉）
 #   → 换上新构件（/opt/andon-finance/current，上一版留在 previous）→ 重启 andon-jiuan。哪一步失败都不往下走、不做健康检查。
 #   KB_ALLOWED_CIDR=<私网段> deploy.sh  建栈时一起放行知识库的 PG 端口（栈已在时用 infra/kb.sh sg）；知识库本身用 infra/kb.sh 部署，见 kb/README.md
 #   KB_MODE=pg|s3vectors（一般写在 DEPLOY_ENV 的配置文件里）决定「知识库」页走哪种方式（默认 pg）；两种方式都经 Nexus 上的知识库 Agent，
@@ -19,6 +19,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$HERE/lib/deploy-env.sh"
 load_deploy_env
 source "$HERE/lib/remote.sh"
+source "$HERE/lib/bench-secrets.sh"
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK:-andon-finance-poc}"
 SECRETS="$HERE/secrets.env"
@@ -56,7 +57,7 @@ aws sts get-caller-identity --query Account --output text
 say "基础设施和部署脚本的测试（poc/infra/test）"
 node_tests "$HERE" "test/**/*.test.mjs"
 
-say "构建九安 v0.7.10 副本（按清单复制 + 补丁 + mysql2）"
+say "构建九安 v0.7.10 副本（按清单复制 + 补丁 + 锁定版本的依赖）"
 "$POC_DIR/bench/build-jiuan.sh"
 
 say "构建新前端（poc/web：npm ci、测试、构建）"
@@ -104,30 +105,15 @@ say "密钥配置文件 $SECRETS"
 if [[ ! -f "$SECRETS" ]]; then
   install -m 600 /dev/null "$SECRETS"   # 先建成 0600，再写入
   cat >> "$SECRETS" <<SECRETSFILE
-# 九安 v0.7.10 测试台的启动配置（两个账号的口令、MySQL 和九安存储的密钥）。只放在本机和实例上，不进构件、不进文档、不贴进对话。
+# 九安 v0.7.10 测试台的启动配置（两个账号的口令、数据库和九安存储的密钥）。只放在本机和实例上，不进构件、不进文档、不贴进对话。
 # 改完运行 infra/deploy.sh --code-only。Agent 的调用密钥不放这里，在新前端的「Agent 接入」页启用。
 REVIEWER_PASSWORD=$(openssl rand -base64 18)
 CHECKER_PASSWORD=$(openssl rand -base64 18)
 SECRETSFILE
   echo "已生成 ${SECRETS}：两个账号的随机口令（测试台的三项密钥接着补上）"
 fi
-# >>> bench-secrets
-# 测试台（MySQL 与九安存储）的三项密钥：缺了才补，已有的永远不改。换了 JIUAN_DATA_KEY，九安的库就打不开了。
-# 2026-11-02 之前的文件里后两项叫 JIUAN07_…：先原地改名（值不变），免得当成缺了另生成。
-for name in JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY; do
-  legacy="JIUAN07_${name#JIUAN_}"
-  if grep -q "^${legacy}=" "$SECRETS" && ! grep -q "^${name}=" "$SECRETS"; then
-    ( umask 077; sed "s/^${legacy}=/${name}=/" "$SECRETS" > "$SECRETS.new" ) && mv "$SECRETS.new" "$SECRETS"
-    echo "已把 ${SECRETS} 里的 ${legacy} 改名为 ${name}（值不变）"
-  fi
-done
-for name in BENCH_MYSQL_ROOT_PASSWORD JIUAN_MYSQL_APP_PASSWORD JIUAN_DATA_KEY; do
-  grep -q "^${name}=" "$SECRETS" && continue
-  if [[ "$name" == *_DATA_KEY ]]; then value="$(openssl rand -base64 32)"; else value="$(openssl rand -hex 16)"; fi
-  printf '%s\n' "# 测试台：只补不换（${name}）" "${name}=${value}" >> "$SECRETS"
-  echo "已在 ${SECRETS} 里补上 ${name}"
-done
-# <<< bench-secrets
+# 测试台（PostgreSQL 与九安存储）的密钥：缺了才补、已有的永远不改（lib/bench-secrets.sh）
+ensure_bench_secrets "$SECRETS"
 chmod 600 "$SECRETS"
 
 say "打包并上传构件"

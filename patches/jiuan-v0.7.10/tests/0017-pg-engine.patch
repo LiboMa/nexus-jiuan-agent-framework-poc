@@ -1,0 +1,2522 @@
+补丁 0017 的测试（还有只在带测试的构建里才有的 scripts/ 和 deploy/ecs/analysis.example.json，一起放这里）。
+- 新 tests/pg-runtime-graph.test.mjs：外壳加载的 35 个入口一路静态 import 下去，没有 mysql2、没有已删的 MySQL 模块、引用的文件都在；
+  选引擎只认 postgres；配置照 MySQL 那条的规则校验（测试台的 127.0.0.1:5433 / jiuan / jiuan_app 可以，mysql 不行）。
+- 整个删掉（removed-tests.json）：migration-drift、migration-plan、mysql-integration、source-foundation-schema——测的是 MySQL 的迁移链、
+  迁移计划 / 漂移检查脚本和建表文字；PG 的迁移、漂移检查由 pg-schema.test 测。
+- 删掉的单条（removed-tests.json，同上理由）：approval-identity-schema S1（v18）、document-search P9（v19）、element-store A1（v14 的位置和语句）、
+  dump-manifest 里连真 MySQL 的两条、mysql-database.test 里测 MySQL 连接池 / 迁移 / 建表文字的 12 条，以及 ecs-deployment 的
+  「postgres 允许 ssl true 但拒绝 ssl 对象、mysql 允许 ssl null」（行为变了：postgres 接过了 MySQL 的 ssl 规则，mysql 被拒）——换成新的一条
+  「postgres takes the ssl rules MySQL had, and a mysql database is refused」。
+- 改写、名字不变：mysql-database.test 留下用假库测正式分析存储的 8 条；element-store.test 的 S1、「A1 every v14 CHECK…」改从 PG 基线读
+  （PG 的名字上限 63）；A13 的清单去掉已删的 mysql-database.mjs；ecs-deployment 的配置换成 postgres、驱动换成 node-postgres、
+  覆盖地址换成 ANALYSIS_DATABASE_URL；startup-smoke 连 PG（隔离端口 5434）起两种部署形态；full-sync-huilianyi 的锁测试连 PG
+  （KILL → pg_terminate_backend，持有者 → isNamedLockUsed），假库认 advisory 锁；pool-starvation 的「拿不到连接」错误码
+  MYSQL_POOL_ACQUIRE_TIMEOUT → PG_POOL_ACQUIRE_TIMEOUT；platform-call-middleware-r2 的假库认 advisory 锁；
+  其余测试配置里的 engine: 'mysql' → 'postgres'。
+- scripts/（start-analysis、run-agent、process-report-detail-queue、full-sync-huilianyi、repair-analysis-document-heads）：引擎判断和文案
+  'mysql' → 'postgres'；deploy/ecs/analysis.example.json：postgres、5432。
+
+diff --git a/deploy/ecs/analysis.example.json b/deploy/ecs/analysis.example.json
+index a5b8f12..5629080 100644
+--- a/deploy/ecs/analysis.example.json
++++ b/deploy/ecs/analysis.example.json
+@@ -7,7 +7,7 @@
+   "connectionId": "REPLACE_WITH_EXISTING_CONNECTION_ID",
+   "scope": {"tenantId": "REPLACE_WITH_TENANT_ID", "companyId": "REPLACE_WITH_COMPANY_ID", "allCompaniesInTenant": false},
+   "origin": "https://audit.example.com",
+-  "database": {"engine": "mysql", "host": "REPLACE_WITH_RDS_INTERNAL_HOST", "port": 3306, "database": "jiuan_analysis", "user": "jiuan_app"},
++  "database": {"engine": "postgres", "host": "REPLACE_WITH_RDS_INTERNAL_HOST", "port": 5432, "database": "jiuan_analysis", "user": "jiuan_app"},
+   "secretFiles": {"databasePassword": "/run/secrets/mysql_password", "dataKey": "/run/secrets/analysis_data_key"},
+   "tokenFile": "/run/secrets/hly_token",
+   "caFile": "/run/secrets/hly_ca",
+diff --git a/scripts/full-sync-huilianyi.mjs b/scripts/full-sync-huilianyi.mjs
+index 87c5ad4..cf153dd 100644
+--- a/scripts/full-sync-huilianyi.mjs
++++ b/scripts/full-sync-huilianyi.mjs
+@@ -302,7 +302,7 @@ if (end < start || !['both', 'corporate', 'employee'].includes(channel) || !Numb
+ const readConfig = dependencies.readConfig || readAnalysisConfig;
+ const config = readConfig();
+ const docker = isDockerAnalysis(config);
+-if (config.database.engine !== 'mysql') throw new Error('正式分析配置尚未切换到 MySQL，未向汇联易发起请求。');
++if (config.database.engine !== 'postgres') throw new Error('正式分析配置尚未切换到 PostgreSQL，未向汇联易发起请求。');
+ if (config.scope.allCompaniesInTenant !== true) throw new Error('正式全量同步要求 scope.allCompaniesInTenant=true，未向汇联易发起请求。');
+ const secrets = dependencies.secrets || (dependencies.loadSecrets || analysisSecrets)(config);
+ const env = dependencies.environment ? dependencies.environment() : (docker ? { ...process.env } : { ...(existsSync('.env') ? parseEnv(readFileSync('.env', 'utf8')) : {}), ...process.env });
+diff --git a/scripts/process-report-detail-queue.mjs b/scripts/process-report-detail-queue.mjs
+index b51333b..dc41eeb 100644
+--- a/scripts/process-report-detail-queue.mjs
++++ b/scripts/process-report-detail-queue.mjs
+@@ -23,7 +23,7 @@ export async function main({ argv = process.argv.slice(2), dependencies = {} } =
+   const loadSecrets = dependencies.loadSecrets || analysisSecrets;
+   const openDatabase = dependencies.openDatabase || createAnalysisDatabase;
+   const config = readConfig();
+-  if (config.database.engine !== 'mysql') throw new Error('正式分析库当前不是 MySQL，未启动详情队列。');
++  if (config.database.engine !== 'postgres') throw new Error('正式分析库当前不是 PostgreSQL，未启动详情队列。');
+   if (values.execute && !values['batch-id']) throw new Error('--batch-id 是 --execute 必填项。');
+   const secrets = dependencies.secrets || loadSecrets(config);
+   const database = dependencies.database || openDatabase({ config, secrets });
+diff --git a/scripts/repair-analysis-document-heads.mjs b/scripts/repair-analysis-document-heads.mjs
+index 4a60526..151c309 100644
+--- a/scripts/repair-analysis-document-heads.mjs
++++ b/scripts/repair-analysis-document-heads.mjs
+@@ -60,7 +60,7 @@ export async function main({ argv = process.argv.slice(2), dependencies = {} } =
+     console.log(JSON.stringify(result));
+     return { ...result, exitCode: 2 };
+   }
+-  if (config.database?.engine !== 'mysql') throw Object.assign(new Error('正式分析库当前不是 MySQL，未执行单据头修复。'), { code: 'ANALYSIS_CONFIGURATION' });
++  if (config.database?.engine !== 'postgres') throw Object.assign(new Error('正式分析库当前不是 PostgreSQL，未执行单据头修复。'), { code: 'ANALYSIS_CONFIGURATION' });
+   const secrets = dependencies.secrets || loadSecrets(config);
+   const dataKey = secrets?.dataKey;
+   const database = dependencies.database || openDatabase({ config, secrets });
+diff --git a/scripts/run-agent.mjs b/scripts/run-agent.mjs
+index 8c2650a..0778de5 100644
+--- a/scripts/run-agent.mjs
++++ b/scripts/run-agent.mjs
+@@ -67,7 +67,7 @@ export async function buildRuntime({ dryRun = false, agentId, readConfig = readA
+   let store = null, gateway = null, lockPool = null;
+   try {
+     const platformStore = createPlatformStore({ pool: database.pool });
+-    if (config.database.engine !== 'mysql') throw Object.assign(new Error('Platform agents require the MySQL analysis store.'), { code: 'PLATFORM_CONFIGURATION' });
++    if (config.database.engine !== 'postgres') throw Object.assign(new Error('Platform agents require the PostgreSQL analysis store.'), { code: 'PLATFORM_CONFIGURATION' });
+     store = await database.open({ key: Buffer.from(secrets.dataKey, 'base64'), connectionId: config.connectionId, readOnly: dryRun });
+     // Preview uses only adapter.plan/read paths. It deliberately skips migrate,
+     // connector acquisition and all external clients so --dry-run is read-only.
+diff --git a/scripts/start-analysis.mjs b/scripts/start-analysis.mjs
+index d60f249..3e5344c 100644
+--- a/scripts/start-analysis.mjs
++++ b/scripts/start-analysis.mjs
+@@ -54,7 +54,7 @@ const modelEnv=docker?{...process.env}:deploymentEnvironment({...(existsSync('.e
+ const database=createAnalysisDatabase({config,secrets}),pool=database.pool;
+ pool.on?.('error',()=>console.error('ANALYSIS_DATABASE_CONNECTION'));
+ const store=await database.open({key:Buffer.from(secrets.dataKey,'base64'),connectionId:config.connectionId});await store.migrate();
+-const referenceStore=config.database.engine==='mysql'?createAgentReferenceStore({pool}):null;
++const referenceStore=config.database.engine==='postgres'?createAgentReferenceStore({pool}):null;
+ const departmentLogin=createDepartmentLogin({getRule:()=>readAnalysisConfig().dingtalkDepartmentLogin??null,
+   dingtalk:{getDepartment:(...args)=>dingtalk.getDepartment(...args)},log:code=>console.error(code)});
+ const effectiveConfig=()=>{const c=readAnalysisConfig();return {...c,accounts:departmentLogin.accountsWith(c.accounts)};};
+@@ -75,7 +75,7 @@ const gateway=createCallGateway({store:platformStore,registry,lockPool,processTa
+ const agentAssemblers={'first_review@1':missingAssembler};
+ // A person may start only review_advice, from the document page (authorizePersonRun).
+ const agentTasks=agentEnablement?createAgentTaskService({store,gateway,enablement:agentEnablement,getConfig:effectiveConfig,assemblers:agentAssemblers,authorize:authorizePersonRun,
+-  listKeys:config.database.engine==='mysql'?async()=>{const [rows]=await pool.query("SELECT scope_key FROM analysis_sync_states WHERE connection_id=? AND scope_key LIKE ?",[config.connectionId,AGENT_TASK_KEY_PREFIX+'%']);return rows.map(row=>row.scope_key);}:null}):null;
++  listKeys:config.database.engine==='postgres'?async()=>{const [rows]=await pool.query("SELECT scope_key FROM analysis_sync_states WHERE connection_id=? AND scope_key LIKE ?",[config.connectionId,AGENT_TASK_KEY_PREFIX+'%']);return rows.map(row=>row.scope_key);}:null}):null;
+ if(agentTasks){try{await agentTasks.recover();}catch(error){console.error(`AGENT_TASK_RECOVER_FAILED ${error?.code||''}`);}}
+ // Terms 37, 73 and 75: where the third way runs on Nexus (test instance, agents.tasks.review_advice on) it is the only
+ // 「AI 独立建议」: the relay advice is not built, and the same card sends corporate payments to the review Agent.
+@@ -149,7 +149,7 @@ if(!docker){
+ }
+ const sapClient=gateway.govern('sap-mcp');
+ let sapPaymentStore=null;
+-if (config.database.engine === 'mysql') {
++if (config.database.engine === 'postgres') {
+   sapPaymentStore=openSapPaymentStore({pool,key:Buffer.from(secrets.dataKey,'base64'),connectionId:config.connectionId,tenantId:config.scope.tenantId});
+ }
+ const productionFile=modelEnv.SAP_SUPPLIER_ANALYSIS_XLSX||resolve('data/supplier-production/产量汇总表-26年.xlsx');
+diff --git a/tests/approval-identity-schema.test.mjs b/tests/approval-identity-schema.test.mjs
+index 2a049d0..69659b8 100644
+--- a/tests/approval-identity-schema.test.mjs
++++ b/tests/approval-identity-schema.test.mjs
+@@ -1,7 +1,5 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+-import { MYSQL_APPROVAL_IDENTITY_MIGRATION } from '../src/approval-identity-schema.mjs';
+-import { MYSQL_MIGRATIONS, splitMySqlStatements, validateAdditiveMigration } from '../src/mysql-database.mjs';
+ import { DOCUMENT_TABLES } from '../src/analysis-documents-admin.mjs';
+ 
+ // SYNC-06a: who acted on a document and who holds it now are kept in four new tables. The
+@@ -9,20 +7,6 @@ import { DOCUMENT_TABLES } from '../src/analysis-documents-admin.mjs';
+ // child tables must still be able to delete documents.
+ const NEW_TABLES = ['audit_approval_actor_index', 'audit_approval_actors', 'audit_approval_pending', 'hly_departments'];
+ 
+-test('S1 v18 approval-identity stays registered, only adds four tables and has no foreign key', () => {
+-  const migration = MYSQL_APPROVAL_IDENTITY_MIGRATION;
+-  assert.deepEqual([migration.version, migration.name, migration.additive], [18, 'approval-identity', true]);
+-  assert.doesNotThrow(() => validateAdditiveMigration(migration));
+-  const statements = splitMySqlStatements(migration.sql);
+-  assert.equal(statements.length, 4);
+-  for (const statement of statements) assert.match(statement.trim(), /^CREATE TABLE IF NOT EXISTS /u);
+-  assert.deepEqual(statements.map(statement => statement.trim().match(/^CREATE TABLE IF NOT EXISTS (\w+)/u)?.[1]), NEW_TABLES);
+-  assert.doesNotMatch(migration.sql, /references|foreign\s+key/iu);
+-  assert.equal(MYSQL_MIGRATIONS.at(-1).version, 19);
+-  assert.equal(MYSQL_MIGRATIONS.at(-1).name, 'document-search');
+-  assert.equal(MYSQL_MIGRATIONS.find(item => item.version === 18).sql, migration.sql);
+-});
+-
+ test('S2 the three document child tables are cleared before audit_documents, the department table is not', () => {
+   const documents = DOCUMENT_TABLES.indexOf('audit_documents');
+   assert.ok(documents > 0);
+diff --git a/tests/document-search.test.mjs b/tests/document-search.test.mjs
+index 7909b0e..98153cc 100644
+--- a/tests/document-search.test.mjs
++++ b/tests/document-search.test.mjs
+@@ -1,7 +1,6 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ import * as storeModule from '../src/mysql-analysis-store.mjs';
+-import { MYSQL_MIGRATIONS, splitMySqlStatements, validateAdditiveMigration } from '../src/mysql-database.mjs';
+ 
+ test('search names use the approval card fields and reject aliases', () => {
+   assert.equal(typeof storeModule.documentSearchNames, 'function');
+@@ -25,11 +24,3 @@ test('search names accept only nonempty strings and cap each at 300 characters',
+     { payeeName: '名'.repeat(300), applicantName: '名'.repeat(300) });
+ });
+ 
+-test('P9 search migration only creates the additive search table', () => {
+-  const migration = MYSQL_MIGRATIONS.at(-1);
+-  assert.deepEqual([migration.version, migration.name, migration.additive], [19, 'document-search', true]);
+-  assert.doesNotThrow(() => validateAdditiveMigration(migration));
+-  const statements = splitMySqlStatements(migration.sql);
+-  assert.equal(statements.length, 1);
+-  assert.match(statements[0], /^CREATE TABLE IF NOT EXISTS analysis_document_search/u);
+-});
+diff --git a/tests/dump-manifest.test.mjs b/tests/dump-manifest.test.mjs
+index f127810..e68705a 100644
+--- a/tests/dump-manifest.test.mjs
++++ b/tests/dump-manifest.test.mjs
+@@ -8,7 +8,6 @@ import { spawnSync } from 'node:child_process';
+ import { gzipSync } from 'node:zlib';
+ import { fileURLToPath } from 'node:url';
+ import { manifestOf, manifestText, scanInsertValues } from '../deploy/gitea/dump-manifest.mjs';
+-import { MYSQL_MIGRATIONS, createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
+ 
+ // REL-03a-4: the manifest a restore drill compares against is read from the dump itself
+ // (counts and versions only). A parenthesis or a quote inside a value is never a row; the
+@@ -85,60 +84,7 @@ test('a dump without its closing line gets no manifest, and the run says why', t
+ 
+ const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+ const MYSQLDUMP = process.env.MYSQLDUMP || 'C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe';
+-test('a real mysqldump: the manifest counts what COUNT(*) counts, binary and quoted values included', {
+-  skip: !mysqlTestUrl ? 'MYSQL_TEST_URL is not set; integration database was not contacted' : !existsSync(MYSQLDUMP) && 'mysqldump is not installed here',
+-}, async t => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/u);
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
+-  const dir = mkdtempSync(join(tmpdir(), 'dump-manifest-real-'));
+-  // The database is shared with every integration file after this one: it is left empty, as this
+-  // case found it after its own clean start, whether the case passed or not (REL-03a-4 r1).
+-  t.after(async () => {
+-    try { await pool.query('DROP TABLE IF EXISTS analysis_documents, schema_migrations, analysis_batches'); }
+-    finally { await pool.end(); rmSync(dir, { recursive: true, force: true }); }
+-  });
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  await pool.query('CREATE TABLE analysis_documents (id VARCHAR(40) PRIMARY KEY, payload LONGBLOB, note TEXT)');
+-  await pool.query('CREATE TABLE schema_migrations (version INT PRIMARY KEY, name VARCHAR(40))');
+-  await pool.query('CREATE TABLE analysis_batches (id INT PRIMARY KEY)');
+-  const awkward = ["a (b), c", "it's (x)", ')),((', 'back\\slash', 'line\nbreak', '', "''"];
+-  const rows = Array.from({ length: 2500 }, (_, n) => [`d${n}`, Buffer.from([0, 40, 41, 39, 92, 10, n % 256, 44]), awkward[n % awkward.length]]);
+-  for (let i = 0; i < rows.length; i += 500) await pool.query('INSERT INTO analysis_documents (id, payload, note) VALUES ?', [rows.slice(i, i + 500)]);
+-  await pool.query("INSERT INTO schema_migrations VALUES (1,'core'),(18,'approval-identity'),(19,'document-search'),(17,'x')");
+-  const out = join(dir, '20261021T010203Z-mysql.sql');
+-  const dump = spawnSync(MYSQLDUMP, ['-h', config.host, '-P', String(config.port), '-u', config.user, '--single-transaction', '--no-tablespaces', '--skip-lock-tables', '--databases', config.database, `--result-file=${out}`],
+-    { env: { ...process.env, MYSQL_PWD: config.password }, encoding: 'utf8' });
+-  assert.equal(dump.status, 0, dump.stderr);
+-  const manifest = await manifestOf(out);
+-  const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM analysis_documents');
+-  assert.equal(Number(n), 2500);
+-  assert.deepEqual(Object.fromEntries(manifest.counts), { [`${config.database}.analysis_documents`]: 2500, [`${config.database}.schema_migrations`]: 4, [`${config.database}.analysis_batches`]: 0 });
+-  assert.deepEqual(Object.fromEntries(manifest.maxVersion), { [config.database]: 19 });
+-});
+-
+ // REL-03a-4 r1: the case above shares MYSQL_TEST_URL with every integration file after this one.
+ // It once left its own schema_migrations (version 18) behind, so the next file's migration took
+ // the database for migrated and created no tables (full-rd, 10-21: 62 ER_NO_SUCH_TABLE from
+ // element-directive.integration on). The project's own migration must still build the schema.
+-test('the shared test database still migrates from scratch for the next files', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async t => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
+-  t.after(() => pool.end());
+-  const latest = MYSQL_MIGRATIONS.at(-1).version;
+-  assert.equal((await migrateMySql(pool)).currentVersion, latest);
+-  const [tables] = await pool.query('SELECT TABLE_NAME AS name FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  const names = new Set(tables.map(row => row.name));
+-  for (const name of ['schema_migrations', 'analysis_documents', 'analysis_document_versions', 'audit_documents', 'element_family_registry', 'audit_approval_actors'])
+-    assert.ok(names.has(name), `${name} was created`);
+-  const [[{ highest }]] = await pool.query('SELECT MAX(version) AS highest FROM schema_migrations');
+-  assert.equal(Number(highest), latest);
+-  const [[{ rows }]] = await pool.query('SELECT COUNT(*) AS `rows` FROM schema_migrations');
+-  assert.equal(Number(rows), MYSQL_MIGRATIONS.length, 'every migration is recorded');
+-});
+-
+diff --git a/tests/ecs-deployment.test.mjs b/tests/ecs-deployment.test.mjs
+index 1aee46d..2b425f2 100644
+--- a/tests/ecs-deployment.test.mjs
++++ b/tests/ecs-deployment.test.mjs
+@@ -15,7 +15,7 @@ function fixture(t){
+   writeFileSync(rdsCaFile,'synthetic-rds-ca');
+   const config={deployment:'ecs-docker',instance:'production',source:{kind:'huilianyi-mcp'},environment:'prod',mode:'read_only_analysis',connectionId:'test-connection',
+     scope:{tenantId:'test-tenant',companyId:'test-company'},origin:'https://audit.example.com',
+-    database:{engine:'mysql',host:'mysql',port:3306,database:'jiuan_analysis',user:'jiuan_app'},
++    database:{engine:'postgres',host:'pg',port:5432,database:'jiuan_analysis',user:'jiuan_app'},
+     secretFiles:{databasePassword:passwordFile,dataKey:keyFile},tokenFile:join(dir,'token'),caFile:join(dir,'ca'),
+     automaticSync:false,syncIntervalMs:0,accounts:[]};
+   const save=()=>writeFileSync(file,JSON.stringify(config));
+@@ -37,7 +37,7 @@ test('ECS config must state instance and source',t=>{
+ test('ECS config loads HTTPS origin and mounted secrets without Windows DPAPI',t=>{
+   const f=fixture(t);let config,secrets;
+   assert.doesNotThrow(()=>{config=readAnalysisConfig(f.file);secrets=analysisSecrets(config);});
+-  assert.equal(config.database.host,'mysql');
++  assert.equal(config.database.host,'pg');
+   assert.equal(secrets.databasePassword,'synthetic-password');
+   assert.deepEqual(Buffer.from(secrets.dataKey,'base64'),Buffer.alloc(32,7));
+ });
+@@ -96,34 +96,37 @@ test('ECS MySQL ssl contract requires the mounted RDS CA and rejects unsafe vari
+   assert.doesNotThrow(() => readAnalysisConfig(f.file));
+ });
+ 
+-test('postgres permits ssl true but rejects an ssl object, and mysql permits ssl null', t => {
++// PostgreSQL is the only engine: it takes the ssl rules MySQL had (true, or an absolute CA file; null allowed),
++// and a mysql config is refused (this replaces 'postgres permits ssl true but rejects an ssl object, and mysql permits ssl null').
++test('postgres takes the ssl rules MySQL had, and a mysql database is refused', t => {
+   const f = fixture(t);
+   delete f.config.deployment;
+   delete f.config.secretFiles;
+   f.config.origin = 'http://127.0.0.1:4180';
+-  f.config.database = { engine: 'postgres', host: '127.0.0.1', port: 55432, database: 'jiuan_analysis', ssl: true };
++  f.config.database = { engine: 'postgres', host: '127.0.0.1', port: 5432, database: 'jiuan_analysis', user: 'jiuan_app', ssl: true };
+   f.save();
+   assert.doesNotThrow(() => readAnalysisConfig(f.file));
+-  f.config.database.ssl = { caFile: '/tmp/ca.pem' };
+-  f.save();
+-  assert.throws(() => readAnalysisConfig(f.file));
++  for (const [ssl, ok] of [[{ caFile: '/tmp/ca.pem' }, true], [{ caFile: 'ca.pem' }, false], [null, true]]) {
++    f.config.database.ssl = ssl;
++    f.save();
++    if (ok) assert.doesNotThrow(() => readAnalysisConfig(f.file), JSON.stringify(ssl));
++    else assert.throws(() => readAnalysisConfig(f.file), JSON.stringify(ssl));
++  }
+   f.config.database = { engine: 'mysql', host: 'mysql', port: 3306, database: 'jiuan_analysis', user: 'jiuan_app', ssl: null };
+   f.save();
+-  assert.doesNotThrow(() => readAnalysisConfig(f.file));
++  assert.throws(() => readAnalysisConfig(f.file));
+ });
+ 
+ test('createAnalysisDatabase passes the ECS CA contract through to mysql2', async t => {
++  // The driver is node-postgres now: the mounted CA goes into its ssl options the same way.
+   const f = fixture(t);
+-  const previous = { MYSQL_URL: process.env.MYSQL_URL, ANALYSIS_MYSQL_URL: process.env.ANALYSIS_MYSQL_URL };
+-  delete process.env.MYSQL_URL;
+-  delete process.env.ANALYSIS_MYSQL_URL;
++  const previous = process.env.ANALYSIS_DATABASE_URL;
++  delete process.env.ANALYSIS_DATABASE_URL;
+   try {
+     const config = { ...f.config, database: { ...f.config.database, ssl: { caFile: f.rdsCaFile } } };
+     const database = createAnalysisDatabase({ config, secrets: { databasePassword: 'synthetic-password' } });
+     try {
+-      assert.deepEqual(database.pool.pool.config.connectionConfig.ssl, {
+-        ca: 'synthetic-rds-ca', rejectUnauthorized: true, verifyIdentity: true,
+-      });
++      assert.deepEqual(database.pool.core.options.ssl, { ca: 'synthetic-rds-ca', rejectUnauthorized: true });
+     } finally {
+       await database.pool.end();
+     }
+@@ -131,21 +134,19 @@ test('createAnalysisDatabase passes the ECS CA contract through to mysql2', asyn
+     config.database.ssl = true;
+     const local = createAnalysisDatabase({ config, secrets: { databasePassword: 'synthetic-password' } });
+     try {
+-      assert.deepEqual(local.pool.pool.config.connectionConfig.ssl, { rejectUnauthorized: true });
++      assert.deepEqual(local.pool.core.options.ssl, { rejectUnauthorized: true });
+     } finally {
+       await local.pool.end();
+     }
+   } finally {
+-    if (previous.MYSQL_URL === undefined) delete process.env.MYSQL_URL;
+-    else process.env.MYSQL_URL = previous.MYSQL_URL;
+-    if (previous.ANALYSIS_MYSQL_URL === undefined) delete process.env.ANALYSIS_MYSQL_URL;
+-    else process.env.ANALYSIS_MYSQL_URL = previous.ANALYSIS_MYSQL_URL;
++    if (previous === undefined) delete process.env.ANALYSIS_DATABASE_URL;
++    else process.env.ANALYSIS_DATABASE_URL = previous;
+   }
+ });
+ 
+ test('RDS internal host is accepted while the placeholder host is rejected', t => {
+   const f = fixture(t);
+-  f.config.database.host = 'rm-2zeabc123.mysql.rds.aliyuncs.com';
++  f.config.database.host = 'pgm-2zeabc123.pg.rds.aliyuncs.com';
+   f.save();
+   assert.doesNotThrow(() => readAnalysisConfig(f.file));
+   f.config.database.host = 'REPLACE_WITH_RDS_INTERNAL_HOST';
+@@ -161,40 +162,32 @@ test('the shipped ECS template loads once its placeholders are filled', t => {
+   const template = JSON.parse(readFileSync(new URL('../deploy/ecs/analysis.example.json', import.meta.url), 'utf8'));
+   assert.equal(template.instance, 'production');
+   assert.deepEqual(template.source, { kind: 'huilianyi-mcp' });
+-  template.database.host = 'rm-2zeabc123.mysql.rds.aliyuncs.com';
++  template.database.host = 'pgm-2zeabc123.pg.rds.aliyuncs.com';
+   const file = join(dir, 'analysis.json');
+   writeFileSync(file, JSON.stringify(template));
+   assert.doesNotThrow(() => readAnalysisConfig(file));
+ });
+ 
+ test('ECS rejects each database URL environment override while local mode preserves MYSQL_URL', async t => {
++  // The one override is ANALYSIS_DATABASE_URL now (it was ANALYSIS_MYSQL_URL / MYSQL_URL).
+   const f = fixture(t);
+-  const previous = { MYSQL_URL: process.env.MYSQL_URL, ANALYSIS_MYSQL_URL: process.env.ANALYSIS_MYSQL_URL };
++  const previous = process.env.ANALYSIS_DATABASE_URL;
+   try {
+-    for (const name of ['MYSQL_URL','ANALYSIS_MYSQL_URL']) {
+-      delete process.env.MYSQL_URL;
+-      delete process.env.ANALYSIS_MYSQL_URL;
+-      process.env[name] = 'mysql://override_user:override_password@override.example/jiuan_analysis';
+-      assert.throws(() => createAnalysisDatabase({ config: readAnalysisConfig(f.file), secrets: { databasePassword: 'synthetic-password' } }), error => error.code === 'ECS_DATABASE_URL_OVERRIDE');
+-    }
+-
+-    delete process.env.ANALYSIS_MYSQL_URL;
+-    process.env.MYSQL_URL = 'mysql://override_user:override_password@override.example/jiuan_analysis';
++    process.env.ANALYSIS_DATABASE_URL = 'postgres://override_user:override_password@override.example/jiuan_analysis';
++    assert.throws(() => createAnalysisDatabase({ config: readAnalysisConfig(f.file), secrets: { databasePassword: 'synthetic-password' } }), error => error.code === 'ECS_DATABASE_URL_OVERRIDE');
+     delete f.config.deployment;
+     delete f.config.secretFiles;
+     f.config.origin = 'http://127.0.0.1:4180';
+     f.save();
+     const database = createAnalysisDatabase({ config: readAnalysisConfig(f.file), secrets: { databasePassword: 'synthetic-password' } });
+     try {
+-      assert.equal(database.pool.pool.config.connectionConfig.host, 'override.example');
++      assert.equal(database.pool.core.options.host, 'override.example');
+     } finally {
+       await database.pool.end();
+     }
+   } finally {
+-    if (previous.MYSQL_URL === undefined) delete process.env.MYSQL_URL;
+-    else process.env.MYSQL_URL = previous.MYSQL_URL;
+-    if (previous.ANALYSIS_MYSQL_URL === undefined) delete process.env.ANALYSIS_MYSQL_URL;
+-    else process.env.ANALYSIS_MYSQL_URL = previous.ANALYSIS_MYSQL_URL;
++    if (previous === undefined) delete process.env.ANALYSIS_DATABASE_URL;
++    else process.env.ANALYSIS_DATABASE_URL = previous;
+   }
+ });
+ 
+diff --git a/tests/element-store.test.mjs b/tests/element-store.test.mjs
+index a72200a..901a304 100644
+--- a/tests/element-store.test.mjs
++++ b/tests/element-store.test.mjs
+@@ -4,8 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
+ import { readdirSync, readFileSync, statSync } from 'node:fs';
+ import { join, relative, resolve } from 'node:path';
+ import * as elementStore from '../src/element-store.mjs';
+-import { MYSQL_ELEMENT_STORE_MIGRATION } from '../src/element-store-schema.mjs';
+-import { MYSQL_MIGRATIONS, parseMigrationExpects, splitMySqlStatements, validateAdditiveMigration } from '../src/mysql-database.mjs';
++import { PG_BASELINE_SCHEMA } from '../src/pg-schema.mjs';
+ 
+ const ROOT = resolve(import.meta.dirname, '..');
+ const STORE_SOURCE = readFileSync(join(ROOT, 'src', 'element-store.mjs'), 'utf8');
+@@ -25,55 +24,32 @@ test('only dingtalk: principals qualify as dingtalk identities', () => {
+   assert.equal(elementStore.isDingtalkPrincipal(null), false);
+ });
+ 
+-test('A1 v14 directly follows v13, is additive, and has exactly six CREATE TABLE IF NOT EXISTS statements', () => {
+-  const v14 = MYSQL_MIGRATIONS.findIndex(item => item.version === 14);
+-  assert.equal(MYSQL_MIGRATIONS[v14].name, 'element-store');
+-  assert.equal(MYSQL_MIGRATIONS[v14 - 1].version, 13);
+-  assert.equal(MYSQL_MIGRATIONS[v14 - 1].name, 'approval-writeback');
+-  assert.equal(MYSQL_ELEMENT_STORE_MIGRATION.version, 14);
+-  assert.equal(MYSQL_ELEMENT_STORE_MIGRATION.name, 'element-store');
+-  assert.equal(MYSQL_ELEMENT_STORE_MIGRATION.additive, true);
+-  validateAdditiveMigration(MYSQL_ELEMENT_STORE_MIGRATION);
+-  const statements = splitMySqlStatements(MYSQL_ELEMENT_STORE_MIGRATION.sql);
+-  assert.equal(statements.length, 6);
+-  assert.ok(statements.every(statement => /^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+element_/i.test(statement)));
+-  const sql = MYSQL_ELEMENT_STORE_MIGRATION.sql;
+-  for (const forbidden of [/\bENUM\s*\(/i, /\bGENERATED\b/i, /\bFOREIGN\s+KEY\b/i, /\bREFERENCES\b/i, /\bALTER\b/i, /\bAS\s*\(/i]) {
+-    assert.doesNotMatch(sql, forbidden, `v14 must not use ${forbidden}`);
+-  }
+-  assert.deepEqual(Object.keys(parseMigrationExpects(sql).tables).sort(), V14_TABLES);
+-});
+-
+ test('A1 every v14 CHECK is named <table>_chk_<meaning>, at most 64 characters, and unique across all migrations', () => {
+-  const sql = MYSQL_ELEMENT_STORE_MIGRATION.sql;
+-  const expects = parseMigrationExpects(sql);
+-  assert.ok(expects.checks.length >= 27, `expected the full v14 check set, got ${expects.checks.length}`);
+-  for (const check of expects.checks) {
+-    assert.match(check.name, new RegExp(`^${check.table}_chk_[a-z][a-z_]*$`), `${check.table}.${check.name}`);
+-    assert.doesNotMatch(check.name, /^CHECK_\d+$/);
+-    assert.ok(check.name.length <= 64, check.name);
++  // On PostgreSQL the named CHECKs live in the v19 baseline (the identifier limit there is 63); the unsigned-column
++  // CHECKs (col >= 0) carry PostgreSQL's own names and are not part of this naming rule.
++  const named = [...PG_BASELINE_SCHEMA.matchAll(/CONSTRAINT "([a-z0-9_]+)" CHECK/gu)].map(match => match[1]);
++  const v14 = named.filter(name => V14_TABLES.some(table => name.startsWith(`${table}_chk_`)));
++  assert.ok(v14.length >= 27, `expected the full v14 check set, got ${v14.length}`);
++  for (const name of v14) {
++    assert.match(name, /^[a-z_]+_chk_[a-z][a-z_]*$/, name);
++    assert.ok(name.length <= 63, name);
+   }
+-  // An inline column CHECK or an unnamed table CHECK would be auto-named by MySQL.
+-  const allChecks = (sql.match(/\bCHECK\s*\(/gi) || []).length;
+-  const namedChecks = (sql.match(/\bCONSTRAINT\s+[A-Za-z0-9_]+\s+CHECK\s*\(/gi) || []).length;
+-  assert.equal(allChecks, namedChecks, 'every CHECK must be written as CONSTRAINT <name> CHECK (...)');
+-  assert.equal(namedChecks, expects.checks.length);
+-  const everyName = MYSQL_MIGRATIONS.flatMap(migration => (migration.expects?.checks || []).map(check => check.name));
+-  assert.equal(new Set(everyName).size, everyName.length, 'CHECK names must be unique in the database');
++  assert.equal(new Set(named).size, named.length, 'CHECK names must be unique in the database');
+ });
+ 
+ test('S1 v14 element_draft_edits carries intent, an encrypted note, and three named intent checks', () => {
+-  const expects = parseMigrationExpects(MYSQL_ELEMENT_STORE_MIGRATION.sql);
+-  const editColumns = expects.tables.element_draft_edits;
++  // Read from the PostgreSQL baseline (MySQL's v14 migration text is gone): the same columns and named CHECKs.
++  const table = PG_BASELINE_SCHEMA.match(/CREATE TABLE "element_draft_edits" \(([\s\S]*?)\n\);/u)[1];
++  const editColumns = [...table.matchAll(/^\s+"([a-z_]+)" /gmu)].map(match => match[1]);
+   assert.ok(editColumns.includes('intent'));
+   assert.ok(editColumns.includes('note_ciphertext'));
+-  const names = expects.checks.filter(check => check.table === 'element_draft_edits').map(check => check.name).sort();
++  const names = [...table.matchAll(/CONSTRAINT "([a-z_]+)" CHECK/gu)].map(match => match[1]).sort();
+   for (const name of ['element_draft_edits_chk_intent', 'element_draft_edits_chk_intent_pair', 'element_draft_edits_chk_whole_mark']) {
+     assert.ok(names.includes(name), name);
+     assert.match(name, /^element_draft_edits_chk_/);
+   }
+   assert.doesNotMatch(editColumns.join(','), /\bnote\b(?!_ciphertext)/);
+-  const action = MYSQL_ELEMENT_STORE_MIGRATION.sql.match(/CONSTRAINT\s+element_draft_edits_chk_action\s+CHECK\s*\(action\s+IN\s*\(([^)]*)\)\)/i);
++  const action = table.match(/CONSTRAINT "element_draft_edits_chk_action" CHECK \(\("action" in \(([^)]*)\)\)\)/iu);
+   assert.ok(action, 'element_draft_edits_chk_action is a plain IN list');
+   assert.deepEqual(action[1].split(',').map(value => value.trim().replace(/^'|'$/g, '')).sort(), ['add', 'adopt', 'discard', 'import', 'modify', 'resolve_conflict', 'restore', 'save']);
+ });
+@@ -126,12 +102,10 @@ test('A13 only the milestone runtime constructs the store: besides it, only the
+     .filter(file => /\.(m?js|cjs|html|py|sh|ps1)$/.test(file));
+   const hits = files.filter(file => readFileSync(file, 'utf8').includes('element-store')).map(file => relative(ROOT, file).replaceAll('\\', '/')).sort();
+   // RLN-B1: the tree registry reuses the store's error and row-bound sealing helpers; it never builds a store.
+-  assert.deepEqual(hits, ['src/element-registry.mjs', 'src/element-store-schema.mjs', 'src/element-store.mjs', 'src/milestone-runtime.mjs', 'src/mysql-database.mjs']);
++  // src/mysql-database.mjs (MySQL's migration list) is gone with PostgreSQL; element-store-schema.mjs keeps the old MySQL DDL text only
++  assert.deepEqual(hits, ['src/element-registry.mjs', 'src/element-store-schema.mjs', 'src/element-store.mjs', 'src/milestone-runtime.mjs']);
+   const registry = readFileSync(join(ROOT, 'src', 'element-registry.mjs'), 'utf8').split(/\r?\n/);
+   assert.deepEqual(registry.filter(line => line.includes('element-store')), ["import { problem, sealElementValue, unsealElementValue } from './element-store.mjs';"]);
+-  const database = readFileSync(join(ROOT, 'src', 'mysql-database.mjs'), 'utf8');
+-  const lines = database.split(/\r?\n/).filter(line => line.includes('element-store'));
+-  assert.deepEqual(lines, ["import { MYSQL_ELEMENT_DIRECTIVE_FORMAT_MIGRATION, MYSQL_ELEMENT_PUBLISH_MIGRATION, MYSQL_ELEMENT_REGISTRY_MIGRATION, MYSQL_ELEMENT_STORE_MIGRATION } from './element-store-schema.mjs';"]);
+   const runtime = readFileSync(join(ROOT, 'src', 'milestone-runtime.mjs'), 'utf8').split(/\r?\n/);
+   assert.deepEqual(runtime.filter(line => line.includes('element-store')), ["import { createElementStore } from './element-store.mjs';"]);
+   const constructors = files.filter(file => !file.endsWith('element-store.mjs') && readFileSync(file, 'utf8').includes('createElementStore')).map(file => relative(ROOT, file).replaceAll('\\', '/'));
+diff --git a/tests/full-sync-huilianyi.test.mjs b/tests/full-sync-huilianyi.test.mjs
+index cce11f5..ab117b8 100644
+--- a/tests/full-sync-huilianyi.test.mjs
++++ b/tests/full-sync-huilianyi.test.mjs
+@@ -213,12 +213,12 @@ test('splitting a refused window removes only the coarse refusal', async () => {
+ });
+ 
+ test('only one full sync per connection holds the database lock at a time (review 2026-10-11)', {
+-  skip: process.env.MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: process.env.PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+   const { acquireFullSyncLock } = await import('../scripts/full-sync-huilianyi.mjs');
+-  const { createMySqlPool } = await import('../src/mysql-database.mjs');
+-  const first = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 2 });
+-  const second = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 2 });
++  const { createPgPool } = await import('../src/pg-database.mjs');
++  const first = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 2 });
++  const second = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 2 });
+   try {
+     const held = await acquireFullSyncLock(first, 'hly-prod-a-connection-id-long-enough-to-exceed-sixty-four-characters-in-a-lock-name');
+     assert.ok(held);
+@@ -252,10 +252,13 @@ test('business refusal messages use the public vendor message policy', async ()
+ 
+ test('a held lock exposes a verify operation', async () => {
+   const { acquireFullSyncLock } = await import('../scripts/full-sync-huilianyi.mjs');
++  // PostgreSQL advisory locks: the try-lock answers true, pg_locks names this connection's backend as the holder
+   const pool = { getConnection: async () => ({
++    threadId: 4242,
+     async query(sql) {
+-      if (/GET_LOCK/.test(sql)) return [[{ acquired: 1 }]];
+-      if (/IS_USED_LOCK/.test(sql)) return [[{ held: 1 }]];
++      if (/pg_try_advisory_lock\(/.test(sql)) return [[{ acquired: true }]];
++      if (/FROM pg_locks/.test(sql)) return [[{ pid: 4242 }]];
++      if (/pg_advisory_unlock\(/.test(sql)) return [[{ released: true }]];
+       return [[]];
+     },
+     release() {},
+@@ -267,19 +270,18 @@ test('a held lock exposes a verify operation', async () => {
+ });
+ 
+ test('verify detects a lock connection killed by another connection', {
+-  skip: process.env.MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: process.env.PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+   const { acquireFullSyncLock } = await import('../scripts/full-sync-huilianyi.mjs');
+-  const { createMySqlPool } = await import('../src/mysql-database.mjs');
+-  const holderPool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 1 });
+-  const killerPool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 2 });
++  const { createPgPool, isNamedLockUsed } = await import('../src/pg-database.mjs');
++  const holderPool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 1 });
++  const killerPool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 2 });
+   const lock = await acquireFullSyncLock(holderPool, `verify-kill-${Date.now()}`);
+   try {
+     assert.equal(await lock.verify(), true);
+-    const [rows] = await killerPool.query('SELECT IS_USED_LOCK(?) AS id', [lock.name]);
+-    const id = Number(rows[0]?.id);
++    const id = Number(await isNamedLockUsed(killerPool, lock.name));
+     assert.ok(Number.isSafeInteger(id) && id > 0);
+-    await killerPool.query(`KILL ${id}`);
++    await killerPool.query('SELECT pg_terminate_backend(?)', [id]);
+     assert.equal(await lock.verify(), false);
+   } finally {
+     await lock.release().catch(() => {});
+diff --git a/tests/full-sync-main.test.mjs b/tests/full-sync-main.test.mjs
+index 122bf77..a2d8d83 100644
+--- a/tests/full-sync-main.test.mjs
++++ b/tests/full-sync-main.test.mjs
+@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
+ 
+ import { main } from '../scripts/full-sync-huilianyi.mjs';
+ 
+-const config = () => ({ database: { engine: 'mysql' }, connectionId: 'full-sync-main-test', scope: { allCompaniesInTenant: true } });
++const config = () => ({ database: { engine: 'postgres' }, connectionId: 'full-sync-main-test', scope: { allCompaniesInTenant: true } });
+ const secrets = { dataKey: Buffer.alloc(32).toString('base64') };
+ const quiet = async callback => {
+   const original = { log: console.log, error: console.error };
+diff --git a/tests/healthcheck-version.test.mjs b/tests/healthcheck-version.test.mjs
+index 176b0cf..fbb082e 100644
+--- a/tests/healthcheck-version.test.mjs
++++ b/tests/healthcheck-version.test.mjs
+@@ -22,7 +22,7 @@ async function withApp(t, body, status = 200) {
+   const config = join(dir, 'analysis.json');
+   writeFileSync(config, JSON.stringify({ deployment: 'ecs-docker', instance: 'production', source: { kind: 'huilianyi-mcp' }, environment: 'prod', mode: 'read_only_analysis', connectionId: 'c',
+     scope: { tenantId: 't', companyId: 'co' }, origin: 'https://audit.example.com',
+-    database: { engine: 'mysql', host: 'mysql', port: 3306, database: 'jiuan_analysis', user: 'jiuan_app' },
++    database: { engine: 'postgres', host: 'pg', port: 5432, database: 'jiuan_analysis', user: 'jiuan_app' },
+     secretFiles: { databasePassword: join(dir, 'p'), dataKey: join(dir, 'k') }, tokenFile: join(dir, 't'), caFile: join(dir, 'ca'),
+     automaticSync: false, syncIntervalMs: 0, accounts: [] }));
+   // Asynchronous on purpose: a synchronous spawn would block this process, and with it the fake app.
+diff --git a/tests/huilianyi-source.test.mjs b/tests/huilianyi-source.test.mjs
+index 8a3c386..649566d 100644
+--- a/tests/huilianyi-source.test.mjs
++++ b/tests/huilianyi-source.test.mjs
+@@ -25,7 +25,7 @@ test('analysis config rejects crossed instance/source pairs and accepts a comple
+   const base = {
+     environment: 'prod', mode: 'read_only_analysis', scope: { tenantId: 'tenant', companyId: 'company' },
+     origin: 'http://127.0.0.1:4180', automaticSync: false, syncIntervalMs: 0,
+-    accounts: [], database: { engine: 'mysql', host: 'mysql', port: 3306, database: 'analysis', user: 'app' },
++    accounts: [], database: { engine: 'postgres', host: 'pg', port: 5432, database: 'analysis', user: 'app' },
+   };
+   const read = value => { writeFileSync(file, JSON.stringify(value)); return () => readAnalysisConfig(file); };
+   for (const approvalWriteback of [null, {}, { enabled: false }, { enabled: true }]) assert.throws(read({ ...base, instance: 'production', source: { kind: 'huilianyi-mcp' }, approvalWriteback }), /approvalWriteback/);
+diff --git a/tests/migration-drift.test.mjs b/tests/migration-drift.test.mjs
+deleted file mode 100644
+index 299e0b2..0000000
+--- a/tests/migration-drift.test.mjs
++++ /dev/null
+@@ -1,771 +0,0 @@
+-import test from 'node:test';
+-import assert from 'node:assert/strict';
+-import { spawnSync } from 'node:child_process';
+-import { readFileSync } from 'node:fs';
+-import { resolve } from 'node:path';
+-
+-import {
+-  MYSQL_MIGRATIONS,
+-  createMySqlPool,
+-  inspectMigrationSchema,
+-  migrationChecksum,
+-  migrateMySql,
+-  parseMigrationExpects,
+-  parseMySqlUrl,
+-} from '../src/mysql-database.mjs';
+-import * as mysqlDatabase from '../src/mysql-database.mjs';
+-import { buildMigrationReport, main as migrationReportMain } from '../scripts/check-migration-drift.mjs';
+-
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-
+-async function resetMySqlTestDatabase(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-  }
+-}
+-
+-async function snapshotSchema(pool) {
+-  const queries = [
+-    'SELECT * FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME',
+-    'SELECT * FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION',
+-    'SELECT * FROM information_schema.statistics WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX',
+-    'SELECT * FROM information_schema.table_constraints WHERE CONSTRAINT_SCHEMA = DATABASE() ORDER BY TABLE_NAME, CONSTRAINT_NAME',
+-    'SELECT * FROM information_schema.key_column_usage WHERE CONSTRAINT_SCHEMA = DATABASE() ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION',
+-    'SELECT * FROM information_schema.referential_constraints WHERE CONSTRAINT_SCHEMA = DATABASE() ORDER BY TABLE_NAME, CONSTRAINT_NAME',
+-    'SELECT * FROM information_schema.check_constraints WHERE CONSTRAINT_SCHEMA = DATABASE() ORDER BY CONSTRAINT_NAME',
+-    'SELECT * FROM schema_migrations ORDER BY version',
+-  ];
+-  const result = [];
+-  for (const sql of queries) {
+-    const [rows] = await pool.query(sql);
+-    result.push(rows);
+-  }
+-  return JSON.stringify(result);
+-}
+-
+-async function runDriftReportInProcess(urlValue) {
+-  const originalWrite = process.stdout.write;
+-  const originalExitCode = process.exitCode;
+-  let stdout = '';
+-  process.stdout.write = (chunk) => { stdout += String(chunk); return true; };
+-  process.exitCode = undefined;
+-  try {
+-    await migrationReportMain({ urlValue });
+-    return { status: process.exitCode ?? 0, stdout };
+-  } catch (error) {
+-    return { status: 1, stdout, error };
+-  } finally {
+-    process.stdout.write = originalWrite;
+-    process.exitCode = originalExitCode;
+-  }
+-}
+-
+-async function runDriftReport(urlValue) {
+-  if (process.env.CHECK_DRIFT_INPROCESS === '1') return runDriftReportInProcess(urlValue);
+-  const env = { ...process.env, MYSQL_URL: urlValue };
+-  delete env.MYSQL_TEST_URL;
+-  const result = spawnSync(process.execPath, [resolve('scripts/check-migration-drift.mjs')], {
+-    cwd: resolve('.'),
+-    env,
+-    encoding: 'utf8',
+-    timeout: 180000,
+-  });
+-  if (result.error?.code === 'EPERM') return runDriftReportInProcess(urlValue);
+-  return result;
+-}
+-
+-class DriftFake {
+-  constructor({ checksum = 'old', recordedVersions = [1], tableRows = [{ TABLE_NAME: 'demo' }], columnRows = [{ TABLE_NAME: 'demo', COLUMN_NAME: 'id' }] } = {}) {
+-    this.checksum = checksum;
+-    this.recordedVersions = recordedVersions;
+-    this.tableRows = tableRows;
+-    this.columnRows = columnRows;
+-    this.released = false;
+-    this.applied = [];
+-  }
+-
+-  async getConnection() {
+-    return { query: this.query.bind(this), release: () => { this.released = true; } };
+-  }
+-
+-  async query(sql, params = []) {
+-    if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+-    if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
+-    if (sql.includes('SELECT version FROM schema_migrations')) {
+-      return [this.recordedVersions.map(version => ({ version, name: 'demo', checksum: this.checksum, adopted_by: 'applied' }))];
+-    }
+-    if (sql.includes('SELECT version, name, checksum, adopted_by FROM schema_migrations')) {
+-      return [this.recordedVersions.map(version => ({ version, name: 'demo', checksum: this.checksum, adopted_by: 'applied' }))];
+-    }
+-    if (sql.includes('information_schema.columns')) return [this.columnRows];
+-    if (sql.includes('information_schema.tables')) return [this.tableRows];
+-    if (sql.includes('information_schema.statistics')) return [[]];
+-    if (sql.includes('UPDATE schema_migrations')) return [[]];
+-    if (sql.includes('INSERT INTO schema_migrations')) { this.applied.push(params[0]); return [[]]; }
+-    return [[]];
+-  }
+-}
+-
+-test('migrateMySql rejects a changed checksum before applying new migrations', async () => {
+-  const pool = new DriftFake({ checksum: '0'.repeat(64) });
+-  await assert.rejects(
+-    migrateMySql(pool, { migrations: [
+-      { version: 1, name: 'demo', sql: 'CREATE TABLE demo (id BIGINT PRIMARY KEY)' },
+-      { version: 2, name: 'new', sql: 'CREATE TABLE new_table (id BIGINT PRIMARY KEY)' },
+-    ] }),
+-    error => error.code === 'MYSQL_MIGRATION_DRIFT'
+-      && error.drift[0].version === 1
+-      && error.drift[0].reason === 'checksum_changed'
+-      && pool.applied.length === 0
+-      && pool.released,
+-  );
+-});
+-
+-test('migrateMySql rejects a legacy record when its expected structure is missing', async () => {
+-  const pool = new DriftFake({ checksum: null, tableRows: [] });
+-  await assert.rejects(
+-    migrateMySql(pool, { migrations: [{ version: 1, name: 'demo', sql: 'CREATE TABLE demo (id BIGINT PRIMARY KEY)' }] }),
+-    error => error.code === 'MYSQL_MIGRATION_DRIFT'
+-      && error.drift[0].reason === 'schema_missing'
+-      && error.drift[0].missing.includes('demo')
+-      && pool.applied.length === 0
+-      && pool.released,
+-  );
+-});
+-
+-test('every migration exposes structural expectations for legacy readback', () => {
+-  assert.deepEqual(MYSQL_MIGRATIONS.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+-  for (const migration of MYSQL_MIGRATIONS) {
+-    assert.ok(Object.keys(migration.expects?.tables || {}).length > 0, `migration ${migration.version} has no table expectations`);
+-  }
+-});
+-
+-test('release 0.5.3 migration checksums for versions 1-12 remain pinned', () => {
+-  const expected = [
+-    '4e6bb981fa5ff8cf01a5a965f6a7c3a3137123a6ad39bfcf21e8ee8dd5681ac7',
+-    '9679ccd61958331c9d45e708805e1a94176c93cc16014f3a56ec73a51cb08de1',
+-    'cfcd265e923a3f47b3318f758d960a941e0d559b7d7d0395e880bea0636938ad',
+-    '06ea4f2b6f48bd0c724dd1f37ad12b53f6e961d832d8ef20b6edc15d579bad3a',
+-    'fb4b39ec610ac5eb2f4d7ea6caa9851bbec004401f1ea1687818106410ee53b4',
+-    '648897cb8c8a973a4834de83c9aa125b7aea26a7e844438e9ae317d7e6408f34',
+-    '35d4e03baefe4c6a128bb48805a05a85444c6a03e5abf424a5d08f9938f688b6',
+-    '0621b5b0b2fefe7380ffcbb16b06025e06efe98642c9af0b10834736ebecaa27',
+-    '5100fc6b8209d4d2267d1f44af242b70b44ed10a2d0548cb7bea701d2817646f',
+-    '74922903d85e69305685e91f7569099b26fb20f73efb90223ec118a4f5b50b2b',
+-    '716a2247779511e74dfbe8ae066a0291996afdf6742e0ceb99e5bacc0de27cef',
+-    '4787e37b27a9d5b617f286c009824fe738cba23159c2417b4ca7bf7f2676a374',
+-  ];
+-  assert.deepEqual(MYSQL_MIGRATIONS.filter(migration => migration.version <= 12).map(migrationChecksum), expected);
+-});
+-
+-test('migration expectation parser keeps columns, keys, foreign keys, and checks', () => {
+-  const expects = parseMigrationExpects(`
+-    CREATE TABLE parent (
+-      id BIGINT NOT NULL PRIMARY KEY,
+-      code VARCHAR(32) NOT NULL,
+-      UNIQUE KEY parent_code (code)
+-    );
+-    CREATE TABLE child (
+-      id BIGINT NOT NULL PRIMARY KEY,
+-      parent_id BIGINT NOT NULL,
+-      KEY child_parent (parent_id),
+-      CONSTRAINT child_parent_fk FOREIGN KEY (parent_id) REFERENCES parent (id),
+-      CONSTRAINT child_positive CHECK (id > 0)
+-    );
+-  `);
+-  assert.deepEqual(expects.columns.find(item => item.table === 'parent' && item.name === 'code'), {
+-    table: 'parent', name: 'code', type: 'varchar', nullable: false, length: 32,
+-  });
+-  assert.ok(expects.primaryKeys.some(item => item.table === 'parent' && item.columns[0] === 'id'));
+-  assert.ok(expects.indexes.some(item => item.table === 'parent' && item.name === 'parent_code' && item.unique));
+-  assert.deepEqual(expects.foreignKeys, [{
+-    table: 'child', name: 'child_parent_fk', columns: ['parent_id'], referencedTable: 'parent', referencedColumns: ['id'],
+-  }]);
+-  assert.deepEqual(expects.checks, [{ table: 'child', name: 'child_positive' }]);
+-});
+-
+-test('migration expectations retain precise type, extra, foreign-action, and check metadata', () => {
+-  const expects = parseMigrationExpects(`
+-    CREATE TABLE parent (id BIGINT UNSIGNED NOT NULL PRIMARY KEY) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+-    CREATE TABLE child (
+-      id BIGINT NOT NULL,
+-      changed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+-      parent_id BIGINT,
+-      CONSTRAINT child_parent FOREIGN KEY (parent_id) REFERENCES parent (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+-      CONSTRAINT child_positive CHECK ((id > 0))
+-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-  `);
+-  const changed = expects.columns.find(item => item.table === 'child' && item.name === 'changed_at');
+-  assert.equal(changed.__columnType, 'datetime(6)');
+-  assert.equal(changed.__extra, 'on update current_timestamp(6)');
+-  assert.deepEqual(expects.foreignKeys[0], {
+-    table: 'child', name: 'child_parent', columns: ['parent_id'], referencedTable: 'parent', referencedColumns: ['id'],
+-    deleteRule: 'CASCADE', updateRule: 'NO ACTION',
+-  });
+-  assert.equal(expects.checks[0].__clause, '(id > 0)');
+-  assert.deepEqual(expects.tableOptions, {
+-    parent: { engine: 'INNODB', tableCollation: 'utf8mb4_bin', charset: 'utf8mb4' },
+-    child: { engine: 'INNODB', tableCollation: 'utf8mb4_unicode_ci', charset: 'utf8mb4' },
+-  });
+-});
+-
+-test('ALTER migrations must declare explicit expectations', async () => {
+-  const connection = { async query() { return [[]]; } };
+-  await assert.rejects(
+-    inspectMigrationSchema(connection, { version: 11, name: 'alter', sql: 'ALTER TABLE demo ADD COLUMN flag BOOLEAN NOT NULL' }),
+-    { code: 'MYSQL_CONFIGURATION' },
+-  );
+-});
+-
+-test('inspectMigrationSchema rejects a signed column where the migration requires unsigned', async () => {
+-  const connection = {
+-    async query(sql) {
+-      if (sql.includes('information_schema.tables')) return [[{ TABLE_NAME: 'demo' }]];
+-      if (sql.includes('information_schema.columns')) return [[{
+-        TABLE_NAME: 'demo', COLUMN_NAME: 'id', DATA_TYPE: 'bigint', COLUMN_TYPE: 'bigint',
+-        IS_NULLABLE: 'NO', COLUMN_DEFAULT: null, EXTRA: '',
+-      }]];
+-      return [[]];
+-    },
+-  };
+-  const result = await inspectMigrationSchema(connection, {
+-    version: 11,
+-    name: 'unsigned-column',
+-    sql: 'CREATE TABLE demo (id BIGINT UNSIGNED NOT NULL)',
+-  });
+-  assert.equal(result.ok, false);
+-  assert.ok(result.missing.includes('column demo.id'));
+-});
+-
+-test('migrateMySql rejects a recorded version that is absent from the code', async () => {
+-  const pool = new DriftFake({ recordedVersions: [99], checksum: null, tableRows: [] });
+-  await assert.rejects(
+-    migrateMySql(pool, { migrations: [{ version: 1, name: 'demo', sql: 'CREATE TABLE demo (id BIGINT PRIMARY KEY)' }] }),
+-    error => error.code === 'MYSQL_MIGRATION_DRIFT'
+-      && error.drift.some(item => item.reason === 'unknown_version' && item.version === 99)
+-      && pool.applied.length === 0
+-      && pool.released,
+-  );
+-});
+-
+-test('shared migration classifier tolerates only newer additive records', () => {
+-  assert.equal(typeof mysqlDatabase.classifyMigrationVersions, 'function');
+-  const migrations = [
+-    { version: 1, name: 'one', sql: 'CREATE TABLE one (id INT)' },
+-    { version: 2, name: 'two', sql: 'CREATE TABLE two (id INT)' },
+-  ];
+-  assert.deepEqual(mysqlDatabase.classifyMigrationVersions([
+-    { version: 1, additive: 0 },
+-    { version: 3, additive: 1 },
+-  ], migrations), {
+-    normal: [1],
+-    pending: [2],
+-    aheadAdditive: [3],
+-    drift: [],
+-    highestKnownVersion: 2,
+-  });
+-  assert.equal(mysqlDatabase.classifyMigrationVersions([{ version: 3, additive: 0 }], migrations).drift[0].reason, 'unknown_version');
+-  assert.equal(mysqlDatabase.classifyMigrationVersions([{ version: 1, additive: 1 }, { version: 3, additive: 1 }], [
+-    ...migrations,
+-    { version: 4, name: 'four', sql: 'CREATE TABLE four (id INT)' },
+-  ]).drift[0].version, 3);
+-});
+-
+-test('additive migrations accept only CREATE TABLE IF NOT EXISTS statements', async () => {
+-  for (const sql of [
+-    'CREATE TABLE IF NOT EXISTS safe_table (id INT); ALTER TABLE safe_table ADD COLUMN name VARCHAR(8)',
+-    'CREATE TABLE IF NOT EXISTS safe_table (id INT); DROP TABLE safe_table',
+-    'CREATE TABLE IF NOT EXISTS safe_table (id INT); INSERT INTO safe_table VALUES (1)',
+-  ]) {
+-    const pool = new DriftFake({ recordedVersions: [], tableRows: [], columnRows: [] });
+-    await assert.rejects(
+-      migrateMySql(pool, { migrations: [{ version: 13, name: 'unsafe-additive', additive: true, sql }] }),
+-      error => error.code === 'MYSQL_CONFIGURATION',
+-    );
+-  }
+-});
+-
+-test('migration report uses the shared additive-ahead classification', async () => {
+-  const pool = {
+-    async query(sql) {
+-      if (sql.includes("TABLE_NAME = 'schema_migrations'")) return [[{ TABLE_NAME: 'schema_migrations' }]];
+-      if (sql.includes('SELECT version, name, checksum, adopted_by')) return [[{ version: 13, name: 'future', checksum: null, adopted_by: 'applied', additive: 1 }]];
+-      return [[]];
+-    },
+-  };
+-  const report = await buildMigrationReport(pool, { migrations: [] });
+-  assert.equal(report.migrations[0].status, 'ahead_additive');
+-  assert.equal(report.migrations[0].state, 'ahead_additive');
+-  assert.equal(report.migrations[0].reason, 'ahead_additive');
+-  assert.equal(report.migrations.filter(item => item.status === 'drift').length, 0);
+-});
+-
+-test('real MySQL permits a newer additive schema but rejects non-additive and middle versions', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  // Hypothetical future migrations sit just above the newest real one, so the
+-  // test keeps working as real migrations (v13 writeback, v14 elements) land.
+-  const next = Math.max(...MYSQL_MIGRATIONS.map(migration => migration.version)) + 1;
+-  const additive13 = { version: next, name: 'rel02-additive-next', additive: true, sql: 'CREATE TABLE IF NOT EXISTS rel02_additive_next (id INT NOT NULL)' };
+-  const additive14 = { version: next + 1, name: 'rel02-additive-next2', additive: true, sql: 'CREATE TABLE IF NOT EXISTS rel02_additive_next2 (id INT NOT NULL)' };
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    await migrateMySql(pool, { migrations: [...MYSQL_MIGRATIONS, additive13] });
+-    const ahead = await migrateMySql(pool, { migrations: MYSQL_MIGRATIONS });
+-    assert.deepEqual(ahead.aheadAdditive, [next]);
+-    const report = await buildMigrationReport(pool, { migrations: MYSQL_MIGRATIONS });
+-    assert.equal(report.migrations.find(item => item.version === next).status, 'ahead_additive');
+-    assert.equal(report.migrations.some(item => item.status === 'drift'), false);
+-
+-    await pool.query('UPDATE schema_migrations SET additive = 0 WHERE version = ?', [next]);
+-    await assert.rejects(migrateMySql(pool, { migrations: MYSQL_MIGRATIONS }), error => error.code === 'MYSQL_MIGRATION_DRIFT' && error.drift.some(item => item.version === next));
+-
+-    await resetMySqlTestDatabase(pool);
+-    await migrateMySql(pool, { migrations: [...MYSQL_MIGRATIONS, additive13, additive14] });
+-    const knownLater = [...MYSQL_MIGRATIONS, additive14];
+-    await assert.rejects(migrateMySql(pool, { migrations: knownLater }), error => error.code === 'MYSQL_MIGRATION_DRIFT' && error.drift.some(item => item.version === next));
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-test('migration checksum normalizes CRLF', () => {
+-  assert.equal(
+-    migrationChecksum({ sql: 'CREATE TABLE demo (id BIGINT);\nALTER TABLE demo ADD COLUMN name VARCHAR(8);\n' }),
+-    migrationChecksum({ sql: 'CREATE TABLE demo (id BIGINT);\r\nALTER TABLE demo ADD COLUMN name VARCHAR(8);\r\n' }),
+-  );
+-});
+-
+-test('a later drift prevents every earlier legacy record from being adopted', async () => {
+-  const calls = [];
+-  const connection = {
+-    async query(sql, params = []) {
+-      calls.push({ sql, params });
+-      if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+-      if (sql.includes('information_schema.tables')) return [[{ TABLE_NAME: 'demo' }]];
+-      if (sql.includes('information_schema.columns')) return [[{
+-        TABLE_NAME: 'demo', COLUMN_NAME: 'id', DATA_TYPE: 'bigint', COLUMN_TYPE: 'bigint',
+-        IS_NULLABLE: 'YES', CHARACTER_MAXIMUM_LENGTH: null, COLUMN_DEFAULT: null, EXTRA: '',
+-      }]];
+-      if (sql.includes('SELECT version FROM schema_migrations')) return [[
+-        { version: 1 }, { version: 2 },
+-      ]];
+-      if (sql.includes('SELECT version, name, checksum, adopted_by')) return [[
+-        { version: 1, name: 'demo', checksum: null, adopted_by: null },
+-        { version: 2, name: 'missing', checksum: null, adopted_by: null },
+-      ]];
+-      if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
+-      return [[]];
+-    },
+-    release() {},
+-  };
+-  await assert.rejects(
+-    migrateMySql({ async getConnection() { return connection; } }, { migrations: [
+-      { version: 1, name: 'demo', sql: 'CREATE TABLE demo (id BIGINT)' },
+-      { version: 2, name: 'missing', sql: 'CREATE TABLE missing (id BIGINT)' },
+-    ] }),
+-    error => error.code === 'MYSQL_MIGRATION_DRIFT' && error.drift.some(item => item.version === 2),
+-  );
+-  assert.equal(calls.filter(call => call.sql.includes('UPDATE schema_migrations')).length, 0);
+-});
+-
+-test('expectation union covers the complete application schema', () => {
+-  const tables = new Set();
+-  const columns = new Set();
+-  const indexes = new Set();
+-  const foreignKeys = new Set();
+-  const checks = new Set();
+-  for (const migration of MYSQL_MIGRATIONS) {
+-    for (const [table, value] of Object.entries(migration.expects.tables || {})) {
+-      if (table === 'schema_migrations') continue;
+-      tables.add(table);
+-      for (const column of (Array.isArray(value) ? value : value.columns || [])) columns.add(`${table}.${column}`);
+-    }
+-    for (const index of migration.expects.indexes || []) if (index.table !== 'schema_migrations') indexes.add(`${index.table}.${index.name}`);
+-    for (const primary of migration.expects.primaryKeys || []) if (primary.table !== 'schema_migrations') indexes.add(`${primary.table}.${primary.name}`);
+-    for (const foreign of migration.expects.foreignKeys || []) foreignKeys.add(`${foreign.table}.${foreign.name}`);
+-    for (const check of migration.expects.checks || []) checks.add(`${check.table}.${check.name}`);
+-  }
+-  const counts = { tables: tables.size, columns: columns.size, indexes: indexes.size, foreignKeys: foreignKeys.size, checks: checks.size };
+-  console.log(`migration coverage tables=${counts.tables} columns=${counts.columns} indexes=${counts.indexes} foreignKeys=${counts.foreignKeys} checks=${counts.checks}`);
+-  // RLN-B1 v15 element_family_registry: +1 table, +11 columns, +3 indexes (PK, oid, tenant), +3 checks.
+-  // RLN-B3 v17: +2 columns (activation_mode, source_version_id), +3 checks (activation_mode, publisher, source_version).
+-  // SEARCH-PLAIN-1 v19: +1 table and five columns, plus its primary key.
+-  assert.deepEqual(counts, { tables: 70, columns: 796, indexes: 193, foreignKeys: 30, checks: 81 });
+-});
+-
+-test('real MySQL inventory exactly matches the migration expectation union', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    const [existingTables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-    try {
+-      for (const row of existingTables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    } finally {
+-      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-    }
+-    await migrateMySql(pool);
+-    const [tableRows] = await pool.query("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME <> 'schema_migrations'");
+-    const [columnRows] = await pool.query("SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME <> 'schema_migrations'");
+-    const [indexRows] = await pool.query("SELECT TABLE_NAME, INDEX_NAME FROM information_schema.statistics WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME <> 'schema_migrations'");
+-    const [foreignRows] = await pool.query("SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME FROM information_schema.table_constraints tc WHERE tc.CONSTRAINT_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'FOREIGN KEY'");
+-    const [checkRows] = await pool.query("SELECT tc.TABLE_NAME, cc.CONSTRAINT_NAME FROM information_schema.table_constraints tc INNER JOIN information_schema.check_constraints cc ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'CHECK'");
+-    const actual = {
+-      tables: new Set(tableRows.map(row => String(row.TABLE_NAME))),
+-      columns: new Set(columnRows.map(row => `${row.TABLE_NAME}.${row.COLUMN_NAME}`)),
+-      indexes: new Set(indexRows.map(row => `${row.TABLE_NAME}.${row.INDEX_NAME}`)),
+-      foreignKeys: new Set(foreignRows.map(row => `${row.TABLE_NAME}.${row.CONSTRAINT_NAME}`)),
+-      checks: new Set(checkRows.map(row => `${row.TABLE_NAME}.${row.CONSTRAINT_NAME}`)),
+-    };
+-    const expected = { tables: new Set(), columns: new Set(), indexes: new Set(), foreignKeys: new Set(), checks: new Set() };
+-    for (const migration of MYSQL_MIGRATIONS) {
+-      for (const [table, value] of Object.entries(migration.expects.tables || {})) {
+-        if (table === 'schema_migrations') continue;
+-        expected.tables.add(table);
+-        for (const column of (Array.isArray(value) ? value : value.columns || [])) expected.columns.add(`${table}.${column}`);
+-      }
+-      for (const index of migration.expects.indexes || []) if (index.table !== 'schema_migrations') expected.indexes.add(`${index.table}.${index.name}`);
+-      for (const primary of migration.expects.primaryKeys || []) if (primary.table !== 'schema_migrations') expected.indexes.add(`${primary.table}.${primary.name}`);
+-      for (const foreign of migration.expects.foreignKeys || []) expected.foreignKeys.add(`${foreign.table}.${foreign.name}`);
+-      for (const check of migration.expects.checks || []) expected.checks.add(`${check.table}.${check.name}`);
+-    }
+-    assert.deepEqual(actual.tables, expected.tables);
+-    assert.deepEqual(actual.columns, expected.columns);
+-    assert.deepEqual(actual.indexes, expected.indexes);
+-    assert.deepEqual(actual.foreignKeys, expected.foreignKeys);
+-    assert.deepEqual(actual.checks, expected.checks);
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-test('gold schema readback matches every expected column, foreign key, check, and table attribute', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    await migrateMySql(pool);
+-    for (const migration of MYSQL_MIGRATIONS) {
+-      const result = await inspectMigrationSchema(pool, migration, { migrations: MYSQL_MIGRATIONS });
+-      assert.deepEqual(result.missing, [], `v${migration.version} gold schema attributes`);
+-      assert.deepEqual(result.unexpected, [], `v${migration.version} unexpected gold objects`);
+-      assert.equal(result.ok, true, `v${migration.version} gold schema`);
+-    }
+-    const tables = new Set();
+-    const columns = new Set();
+-    for (const migration of MYSQL_MIGRATIONS) {
+-      for (const [table, value] of Object.entries(migration.expects.tables || {})) {
+-        if (table === 'schema_migrations') continue;
+-        tables.add(table);
+-        for (const column of (Array.isArray(value) ? value : value.columns || [])) columns.add(`${table}.${column}`);
+-      }
+-      for (const column of migration.expects.columns || []) if (column.table !== 'schema_migrations') columns.add(`${column.table}.${column.name}`);
+-    }
+-    const counts = {
+-      tables: tables.size,
+-      columns: columns.size,
+-      foreignKeys: new Set(MYSQL_MIGRATIONS.flatMap(migration => migration.expects.foreignKeys || []).map(item => `${item.table}.${item.name}`)).size,
+-      checks: new Set(MYSQL_MIGRATIONS.flatMap(migration => migration.expects.checks || []).map(item => `${item.table}.${item.name}`)).size,
+-    };
+-    console.log(`gold schema attributes tables=${counts.tables} columns=${counts.columns} foreignKeys=${counts.foreignKeys} checks=${counts.checks}`);
+-    // SEARCH-PLAIN-1 v19: +1 table and five columns, no foreign key.
+-    assert.deepEqual(counts, { tables: 70, columns: 796, foreignKeys: 30, checks: 81 });
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-test('read-only report distinguishes adoptable legacy records from pending migrations', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  const reportCalls = [];
+-  try {
+-    const [existingTables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-    try {
+-      for (const row of existingTables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    } finally {
+-      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-    }
+-    await migrateMySql(pool, { migrations: MYSQL_MIGRATIONS.filter(migration => migration.version <= 7) });
+-    await pool.query('ALTER TABLE schema_migrations DROP COLUMN checksum, DROP COLUMN adopted_by');
+-    const reportPool = {
+-      async query(sql, params) {
+-        reportCalls.push(String(sql).trim().split(/\s+/)[0].toUpperCase());
+-        return pool.query(sql, params);
+-      },
+-    };
+-    const report = await buildMigrationReport(reportPool);
+-    assert.equal(report.conclusion, '未发现漂移；待执行 12 个版本');
+-    assert.deepEqual(report.migrations.slice(0, 7).map(item => item.status), Array(7).fill('adoptable'));
+-    assert.deepEqual(report.migrations.slice(7).map(item => item.status), Array(12).fill('pending'));
+-    assert.ok(reportCalls.length > 0);
+-    assert.ok(reportCalls.every(command => command === 'SELECT' || command === 'SHOW'));
+-
+-    const completed = await migrateMySql(pool);
+-    assert.deepEqual(completed.applied, [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-test('migration drift report is read-only and its process exit code is a deployment gate', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  assert.doesNotMatch(readFileSync(resolve('scripts/check-migration-drift.mjs'), 'utf8'), /import\s*\{[^}]*migrateMySql/s);
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    const pending = await runDriftReport(mysqlTestUrl);
+-    assert.equal(pending.error, undefined, pending.error?.message);
+-    assert.equal(pending.status, 0, 'empty test database is a pending, non-drifting state');
+-    await migrateMySql(pool);
+-    const before = await snapshotSchema(pool);
+-    const clean = await runDriftReport(mysqlTestUrl);
+-    assert.equal(clean.status, 0);
+-    const after = await snapshotSchema(pool);
+-    assert.equal(after, before, 'report must not change any schema or migration metadata');
+-
+-    await pool.query('ALTER TABLE entities ADD UNIQUE KEY entities_report_gate_unique (kind)');
+-    const drift = await runDriftReport(mysqlTestUrl);
+-    assert.equal(drift.status, 2);
+-    await pool.query('ALTER TABLE entities DROP INDEX entities_report_gate_unique');
+-
+-    const missingUrl = new URL(mysqlTestUrl);
+-    missingUrl.pathname = '/__codex_missing_migration_report_database__';
+-    assert.equal((await runDriftReport(missingUrl.toString())).status, 1);
+-  } finally {
+-    await resetMySqlTestDatabase(pool);
+-    await pool.end();
+-  }
+-});
+-
+-test('real MySQL rejects representative key and constraint mutations, then returns green after repair', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  const lockPool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 1 });
+-  try {
+-    const [existingTables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-    try {
+-      for (const row of existingTables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    } finally {
+-      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-    }
+-    await migrateMySql(pool);
+-
+-    const mutations = [
+-      { sql: 'ALTER TABLE decisions DROP PRIMARY KEY', token: 'primary_key decisions.PRIMARY', repair: 'ALTER TABLE decisions ADD PRIMARY KEY (id)' },
+-      { sql: 'ALTER TABLE decisions DROP INDEX decisions_document_fingerprint', token: 'index decisions.decisions_document_fingerprint', repair: 'ALTER TABLE decisions ADD UNIQUE KEY decisions_document_fingerprint (document_id, fingerprint)' },
+-      { sql: 'ALTER TABLE entities DROP INDEX entities_updated_at', token: 'index entities.entities_updated_at', repair: 'ALTER TABLE entities ADD KEY entities_updated_at (updated_at)' },
+-      { sql: 'ALTER TABLE analysis_documents DROP FOREIGN KEY analysis_documents_connection', token: 'foreign_key analysis_documents.analysis_documents_connection', repair: 'ALTER TABLE analysis_documents ADD CONSTRAINT analysis_documents_connection FOREIGN KEY (connection_id) REFERENCES analysis_connections(connection_id)' },
+-      { sql: 'ALTER TABLE analysis_connections DROP CHECK analysis_connections_environment', token: 'check analysis_connections.analysis_connections_environment', repair: "ALTER TABLE analysis_connections ADD CONSTRAINT analysis_connections_environment CHECK (environment = 'prod')" },
+-      { sql: "ALTER TABLE audit_report_projection_status DROP CHECK audit_report_projection_status_value, ADD CONSTRAINT audit_report_projection_status_value CHECK (projection_status IN ('projected', 'failed'))", token: 'check audit_report_projection_status.audit_report_projection_status_value', repair: "ALTER TABLE audit_report_projection_status DROP CHECK audit_report_projection_status_value, ADD CONSTRAINT audit_report_projection_status_value CHECK (projection_status IN ('projected', 'retryable_failed', 'permanent_failed'))" },
+-      { sql: 'ALTER TABLE audit_attachment_extractions ALTER COLUMN content_sha256 DROP DEFAULT', token: 'column audit_attachment_extractions.content_sha256', repair: "ALTER TABLE audit_attachment_extractions ALTER COLUMN content_sha256 SET DEFAULT ''" },
+-      { sql: 'ALTER TABLE audit_attachments MODIFY COLUMN declared_bytes BIGINT NULL', token: 'column audit_attachments.declared_bytes', repair: 'ALTER TABLE audit_attachments MODIFY COLUMN declared_bytes BIGINT UNSIGNED NULL' },
+-      { sql: 'ALTER TABLE audit_attachments MODIFY COLUMN fetched_at DATETIME NULL', token: 'column audit_attachments.fetched_at', repair: 'ALTER TABLE audit_attachments MODIFY COLUMN fetched_at DATETIME(6) NULL' },
+-      { sql: 'ALTER TABLE entities MODIFY COLUMN updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)', token: 'column entities.updated_at', repair: 'ALTER TABLE entities MODIFY COLUMN updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)' },
+-      { sql: ['ALTER TABLE audit_documents DROP FOREIGN KEY audit_documents_source', 'ALTER TABLE audit_documents ADD CONSTRAINT audit_documents_source FOREIGN KEY (source_connection_id) REFERENCES audit_source_connections(source_connection_id) ON DELETE CASCADE'], token: 'foreign_key audit_documents.audit_documents_source', repair: ['ALTER TABLE audit_documents DROP FOREIGN KEY audit_documents_source', 'ALTER TABLE audit_documents ADD CONSTRAINT audit_documents_source FOREIGN KEY (source_connection_id) REFERENCES audit_source_connections(source_connection_id)'] },
+-      { sql: 'ALTER TABLE decisions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin', token: 'table decisions', repair: 'ALTER TABLE decisions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci' },
+-      { sql: 'ALTER TABLE entities ADD UNIQUE KEY entities_kind_unique (kind)', token: 'index entities.entities_kind_unique', repair: 'ALTER TABLE entities DROP INDEX entities_kind_unique' },
+-      { sql: 'ALTER TABLE entities ADD COLUMN harmless_extra VARCHAR(16) NULL', token: 'column entities.harmless_extra', expectDrift: false, repair: 'ALTER TABLE entities DROP COLUMN harmless_extra' },
+-      { sql: 'ALTER TABLE audit_attachment_extractions DROP INDEX audit_attachment_extractions_identity, ADD KEY audit_attachment_extractions_identity (attachment_id, content_sha256, method, parser_version, model_version)', token: 'index audit_attachment_extractions.audit_attachment_extractions_identity', repair: 'ALTER TABLE audit_attachment_extractions DROP INDEX audit_attachment_extractions_identity, ADD UNIQUE KEY audit_attachment_extractions_identity (attachment_id, content_sha256, method, parser_version, model_version)' },
+-      { sql: "ALTER TABLE audit_attachment_extractions MODIFY COLUMN model_version VARCHAR(128) NULL", token: 'column audit_attachment_extractions.model_version', repair: "ALTER TABLE audit_attachment_extractions MODIFY COLUMN model_version VARCHAR(128) NOT NULL DEFAULT ''" },
+-    ];
+-    for (const mutation of mutations) {
+-      for (const statement of (Array.isArray(mutation.sql) ? mutation.sql : [mutation.sql])) await pool.query(statement);
+-      if (mutation.expectDrift === false) {
+-        const result = await migrateMySql(pool);
+-        assert.deepEqual(result.applied, []);
+-        const report = await buildMigrationReport(pool);
+-        assert.ok(report.migrations.some(item => item.hints?.some(value => value.includes(mutation.token))));
+-      } else {
+-        await assert.rejects(
+-          migrateMySql(pool),
+-          error => error.code === 'MYSQL_MIGRATION_DRIFT'
+-            && error.drift.some(item => (item.reason === 'schema_missing' || item.reason === 'unexpected')
+-              && [...(item.missing || []), ...(item.unexpected || [])].some(value => value.includes(mutation.token)))
+-            && !error.drift.some(item => item.reason === 'unknown_version'),
+-        );
+-      }
+-      const lockConnection = await lockPool.getConnection();
+-      const [lockRows] = await lockConnection.query('SELECT GET_LOCK(CONCAT(?, ":", DATABASE()), 0) AS acquired', ['jiuan:mysql:schema']);
+-      assert.equal(Number(lockRows?.[0]?.acquired), 1, `migration lock leaked after ${mutation.sql}`);
+-      await lockConnection.query('SELECT RELEASE_LOCK(CONCAT(?, ":", DATABASE()))', ['jiuan:mysql:schema']);
+-      lockConnection.release();
+-      for (const statement of (Array.isArray(mutation.repair) ? mutation.repair : [mutation.repair])) await pool.query(statement);
+-    }
+-    const repaired = await migrateMySql(pool);
+-    assert.deepEqual(repaired.applied, []);
+-  } finally {
+-    await pool.end();
+-    await lockPool.end();
+-  }
+-});
+-
+-test('migration lock is isolated by database name', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  const lockPool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 1 });
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    const other = await lockPool.getConnection();
+-    try {
+-      const [otherLock] = await other.query('SELECT GET_LOCK(?, 0) AS acquired', ['jiuan:mysql:schema:another_database']);
+-      assert.equal(Number(otherLock?.[0]?.acquired), 1);
+-      const migrated = await migrateMySql(pool, { lockTimeout: 1 });
+-      assert.equal(migrated.currentVersion, Math.max(...MYSQL_MIGRATIONS.map(item => item.version)));
+-      await other.query('SELECT RELEASE_LOCK(?)', ['jiuan:mysql:schema:another_database']);
+-    } finally {
+-      other.release();
+-    }
+-
+-    const held = await lockPool.getConnection();
+-    try {
+-      const [currentLock] = await held.query('SELECT GET_LOCK(CONCAT(?, ":", DATABASE()), 0) AS acquired', ['jiuan:mysql:schema']);
+-      assert.equal(Number(currentLock?.[0]?.acquired), 1);
+-      await assert.rejects(migrateMySql(pool, { lockTimeout: 1 }), error => error.code === 'MYSQL_MIGRATION_LOCKED');
+-      await held.query('SELECT RELEASE_LOCK(CONCAT(?, ":", DATABASE()))', ['jiuan:mysql:schema']);
+-    } finally {
+-      held.release();
+-    }
+-  } finally {
+-    await pool.end();
+-    await lockPool.end();
+-  }
+-});
+-
+-test('v14 element-store tables read back exactly: columns, named checks, zero drift, idempotent re-migration', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    assert.deepEqual((await migrateMySql(pool)).applied, MYSQL_MIGRATIONS.map(migration => migration.version));
+-    const v14 = MYSQL_MIGRATIONS.find(migration => migration.version === 14);
+-    assert.equal(v14.name, 'element-store');
+-    assert.equal(v14.additive, true);
+-    const tables = Object.keys(v14.expects.tables).sort();
+-    assert.deepEqual(tables, ['element_draft_edits', 'element_family_drafts', 'element_family_events', 'element_family_heads', 'element_family_versions', 'element_oid_claims']);
+-    const placeholders = tables.map(() => '?').join(', ');
+-    const [columnRows] = await pool.query(`SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${placeholders})`, tables);
+-    for (const table of tables) {
+-      const actual = columnRows.filter(row => row.TABLE_NAME === table).map(row => row.COLUMN_NAME).sort();
+-      // v17 adds activation_mode (versions) and source_version_id (draft edits) to v14 tables.
+-      const added = MYSQL_MIGRATIONS.filter(migration => migration.version > 14).flatMap(migration => migration.expects.tables?.[table] || []);
+-      assert.deepEqual(actual, [...new Set([...v14.expects.tables[table], ...added])].sort(), `${table} columns`);
+-    }
+-    const columnSet = new Set(columnRows.map(row => `${row.TABLE_NAME}.${row.COLUMN_NAME}`));
+-    for (const column of ['element_draft_edits.intent', 'element_draft_edits.note_ciphertext', 'element_family_versions.kind', 'element_family_versions.document_type', 'element_family_versions.status_changed_at', 'element_family_versions.family_kind']) {
+-      assert.ok(columnSet.has(column), column);
+-    }
+-    const [checkRows] = await pool.query(`SELECT tc.TABLE_NAME, cc.CONSTRAINT_NAME FROM information_schema.table_constraints tc INNER JOIN information_schema.check_constraints cc ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+-      WHERE tc.CONSTRAINT_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'CHECK' AND tc.TABLE_NAME IN (${placeholders})`, tables);
+-    const actualChecks = checkRows.map(row => `${row.TABLE_NAME}.${row.CONSTRAINT_NAME}`).sort();
+-    // v16 and v17 rewrite six v14 CHECKs under their v14 names (v14 then expects the other 21) and v17 adds three.
+-    const later = MYSQL_MIGRATIONS.filter(migration => migration.version > 14);
+-    const rewritten = later.flatMap(migration => migration.supersedes?.checks || []);
+-    assert.deepEqual(rewritten.sort(), [
+-      'element_draft_edits.element_draft_edits_chk_intent', 'element_draft_edits.element_draft_edits_chk_intent_pair',
+-      'element_family_drafts.element_family_drafts_chk_format', 'element_family_events.element_family_events_chk_event',
+-      'element_family_versions.element_family_versions_chk_confirmer_differs', 'element_family_versions.element_family_versions_chk_format',
+-    ]);
+-    const laterOnV14Tables = later.flatMap(migration => migration.expects.checks || []).filter(check => tables.includes(check.table)).map(check => `${check.table}.${check.name}`);
+-    assert.deepEqual(actualChecks, [...new Set([...v14.expects.checks.map(check => `${check.table}.${check.name}`), ...laterOnV14Tables])].sort());
+-    assert.equal(v14.expects.checks.length, 21);
+-    assert.equal(actualChecks.length, 30);
+-    assert.ok(actualChecks.every(name => /^(element_[a-z_]+)\.\1_chk_[a-z_]+$/.test(name)), 'every v14 CHECK is named <table>_chk_<meaning>');
+-    for (const name of ['element_draft_edits.element_draft_edits_chk_intent', 'element_draft_edits.element_draft_edits_chk_intent_pair', 'element_draft_edits.element_draft_edits_chk_whole_mark']) assert.ok(actualChecks.includes(name), name);
+-    const inspected = await inspectMigrationSchema(pool, v14, { migrations: MYSQL_MIGRATIONS });
+-    assert.deepEqual([inspected.ok, inspected.missing, inspected.unexpected], [true, [], []]);
+-    const before = await snapshotSchema(pool);
+-    assert.deepEqual((await migrateMySql(pool)).applied, []);
+-    assert.equal(await snapshotSchema(pool), before);
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-// REL-03a-3: an additive migration must leave the previous image working on the migrated
+-// database. A new table with a foreign key blocks the old image's deletes (it does not know to
+-// clear the new child table first); CREATE TABLE ... SELECT and ... LIKE copy another table.
+-test('additive migrations refuse foreign keys and copied tables, however they are written', () => {
+-  const refused = {
+-    'FOREIGN KEY ... REFERENCES': ['CREATE TABLE IF NOT EXISTS child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES parent (id))', /FOREIGN KEY|REFERENCES/],
+-    'column REFERENCES': ['CREATE TABLE IF NOT EXISTS child (id INT PRIMARY KEY, parent_id INT REFERENCES parent (id))', /REFERENCES/],
+-    'lower case, split over lines, extra spaces': ['create table if not exists child (\n  id int primary key,\n  parent_id int,\n  constraint fk_child\n    foreign    key (parent_id)\n    references\tparent (id)\n)', /FOREIGN KEY|REFERENCES/],
+-    'AS SELECT': ['CREATE TABLE IF NOT EXISTS copy AS SELECT * FROM source', /SELECT/],
+-    'as select over lines': ['create table if not exists copy\n  as\n  select id from source', /SELECT/],
+-    'SELECT without AS': ['CREATE TABLE IF NOT EXISTS copy (id INT) SELECT id FROM source', /SELECT/],
+-    'LIKE': ['CREATE TABLE IF NOT EXISTS copy LIKE source', /LIKE/],
+-    'LIKE in parentheses': ['CREATE TABLE IF NOT EXISTS copy (LIKE source)', /LIKE/],
+-    'like over lines': ['create table if not exists `copy`\n  like   `source`', /LIKE/],
+-  };
+-  for (const [kind, [sql, wording]] of Object.entries(refused)) {
+-    assert.throws(() => mysqlDatabase.validateAdditiveMigration({ version: 99, name: 'probe', additive: true, sql: `${sql};` }),
+-      error => /Migration 99 \(probe\)/.test(error.message) && wording.test(error.message), kind);
+-  }
+-  // The words inside a comment, a string, a quoted name or a CHECK are not those statements.
+-  const allowed = 'CREATE TABLE IF NOT EXISTS ok_table (\n'
+-    + "  id INT PRIMARY KEY COMMENT 'references the parent, like the old one; select carefully',\n"
+-    + '  references_count INT NOT NULL DEFAULT 0,\n'
+-    + '  `select` VARCHAR(8),\n'
+-    + "  code VARCHAR(8) CHECK (code LIKE 'A%')\n"
+-    + ') -- foreign key handled elsewhere\n';
+-  assert.doesNotThrow(() => mysqlDatabase.validateAdditiveMigration({ version: 98, name: 'plain', additive: true, sql: `${allowed};` }));
+-  // Every migration the program marks additive still passes.
+-  const additive = MYSQL_MIGRATIONS.filter(migration => migration.additive === true);
+-  assert.ok(additive.length >= 2);
+-  for (const migration of additive) assert.doesNotThrow(() => mysqlDatabase.validateAdditiveMigration(migration), `version ${migration.version}`);
+-  // A migration not marked additive is not this check's business.
+-  assert.doesNotThrow(() => mysqlDatabase.validateAdditiveMigration({ version: 97, name: 'reshape', sql: refused['FOREIGN KEY ... REFERENCES'][0] }));
+-});
+-
+-// REL-03a-3 x SYNC-06a: v18 approval-identity (four new tables with keys and CHECK constraints, no
+-// foreign key) passes the stricter additive check, so rolling back to an image without v18 still
+-// starts on a database that has it.
+-test('the stricter additive check accepts v18 approval-identity', () => {
+-  const v18 = MYSQL_MIGRATIONS.find(migration => migration.version === 18);
+-  assert.deepEqual([v18?.name, v18?.additive], ['approval-identity', true]);
+-  assert.doesNotThrow(() => mysqlDatabase.validateAdditiveMigration(v18));
+-});
+-
+-test('an image without v19 still starts on a database migrated through v19', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    const [existingTables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-    try {
+-      for (const row of existingTables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    } finally {
+-      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-    }
+-    assert.equal((await migrateMySql(pool)).currentVersion, 19);
+-    const [[record]] = await pool.query('SELECT additive FROM schema_migrations WHERE version = 19');
+-    assert.equal(Number(record.additive), 1);
+-    const older = await migrateMySql(pool, { migrations: MYSQL_MIGRATIONS.filter(migration => migration.version < 19) });
+-    assert.deepEqual([older.applied, older.aheadAdditive], [[], [19]], 'v19 is ahead and additive, not drift');
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+diff --git a/tests/migration-plan.test.mjs b/tests/migration-plan.test.mjs
+deleted file mode 100644
+index d3fcc02..0000000
+--- a/tests/migration-plan.test.mjs
++++ /dev/null
+@@ -1,119 +0,0 @@
+-import test from 'node:test';
+-import assert from 'node:assert/strict';
+-import { spawnSync } from 'node:child_process';
+-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+-import { join } from 'node:path';
+-import { tmpdir } from 'node:os';
+-import { planMigrations, readAppliedMigrations } from '../scripts/migration-plan.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl, MYSQL_MIGRATIONS } from '../src/mysql-database.mjs';
+-
+-// REL-03a-2 item 5a: before migrating, deploy.sh asks the new image which migrations are
+-// still to run and which of them are not additive (those make the previous image refuse
+-// to start, so an automatic rollback after them cannot work).
+-const known = [
+-  { version: 1, name: 'core' },
+-  { version: 2, name: 'analysis' },
+-  { version: 3, name: 'additive-one', additive: true },
+-  { version: 4, name: 'reshape' },
+-  { version: 5, name: 'additive-two', additive: true },
+-];
+-
+-test('only additive migrations pending: nothing non-additive', () => {
+-  assert.deepEqual(planMigrations({ appliedVersions: [1, 2, 4], migrations: known }), { pending: [3, 5], nonAdditive: [], drift: [] });
+-});
+-
+-test('a pending migration without additive: true is non-additive, in version order', () => {
+-  assert.deepEqual(planMigrations({ appliedVersions: [{ version: 2 }, { version: 1 }], migrations: known }), { pending: [3, 4, 5], nonAdditive: [4], drift: [] });
+-  assert.deepEqual(planMigrations({ appliedVersions: [], migrations: known }), { pending: [1, 2, 3, 4, 5], nonAdditive: [1, 2, 4], drift: [] });
+-});
+-
+-test('everything applied: all lists empty', () => {
+-  assert.deepEqual(planMigrations({ appliedVersions: [1, 2, 3, 4, 5], migrations: known }), { pending: [], nonAdditive: [], drift: [] });
+-});
+-
+-test('an applied version the program does not know is drift unless it is a newer additive one', () => {
+-  const applied = [1, 2, 3, 4, 5, { version: 7, additive: 0 }];
+-  assert.deepEqual(planMigrations({ appliedVersions: applied, migrations: known }), { pending: [], nonAdditive: [], drift: [7] });
+-  assert.deepEqual(planMigrations({ appliedVersions: [1, 2, 3, 4, 5, { version: 6, additive: 1 }], migrations: known }), { pending: [], nonAdditive: [], drift: [] });
+-  assert.deepEqual(planMigrations({ appliedVersions: [1, 2, 3, 4, 5, 6], migrations: known }), { pending: [], nonAdditive: [], drift: [6] }, 'additive unknown is not additive');
+-});
+-
+-test('invalid input is refused rather than guessed', () => {
+-  for (const appliedVersions of [null, [0], [-1], [1.5], ['2'], [{ version: 'x' }], [1, 1]]) {
+-    assert.throws(() => planMigrations({ appliedVersions, migrations: known }), { code: 'MIGRATION_PLAN_INVALID' }, JSON.stringify(appliedVersions));
+-  }
+-});
+-
+-test('the default catalogue is the program\'s own migrations', () => {
+-  const all = MYSQL_MIGRATIONS.map(item => item.version);
+-  assert.deepEqual(planMigrations({ appliedVersions: all }), { pending: [], nonAdditive: [], drift: [] });
+-});
+-
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-test('MySQL: applied migrations are read without migrating; a missing table means none', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307); assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
+-  try {
+-    const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-    assert.deepEqual(await readAppliedMigrations(pool), []);
+-    const [before] = await pool.query('SELECT COUNT(*) AS n FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    assert.equal(Number(before[0].n), 0, 'reading created nothing');
+-    await migrateMySql(pool);
+-    const applied = await readAppliedMigrations(pool);
+-    assert.deepEqual(applied.map(row => row.version), MYSQL_MIGRATIONS.map(item => item.version));
+-    for (const row of applied) assert.equal(row.additive, MYSQL_MIGRATIONS.find(item => item.version === row.version).additive === true ? 1 : 0, `version ${row.version}`);
+-    assert.deepEqual(planMigrations({ appliedVersions: applied }), { pending: [], nonAdditive: [], drift: [] });
+-  } finally { await pool.end(); }
+-});
+-
+-// The deploy-time call: `node scripts/check-deployment.mjs --plan-migrations` with a server
+-// (ecs-docker) config prints one JSON line and migrates nothing.
+-function runPlan(config) {
+-  const dir = mkdtempSync(join(tmpdir(), 'plan-cli-'));
+-  try {
+-    const file = (name, value) => { const path = join(dir, name); writeFileSync(path, value); return path; };
+-    const path = file('config.json', JSON.stringify({
+-      deployment: 'ecs-docker', instance: 'test', environment: 'prod', mode: 'read_only_analysis',
+-      source: { kind: 'huilianyi-stage-oauth', appIdFile: file('app-id', 'synthetic'), appSecretFile: file('app-secret', 'synthetic') },
+-      connectionId: 'plan-cli', scope: { tenantId: 'tenant', companyId: 'company', allCompaniesInTenant: true },
+-      origin: 'https://audit-test.example.com',
+-      database: { engine: 'mysql', host: config.host, port: config.port, database: config.database, user: config.user },
+-      secretFiles: { databasePassword: file('db', config.password), dataKey: file('key', Buffer.alloc(32, 7).toString('base64')) },
+-      automaticSync: false, syncIntervalMs: 3600000, dingtalkBindingsReady: false, accounts: [],
+-    }));
+-    const env = { ...process.env, ANALYSIS_CONFIG: path };
+-    delete env.MYSQL_URL; delete env.ANALYSIS_MYSQL_URL;
+-    return spawnSync(process.execPath, ['scripts/check-deployment.mjs', '--plan-migrations'], { env, encoding: 'utf8', timeout: 60000 });
+-  } finally { rmSync(dir, { recursive: true, force: true }); }
+-}
+-
+-test('MySQL: check-deployment --plan-migrations prints the plan and migrates nothing', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307); assert.match(config.database, /_test$/);
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
+-  try {
+-    const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-    const empty = runPlan(config);
+-    assert.equal(empty.status, 0, empty.stderr);
+-    const all = MYSQL_MIGRATIONS.map(item => item.version);
+-    assert.deepEqual(JSON.parse(empty.stdout.trim()), { pending: all, nonAdditive: MYSQL_MIGRATIONS.filter(item => item.additive !== true).map(item => item.version), drift: [] });
+-    assert.equal(empty.stdout.trim().split('\n').length, 1, 'one line');
+-    const [after] = await pool.query('SELECT COUNT(*) AS n FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    assert.equal(Number(after[0].n), 0, 'the plan created no table');
+-    await migrateMySql(pool);
+-    const migrated = runPlan(config);
+-    assert.equal(migrated.status, 0, migrated.stderr);
+-    assert.deepEqual(JSON.parse(migrated.stdout.trim()), { pending: [], nonAdditive: [], drift: [] });
+-    const refused = runPlan({ ...config, password: 'not-the-password' });
+-    assert.equal(refused.status, 1);
+-    assert.equal(refused.stdout, '');
+-    assert.doesNotMatch(refused.stderr, /not-the-password|\{/u, 'only an error code');
+-  } finally { await pool.end(); }
+-});
+diff --git a/tests/mysql-database.test.mjs b/tests/mysql-database.test.mjs
+index afe8675..6090b81 100644
+--- a/tests/mysql-database.test.mjs
++++ b/tests/mysql-database.test.mjs
+@@ -5,106 +5,10 @@ import {join} from 'node:path';
+ import {tmpdir} from 'node:os';
+ import { createCipheriv, randomBytes } from 'node:crypto';
+ 
+-import {
+-  MYSQL_ANALYSIS_SCHEMA,
+-  MYSQL_CORE_SCHEMA,
+-  MYSQL_MIGRATIONS,
+-  createMySqlPool,
+-  migrateMySql,
+-  mysqlPoolOptions,
+-  parseMySqlUrl,
+-} from '../src/mysql-database.mjs';
+-import {
+-  MYSQL_ATTACHMENT_EXTRACTION_RETRY_MIGRATION,
+-  MYSQL_ATTACHMENT_QUEUE_MIGRATION,
+-  MYSQL_REPORT_DETAIL_MIGRATION,
+-  MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION,
+-} from '../src/mysql-source-foundation.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { normalizeAnalysisReport, normalizeStoredAnalysisReport } from '../src/analysis-normalize.mjs';
+ import { all, find, store } from '../src/db.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-
+-async function resetMySqlTestDatabase(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) {
+-      const table = String(row.TABLE_NAME).replaceAll('`', '``');
+-      await pool.query(`DROP TABLE IF EXISTS \`${table}\``);
+-    }
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
+-}
+-
+-test('parseMySqlUrl validates a mysql connection URL without logging credentials', () => {
+-  const config = parseMySqlUrl('mysql://audit_user:secret%21@db.example:3307/jiuan?ssl=true');
+-  assert.deepEqual(config, {
+-    host: 'db.example',
+-    port: 3307,
+-    user: 'audit_user',
+-    password: 'secret!',
+-    database: 'jiuan',
+-    ssl: true,
+-  });
+-  assert.throws(() => parseMySqlUrl('postgres://user:pass@localhost/db'), { code: 'MYSQL_CONFIGURATION' });
+-  assert.throws(() => parseMySqlUrl('mysql://user:pass@localhost/'), { code: 'MYSQL_CONFIGURATION' });
+-  assert.throws(() => parseMySqlUrl('mysql://user:%zz@localhost/jiuan'), { code: 'MYSQL_CONFIGURATION' });
+-});
+-
+-test('mysqlPoolOptions translates an RDS CA file into a bounded mysql2 ssl option', t => {
+-  const dir = mkdtempSync(join(tmpdir(), 'mysql-ca-'));
+-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+-  const caFile = join(dir, 'rds-ca.pem');
+-  const ca = 'synthetic-ca-content';
+-  writeFileSync(caFile, ca);
+-  assert.deepEqual(mysqlPoolOptions({ ssl: { caFile } }), { ssl: { ca, rejectUnauthorized: true, verifyIdentity: true } });
+-  assert.deepEqual(mysqlPoolOptions({ ssl: { caFile, verifyIdentity: false } }), { ssl: { ca, rejectUnauthorized: true, verifyIdentity: false } });
+-  assert.deepEqual(mysqlPoolOptions({ ssl: true }), { ssl: { rejectUnauthorized: true } });
+-  assert.deepEqual(mysqlPoolOptions({ ssl: false }), {});
+-  assert.deepEqual(mysqlPoolOptions({ ssl: null }), {});
+-  assert.deepEqual(mysqlPoolOptions({}), {});
+-  writeFileSync(caFile, '');
+-  assert.throws(() => mysqlPoolOptions({ ssl: { caFile } }), { code: 'MYSQL_CONFIGURATION' });
+-  writeFileSync(caFile, 'x'.repeat(128 * 1024 + 1));
+-  assert.throws(() => mysqlPoolOptions({ ssl: { caFile } }), { code: 'MYSQL_CONFIGURATION' });
+-});
+-
+-test('createMySqlPool lets explicit ssl override the URL-derived setting', async () => {
+-  const withCa = createMySqlPool({ url: 'mysql://user:pass@db.example/jiuan?ssl=false', ssl: { ca: 'synthetic-ca', rejectUnauthorized: true, verifyIdentity: false } });
+-  const disabled = createMySqlPool({ url: 'mysql://user:pass@db.example/jiuan?ssl=true', ssl: false });
+-  try {
+-    assert.deepEqual(withCa.pool.config.connectionConfig.ssl, { ca: 'synthetic-ca', rejectUnauthorized: true, verifyIdentity: false });
+-    assert.equal(disabled.pool.config.connectionConfig.ssl, false);
+-  } finally {
+-    await withCa.end();
+-    await disabled.end();
+-  }
+-});
+-
+-test('createMySqlPool derives ssl from the URL when no explicit ssl option is passed', async () => {
+-  const pool = createMySqlPool({ url: 'mysql://user:pass@db.example/jiuan?ssl=true' });
+-  try {
+-    assert.deepEqual(pool.pool.config.connectionConfig.ssl, { rejectUnauthorized: true });
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-test('MySQL schemas define the complete encrypted analysis store and core persistence tables', () => {
+-  for (const schema of [MYSQL_CORE_SCHEMA, MYSQL_ANALYSIS_SCHEMA]) {
+-    assert.match(schema, /ENGINE=InnoDB/);
+-    assert.match(schema, /utf8mb4/);
+-    assert.match(schema, /CREATE TABLE IF NOT EXISTS/);
+-  }
+-  assert.match(MYSQL_CORE_SCHEMA, /entities/);
+-  assert.match(MYSQL_CORE_SCHEMA, /source_tasks/);
+-  assert.match(MYSQL_ANALYSIS_SCHEMA, /document_versions/);
+-  assert.match(MYSQL_ANALYSIS_SCHEMA, /LONGBLOB/);
+-  assert.doesNotMatch(MYSQL_ANALYSIS_SCHEMA, /CREATE SCHEMA|CREATE DATABASE/);
+-});
+ 
+ test('analysis page writes are mirrored into the unified audit source model', async () => {
+   const pool = new FakeMySql();
+@@ -185,116 +89,6 @@ test('MySQL detail candidates still read audit rows stored under a version id co
+   await store.close();
+ });
+ 
+-test('MySQL migrations include durable SAP payment snapshots and sync batches', async () => {
+-  const { MYSQL_MIGRATIONS } = await import('../src/mysql-database.mjs');
+-  const migration = MYSQL_MIGRATIONS.find(item => item.name === 'sap-payment-snapshots');
+-  assert.ok(migration);
+-  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS sap_payment_requests/);
+-  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS sap_payment_sync_batches/);
+-  assert.match(migration.sql, /raw_payload LONGBLOB/);
+-});
+-
+-test('migrateMySql runs an ordered, idempotent migration under a MySQL advisory lock', async () => {
+-  const calls = [];
+-  const connection = {
+-    async query(sql, params = []) {
+-      calls.push({ sql, params });
+-      if (sql.includes('SELECT GET_LOCK')) return [[{ acquired: 1 }]];
+-      if (sql.includes('SELECT version FROM schema_migrations')) return [[{ version: 1 }]];
+-      return [[]];
+-    },
+-    release() { calls.push({ sql: 'RELEASE' }); },
+-  };
+-  const pool = { async getConnection() { return connection; } };
+-  const result = await migrateMySql(pool, {
+-    migrations: [{ version: 1, name: 'core', sql: 'CREATE TABLE demo (id BIGINT PRIMARY KEY)' }],
+-  });
+-  assert.deepEqual(result, { applied: [], currentVersion: 1, aheadAdditive: [] });
+-  assert.equal(calls.filter(call => call.sql.includes('CREATE TABLE demo')).length, 0);
+-  assert.equal(calls.at(-1).sql, 'RELEASE');
+-  assert.ok(calls.some(call => call.sql.includes('GET_LOCK')));
+-  assert.ok(calls.some(call => call.sql.includes('RELEASE_LOCK')));
+-});
+-
+-test('attachment queue migrations guard columns and indexes when missing and already present', async () => {
+-  const pool = new MigrationSchemaFake();
+-  const first = await migrateMySql(pool, {
+-    migrations: [MYSQL_ATTACHMENT_QUEUE_MIGRATION, MYSQL_ATTACHMENT_EXTRACTION_RETRY_MIGRATION],
+-  });
+-  assert.deepEqual(first.applied, [6, 7]);
+-  assert.equal(pool.columns.get('audit_attachment_extractions')?.has('max_attempts'), true);
+-  pool.migrations.clear();
+-  const second = await migrateMySql(pool, {
+-    migrations: [MYSQL_ATTACHMENT_QUEUE_MIGRATION, MYSQL_ATTACHMENT_EXTRACTION_RETRY_MIGRATION],
+-  });
+-  assert.deepEqual(second.applied, [6, 7]);
+-  assert.equal(pool.columns.get('audit_attachment_extractions')?.has('max_attempts'), true);
+-  assert.match(MYSQL_ATTACHMENT_EXTRACTION_RETRY_MIGRATION.sql, /information_schema\.COLUMNS/);
+-  assert.match(MYSQL_ATTACHMENT_QUEUE_MIGRATION.sql, /information_schema\.STATISTICS/);
+-});
+-
+-test('attachment queue migration replaces the legacy identity index atomically', async () => {
+-  const pool = new MigrationSchemaFake();
+-  const table = 'audit_attachment_extractions';
+-  const index = 'audit_attachment_extractions_identity';
+-  pool.indexes.set(table, new Set([index]));
+-  pool.indexColumns.set(table, new Map([[index, ['attachment_id', 'method', 'parser_version', 'model_version']]]));
+-
+-  const result = await migrateMySql(pool, { migrations: [MYSQL_ATTACHMENT_QUEUE_MIGRATION] });
+-
+-  assert.deepEqual(result.applied, [6]);
+-  assert.deepEqual(pool.indexColumns.get(table)?.get(index), [
+-    'attachment_id', 'content_sha256', 'method', 'parser_version', 'model_version',
+-  ]);
+-});
+-
+-test('report detail v9 migration defines the queue table and lease columns', async () => {
+-  const pool = new MigrationSchemaFake();
+-  const first = await migrateMySql(pool, { migrations: [MYSQL_REPORT_DETAIL_MIGRATION] });
+-  assert.deepEqual(first.applied, [9]);
+-  assert.equal(first.currentVersion, 9);
+-  assert.match(MYSQL_REPORT_DETAIL_MIGRATION.sql, /CREATE TABLE IF NOT EXISTS audit_report_details/);
+-  assert.match(MYSQL_REPORT_DETAIL_MIGRATION.sql, /PRIMARY KEY \(document_id, content_version\)/);
+-  assert.match(MYSQL_REPORT_DETAIL_MIGRATION.sql, /detail_digest/);
+-  assert.match(MYSQL_REPORT_DETAIL_MIGRATION.sql, /audit_sync_items.*lease_owner/s);
+-});
+-
+-test('report detail v10 migration defines projection tables with versioned row keys', async () => {
+-  const pool = new MigrationSchemaFake();
+-  const result = await migrateMySql(pool, { migrations: [MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION] });
+-  assert.deepEqual(result.applied, [10]);
+-  assert.equal(result.currentVersion, 10);
+-  assert.match(MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION.sql, /CREATE TABLE IF NOT EXISTS audit_report_projection/);
+-  assert.match(MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION.sql, /CREATE TABLE IF NOT EXISTS audit_expense_lines/);
+-  assert.match(MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION.sql, /PRIMARY KEY \(document_id, content_version, line_index\)/);
+-  assert.match(MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION.sql, /sensitive_ciphertext LONGBLOB/);
+-});
+-
+-test('real MySQL applies v1-to-latest migrations twice without SQL errors', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    const expectedVersions = MYSQL_MIGRATIONS.map(item => item.version);
+-    const first = await migrateMySql(pool);
+-    assert.deepEqual(first.applied, expectedVersions);
+-    assert.equal(first.currentVersion, Math.max(...expectedVersions));
+-    const second = await migrateMySql(pool);
+-    assert.deepEqual(second.applied, []);
+-    assert.equal(second.currentVersion, Math.max(...expectedVersions));
+-  } finally {
+-    await pool.end();
+-  }
+-});
+-
+-test('createMySqlPool does not create a pool without an explicit URL', () => {
+-  assert.throws(() => createMySqlPool({}), { code: 'MYSQL_CONFIGURATION' });
+-});
+-
+ test('core entity helpers use MySQL upserts and accept native JSON driver values', () => {
+   const calls = [];
+   const db = {
+@@ -346,89 +140,6 @@ class FakeMySql {
+   async getConnection() { return { query: this.query.bind(this), release() {} }; }
+ }
+ 
+-class MigrationSchemaFake {
+-  constructor() {
+-    this.migrations = new Set();
+-    this.columns = new Map();
+-    this.indexes = new Map();
+-    this.indexColumns = new Map();
+-    this.foreignKeyColumns = new Map([
+-      ['audit_attachment_extractions', new Set(['attachment_id'])],
+-    ]);
+-    this.preparedSql = null;
+-    this.connection = { query: this.query.bind(this), release() {} };
+-  }
+-  async getConnection() { return this.connection; }
+-  async query(sql, params = []) {
+-    if (sql.includes('SELECT GET_LOCK')) return [[{ acquired: 1 }]];
+-    if (sql.includes('SELECT RELEASE_LOCK')) return [[{ released: 1 }]];
+-    if (sql.includes('SELECT version FROM schema_migrations')) return [[...this.migrations].map(version => ({ version }))];
+-    if (sql.includes('INSERT INTO schema_migrations')) { this.migrations.add(Number(params[0])); return [[]]; }
+-    if (sql.startsWith('CREATE TABLE IF NOT EXISTS schema_migrations')) return [[]];
+-    if (sql.startsWith('SET @migration_sql')) {
+-      const source = sql.match(/information_schema\.(COLUMNS|STATISTICS)/i)?.[1]?.toUpperCase();
+-      const table = sql.match(/TABLE_NAME = '([^']+)'/i)?.[1];
+-      const name = sql.match(source === 'COLUMNS' ? /COLUMN_NAME = '([^']+)'/i : /INDEX_NAME = '([^']+)'/i)?.[1];
+-      const exists = source === 'COLUMNS'
+-        ? this.columns.get(table)?.has(name) === true
+-        : this.indexes.get(table)?.has(name) === true;
+-      const unquote = value => value?.replaceAll("''", "'");
+-      if (source === 'STATISTICS' && sql.includes('DROP INDEX') && sql.includes('CASE')) {
+-        const add = unquote(sql.match(/THEN '((?:''|[^'])*)'/s)?.[1]);
+-        const replace = unquote(sql.match(/ELSE '((?:''|[^'])*)'/s)?.[1]);
+-        const indexColumns = this.indexColumns.get(table)?.get(name) || [];
+-        const hasContentHash = indexColumns.includes('content_sha256');
+-        this.preparedSql = !exists ? add : hasContentHash ? 'SELECT 1' : replace;
+-      } else {
+-        const add = unquote(sql.match(/, '((?:''|[^'])*)', 'SELECT 1'\)/s)?.[1]) || 'SELECT 1';
+-        const isAdd = sql.includes(') = 0,');
+-        this.preparedSql = (isAdd ? !exists : exists) ? add : 'SELECT 1';
+-      }
+-      return [[]];
+-    }
+-    if (sql.startsWith('PREPARE')) return [[]];
+-    if (sql.startsWith('EXECUTE migration_statement')) {
+-      if (this.preparedSql?.startsWith('ALTER TABLE')) this.applyAlter(this.preparedSql);
+-      return [[]];
+-    }
+-    if (sql.startsWith('DEALLOCATE')) { this.preparedSql = null; return [[]]; }
+-    if (sql.startsWith('ALTER TABLE')) this.applyAlter(sql);
+-    return [[]];
+-  }
+-  applyAlter(sql) {
+-    const table = sql.match(/ALTER TABLE\s+`?([A-Za-z0-9_]+)`?/i)?.[1];
+-    if (!table) return;
+-    const columns = this.columns.get(table) || new Set();
+-    const indexes = this.indexes.get(table) || new Set();
+-    for (const [, column] of sql.matchAll(/ADD COLUMN\s+`?([A-Za-z0-9_]+)`?/gi)) {
+-      if (columns.has(column)) throw new Error(`duplicate column ${table}.${column}`);
+-      columns.add(column);
+-    }
+-    const droppedIndexes = [...sql.matchAll(/DROP INDEX\s+`?([A-Za-z0-9_]+)`?/gi)].map(([, index]) => index);
+-    const addedIndexes = [...sql.matchAll(/ADD (?:UNIQUE )?KEY\s+`?([A-Za-z0-9_]+)`?\s*\(([^)]+)\)/gi)]
+-      .map(([, index, definition]) => ({ index, definition }));
+-    const replacedIndexes = new Set(addedIndexes.map(({ index }) => index).filter(index => droppedIndexes.includes(index)));
+-    for (const index of droppedIndexes) {
+-      const indexColumns = this.indexColumns.get(table)?.get(index) || [];
+-      const foreignKeyColumns = this.foreignKeyColumns.get(table) || new Set();
+-      if (!replacedIndexes.has(index) && foreignKeyColumns.has(indexColumns[0])) {
+-        throw Object.assign(new Error(`Cannot drop index '${index}': needed in a foreign key constraint`), { code: 'ER_DROP_INDEX_FK' });
+-      }
+-      indexes.delete(index);
+-      this.indexColumns.get(table)?.delete(index);
+-    }
+-    for (const { index, definition } of addedIndexes) {
+-      if (indexes.has(index)) throw new Error(`duplicate index ${table}.${index}`);
+-      indexes.add(index);
+-      const columnsByIndex = this.indexColumns.get(table) || new Map();
+-      columnsByIndex.set(index, definition.split(',').map(column => column.trim().replaceAll('`', '')));
+-      this.indexColumns.set(table, columnsByIndex);
+-    }
+-    this.columns.set(table, columns);
+-    this.indexes.set(table, indexes);
+-  }
+-}
+-
+ class HistoricalVersionFakeMySql extends FakeMySql {
+   constructor() { super(); this.documentId = null; this.currentVersion = null; this.payloads = new Map(); }
+   async query(sql, params = []) {
+diff --git a/tests/mysql-integration.test.mjs b/tests/mysql-integration.test.mjs
+deleted file mode 100644
+index 5c79085..0000000
+--- a/tests/mysql-integration.test.mjs
++++ /dev/null
+@@ -1,64 +0,0 @@
+-import test from 'node:test';
+-import assert from 'node:assert/strict';
+-
+-import { createMySqlPool, migrateMySql, MYSQL_MIGRATIONS, parseMySqlUrl } from '../src/mysql-database.mjs';
+-
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-
+-async function resetMySqlTestDatabase(pool) {
+-  const [tables] = await pool.query(`
+-    SELECT TABLE_NAME
+-    FROM information_schema.tables
+-    WHERE TABLE_SCHEMA = DATABASE()`);
+-  await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-  try {
+-    for (const row of tables) {
+-      const table = String(row.TABLE_NAME).replaceAll('`', '``');
+-      await pool.query(`DROP TABLE IF EXISTS \`${table}\``);
+-    }
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-  }
+-}
+-
+-test('MySQL migration runner is clean, FK-safe, and idempotent', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
+-}, async () => {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a database ending in _test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
+-  try {
+-    await resetMySqlTestDatabase(pool);
+-    const first = await migrateMySql(pool);
+-    assert.deepEqual(first.applied, MYSQL_MIGRATIONS.map(item => item.version));
+-    const [maxAttemptsRows] = await pool.query(`
+-      SELECT COUNT(*) AS count
+-      FROM information_schema.COLUMNS
+-      WHERE TABLE_SCHEMA = DATABASE()
+-        AND TABLE_NAME = 'audit_attachment_extractions'
+-        AND COLUMN_NAME = 'max_attempts'`);
+-    assert.equal(Number(maxAttemptsRows?.[0]?.count), 1);
+-    const [identityRows] = await pool.query(`
+-      SELECT COUNT(*) AS index_columns,
+-             SUM(CASE WHEN COLUMN_NAME = 'content_sha256' THEN 1 ELSE 0 END) AS content_sha256_columns
+-      FROM information_schema.STATISTICS
+-      WHERE TABLE_SCHEMA = DATABASE()
+-        AND TABLE_NAME = 'audit_attachment_extractions'
+-        AND INDEX_NAME = 'audit_attachment_extractions_identity'`);
+-    assert.equal(Number(identityRows?.[0]?.index_columns), 5);
+-    assert.equal(Number(identityRows?.[0]?.content_sha256_columns), 1);
+-    const [detailDigestRows] = await pool.query(`
+-      SELECT COUNT(*) AS count
+-      FROM information_schema.COLUMNS
+-      WHERE TABLE_SCHEMA = DATABASE()
+-        AND TABLE_NAME = 'audit_report_details'
+-        AND COLUMN_NAME = 'detail_digest'`);
+-    assert.equal(Number(detailDigestRows?.[0]?.count), 1);
+-    const second = await migrateMySql(pool);
+-    assert.deepEqual(second.applied, []);
+-    assert.equal(second.currentVersion, MYSQL_MIGRATIONS.at(-1).version);
+-  } finally {
+-    await pool.end();
+-  }
+-});
+diff --git a/tests/pg-runtime-graph.test.mjs b/tests/pg-runtime-graph.test.mjs
+new file mode 100644
+index 0000000..7335772
+--- /dev/null
++++ b/tests/pg-runtime-graph.test.mjs
+@@ -0,0 +1,87 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
++import { dirname, join, resolve } from 'node:path';
++import { tmpdir } from 'node:os';
++import { fileURLToPath } from 'node:url';
++import { readAnalysisConfig } from '../src/analysis-config.mjs';
++import { analysisDatabaseEngine, createAnalysisDatabase } from '../src/analysis-database.mjs';
++
++// PostgreSQL 是唯一的库：测试台外壳加载的九安模块（poc/app/jiuan.mjs 里那张表）静态 import 一路走下去，
++// 没有一个碰 mysql2 或已删掉的 MySQL 模块；选引擎只认 postgres；配置照原来 MySQL 那条的规则校验。
++const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
++const SHELL_ENTRIES = [
++  'analysis-server.mjs', 'src/analysis-auth.mjs', 'src/analysis-sync.mjs', 'src/platform/scheduler.mjs', 'src/platform/agent-runner.mjs',
++  'src/platform/adapters/list-sync.mjs', 'src/platform/adapters/report-detail.mjs', 'src/platform/adapters/detail-projection.mjs',
++  'src/platform/adapters/element-check.mjs', 'src/platform/agent-catalog.mjs', 'src/platform/adapters/catalog.mjs',
++  'src/analysis-config.mjs', 'src/huilianyi-source.mjs', 'src/analysis-runtime-services.mjs', 'src/analysis-runtime-registry.mjs',
++  'src/analysis-database.mjs', 'src/platform/platform-store.mjs', 'src/platform/connectors.mjs', 'providers/nexus-a2a.mjs',
++  'src/agent-contract/checks.mjs', 'src/agent-enablement.mjs', 'src/agent-task-service.mjs', 'src/agent-tasks/review-advice.mjs',
++  'src/agent-tasks/element-check-state.mjs', 'src/agent-tasks/review-advice-state.mjs', 'src/platform/service-identity.mjs',
++  'src/platform/call-middleware.mjs', 'src/platform/secret-source.mjs', 'src/platform/company-scope.mjs',
++  'src/platform/pipeline-progress.mjs', 'src/platform/platform-routes.mjs', 'src/company-directory.mjs',
++  'src/department-directory.mjs', 'src/approval-identity.mjs', 'src/milestone-runtime.mjs',
++];
++const MYSQL_MODULES = /(^|\/)mysql-(database|sync-database|sync-worker)\.mjs$/;
++
++/** Every module reachable from the entries by static import / export … from / import('literal'): { file → specifiers }. */
++function importGraph(entries) {
++  const seen = new Map(), queue = entries.map(entry => join(ROOT, entry));
++  while (queue.length) {
++    const file = queue.pop();
++    if (seen.has(file)) continue;
++    const source = readFileSync(file, 'utf8');
++    const specifiers = [...source.matchAll(/(?:^|[\s;])(?:import|export)\s[^'"`;]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|^\s*import\s+['"]([^'"]+)['"]/gm)]
++      .map(match => match[1] || match[2] || match[3]);
++    seen.set(file, specifiers);
++    for (const specifier of specifiers) {
++      if (!specifier.startsWith('.')) continue;
++      const target = resolve(dirname(file), specifier);
++      assert.ok(existsSync(target), `${file.slice(ROOT.length + 1)} imports a missing module ${specifier}`);
++      queue.push(target);
++    }
++  }
++  return seen;
++}
++
++test('外壳加载的九安模块一路 import 下去：没有 mysql2，没有已删掉的 MySQL 模块，引用的文件都在', () => {
++  assert.equal(SHELL_ENTRIES.length, 35);
++  const graph = importGraph(SHELL_ENTRIES);
++  assert.ok(graph.size > SHELL_ENTRIES.length, `walked ${graph.size} modules`);
++  const offenders = [];
++  for (const [file, specifiers] of graph) {
++    for (const specifier of specifiers) if (specifier === 'mysql2' || specifier.startsWith('mysql2/') || MYSQL_MODULES.test(specifier)) offenders.push(`${file.slice(ROOT.length + 1)} → ${specifier}`);
++  }
++  assert.deepEqual(offenders, []);
++  for (const removed of ['src/mysql-database.mjs', 'src/mysql-sync-database.mjs', 'src/mysql-sync-worker.mjs']) assert.equal(existsSync(join(ROOT, removed)), false, `${removed} is gone`);
++  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
++  assert.equal(Object.hasOwn(pkg.dependencies || {}, 'mysql2'), false);
++  assert.equal(typeof pkg.dependencies?.pg, 'string');
++});
++
++test('选引擎：只认 postgres；mysql 报 ANALYSIS_DATABASE_ENGINE_UNSUPPORTED', () => {
++  assert.equal(analysisDatabaseEngine({ database: { engine: 'postgres' } }), 'postgres');
++  assert.equal(analysisDatabaseEngine({ database: { engine: 'mysql' } }), 'unsupported');
++  assert.throws(() => createAnalysisDatabase({ config: { database: { engine: 'mysql', host: 'db', port: 3306, database: 'jiuan', user: 'u' } }, secrets: { databasePassword: 'p' } }),
++    error => error.code === 'ANALYSIS_DATABASE_ENGINE_UNSUPPORTED' && /PostgreSQL/.test(error.message));
++});
++
++function configFile(t, database) {
++  const dir = mkdtempSync(join(tmpdir(), 'pg-config-'));
++  t.after(() => rmSync(dir, { recursive: true, force: true }));
++  const file = join(dir, 'analysis.json');
++  writeFileSync(file, JSON.stringify({ environment: 'prod', mode: 'read_only_analysis', connectionId: 'c', scope: { tenantId: 't', companyId: 'co' },
++    origin: 'http://127.0.0.1:4180', database, automaticSync: false, syncIntervalMs: 0, accounts: [], protectedSecrets: '', tokenFile: join(dir, 'token'), caFile: join(dir, 'ca') }));
++  return file;
++}
++
++test('配置：postgres 照原来 MySQL 那条的规则（主机、端口、库名、用户）；测试台的 127.0.0.1:5433 / jiuan / jiuan_app 可以；mysql 不行', t => {
++  const accepted = readAnalysisConfig(configFile(t, { engine: 'postgres', host: '127.0.0.1', port: 5433, database: 'jiuan', user: 'jiuan_app' }));
++  assert.deepEqual(accepted.database, { engine: 'postgres', host: '127.0.0.1', port: 5433, database: 'jiuan', user: 'jiuan_app' });
++  assert.equal(readAnalysisConfig(configFile(t, { host: '127.0.0.1', port: 5433, database: 'jiuan', user: 'jiuan_app' })).database.engine, 'postgres', '不写 engine 就是 postgres');
++  for (const bad of [{ engine: 'mysql', host: '127.0.0.1', port: 3306, database: 'jiuan', user: 'jiuan_app' }, { engine: 'postgres', host: 'bad host', port: 5433, database: 'jiuan', user: 'u' },
++    { engine: 'postgres', host: '127.0.0.1', port: 0, database: 'jiuan', user: 'u' }, { engine: 'postgres', host: '127.0.0.1', port: 5433, database: 'bad name', user: 'u' },
++    { engine: 'postgres', host: '127.0.0.1', port: 5433, database: 'jiuan', user: '' }]) {
++    assert.throws(() => readAnalysisConfig(configFile(t, bad)), JSON.stringify(bad));
++  }
++});
+diff --git a/tests/platform-call-middleware-r2.test.mjs b/tests/platform-call-middleware-r2.test.mjs
+index 7de7f6e..4899f7b 100644
+--- a/tests/platform-call-middleware-r2.test.mjs
++++ b/tests/platform-call-middleware-r2.test.mjs
+@@ -360,7 +360,7 @@ test('a failed lock connection is retried on the next call', async () => {
+     async getConnection() {
+       connections += 1;
+       if (connections === 1) throw new Error('connection refused');
+-      return { async query(sql) { return sql.includes('GET_LOCK') ? [[{ acquired: 1 }], []] : [[{ released: 1 }], []]; }, release() {} };
++      return { async query(sql) { return sql.includes('pg_try_advisory_lock(') ? [[{ acquired: true }], []] : [[{ released: true }], []]; }, release() {} };
+     },
+   };
+   const store = storeFixture();
+@@ -378,7 +378,7 @@ test('a synchronous lock connection failure is not cached', async () => {
+       if (connections === 1) throw new Error('connection refused');
+       return {
+         async query(sql) {
+-          return sql.includes('GET_LOCK') ? [[{ acquired: 1 }], []] : [[{ released: 1 }], []];
++          return sql.includes('pg_try_advisory_lock(') ? [[{ acquired: true }], []] : [[{ released: true }], []];
+         },
+         release() {},
+       };
+@@ -402,7 +402,7 @@ test('close is re-entrant and releases locks after its timeout', async () => {
+   let started;
+   const lockPool = {
+     async getConnection() {
+-      return { async query(sql) { if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }], []]; if (sql.includes('RELEASE_LOCK')) { released += 1; return [[{ released: 1 }], []]; } return [[{ owned: 1 }], []]; }, release() {} };
++      return { async query(sql) { if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: true }], []]; if (sql.includes('pg_advisory_unlock(')) { released += 1; return [[{ released: true }], []]; } return [[{ owned: 1 }], []]; }, release() {} };
+     },
+   };
+   const store = storeFixture({ settings: { 'middleware/hly-prod': { timeoutMs: 60000, maxRetries: 0 } } });
+@@ -430,8 +430,8 @@ test('close waits for an in-flight call before releasing its lock', async () =>
+     async getConnection() {
+       return {
+         async query(sql) {
+-          if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }], []];
+-          if (sql.includes('RELEASE_LOCK')) { events.push('release-lock'); return [[{ released: 1 }], []]; }
++          if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: true }], []];
++          if (sql.includes('pg_advisory_unlock(')) { events.push('release-lock'); return [[{ released: true }], []]; }
+           return [[{ owned: 1 }], []];
+         },
+         release() {},
+@@ -491,8 +491,8 @@ test('close waits for a timed-out request background completion', async () => {
+     async getConnection() {
+       return {
+         async query(sql) {
+-          if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }], []];
+-          if (sql.includes('RELEASE_LOCK')) { events.push('release-lock'); return [[{ released: 1 }], []]; }
++          if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: true }], []];
++          if (sql.includes('pg_advisory_unlock(')) { events.push('release-lock'); return [[{ released: true }], []]; }
+           return [[{ owned: 1 }], []];
+         },
+         release() {},
+@@ -527,8 +527,8 @@ test('close remains bounded when a lock query hangs', async () => {
+     async getConnection() {
+       return {
+         async query(sql) {
+-          if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }], []];
+-          if (sql.includes('IS_USED_LOCK')) return new Promise(() => {});
++          if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: true }], []];
++          if (sql.includes('FROM pg_locks')) return new Promise(() => {});
+           return new Promise(() => {});
+         },
+         destroy() { destroyed += 1; },
+@@ -605,7 +605,7 @@ test('a lock acquired just before close is released before the call aborts', asy
+   let releaseQueries = 0;
+   const lockPool = {
+     async getConnection() {
+-      return { async query(sql) { if (sql.includes('GET_LOCK')) { await new Promise(resolve => { allowGetLock = resolve; }); return [[{ acquired: 1 }], []]; } if (sql.includes('RELEASE_LOCK')) { releaseQueries += 1; return [[{ released: 1 }], []]; } return [[]]; }, release() {} };
++      return { async query(sql) { if (sql.includes('pg_try_advisory_lock(')) { await new Promise(resolve => { allowGetLock = resolve; }); return [[{ acquired: true }], []]; } if (sql.includes('pg_advisory_unlock(')) { releaseQueries += 1; return [[{ released: true }], []]; } return [[]]; }, release() {} };
+     },
+   };
+   const gateway = createCallGateway({ store: storeFixture(), registry: registryFixture({ queryExpenseReports: async () => ({}) }), lockPool, closeTimeoutMs: 100 });
+@@ -628,7 +628,7 @@ test('missing allowed client methods fail before reserving budget', async () =>
+ test('lock ownership is established before budget reservation', async () => {
+   const store = storeFixture();
+   let calls = 0;
+-  const lockPool = { async getConnection() { return { async query(sql) { if (sql.includes('GET_LOCK')) return [[{ acquired: 0 }], []]; return [[{ released: 1 }], []]; }, release() {} }; } };
++  const lockPool = { async getConnection() { return { async query(sql) { if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: false }], []]; return [[{ released: true }], []]; }, release() {} }; } };
+   const gateway = createCallGateway({ store, registry: registryFixture({ queryExpenseReports: async () => { calls += 1; } }), lockPool });
+   await assert.rejects(call(gateway, 'hly-prod', 'queryExpenseReports'), error => error.code === 'CONNECTOR_GATEWAY_BUSY');
+   assert.equal(store.reserves.length, 0);
+diff --git a/tests/platform-rewire-hly.integration.test.mjs b/tests/platform-rewire-hly.integration.test.mjs
+index 8684ff5..238aa0a 100644
+--- a/tests/platform-rewire-hly.integration.test.mjs
++++ b/tests/platform-rewire-hly.integration.test.mjs
+@@ -167,7 +167,7 @@ test('full-sync CLI exits 4 and makes no HLY call when the resident gateway owns
+   let released = 0;
+   try {
+     const result = await runFullSyncCli({ argv: ['--start', '2026-10-01', '--end', '2026-10-01'], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'full-sync-test', scope: { allCompaniesInTenant: true } }),
++      readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'full-sync-test', scope: { allCompaniesInTenant: true } }),
+       secrets: { dataKey: Buffer.alloc(32).toString('base64') },
+       database: { pool: { async end() {} } },
+       acquireLock: async () => ({ async release() { released += 1; } }),
+@@ -194,7 +194,7 @@ test('full-sync CLI exits 4 before touching the store or the gateway when anothe
+   let touched = 0;
+   try {
+     const result = await runFullSyncCli({ argv: ['--start', '2026-10-01', '--end', '2026-10-01', '--manifest', 'scheduled'], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'full-sync-test', scope: { allCompaniesInTenant: true } }),
++      readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'full-sync-test', scope: { allCompaniesInTenant: true } }),
+       secrets: { dataKey: Buffer.alloc(32).toString('base64') },
+       database: { pool: { async end() {} }, async open() { touched += 1; throw new Error('store must not be opened'); } },
+       acquireLock: async () => null,
+diff --git a/tests/pool-starvation.integration.test.mjs b/tests/pool-starvation.integration.test.mjs
+index fb6877a..d302d8a 100644
+--- a/tests/pool-starvation.integration.test.mjs
++++ b/tests/pool-starvation.integration.test.mjs
+@@ -55,7 +55,7 @@ afterEach(async () => {
+ 
+ async function fixture({ limits, holders = [], detailGate = null } = {}) {
+   const url = parsePgUrl(mysqlTestUrl);
+-  if (Number(url.port) === 3306) throw new Error('PG_TEST_URL must not target port 3306');
++  if (Number(url.port) !== 5434) throw new Error('PG_TEST_URL must target the isolated 5434 test instance');
+   const setup = createPgPool({ url: mysqlTestUrl });
+   try {
+     await setup.query('DROP SCHEMA IF EXISTS public CASCADE');
+@@ -64,7 +64,7 @@ async function fixture({ limits, holders = [], detailGate = null } = {}) {
+   } finally { await setup.end(); }
+   // The pools, gateway, runner and adapter wired exactly as scripts/start-analysis.mjs wires them.
+   const database = createAnalysisDatabase({
+-    config: { database: { engine: 'mysql', host: url.host, port: url.port, database: url.database, user: url.user } },
++    config: { database: { engine: 'postgres', host: url.host, port: url.port, database: url.database, user: url.user } },
+     secrets: { databasePassword: url.password },
+     ...(limits ? { limits } : {}),
+   });
+@@ -111,8 +111,8 @@ test('the analysis pool gives up on a full pool and on a slow query instead of w
+   const e = await fixture({ limits: { acquireTimeoutMs: 300, queryTimeoutMs: 500 } });
+   const held = [];
+   for (let i = 0; i < ANALYSIS_POOL_LIMITS.connectionLimit; i += 1) held.push(await within(e.pool.getConnection(), 3000, 'taking a connection'));
+-  await assert.rejects(within(e.pool.query('SELECT 1'), 3000, 'a query on a full pool'), { code: 'MYSQL_POOL_ACQUIRE_TIMEOUT' });
+-  await assert.rejects(within(e.pool.getConnection(), 3000, 'getConnection on a full pool'), { code: 'MYSQL_POOL_ACQUIRE_TIMEOUT' });
++  await assert.rejects(within(e.pool.query('SELECT 1'), 3000, 'a query on a full pool'), { code: 'PG_POOL_ACQUIRE_TIMEOUT' });
++  await assert.rejects(within(e.pool.getConnection(), 3000, 'getConnection on a full pool'), { code: 'PG_POOL_ACQUIRE_TIMEOUT' });
+   const answered = await within(health(e.port), 3500, '/api/health on a full pool');
+   assert.equal(answered.status, 503);
+   for (const connection of held) connection.release();
+diff --git a/tests/repair-analysis-document-heads.integration.test.mjs b/tests/repair-analysis-document-heads.integration.test.mjs
+index 81fa18b..9362888 100644
+--- a/tests/repair-analysis-document-heads.integration.test.mjs
++++ b/tests/repair-analysis-document-heads.integration.test.mjs
+@@ -48,7 +48,7 @@ async function fixture() {
+     await pool.query('UPDATE analysis_documents SET version=? WHERE connection_id=? AND id=?', [firstVersion.get(document.id), connectionId, document.id]);
+     await pool.query('UPDATE audit_documents SET source_version=? WHERE source_connection_id=? AND document_id=?', [firstVersion.get(document.id), connectionId, document.id]);
+   }
+-  return { pool, store, config: { database: { engine: 'mysql' }, connectionId } };
++  return { pool, store, config: { database: { engine: 'postgres' }, connectionId } };
+ }
+ 
+ async function close(value) {
+diff --git a/tests/repair-analysis-document-heads.test.mjs b/tests/repair-analysis-document-heads.test.mjs
+index 7691c86..3c53256 100644
+--- a/tests/repair-analysis-document-heads.test.mjs
++++ b/tests/repair-analysis-document-heads.test.mjs
+@@ -34,7 +34,7 @@ async function run(argv, { lock } = {}) {
+     await main({
+       argv,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         store,
+@@ -75,7 +75,7 @@ test('repair script refuses execute without matching confirmation and does not t
+     const result = await main({
+       argv: ['--execute', '--expect', '1', '--token', tokenFor(1)],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         store: { repairDocumentHeads: async () => { repaired = true; } },
+@@ -98,7 +98,7 @@ test('repair script refuses a bad token before changing data', async () => {
+     const result = await main({
+       argv: ['--execute', '--expect', '1', '--token', '0000000000000000', '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -122,7 +122,7 @@ test('repair script rejects a token for a different expected count before changi
+     const result = await main({
+       argv: ['--execute', '--expect', '2', '--token', tokenFor(1), '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -146,7 +146,7 @@ test('repair script rejects a token for fewer repairs than the current preview',
+     const result = await main({
+       argv: ['--execute', '--expect', '2', '--token', tokenFor(1), '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -169,7 +169,7 @@ test('repair script compares all sixteen token characters', async () => {
+     const result = await main({
+       argv: ['--execute', '--expect', '1', '--token', `${tokenFor(1).slice(0, 8)}00000000`, '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -192,7 +192,7 @@ test('repair token changes when the approved document set changes', async () =>
+     const result = await main({
+       argv: ['--execute', '--expect', '1', '--token', tokenFor(1), '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -216,7 +216,7 @@ test('repair rejects a preview with failed documents before executing', async ()
+     const result = await main({
+       argv: ['--execute', '--expect', '1', '--token', tokenFor(1), '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -238,7 +238,7 @@ test('repair reports the approved count before exceeding it', async () => {
+     const result = await main({
+       argv: ['--execute', '--expect', '1', '--token', tokenFor(1), '--confirm', 'repair-test'],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -279,7 +279,7 @@ test('execution hands the store the previewed set, the approved count and a lock
+     const result = await main({
+       argv: validArgs,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { verifies++; return true; }, async release() {} }),
+@@ -311,7 +311,7 @@ test('repair script reports REPAIR_SET_CHANGED from the store as a refusal with
+     const result = await main({
+       argv: validArgs,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -336,7 +336,7 @@ test("repair script keeps the store's early stop when the lock was lost during t
+     const result = await main({
+       argv: validArgs,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return true; }, async release() {} }),
+@@ -361,7 +361,7 @@ test('repair script reports busy when the full-sync lock is unavailable', async
+     const result = await main({
+       argv: validArgs,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => null,
+@@ -384,7 +384,7 @@ test('repair script reports lock lost before touching the store', async () => {
+     const result = await main({
+       argv: validArgs,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { return false; }, async release() {} }),
+@@ -409,7 +409,7 @@ test('repair script keeps the committed result when the lock is lost afterwards'
+     const result = await main({
+       argv: validArgs,
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         acquireLock: async () => ({ async verify() { verifies++; return verifies === 1; }, async release() {} }),
+@@ -429,7 +429,7 @@ test('repair script rejects an empty connection id', async () => {
+     main({
+       argv: [],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: '' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: '' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         store: { repairDocumentHeads: async () => ({ totalDocuments: 0, needsRepair: 0, needsRepairByForm: {}, repaired: 0, failed: 0 }) },
+@@ -449,7 +449,7 @@ test('repair script reports an explicit not-migrated error when required tables
+     main({
+       argv: [],
+       dependencies: {
+-        readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'repair-test' }),
++        readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'repair-test' }),
+         secrets: { dataKey: DATA_KEY },
+         database: { pool: null },
+         store: { repairDocumentHeads: async () => { throw Object.assign(new Error("Table 'analysis_documents' doesn't exist"), { code: 'ER_NO_SUCH_TABLE', errno: 1146 }); } },
+diff --git a/tests/report-detail-queue.test.mjs b/tests/report-detail-queue.test.mjs
+index fa467e3..0d29a0f 100644
+--- a/tests/report-detail-queue.test.mjs
++++ b/tests/report-detail-queue.test.mjs
+@@ -194,7 +194,7 @@ test('report detail CLI dry-run is injectable, read-only, and uses --batch-id fo
+   console.log = value => { output = String(value); };
+   try {
+     await runReportDetailCli({ argv: [], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
++      readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
+       secrets: { databasePassword: 'test', dataKey: Buffer.alloc(32).toString('base64') },
+       database: { pool, open: async () => { throw new Error('dry-run must not open a replacement store'); } },
+       analysisStore,
+@@ -212,7 +212,7 @@ test('report detail CLI dry-run is injectable, read-only, and uses --batch-id fo
+   assert.equal(pool.calls.some(call => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(call.sql)), false);
+   await assert.rejects(
+     runReportDetailCli({ argv: ['--execute'], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' } }),
++      readConfig: () => ({ database: { engine: 'postgres' } }),
+       loadSecrets: () => { throw new Error('secrets must not load before --batch-id validation'); },
+     } }),
+     error => error?.message.includes('--batch-id'),
+@@ -236,7 +236,7 @@ test('report detail CLI exits 3 when the resident gateway owns the lock', async
+   console.error = value => errors.push(String(value));
+   try {
+     const result = await runReportDetailCli({ argv: ['--execute', '--batch-id', 'busy-batch'], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
++      readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
+       secrets: { dataKey: Buffer.alloc(32).toString('base64') },
+       database: { pool, open: async () => analysisStore },
+       analysisStore,
+@@ -263,7 +263,7 @@ test('report detail CLI holds its gateway and worker locks on the lock pool and
+   let result;
+   try {
+     result = await runReportDetailCli({ argv: ['--execute', '--batch-id', 'lock-batch'], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
++      readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
+       secrets: { dataKey: Buffer.alloc(32).toString('base64') },
+       openDatabase: () => ({ pool: requestPool, lockPool: () => lockPool, open: async () => analysisStore }),
+       analysisStore,
+@@ -297,7 +297,7 @@ test('report detail CLI closes both pools when the gateway refuses the connector
+   let result;
+   try {
+     result = await runReportDetailCli({ argv: ['--execute', '--batch-id', 'busy-lock-batch'], dependencies: {
+-      readConfig: () => ({ database: { engine: 'mysql' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
++      readConfig: () => ({ database: { engine: 'postgres' }, connectionId: 'cli-connection', scope: { companyId: 'c-1' } }),
+       secrets: { dataKey: Buffer.alloc(32).toString('base64') },
+       openDatabase: () => ({ pool: requestPool, lockPool: () => lockPool, open: async () => analysisStore }),
+       analysisStore,
+diff --git a/tests/run-agent.test.mjs b/tests/run-agent.test.mjs
+index f6913c5..06c4f31 100644
+--- a/tests/run-agent.test.mjs
++++ b/tests/run-agent.test.mjs
+@@ -59,7 +59,7 @@ test('run-agent dry-run leaves every platform, analysis, and audit table unchang
+       }
+       return result;
+     };
+-    const config = { database: { engine: 'mysql' }, connectionId: 'dry-run-test', scope: { tenantId: 'tenant', companyId: 'company' }, automaticSync: false, syncIntervalMs: 0, accounts: [] };
++    const config = { database: { engine: 'postgres' }, connectionId: 'dry-run-test', scope: { tenantId: 'tenant', companyId: 'company' }, automaticSync: false, syncIntervalMs: 0, accounts: [] };
+     const secrets = { databasePassword: 'unused', dataKey: key.toString('base64') };
+     const runtime = await runAgentModule.buildRuntime({
+       dryRun: true,
+@@ -110,7 +110,7 @@ test('run-agent closes the store and both pools when building the runtime fails'
+     async end() { ended.push(name); },
+   });
+   const requestPool = fakePool('request'), lockPool = fakePool('lock');
+-  const config = { instance: 'production', source: { kind: 'huilianyi-mcp' }, caFile: join(dir, 'ca.pem'), database: { engine: 'mysql' },
++  const config = { instance: 'production', source: { kind: 'huilianyi-mcp' }, caFile: join(dir, 'ca.pem'), database: { engine: 'postgres' },
+     connectionId: 'lock-1b', scope: { tenantId: 'tenant', companyId: 'company' }, automaticSync: false, accounts: [] };
+   const secrets = { databasePassword: 'unused', dataKey: Buffer.alloc(32, 3).toString('base64') };
+   await assert.rejects(runAgentModule.buildRuntime({
+diff --git a/tests/source-foundation-schema.test.mjs b/tests/source-foundation-schema.test.mjs
+deleted file mode 100644
+index b9afb75..0000000
+--- a/tests/source-foundation-schema.test.mjs
++++ /dev/null
+@@ -1,92 +0,0 @@
+-import test from 'node:test';
+-import assert from 'node:assert/strict';
+-
+-import {
+-  MYSQL_SOURCE_FOUNDATION_SCHEMA,
+-  MYSQL_SOURCE_FOUNDATION_MIGRATION,
+-  MYSQL_AUDIT_APPROVAL_EVENTS_MIGRATION,
+-  MYSQL_REFERENCE_SEED_MIGRATION,
+-  MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION,
+-  SOURCE_FOUNDATION_TABLES,
+-  SOURCE_FOUNDATION_REQUIRED_COLUMNS,
+-  verifyMySqlFoundationSchema,
+-} from '../src/mysql-source-foundation.mjs';
+-import { MYSQL_MIGRATIONS, migrateMySql } from '../src/mysql-database.mjs';
+-
+-test('source foundation schema covers source, sync, attachment, evidence, and review lifecycles', () => {
+-  for (const table of SOURCE_FOUNDATION_TABLES) {
+-    const schema = table === 'audit_approval_events' ? MYSQL_AUDIT_APPROVAL_EVENTS_MIGRATION.sql : MYSQL_SOURCE_FOUNDATION_SCHEMA;
+-    assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
+-  }
+-  assert.match(MYSQL_SOURCE_FOUNDATION_SCHEMA, /ENGINE=InnoDB/);
+-  assert.match(MYSQL_SOURCE_FOUNDATION_SCHEMA, /utf8mb4/);
+-  assert.match(MYSQL_SOURCE_FOUNDATION_SCHEMA, /payload_ciphertext LONGBLOB/);
+-  assert.match(MYSQL_SOURCE_FOUNDATION_SCHEMA, /sha256 CHAR\(64\)/);
+-  assert.match(MYSQL_SOURCE_FOUNDATION_SCHEMA, /lineage_fingerprint CHAR\(64\) NOT NULL/);
+-  assert.match(MYSQL_SOURCE_FOUNDATION_SCHEMA, /status VARCHAR\(32\) NOT NULL/);
+-  assert.match(MYSQL_AUDIT_APPROVAL_EVENTS_MIGRATION.sql, /audit_approval_events_document/);
+-});
+-
+-test('source foundation is an ordered migration after the existing core and analysis schemas', () => {
+-  assert.equal(MYSQL_SOURCE_FOUNDATION_MIGRATION.version, 3);
+-  assert.equal(MYSQL_SOURCE_FOUNDATION_MIGRATION.name, 'source-foundation');
+-  assert.equal(MYSQL_SOURCE_FOUNDATION_MIGRATION.sql, MYSQL_SOURCE_FOUNDATION_SCHEMA);
+-  assert.equal(MYSQL_AUDIT_APPROVAL_EVENTS_MIGRATION.version, 5);
+-  assert.equal(MYSQL_REFERENCE_SEED_MIGRATION.version, 8);
+-  assert.match(MYSQL_REFERENCE_SEED_MIGRATION.sql, /CREATE TABLE IF NOT EXISTS ref_expense_type_seed/);
+-  assert.match(MYSQL_REFERENCE_SEED_MIGRATION.sql, /CREATE TABLE IF NOT EXISTS ref_approval_nodes/);
+-  assert.deepEqual(MYSQL_MIGRATIONS.map(item => item.version), MYSQL_MIGRATIONS.map(item => item.version).sort((a, b) => a - b));
+-  assert.equal(MYSQL_MIGRATIONS.find(item => item.version === 11)?.name, 'platform-foundation');
+-  assert.equal(MYSQL_MIGRATIONS.find(item => item.version === 12)?.name, 'scan-ledger');
+-  assert.equal(MYSQL_MIGRATIONS.find(item => item.version === 14)?.name, 'element-store');
+-  assert.equal(MYSQL_MIGRATIONS.find(item => item.version === 15)?.name, 'element-family-registry');
+-  assert.equal(MYSQL_MIGRATIONS.find(item => item.version === 18)?.name, 'approval-identity');
+-  assert.match(MYSQL_REPORT_DETAIL_PROJECTION_MIGRATION.sql, /audit_travel_applications/);
+-});
+-
+-test('default migration runner applies source foundation after core and analysis', async () => {
+-  const calls = [];
+-  const connection = {
+-    async query(sql, params = []) {
+-      calls.push({ sql, params });
+-      if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+-      if (sql.includes('SELECT version FROM schema_migrations')) return [[]];
+-      return [[]];
+-    },
+-    release() {},
+-  };
+-  const result = await migrateMySql({ async getConnection() { return connection; } });
+-  assert.deepEqual(result, { applied: MYSQL_MIGRATIONS.map(item => item.version), currentVersion: MYSQL_MIGRATIONS.at(-1).version, aheadAdditive: [] });
+-  assert.ok(calls.some(call => call.sql.includes('CREATE TABLE IF NOT EXISTS audit_source_connections')));
+-});
+-
+-test('schema readback reports missing tables and required columns without exposing credentials', async () => {
+-  const calls = [];
+-  const pool = {
+-    async query(sql, params) {
+-      calls.push({ sql, params });
+-      if (sql.includes('information_schema.tables')) return [[...SOURCE_FOUNDATION_TABLES].slice(0, -1).map(TABLE_NAME => ({ TABLE_NAME }))];
+-      return [[{ TABLE_NAME: SOURCE_FOUNDATION_TABLES[0], COLUMN_NAME: SOURCE_FOUNDATION_REQUIRED_COLUMNS[SOURCE_FOUNDATION_TABLES[0]][0] }]];
+-    },
+-  };
+-  const result = await verifyMySqlFoundationSchema(pool);
+-  assert.equal(result.ok, false);
+-  assert.deepEqual(result.missingTables, [SOURCE_FOUNDATION_TABLES.at(-1)]);
+-  assert.ok(result.missingColumns.length > 0);
+-  assert.equal(calls.length, 1);
+-  assert.doesNotMatch(JSON.stringify(calls), /password|secret|token/i);
+-});
+-
+-test('schema readback accepts a complete table and column inventory', async () => {
+-  const pool = {
+-    async query(sql) {
+-      if (sql.includes('information_schema.tables')) return [SOURCE_FOUNDATION_TABLES.map(TABLE_NAME => ({ TABLE_NAME }))];
+-      const rows = [];
+-      for (const [TABLE_NAME, columns] of Object.entries(SOURCE_FOUNDATION_REQUIRED_COLUMNS)) {
+-        for (const COLUMN_NAME of columns) rows.push({ TABLE_NAME, COLUMN_NAME });
+-      }
+-      return [rows];
+-    },
+-  };
+-  assert.deepEqual(await verifyMySqlFoundationSchema(pool), { ok: true, missingTables: [], missingColumns: [] });
+-});
+diff --git a/tests/startup-smoke.test.mjs b/tests/startup-smoke.test.mjs
+index 65f9f80..a75b82b 100644
+--- a/tests/startup-smoke.test.mjs
++++ b/tests/startup-smoke.test.mjs
+@@ -6,9 +6,9 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { randomBytes } from 'node:crypto';
+-import { createMySqlPool, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, parsePgUrl } from '../src/pg-database.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const nodePath = process.execPath;
+ 
+ function waitForExit(child, timeoutMs) {
+@@ -32,21 +32,13 @@ function healthRequest(port, host) {
+ }
+ 
+ async function resetMySqlTestDatabase() {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  if (!/_test$/i.test(config.database)) throw new Error('MYSQL_TEST_URL must target a database ending in _test; refusing to clear it');
+-  if (Number(config.port) === 3306) throw new Error('MYSQL_TEST_URL must not target port 3306');
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const config = parsePgUrl(mysqlTestUrl);
++  if (!/_test$/i.test(config.database)) throw new Error('PG_TEST_URL must target a database ending in _test; refusing to clear it');
++  if (Number(config.port) !== 5434) throw new Error('PG_TEST_URL must target the isolated 5434 test instance');
++  const pool = createPgPool({ url: mysqlTestUrl });
+   try {
+-    const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()');
+-    await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+-    try {
+-      for (const row of tables) {
+-        const table = String(row.TABLE_NAME).replaceAll('`', '``');
+-        await pool.query(`DROP TABLE IF EXISTS \`${table}\``);
+-      }
+-    } finally {
+-      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+-    }
++    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++    await pool.query('CREATE SCHEMA public');
+   } finally {
+     await pool.end();
+   }
+@@ -88,7 +80,7 @@ async function waitForHealth(child, port, host, output, spawnError) {
+ 
+ async function runShape(shape) {
+   await resetMySqlTestDatabase();
+-  const mysql = parseMySqlUrl(mysqlTestUrl);
++  const mysql = parsePgUrl(mysqlTestUrl);
+   const temp = mkdtempSync(join(tmpdir(), `rel02-startup-${shape.instance}-`));
+   const appPortProbe = requirePortProbe();
+   const appPort = await appPortProbe();
+@@ -122,7 +114,7 @@ async function runShape(shape) {
+     connectionId: `startup-${shape.instance}`,
+     scope: { tenantId: 'startup-tenant', companyId: 'startup-company', allCompaniesInTenant: true },
+     origin: 'https://audit.example.com',
+-    database: { engine: 'mysql', host: mysql.host, port: mysql.port, database: mysql.database, user: mysql.user },
++    database: { engine: 'postgres', host: mysql.host, port: mysql.port, database: mysql.database, user: mysql.user },
+     secretFiles: { databasePassword: passwordFile, dataKey: dataKeyFile },
+     ...(shape.instance === 'production' ? { tokenFile, caFile, schedulerChain: false } : {}),
+     automaticSync: true,
+@@ -183,7 +175,7 @@ function requirePortProbe() {
+ 
+ for (const shape of [{ instance: 'production' }, { instance: 'test' }]) {
+   test(`startup smoke boots the ${shape.instance} deployment shape`, {
+-    skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; startup smoke requires the isolated MySQL test database',
++    skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; startup smoke requires the isolated PostgreSQL test database',
+   }, async () => {
+     const probe = spawnSync(nodePath, ['-e', ''], { cwd: process.cwd(), windowsHide: true });
+     if (probe.error) throw new Error(`child-process probe failed (${probe.error.code || probe.error.message}); rerun this test outside the sandbox`);

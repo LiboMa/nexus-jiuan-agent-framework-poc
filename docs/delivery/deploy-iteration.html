@@ -95,7 +95,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
 v0.7.10</span>部署与迭代规范</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-06</td></tr>
     <tr><th scope="row">状态</th><td>交付版 v3（只留新 UI：九安 v0.7.10
 测试台；部署分三块；默认 m7g）</td></tr>
     <tr><th scope="row">范围</th><td>poc/app、poc/web、poc/bench、patches/jiuan-v0.7.10、poc/infra、kb、audit-agent、knowledgebase-writer-agent-pg、skills/nexus-ai-operator、docs</td></tr>
@@ -255,7 +255,8 @@ C1，<a href="handover.html">交接文档</a>第 6.1 节）。</li>
 <tr>
 <td>m7g 测试环境（栈
 <code>andon-<wbr>finance-<wbr>m7g</code>，2026-11-02 起）</td>
-<td>一台 m7g.xlarge（arm64）装前端、MySQL、知识库的 PG，经
+<td>一台 m7g.xlarge（arm64）装前端、九安的 PostgreSQL（2026-11-06
+起；之前的 MySQL 当天晚上删了）、知识库的 PG，经
 SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 端点管理（<code>poc/<wbr>infra/<wbr>README.<wbr>md</code>「经 SSH
 管理」）；数据从旧栈搬来（<code>migrate-<wbr>data.<wbr>sh</code>）；2026-11-02
@@ -294,7 +295,7 @@ SSH（<code>key-<wbr>malibo-<wbr>sa</code>）+ EC2 Instance Connect
 <tr>
 <td>前端</td>
 <td>测试台外壳 <code>poc/<wbr>app</code>、新前端
-<code>poc/<wbr>web</code>、九安 v0.7.10 副本、九安的 MySQL</td>
+<code>poc/<wbr>web</code>、九安 v0.7.10 副本、九安的 PostgreSQL</td>
 <td><code>poc/<wbr>infra/<wbr>deploy.<wbr>sh</code>；测试阶段和 PG
 放在同一台机器上，以后由专人部署、可以分批</td>
 <td>PG 之后</td>
@@ -354,7 +355,8 @@ Nexus（数据连接器、数据库凭证密钥）</td>
 <td><code>patches/<wbr>jiuan-<wbr>v0.<wbr>7.<wbr>10/<wbr></code>（<code>poc/<wbr>bench/<wbr>build-<wbr>jiuan.<wbr>sh</code>
 按文件名顺序打进副本）</td>
 <td>外壳的单元测试（要先构建副本）；<code>poc/<wbr>infra/<wbr>test</code>
-的构建测试；全部端到端测试</td>
+的构建测试；改了数据层（0008–0018 那类）还要跑九安自带的测试（第 7
+节）；全部端到端测试</td>
 <td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>（构件里的九安是
 <code>.<wbr>build/<wbr>jiuan</code>，带 node_modules）</td>
 <td>第 6.1 节</td>
@@ -365,7 +367,8 @@ Nexus（数据连接器、数据库凭证密钥）</td>
 <td><code>poc/<wbr>infra/<wbr>*.<wbr>sh</code>、<code>poc/<wbr>infra/<wbr>lib/<wbr></code>、<code>poc/<wbr>infra/<wbr>bench/<wbr></code></td>
 <td><code>cd poc/<wbr>infra &amp;&amp; node -<wbr>-<wbr>test "test/<wbr>**/<wbr>*.<wbr>test.<wbr>mjs"</code>；健康检查；全部端到端测试</td>
 <td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code>（<code>bench/<wbr></code>
-随构件发出）；测试台的三项密钥只补不换，实例上已有的只认原值（不一样就在重启前失败，服务照旧跑）</td>
+随构件发出）；测试台的密钥只补不换，实例上已有的 PG
+超级用户口令和数据密钥只认原值（不一样就在重启前失败，服务照旧跑）</td>
 <td>第 6.1 节</td>
 <td>运维 + 项目负责人</td>
 </tr>
@@ -397,7 +400,9 @@ refactor，不重建资源</td>
 <td><code>poc/<wbr>infra/<wbr>secrets.<wbr>env</code></td>
 <td>健康检查；端到端测试</td>
 <td><code>deploy.<wbr>sh -<wbr>-<wbr>code-<wbr>only</code></td>
-<td>换回旧值（测试台的三项只补不换）</td>
+<td>换回旧值（PG
+超级用户口令、数据密钥只补不换；<code>JIUAN_<wbr>PG_<wbr>APP_<wbr>PASSWORD</code>
+可以换，下次部署两边一起换）</td>
 <td>运维</td>
 </tr>
 <tr>
@@ -550,8 +555,13 @@ sudo rm -rf /opt/andon-finance/failed                      # 确认没问题以�
 <code>current.tgz</code> 换成这个归档包。</p>
 <p>注意：</p>
 <ul>
-<li>回滚不动 <code>secrets.env</code> 和 MySQL
-里的数据；如果问题出在密钥，按第 4 节「密钥」那几行处理；</li>
+<li>回滚不动 <code>secrets.env</code>
+和九安库里的数据；如果问题出在密钥，按第 4 节「密钥」那几行处理；</li>
+<li><strong>回不到 MySQL 了</strong>：2026-11-06 换库后当天晚上删了
+MySQL，<code>previous</code> 也是连 PostgreSQL
+的构件。九安的库出了问题，只能从切换后的 <code>pg_dump</code>
+或切换前的根卷快照恢复（<a href="operations.html">运维</a>第 2.6
+节）；</li>
 <li>回滚代码不动 Nexus 上的东西：审核 Agent 的提示词按第 6.3
 节回退，知识库里的规则在知识库 Agent 那边（下线的制度可以恢复）；</li>
 <li>回滚后在 <code>CHANGELOG.md</code> 记一笔；下一次正常部署会把现在的
@@ -638,6 +648,16 @@ Nexus 网页上重新加；<code>apply.py</code> 在 pg 方式下每次都按
 <td>本机</td>
 <td>免费</td>
 <td>改了它们；<code>make-<wbr>package.<wbr>sh</code> 出包前会跑</td>
+</tr>
+<tr>
+<td>九安自带的测试：<code>poc/<wbr>infra/<wbr>remote-<wbr>jiuan-<wbr>tests.<wbr>sh -<wbr>-<wbr>engine pg -<wbr>-<wbr>out &lt;结果.<wbr>json&gt;</code>，再
+<code>node poc/<wbr>infra/<wbr>test/<wbr>compare-<wbr>jiuan-<wbr>results.<wbr>mjs poc/<wbr>bench/<wbr>pg-<wbr>port/<wbr>after-<wbr>pg.<wbr>json &lt;结果.<wbr>json&gt;</code></td>
+<td>测试台实例上一次性的测试库容器
+<code>jiuan-<wbr>test-<wbr>pg</code>（127.0.0.1:5434，数据只在内存里，跑完删）；不碰在跑的服务和库
+<code>jiuan</code></td>
+<td>免费（一轮最多 55 分钟）</td>
+<td>改了九安的数据层（补丁 0008–0018
+那类）；<code>after-<wbr>pg.<wbr>json</code> 里过的这次不过就列出来</td>
 </tr>
 <tr>
 <td><code>run.<wbr>sh</code>（先 <code>web.<wbr>e2e.<wbr>mjs</code>，再
@@ -746,7 +766,9 @@ href="handover.html">交接文档</a>第 6.1 节）：</p>
 <li>新版本解压到 <code>source/</code> 下的新目录，老版本保留。</li>
 <li>把 <code>poc/bench/build-jiuan.sh</code>
 里的开发包路径和补丁目录（<code>patches/jiuan-v0.7.10/</code>）改成新版本，再跑一次；补丁打不上会报错，不留半成品。</li>
-<li>逐个修补丁，跑 <code>poc/infra/test</code> 和外壳的单元测试。</li>
+<li>逐个修补丁，跑 <code>poc/infra/test</code>
+和外壳的单元测试；再跑九安自带的测试（第 7 节），和
+<code>poc/bench/pg-port/after-pg.json</code> 比。</li>
 <li>部署到测试环境（<code>deploy.sh --code-only</code>），跑全部端到端测试。</li>
 <li>确认后在 <code>CHANGELOG.md</code>
 写明九安版本变化；老目录再保留一个发布周期。</li>

@@ -11,7 +11,7 @@ test('设置：默认端口 4181、密钥目录和新库；地址、发布编号
   const settings = readSettings(ENV);
   assert.equal(settings.port, 4181);
   assert.equal(settings.secretsDir, '/etc/andon-finance/jiuan');
-  assert.deepEqual(settings.database, { host: '127.0.0.1', port: 3306, database: 'jiuan', user: 'jiuan_app' });
+  assert.deepEqual(settings.database, { host: '127.0.0.1', port: 5433, database: 'jiuan', user: 'jiuan_app' });
   assert.throws(() => readSettings({ ...ENV, POC_ORIGIN: 'http://jiuan-v0710.tinyboat.blog' }), /POC_ORIGIN/);
   assert.equal('publishId' in settings, false, '不写死发布：用哪个发布由「Agent 接入」的启用记录决定');
   assert.throws(() => readSettings({ ...ENV, POC_SECRETS_DIR: 'relative/dir' }), /POC_SECRETS_DIR/);
@@ -56,7 +56,8 @@ test('九安配置：测试实例、测试汇联易、AI 独立建议打开但�
   assert.equal(config.deployment, 'ecs-docker');
   assert.equal(config.source.kind, 'huilianyi-stage-oauth');
   assert.equal(config.source.appIdFile, '/etc/andon-finance/jiuan/hly_app_id');
-  assert.deepEqual(config.secretFiles, { databasePassword: '/etc/andon-finance/jiuan/mysql_app_password', dataKey: '/etc/andon-finance/jiuan/analysis_data_key' });
+  assert.deepEqual(config.secretFiles, { databasePassword: '/etc/andon-finance/jiuan/db_app_password', dataKey: '/etc/andon-finance/jiuan/analysis_data_key' });
+  assert.deepEqual(config.database, { engine: 'postgres', host: '127.0.0.1', port: 5433, database: 'jiuan', user: 'jiuan_app' });
   assert.deepEqual(config.scope, { tenantId: 'poc-tenant', companyId: 'co-a', allCompaniesInTenant: true });
   assert.equal(config.approvalWriteback, undefined);
   assert.deepEqual(config.agents, { nexusOrigin: 'https://nxs-beine1013.tinyboat.blog', tasks: { review_advice: { enabled: true, version: 1, routes: [] } } });

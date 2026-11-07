@@ -2,7 +2,7 @@
 
 **照着做就能在你的环境里建好**：Nexus 上的「知识库文档管家（PG 版）」（`knowledgebase_writer_agent_pg`），把制度文档写进审核 Agent 共用的 PostgreSQL 规则库，并发布成 A2A / MCP，给九安测试台的「制度知识库」页调用。
 
-适用 Nexus v0.3.28 · us-east-1 · 2026-10-30 · 设计：`docs/specs/2026-10-30-pg-kb-steward-design.md` · 接口约定：`docs/specs/2026-10-30-pg-knowledgebase-agent-contract.md`
+适用 Nexus v0.3.28 · us-east-1 · 2026-10-30 · 接口约定：[`docs/kb-rules-v1.md`](../docs/kb-rules-v1.md)
 
 ## 一页看懂
 

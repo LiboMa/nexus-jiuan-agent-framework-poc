@@ -1,0 +1,1372 @@
+补丁 0014 的测试。
+- 改成连 PG（PG_TEST_URL、createPgPool、migratePg、隔离端口 5434、清库 DROP SCHEMA）：agent-task-service、ai-advice-adapter、pipeline-regression、
+  platform-agent-runner、platform-detail-adapters、platform-list-sync-adapter、platform-pipeline-progress、platform-rewire-hly、platform-routes、
+  platform-scheduler、platform-store、pool-starvation 的集成测试，以及 fnd10-remaining-cards、platform-admin-write、platform-call-middleware(-hardening)、
+  platform-store、run-agent 里连真库的那几条。
+- 测试自己的 SQL：命名锁 → acquireNamedLock / releaseNamedLock / isNamedLockUsed；KILL → pg_terminate_backend；CONNECTION_ID() → pg_backend_pid()；
+  JSON_UNQUOTE(JSON_EXTRACT(…)) → ->> ；DATE_FORMAT → to_char；X'00' → '\x00'::bytea；SLEEP(3) → pg_sleep(3)；
+  MySQL 的 CHECKSUM TABLE（看表没被改）→ 按行文字排序后的 md5；一句绑定超过 65535 个参数的造数 INSERT 分批（mysql2 的 query 在客户端拼，PG 真绑定）。
+- 假库（platform-call-middleware、-hardening、run-agent、report-detail-queue）认 PG 的 advisory 锁：试锁回 true / false，持有者从 pg_locks 读，
+  按锁键认是哪把锁。
+- 动了的断言：
+  - platform-store.test「平台表在 v11 迁移里」→「v19 基线里有 platform_settings」（MySQL 迁移链的事实）。
+  - pipeline-regression「查询用上 audit_sync_items_ 的索引」：MySQL 的 EXPLAIN 给 key 列，PG 给计划；在一条连接上关掉顺序扫描再看
+    EXPLAIN (FORMAT JSON) 里用的索引名（表太小，规划器可能干脆整表读）。
+- platform-pipeline-progress 的一万张单据那条：造完数据先 ANALYZE（真库有统计信息；刚灌进去的行没有，PG 可能逐行连接，要 90 秒；
+  有统计信息时全程约 0.1 秒）；断言（含十秒）不动。
+- pg-schema.test 的「数据概览」不再挡掉页面上的别的查询，整页走真库；pg-database.test 加「连接被断开」。
+- pool-starvation 的三条经 createAnalysisDatabase 建池（选引擎在补丁 0017），等 0017。
+
+diff --git a/tests/agent-task-service.integration.test.mjs b/tests/agent-task-service.integration.test.mjs
+index f3b0c18..204810f 100644
+--- a/tests/agent-task-service.integration.test.mjs
++++ b/tests/agent-task-service.integration.test.mjs
+@@ -7,15 +7,15 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { readFileSync } from 'node:fs';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createAgentTaskService, agentTaskKey, AGENT_TASK_KEY_PREFIX } from '../src/agent-task-service.mjs';
+ import { createElementCheckAdapter } from '../src/platform/adapters/element-check.mjs';
+ import { SYSTEM_PIPELINE } from '../src/platform/service-identity.mjs';
+ import { completeReportDetail, claimReportDetail, enqueueReportDetails } from '../src/report-detail-queue.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skip = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skip = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const TENANT = 'nx3-tenant';
+ const COMPANY = 'nx3-company';
+ const CONNECTION = 'nx3-agent-task';
+@@ -29,19 +29,17 @@ const enablement = { publication: async publishId => (publishId === PUB ? { publ
+ const completed = note => ({ status: 'completed', output: { result: 'pass', note, rules: [] }, declined: null, call: { publishId: PUB, contextId: `jag-${note}`, taskId: `task-${note}` } });
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try { for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-  finally { await pool.query('SET FOREIGN_KEY_CHECKS=1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ async function database(t) {
+-  const parsed = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(parsed.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(parsed.database, /_test$/, 'MYSQL_TEST_URL must target a test database');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 8 });
++  const parsed = parsePgUrl(mysqlTestUrl);
++  assert.equal(parsed.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(parsed.database, /_test$/, 'PG_TEST_URL must target a test database');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 8 });
+   await reset(pool);
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: KEY, connectionId: CONNECTION });
+   await store.migrate();
+   t.after(async () => { await store.close().catch(() => {}); await pool.end().catch(() => {}); });
+diff --git a/tests/ai-advice-adapter.integration.test.mjs b/tests/ai-advice-adapter.integration.test.mjs
+index dad3a7f..ae5bdc3 100644
+--- a/tests/ai-advice-adapter.integration.test.mjs
++++ b/tests/ai-advice-adapter.integration.test.mjs
+@@ -4,7 +4,7 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createAnalysisRuntimeServices } from '../src/analysis-runtime-services.mjs';
+ import { createAnalysisRuntimeRegistry } from '../src/analysis-runtime-registry.mjs';
+@@ -12,8 +12,8 @@ import { createAiAdviceAdapter } from '../src/platform/adapters/ai-advice.mjs';
+ import { SYSTEM_PIPELINE } from '../src/platform/service-identity.mjs';
+ import { completeReportDetail, claimReportDetail, enqueueReportDetails } from '../src/report-detail-queue.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const TENANT = 'ai-advice-e2e-tenant';
+ const COMPANY = 'ai-advice-e2e-company';
+ const CONNECTION = 'ai-advice-e2e';
+@@ -22,13 +22,8 @@ const NOW = new Date('2026-10-14T00:00:00.000Z');
+ const PARAMS = { concurrency: 3, perDocumentTimeoutMs: 30000, dailyLimit: 10 };
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ const raw = (id, submittedAt, status = '1002', amount = '12.34') => ({
+@@ -62,12 +57,12 @@ async function readDetails(pool, store, batchId, only) {
+ }
+ 
+ async function database(t) {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307, 'MYSQL_TEST_URL must target the isolated 3307 test instance');
+-  assert.match(config.database, /_test$/, 'MYSQL_TEST_URL must target a test database');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 12 });
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434, 'PG_TEST_URL must target the isolated 5434 test instance');
++  assert.match(config.database, /_test$/, 'PG_TEST_URL must target a test database');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 12 });
+   await reset(pool);
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   const store = await openMySqlAnalysisStore({ pool, key: DETAIL_KEY, connectionId: CONNECTION });
+   await store.migrate();
+   const registries = [];
+diff --git a/tests/fnd10-remaining-cards.test.mjs b/tests/fnd10-remaining-cards.test.mjs
+index e897bff..c7d6623 100644
+--- a/tests/fnd10-remaining-cards.test.mjs
++++ b/tests/fnd10-remaining-cards.test.mjs
+@@ -7,7 +7,7 @@ import { AGENT_CATALOG } from '../src/platform/agent-catalog.mjs';
+ import { createAgentRunner } from '../src/platform/agent-runner.mjs';
+ import { createReferenceSeedAdapter } from '../src/platform/adapters/reference-seed.mjs';
+ import { runSapPaymentTraversal } from '../src/sap-payment-refresh.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createAgentReferenceStore } from '../src/agent-reference-store.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ 
+@@ -71,10 +71,10 @@ test('reference seed adapter imports a seed and appends an operation change', as
+   assert.equal(calls[2][1].scopeId, 'ref.hly-config-seed');
+ });
+ 
+-test('reference import leaves a visible latest collection and an operation change', { skip: process.env.MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async () => {
+-  const pool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 4 });
++test('reference import leaves a visible latest collection and an operation change', { skip: process.env.PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async () => {
++  const pool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 4 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM ref_expense_type_seed');
+     await pool.query('DELETE FROM ref_seed_snapshots');
+     await pool.query("DELETE FROM platform_change_log WHERE scope_id='ref.hly-config-seed'");
+diff --git a/tests/pg-database.test.mjs b/tests/pg-database.test.mjs
+index 7446863..280450b 100644
+--- a/tests/pg-database.test.mjs
++++ b/tests/pg-database.test.mjs
+@@ -143,6 +143,20 @@ test('布尔参数：true / false 照 mysql2 当 1 / 0 送（库里没有 boolea
+   await pool.query('DROP TABLE pg_adapter_flag');
+ });
+ 
++test('拿出来的连接被数据库那头断掉（重启、被踢）：不出未捕获的异常；这条连接上的查询报 PROTOCOL_CONNECTION_LOST；放回去以后不再被拿出来用', real, async t => {
++  const pool = await withPool(t, { connectionLimit: 2 });
++  const conn = await pool.getConnection();
++  const victim = conn.threadId;
++  await pool.query('SELECT pg_terminate_backend(?)', [victim]);
++  await new Promise(resolve => setTimeout(resolve, 300));
++  await assert.rejects(conn.query('SELECT 1'), error => error.code === 'PROTOCOL_CONNECTION_LOST');
++  conn.release();
++  for (let round = 0; round < 4; round += 1) {
++    const [[row]] = await pool.query('SELECT pg_backend_pid() AS pid');
++    assert.notEqual(row.pid, victim);
++  }
++});
++
+ test('事务：beginTransaction / rollback 之后没写进去，commit 之后写进去了', real, async t => {
+   const pool = await withPool(t);
+   await pool.query('DROP TABLE IF EXISTS pg_adapter_tx');
+diff --git a/tests/pg-schema.test.mjs b/tests/pg-schema.test.mjs
+index a7e6ad0..2169c61 100644
+--- a/tests/pg-schema.test.mjs
++++ b/tests/pg-schema.test.mjs
+@@ -145,10 +145,9 @@ test('更新时自动改时间（原 ON UPDATE CURRENT_TIMESTAMP）：别的列
+ test('平台「数据概览」的库状态：新库上是 jiuan_test、版本 19 / 期望 19、已是最新', real, async t => {
+   const pool = await freshPool(t);
+   await migratePg(pool);
+-  // 库状态那几句（schema_migrations、current_database()）走真库；同一页上别的查询（进度、调用记录）归补丁 0014，这里给空
+-  const statusOnly = { query: (sql, params) => (/schema_migrations|current_database\(\)/.test(typeof sql === 'string' ? sql : sql.sql) ? pool.query(sql, params) : Promise.resolve([[]])) };
++  // 整页都走真库（进度、调用记录的查询在补丁 0014 里改好了）
+   const sent = [];
+-  const routes = createPlatformRoutes({ pool: statusOnly, catalog: [], send: (_res, status, body) => sent.push({ status, body }) });
++  const routes = createPlatformRoutes({ pool, catalog: [], send: (_res, status, body) => sent.push({ status, body }) });
+   await routes.handle({ req: { method: 'GET' }, url: new URL('http://localhost/api/analysis/v1/platform/data-overview'), path: '/api/analysis/v1/platform/data-overview', session: { user: { role: 'analyst', companyIds: ['c1'] } } });
+   assert.equal(sent.at(-1).status, 200);
+   const database = sent.at(-1).body.data.dataRange.database;
+diff --git a/tests/pipeline-regression.integration.test.mjs b/tests/pipeline-regression.integration.test.mjs
+index fa29d46..2167fe1 100644
+--- a/tests/pipeline-regression.integration.test.mjs
++++ b/tests/pipeline-regression.integration.test.mjs
+@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
+ 
+ import { createAnalysisSync } from '../src/analysis-sync.mjs';
+ import { deriveSchedulerState, createScheduler } from '../src/platform/scheduler.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createAgentRunner } from '../src/platform/agent-runner.mjs';
+@@ -18,8 +18,8 @@ import { CONNECTORS } from '../src/platform/connectors.mjs';
+ import { createPipelineProgress, PIPELINE_SKIP_REASON_LABELS } from '../src/platform/pipeline-progress.mjs';
+ import { runReportDetailWorker, enqueueReportDetails } from '../src/report-detail-queue.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipDb = mysqlTestUrl ? false : 'MYSQL_TEST_URL not set';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipDb = mysqlTestUrl ? false : 'PG_TEST_URL not set';
+ const FORM = '\u5dee\u65c5\u62a5\u9500\u5355';
+ const key = Buffer.alloc(32, 7);
+ const card = id => AGENT_CATALOG.find(item => item.id === id);
+@@ -102,10 +102,8 @@ test('V2 repeated 15-minute network retries never permanently suspend the lane',
+ 
+ // ---------- MySQL fixture ----------
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try { for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-  finally { await pool.query('SET FOREIGN_KEY_CHECKS=1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ const raw = (id, extra = {}) => ({ tenantId: 'tenant-p', docCompanyOID: 'company-p', companyOID: 'company-p', expenseReportOID: id, businessCode: 'EXP-' + id, formName: FORM, status: '1001', totalAmount: '12.34', expenseTypes: '交通', lastModifyDate: '2026-10-01T00:00:00Z', ...extra });
+ const detail = id => ({ businessCode: 'EXP-' + id, formOID: 'form-p', formName: FORM, docCompanyOID: 'company-p', originTotalAmount: '12.34', applicantOID: 'applicant', expenseReportInvoices: [{ invoiceView: { expenseTypeOID: 'type', expenseTypeCode: 'TRAIN', expenseTypeName: '火车', amount: '12.34', tax: '0.34', taxRate: '0.03', createdDate: '2026-10-01T00:00:00Z', withReceipt: false, receiptList: [] } }], expenseReportSubsidyDetailDTOList: [], expenseReportApplicationDTOS: [] });
+@@ -113,10 +111,10 @@ function registry(client) { return { connector(id) { const value = CONNECTORS[id
+ 
+ let env;
+ async function fixture(clockRef) {
+-  const config = parseMySqlUrl(mysqlTestUrl);
+-  assert.equal(config.port, 3307);
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 16 });
+-  await reset(pool); await migrateMySql(pool);
++  const config = parsePgUrl(mysqlTestUrl);
++  assert.equal(config.port, 5434);
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 16 });
++  await reset(pool); await migratePg(pool);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'pipeline-audit' }); await analysisStore.migrate();
+   const clock = () => new Date(clockRef.now);
+   const platformStore = createPlatformStore({ pool, clock });
+@@ -190,7 +188,7 @@ test('P2b three scheduled rounds project every stored detail; a document at its
+   const timers = { setTimeout: () => ({ unref() {} }), clearTimeout: () => {} };
+   const scheduler = createScheduler({ runner, platformStore: e.platformStore, getConfig: () => ({ automaticSync: true, syncIntervalMs: 1800000 }), clock: e.clock, timers, lanes: ['corporate'], authorizeScheduled: async () => {} });
+   const busyItem = async () => {
+-    const [[row]] = await e.pool.query("SELECT i.status,i.attempt_count,i.error_code,i.error_message,i.next_retry_at FROM audit_sync_items i JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]')) WHERE i.entity_type='report_detail' AND d.document_number='EXP-busy-1'");
++    const [[row]] = await e.pool.query("SELECT i.status,i.attempt_count,i.error_code,i.error_message,i.next_retry_at FROM audit_sync_items i JOIN audit_documents d ON d.document_id=(i.source_entity_id::jsonb->>0) WHERE i.entity_type='report_detail' AND d.document_number='EXP-busy-1'");
+     return { status: row.status, attempts: Number(row.attempt_count), errorCode: row.error_code, errorMessage: row.error_message, nextRetryAt: row.next_retry_at };
+   };
+   const observed = [];
+@@ -452,7 +450,7 @@ test('batch enqueue reads only this run\'s candidates, not the whole detail hist
+   const history = await enqueueReportDetails({ pool: e.pool, analysisStore: e.analysisStore, companyIds: ['company-h'], batchId: 'history', connectionId: 'pipeline-audit', now: e.clock() });
+   assert.equal(history.queued, 300);
+   await e.pool.query(`INSERT INTO audit_report_details(document_id,content_version,detail_digest,company_id,form_name,status,response_sha256,fetched_at,payload_ciphertext)
+-    SELECT JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[0]')),JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[1]')),REPEAT('a',64),'company-h','form','succeeded',REPEAT('b',64),'2026-10-13 01:00:00',X'00'
++    SELECT (source_entity_id::jsonb->>0),(source_entity_id::jsonb->>1),REPEAT('a',64),'company-h','form','succeeded',REPEAT('b',64),'2026-10-13 01:00:00','\\x00'::bytea
+     FROM audit_sync_items WHERE entity_type='report_detail' AND batch_id='history'`);
+   await e.pool.query("UPDATE audit_sync_items SET status='succeeded',finished_at='2026-10-13 01:00:00' WHERE entity_type='report_detail' AND batch_id='history'");
+   // Plus 50 documents of that company still waiting in the queue.
+@@ -495,7 +493,7 @@ test('scale enqueue stays linear and a second unchanged enqueue is constant work
+   const e = await fixture(clockRef);
+   const runScale = async size => {
+     await reset(e.pool);
+-    await migrateMySql(e.pool);
++    await migratePg(e.pool);
+     await e.analysisStore.migrate();
+     for (let offset = 0; offset < size; offset += 100) {
+       await seed(e, Array.from({ length: Math.min(100, size - offset) }, (_, index) => raw(`scale-${size}-${offset + index}`)));
+@@ -518,7 +516,19 @@ test('scale enqueue stays linear and a second unchanged enqueue is constant work
+     const secondMs = performance.now() - secondStart;
+     const secondQueries = queryCount;
+     e.pool.getConnection = originalGetConnection;
+-    const [[explain]] = await e.pool.query("EXPLAIN SELECT sync_item_id FROM audit_sync_items WHERE entity_type='report_detail' AND source_entity_id='x' AND status NOT IN ('failed','skipped','stale') LIMIT 1");
++    // PostgreSQL's EXPLAIN is a plan, not MySQL's key / rows / type columns. On a table this small the planner may read it
++    // whole, so sequential scans are off for this one look: the question is whether an index serves the lookup.
++    const explainConnection = await e.pool.getConnection();
++    let explain;
++    try {
++      await explainConnection.query('SET enable_seqscan = off');
++      const [[planRow]] = await explainConnection.query("EXPLAIN (FORMAT JSON) SELECT sync_item_id FROM audit_sync_items WHERE entity_type='report_detail' AND source_entity_id='x' AND status NOT IN ('failed','skipped','stale') LIMIT 1");
++      const nodes = node => [node, ...(node.Plans || []).flatMap(nodes)];
++      const plan = nodes(planRow['QUERY PLAN'][0].Plan);
++      const indexed = plan.find(node => node['Index Name']);
++      explain = { key: indexed?.['Index Name'] ?? null, rows: indexed?.['Plan Rows'] ?? plan[0]['Plan Rows'], type: (indexed ?? plan[0])['Node Type'] };
++      await explainConnection.query('RESET enable_seqscan');
++    } finally { explainConnection.release(); }
+     return { size, firstQueued: first.queued, secondQueued: second.queued, firstMs, secondMs, firstQueries, secondQueries, explainKey: explain.key, explainRows: Number(explain.rows), explainType: explain.type };
+   };
+   const small = await runScale(400);
+diff --git a/tests/platform-admin-write.test.mjs b/tests/platform-admin-write.test.mjs
+index a212f5b..d776f69 100644
+--- a/tests/platform-admin-write.test.mjs
++++ b/tests/platform-admin-write.test.mjs
+@@ -4,14 +4,14 @@ import { request } from 'node:http';
+ 
+ import { createPlatformRoutes } from '../src/platform/platform-routes.mjs';
+ import { createScheduler } from '../src/platform/scheduler.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+ import { createAnalysisLocalAccess } from '../src/analysis-local-access.mjs';
+ import { AGENT_CATALOG } from '../src/platform/agent-catalog.mjs';
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
++const PG_TEST_URL = process.env.PG_TEST_URL;
+ 
+ const admin = { user: { id: 'owner', principalId: 'account:owner', role: 'admin', companyIds: [] } };
+ const analyst = { user: { id: 'analyst', principalId: 'account:analyst', role: 'analyst', companyIds: [] } };
+@@ -38,11 +38,11 @@ test('admin can update agent settings and the route rejects non-admins and neste
+ });
+ 
+ test('read-only and out-of-range parameters are rejected before any MySQL write', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     await pool.query('DELETE FROM platform_settings');
+     const platformStore = createPlatformStore({ pool });
+@@ -66,10 +66,10 @@ test('read-only and out-of-range parameters are rejected before any MySQL write'
+   }
+ });
+ 
+-test('syncIntervalMs is read-only and its displayed value follows the scheduler', { skip: !MYSQL_TEST_URL }, async () => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++test('syncIntervalMs is read-only and its displayed value follows the scheduler', { skip: !PG_TEST_URL }, async () => {
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     await pool.query('DELETE FROM platform_settings');
+     const platformStore = createPlatformStore({ pool });
+@@ -97,13 +97,13 @@ test('integer schemas expose explicit bounds from their existing validators', ()
+   }
+ });
+ 
+-test('revoked and disabled sessions count pre-auth denials without MySQL audit writes', { skip: !MYSQL_TEST_URL }, async () => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++test('revoked and disabled sessions count pre-auth denials without MySQL audit writes', { skip: !PG_TEST_URL }, async () => {
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   const account = { id: 'owner', name: 'Owner', enabled: true, role: 'admin', companyIds: [], mode: 'local_owner' };
+   const auth = createAnalysisAuth({ getAccounts: () => [account] });
+   let app;
+   try {
+-    await migrateMySql(pool); await pool.query('DELETE FROM platform_change_log');
++    await migratePg(pool); await pool.query('DELETE FROM platform_change_log');
+     const routes = createPlatformRoutes({ platformStore: createPlatformStore({ pool }) });
+     app = createAnalysisApp({ store: { listCompanies: async () => [] }, auth, platformRoutes: routes, origin: 'http://127.0.0.1' });
+     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+@@ -120,13 +120,13 @@ test('revoked and disabled sessions count pre-auth denials without MySQL audit w
+   } finally { await app?.close(); auth.close(); await pool.query('DELETE FROM platform_change_log'); await pool.end(); }
+ });
+ 
+-test('local-ticket then exchange writes exactly one MySQL auth event', { skip: !MYSQL_TEST_URL }, async () => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++test('local-ticket then exchange writes exactly one MySQL auth event', { skip: !PG_TEST_URL }, async () => {
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   const auth = createAnalysisAuth({ getAccounts: () => [{ id: 'owner', name: 'Owner', enabled: true, role: 'admin', companyIds: [], mode: 'local_owner' }] });
+   const credential = 'x'.repeat(43);
+   let app;
+   try {
+-    await migrateMySql(pool); await pool.query('DELETE FROM platform_change_log');
++    await migratePg(pool); await pool.query('DELETE FROM platform_change_log');
+     const routes = createPlatformRoutes({ platformStore: createPlatformStore({ pool }) });
+     app = createAnalysisApp({ store: { listCompanies: async () => [] }, auth, localAccess: createAnalysisLocalAccess({ auth, credential, accountId: 'owner' }), platformRoutes: routes, origin: 'http://127.0.0.1' });
+     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+@@ -390,13 +390,13 @@ test('scheduler status exposes the effective persisted interval', async () => {
+ });
+ 
+ test('real MySQL writes settings and audit changes atomically', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(MYSQL_TEST_URL);
+-  assert.equal(config.port, 3307);
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++  const config = parsePgUrl(PG_TEST_URL);
++  assert.equal(config.port, 5434);
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     await pool.query('DELETE FROM platform_settings');
+     const platformStore = createPlatformStore({ pool });
+@@ -427,9 +427,9 @@ test('real MySQL writes settings and audit changes atomically', {
+ });
+ 
+ test('HTTP writes enforce CSRF and audit authenticated 403s while pre-auth rejects stay in memory', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async (t) => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   const accounts = [
+     { id: 'owner', name: 'Owner', enabled: true, role: 'admin', companyIds: [], mode: 'local_owner' },
+     { id: 'analyst', name: 'Analyst', enabled: true, role: 'analyst', companyIds: [], mode: 'local_owner' },
+@@ -438,7 +438,7 @@ test('HTTP writes enforce CSRF and audit authenticated 403s while pre-auth rejec
+   const auth = createAnalysisAuth({ getAccounts: () => accounts });
+   let app;
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     await pool.query('DELETE FROM platform_settings');
+     const platformStore = createPlatformStore({ pool });
+@@ -555,14 +555,14 @@ test('local ticket exchange writes one safe auth audit row', async () => {
+ });
+ 
+ test('real MySQL records one safe local exchange auth row', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   const accounts = [{ id: 'owner', name: 'Owner', enabled: true, role: 'admin', companyIds: [], mode: 'local_owner' }];
+   const auth = createAnalysisAuth({ getAccounts: () => accounts });
+   let app;
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     const routes = createPlatformRoutes({ platformStore: createPlatformStore({ pool }) });
+     app = createAnalysisApp({ store: { listCompanies: async () => [] }, auth, platformRoutes: routes, origin: 'http://127.0.0.1' });
+@@ -589,14 +589,14 @@ test('real MySQL records one safe local exchange auth row', {
+ });
+ 
+ test('real MySQL records one safe auth row for successful and refused DingTalk login', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   const account = { id: 'ding', name: 'Ding', enabled: true, role: 'admin', companyIds: [], mode: 'dingtalk', corpId: 'corp', userId: 'user', employeeId: '001', sourceVerified: true };
+   const auth = createAnalysisAuth({ getAccounts: () => [account] });
+   let app;
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     const routes = createPlatformRoutes({ platformStore: createPlatformStore({ pool }) });
+     app = createAnalysisApp({ store: { listCompanies: async () => [] }, auth, platformRoutes: routes, origin: 'http://127.0.0.1', dingtalk: { corpId: 'corp', agentId: 'agent', authenticateCode: async code => {
+@@ -626,12 +626,12 @@ test('real MySQL records one safe auth row for successful and refused DingTalk l
+ });
+ 
+ test('real MySQL admin operations persist manual runs, probes, and tested middleware revisions', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(MYSQL_TEST_URL);
++  const config = parsePgUrl(PG_TEST_URL);
+   assert.notEqual(config.port, 3306);
+   assert.match(config.database, /_test$/u);
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 4 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 4 });
+   const platformStore = createPlatformStore({ pool });
+   let busy = false;
+   let probeFails = false;
+@@ -654,7 +654,7 @@ test('real MySQL admin operations persist manual runs, probes, and tested middle
+     async cancel() { return { cancelled: false }; },
+   };
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_call_log');
+     await pool.query('DELETE FROM platform_call_budget_daily');
+     await pool.query('DELETE FROM platform_agent_runs');
+@@ -677,7 +677,7 @@ test('real MySQL admin operations persist manual runs, probes, and tested middle
+     assert.equal(run.actor_principal, 'account:owner');
+     assert.equal(run.status, 'running');
+     await assert.rejects(() => call('POST', `/agents/hly.list-sync/runs/${runId}/cancel`, { reason: 'finished fixture run' }), error => error.code === 'PLATFORM_RUN_FINISHED' && error.status === 409);
+-    const [[cancelChange]] = await pool.query("SELECT outcome,JSON_UNQUOTE(JSON_EXTRACT(result_json,'$.errorCode')) AS error_code FROM platform_change_log WHERE event_kind='operation' AND run_id=? ORDER BY change_id DESC LIMIT 1", [runId]);
++    const [[cancelChange]] = await pool.query("SELECT outcome,result_json->>'errorCode' AS error_code FROM platform_change_log WHERE event_kind='operation' AND run_id=? ORDER BY change_id DESC LIMIT 1", [runId]);
+     assert.equal(cancelChange.outcome, 'refused');
+     assert.equal(cancelChange.error_code, 'PLATFORM_RUN_FINISHED');
+     await assert.rejects(() => call('POST', '/agents/hly.list-sync/run', { operation: 'run-once', reason: 'busy mysql run' }), error => error.code === 'PLATFORM_AGENT_BUSY' && error.status === 409);
+diff --git a/tests/platform-agent-runner.integration.test.mjs b/tests/platform-agent-runner.integration.test.mjs
+index b713315..d877d24 100644
+--- a/tests/platform-agent-runner.integration.test.mjs
++++ b/tests/platform-agent-runner.integration.test.mjs
+@@ -1,6 +1,6 @@
+ import test, { beforeEach, afterEach } from 'node:test';
+ import assert from 'node:assert/strict';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { acquireNamedLock, createPgPool, isNamedLockUsed, migratePg, releaseNamedLock } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createAgentRunner, connectorsForCard, RUNNER_ERRORS, RUN_ERROR_CODES } from '../src/platform/agent-runner.mjs';
+@@ -11,15 +11,13 @@ import { createConnectorRegistry } from '../src/platform/connectors.mjs';
+ import { createListSyncAdapter } from '../src/platform/adapters/list-sync.mjs';
+ import { BANNED_USER_TERMS } from '../src/audit-terms.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const NOW = new Date('2026-10-10T00:00:00.000Z');
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try { for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-  finally { await pool.query('SET FOREIGN_KEY_CHECKS=1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ function fakeRegistry(client = {}) {
+@@ -61,8 +59,8 @@ test('runner rejects ambiguous service-principal actor forms before taking a loc
+ });
+ 
+ async function makeEnv({ adapters = {}, catalog = AGENT_CATALOG, clock = () => NOW, timers = manualTimers(), client = {}, gateway = undefined, connectionId = 'runner-integration', wrapPlatformStore = null } = {}) {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 16 });
+-  await reset(pool); await migrateMySql(pool);
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 16 });
++  await reset(pool); await migratePg(pool);
+   const key = Buffer.alloc(32, 7);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId });
+   await analysisStore.migrate();
+@@ -97,7 +95,7 @@ test('1–3 single flight, database-qualified lock, and live lease recovery', {
+   const blocked = new Promise(resolve => { release = resolve; });
+   const adapter = probe({ onRun: async ctx => Promise.race([blocked, new Promise(resolve => ctx.signal.addEventListener('abort', resolve, { once: true }))]) });
+   const e1 = await makeEnv({ adapters: { 'hly.detail-projection': adapter }, catalog: [card('hly.detail-projection')] });
+-  const p2 = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 4 });
++  const p2 = createPgPool({ url: mysqlTestUrl, connectionLimit: 4 });
+   const s2 = createPlatformStore({ pool: p2, clock: () => NOW });
+   const r2 = createAgentRunner({ pool: p2, platformStore: s2, adapters: { 'hly.detail-projection': adapter }, catalog: [card('hly.detail-projection')], clock: () => NOW, timers: manualTimers(), leaseMs: 300000, heartbeatMs: 30000 });
+   const first = await e1.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' });
+@@ -107,14 +105,14 @@ test('1–3 single flight, database-qualified lock, and live lease recovery', {
+   release(); await first.finished;
+   await r2.close(); await p2.end();
+   const other = await e1.pool.getConnection();
+-  await other.query("SELECT GET_LOCK(CONCAT('platform-agent:hly.detail-projection:other_database'), 0)");
++  await acquireNamedLock(other, 'platform-agent:hly.detail-projection:other_database', 0);
+   const second = await e1.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' });
+-  await second.finished; await other.query("SELECT RELEASE_LOCK(CONCAT('platform-agent:hly.detail-projection:other_database'))"); other.release();
++  await second.finished; await releaseNamedLock(other, 'platform-agent:hly.detail-projection:other_database'); other.release();
+   const [[count2]] = await e1.pool.query("SELECT COUNT(*) AS count FROM platform_agent_runs WHERE agent_id='hly.detail-projection'"); assert.equal(Number(count2.count), 2);
+-  const sameLock = await e1.pool.getConnection(); await sameLock.query("SELECT GET_LOCK(CONCAT('platform-agent:hly.detail-projection:',DATABASE()),0)");
++  const sameLock = await e1.pool.getConnection(); await acquireNamedLock(sameLock, 'platform-agent:hly.detail-projection', 0);
+   await assert.rejects(() => e1.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' }), x => x.code === 'PLATFORM_RUN_BUSY');
+   const [[unchanged]] = await e1.pool.query('SELECT COUNT(*) AS count FROM platform_agent_runs'); assert.equal(Number(unchanged.count), 2);
+-  await sameLock.query("SELECT RELEASE_LOCK(CONCAT('platform-agent:hly.detail-projection:',DATABASE()))"); sameLock.release();
++  await releaseNamedLock(sameLock, 'platform-agent:hly.detail-projection'); sameLock.release();
+   const live = await e1.platformStore.createRun({ agentId: 'hly.detail-projection', codeVersion: 'a'.repeat(64), mode: 'incremental', triggerKind: 'manual', actorPrincipal: 'tester', leaseMs: 300000, startedAt: NOW });
+   await assert.rejects(() => e1.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' }), x => x.code === 'PLATFORM_RUN_BUSY');
+   await e1.platformStore.finishRun({ runId: live.runId, status: 'succeeded' });
+@@ -142,7 +140,7 @@ test('a false lock-held precondition skips without writing a run and releases th
+   assert.equal((await skipped.finished).errorCode, 'PLATFORM_RUN_SKIPPED');
+   const [[count]] = await e.pool.query("SELECT COUNT(*) AS count FROM platform_agent_runs WHERE agent_id='hly.detail-projection'");
+   assert.equal(Number(count.count), 0);
+-  const [[lock]] = await e.pool.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:hly.detail-projection:', DATABASE())) AS owner");
++  const lock = { owner: await isNamedLockUsed(e.pool, 'platform-agent:hly.detail-projection') };
+   assert.equal(lock.owner, null);
+ });
+ 
+@@ -170,7 +168,7 @@ test('close waits for a run still waiting on settings and prevents createRun', {
+   await closing;
+   const [[count]] = await e.pool.query("SELECT COUNT(*) AS count FROM platform_agent_runs WHERE agent_id='hly.detail-projection'");
+   assert.equal(Number(count.count), 0);
+-  const [[lock]] = await e.pool.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:hly.detail-projection:', DATABASE())) AS owner");
++  const lock = { owner: await isNamedLockUsed(e.pool, 'platform-agent:hly.detail-projection') };
+   assert.equal(lock.owner, null);
+   await runner.close();
+   await e.gateway.close(); await e.analysisStore.close(); await e.pool.end(); env = null;
+@@ -217,8 +215,8 @@ test('4–6 pause and heartbeat state are persisted, including lock loss', { ski
+   await closeSpecific(e); const secondTimers = manualTimers(); const e2 = await makeEnv({ adapters: { 'hly.detail-projection': probe({ onRun: async ctx => new Promise(resolve => ctx.signal.addEventListener('abort', resolve, { once: true })) }) }, catalog: [card('hly.detail-projection')], timers: secondTimers });
+   const run = await e2.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' });
+   await new Promise(resolve => setImmediate(resolve));
+-  const [[lock]] = await e2.pool.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:hly.detail-projection:', DATABASE())) AS connection_id");
+-  assert.ok(lock.connection_id); await e2.pool.query('KILL ?', [Number(lock.connection_id)]); await secondTimers.fire();
++  const lock = { connection_id: await isNamedLockUsed(e2.pool, 'platform-agent:hly.detail-projection') };
++  assert.ok(lock.connection_id); await e2.pool.query('SELECT pg_terminate_backend(?)', [Number(lock.connection_id)]); await secondTimers.fire();
+   const killed = await run.finished; assert.equal(killed.status, 'failed'); assert.equal(killed.errorCode, 'PLATFORM_RUN_LOCK_LOST');
+ });
+ 
+@@ -355,7 +353,7 @@ test('12 cancellation and close release locks', { skip: skipReason }, async () =
+   const e = await makeEnv({ adapters: { 'hly.detail-projection': adapter }, catalog: [card('hly.detail-projection')] });
+   const run = await e.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' }); assert.equal((await e.runner.cancel(run.runId)).cancelled, true); assert.equal((await run.finished).errorCode, 'PLATFORM_RUN_CANCELLED');
+   const run2 = await e.runner.runAgent('hly.detail-projection', { trigger: 'manual', actor: 'tester', mode: 'incremental' }); await e.runner.close(); assert.equal((await run2.finished).errorCode, 'PLATFORM_SHUTDOWN');
+-  const [[lock]] = await e.pool.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:hly.detail-projection:', DATABASE())) AS owner"); assert.equal(lock.owner, null);
++  const lock = { owner: await isNamedLockUsed(e.pool, 'platform-agent:hly.detail-projection') }; assert.equal(lock.owner, null);
+ });
+ 
+ test('13 unknown adapter errors and oversized summaries are redacted', { skip: skipReason }, async () => {
+diff --git a/tests/platform-call-middleware-hardening.test.mjs b/tests/platform-call-middleware-hardening.test.mjs
+index 7f39b06..5253678 100644
+--- a/tests/platform-call-middleware-hardening.test.mjs
++++ b/tests/platform-call-middleware-hardening.test.mjs
+@@ -2,7 +2,7 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+ import { createCallGateway, currentAttribution, runWithAttribution } from '../src/platform/call-middleware.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ 
+ function storeFixture({ budget = 100, settings = {} } = {}) {
+@@ -24,7 +24,7 @@ function registryFixture(client, connectorId = 'hly-prod', transport = {}) {
+ 
+ const ctx = { agentId: 'hardening-agent', runId: 'hardening-run' };
+ const call = (gateway, connector, operation, args = []) => runWithAttribution(ctx, () => gateway.govern(connector)[operation](...args));
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ 
+ test('production gateway requires a lock pool and explicit test bypass', () => {
+   const store = storeFixture();
+@@ -355,8 +355,8 @@ test('same-process first lock acquisition shares one in-flight promise', async (
+       connections += 1;
+       return {
+         async query(sql) {
+-          if (sql.includes('GET_LOCK')) { await gate; return [[{ acquired: 1 }], []]; }
+-          return [[{ released: 1 }], []];
++          if (sql.includes('pg_try_advisory_lock(')) { await gate; return [[{ acquired: true }], []]; }
++          return [[{ released: true }], []];
+         },
+         release() {},
+       };
+@@ -399,11 +399,11 @@ test('agent slots are acquired before connector slots', async () => {
+   await Promise.all(calls);
+ });
+ 
+-test('two real MySQL lock pools are mutually exclusive and close releases the lock', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is required' }, async () => {
+-  const poolA = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
+-  const poolB = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
++test('two real MySQL lock pools are mutually exclusive and close releases the lock', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is required' }, async () => {
++  const poolA = createPgPool({ url: mysqlTestUrl, connectionLimit: 2 });
++  const poolB = createPgPool({ url: mysqlTestUrl, connectionLimit: 2 });
+   try {
+-    await migrateMySql(poolA);
++    await migratePg(poolA);
+     const store = storeFixture();
+     const registry = registryFixture({ queryExpenseReports: async () => ({ ok: true }) });
+     const first = createCallGateway({ store, registry, lockPool: poolA });
+@@ -419,10 +419,10 @@ test('two real MySQL lock pools are mutually exclusive and close releases the lo
+   }
+ });
+ 
+-test('real run ids are 26 characters and budget rejection logs preserve all 100 calls', { skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is required' }, async () => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 30 });
++test('real run ids are 26 characters and budget rejection logs preserve all 100 calls', { skip: mysqlTestUrl ? false : 'PG_TEST_URL is required' }, async () => {
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 30 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     for (const table of ['platform_call_log', 'platform_change_log', 'platform_settings', 'platform_call_budget_daily']) await pool.query(`DELETE FROM ${table}`);
+     const store = createPlatformStore({ pool, clock: () => new Date('2026-09-30T00:00:00.000Z') });
+     await store.writeSettings({ scopeKind: 'middleware', scopeId: 'hly-prod', expectedRevision: 0, value: { dailyLimit: 10, maxRetries: 0, connectorLimit: 20, agentLimit: 20 }, actorPrincipal: 'test', actorRole: 'test', reason: 'run id acceptance' });
+diff --git a/tests/platform-call-middleware.test.mjs b/tests/platform-call-middleware.test.mjs
+index 178fec9..348c633 100644
+--- a/tests/platform-call-middleware.test.mjs
++++ b/tests/platform-call-middleware.test.mjs
+@@ -10,9 +10,9 @@ import {
+ } from '../src/platform/call-middleware.mjs';
+ import { BANNED_USER_TERMS } from '../src/audit-terms.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ 
+ function createCallGateway(options = {}) {
+   return createCallGatewayWithLocks({ ...options, lockPool: options.lockPool ?? 'none-for-tests' });
+@@ -65,10 +65,10 @@ test('WB01 irreversible approvals keep gateway attribution and quota but never r
+ });
+ 
+ async function withRealStore(fn, { clock = () => new Date('2026-09-30T00:00:00.000Z') } = {}) {
+-  assert.ok(mysqlTestUrl, 'MYSQL_TEST_URL must be injected for real database acceptance tests');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 30 });
++  assert.ok(mysqlTestUrl, 'PG_TEST_URL must be injected for real database acceptance tests');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 30 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     for (const table of ['platform_call_log', 'platform_change_log', 'platform_settings', 'platform_call_budget_daily']) {
+       await pool.query(`DELETE FROM ${table}`);
+     }
+@@ -459,14 +459,16 @@ test('connector gateway locks are exclusive and are re-acquired after close', as
+   const lockPool = {
+     async getConnection() {
+       const id = ++nextConnection;
++      // PostgreSQL advisory locks: try-lock answers true / false, the holder is read from pg_locks as a backend id
+       const connection = {
++        threadId: id,
+         async query(sql) {
+-          if (sql.includes('GET_LOCK')) {
+-            if (owner === null) { owner = id; return [[{ acquired: 1 }], []]; }
+-            return [[{ acquired: 0 }], []];
++          if (sql.includes('pg_try_advisory_lock(')) {
++            if (owner === null) { owner = id; return [[{ acquired: true }], []]; }
++            return [[{ acquired: false }], []];
+           }
+-          if (sql.includes('RELEASE_LOCK')) { if (owner === id) owner = null; return [[{ released: 1 }], []]; }
+-          if (sql.includes('IS_USED_LOCK')) return [[{ owned: owner === id ? 1 : 0 }], []];
++          if (sql.includes('pg_advisory_unlock(')) { const held = owner === id; if (held) owner = null; return [[{ released: held }], []]; }
++          if (sql.includes('FROM pg_locks')) return [owner === null ? [] : [{ pid: owner }], []];
+           return [[]];
+         },
+         release() { connections.push(`released:${id}`); },
+@@ -491,10 +493,11 @@ test('lost lock stops the current call before the client is invoked', async () =
+     async getConnection() {
+       const id = ++connectionId;
+       return {
++        threadId: id,
+         async query(sql) {
+-          if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }], []];
+-          if (sql.includes('IS_USED_LOCK')) return [[{ owned: 0 }], []];
+-          if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }], []];
++          if (sql.includes('pg_try_advisory_lock(')) return [[{ acquired: true }], []];
++          if (sql.includes('FROM pg_locks')) return [[], []];
++          if (sql.includes('pg_advisory_unlock(')) return [[{ released: true }], []];
+           return [[]];
+         },
+         release() {},
+@@ -509,10 +512,10 @@ test('lost lock stops the current call before the client is invoked', async () =
+ });
+ 
+ test('real MySQL budget rows admit exactly ten concurrent calls', async () => {
+-  assert.ok(mysqlTestUrl, 'MYSQL_TEST_URL must be injected for this acceptance test');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 30 });
++  assert.ok(mysqlTestUrl, 'PG_TEST_URL must be injected for this acceptance test');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 30 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     for (const table of ['platform_call_log', 'platform_change_log', 'platform_settings', 'platform_call_budget_daily']) await pool.query(`DELETE FROM ${table}`);
+     const store = createPlatformStore({ pool, clock: () => new Date('2026-09-30T00:00:00.000Z') });
+     await store.writeSettings({ scopeKind: 'middleware', scopeId: 'hly-prod', expectedRevision: 0, value: { dailyLimit: 10, connectorLimit: 10, agentLimit: 10 }, actorPrincipal: 'test', actorRole: 'test', reason: 'acceptance' });
+@@ -589,7 +592,7 @@ test('real MySQL lock connection death blocks one call, then a fresh lock permit
+     const lockPool = {
+       async getConnection() {
+         const connection = await pool.getConnection();
+-        const [[row]] = await connection.query('SELECT CONNECTION_ID() AS connection_id');
++        const [[row]] = await connection.query('SELECT pg_backend_pid() AS connection_id');
+         lockConnectionId = Number(row.connection_id);
+         return connection;
+       },
+@@ -603,7 +606,7 @@ test('real MySQL lock connection death blocks one call, then a fresh lock permit
+     });
+     await gateway.acquire('hly-prod');
+     assert.ok(lockConnectionId > 0);
+-    await pool.query(`KILL CONNECTION ${lockConnectionId}`);
++    await pool.query('SELECT pg_terminate_backend(?)', [lockConnectionId]);
+     await assert.rejects(
+       runWithAttribution({ agentId: 'lock-agent', runId: 'lock-real-lost' }, () => gateway.govern('hly-prod').queryExpenseReports({})),
+       error => error.code === 'CONNECTOR_GATEWAY_BUSY',
+diff --git a/tests/platform-detail-adapters.integration.test.mjs b/tests/platform-detail-adapters.integration.test.mjs
+index 2a51c0e..dab60d8 100644
+--- a/tests/platform-detail-adapters.integration.test.mjs
++++ b/tests/platform-detail-adapters.integration.test.mjs
+@@ -1,6 +1,6 @@
+ import test, { afterEach } from 'node:test';
+ import assert from 'node:assert/strict';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { acquireNamedLock, createPgPool, migratePg , releaseNamedLock } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createAgentRunner } from '../src/platform/agent-runner.mjs';
+@@ -12,8 +12,8 @@ import { CONNECTORS } from '../src/platform/connectors.mjs';
+ import { analysisDetailVersion, completeReportDetail, encryptReportDetail, enqueueReportDetails, claimReportDetail } from '../src/report-detail-queue.mjs';
+ import { createPipelineProgress } from '../src/platform/pipeline-progress.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const NOW = new Date('2026-10-10T00:00:00.000Z');
+ const FORM = '\u5dee\u65c5\u62a5\u9500\u5355'; const EXPENSE = '\u4ea4\u901a';
+ const key = Buffer.alloc(32, 19);
+@@ -21,10 +21,8 @@ const detailCard = AGENT_CATALOG.find(card => card.id === 'hly.report-detail');
+ const projectionCard = AGENT_CATALOG.find(card => card.id === 'hly.detail-projection');
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try { for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-  finally { await pool.query('SET FOREIGN_KEY_CHECKS=1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ const raw = (id, extra = {}) => ({ tenantId: 'tenant-detail', docCompanyOID: 'company-detail', companyOID: 'company-detail', expenseReportOID: id, businessCode: 'EXP-' + id, formName: FORM, status: '1001', totalAmount: '12.34', expenseTypes: EXPENSE, lastModifyDate: '2026-10-01T00:00:00Z', ...extra });
+ const detail = id => ({ businessCode: 'EXP-' + id, formOID: 'form-detail', formName: FORM, docCompanyOID: 'company-detail', originTotalAmount: '12.34', applicantOID: 'applicant', expenseReportInvoices: [{ invoiceView: { expenseTypeOID: 'type', expenseTypeCode: 'TRAIN', expenseTypeName: '\u706b\u8f66', amount: '12.34', tax: '0.34', taxRate: '0.03', createdDate: '2026-10-01T00:00:00Z', withReceipt: false, receiptList: [] } }], expenseReportSubsidyDetailDTOList: [], expenseReportApplicationDTOS: [] });
+@@ -35,8 +33,8 @@ function registry(client) {
+ 
+ let env;
+ async function fixture() {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 16 });
+-  await reset(pool); await migrateMySql(pool);
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 16 });
++  await reset(pool); await migratePg(pool);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'detail-adapter' }); await analysisStore.migrate();
+   const platformStore = createPlatformStore({ pool, clock: () => NOW });
+   const client = { async getReportDetail({ businessCode }) { return { response: detail(String(businessCode).replace(/^EXP-/, '')) }; } };
+@@ -60,9 +58,9 @@ test('25 detail adapter counts selected/succeeded/failed/skipped/recovered again
+   await enqueueReportDetails({ pool: e.pool, analysisStore: e.analysisStore, formNameIncludes: FORM, batchId: 'version-v1', connectionId: 'detail-adapter', now: NOW });
+   await e.analysisStore.upsertPage({ scope: { tenantId: 'tenant-detail', companyId: 'company-detail' }, reports: [raw('versioned-1', { lastModifyDate: '2026-10-02T00:00:00Z' })], collectedAt: NOW.toISOString() });
+   const queued = await enqueueReportDetails({ pool: e.pool, analysisStore: e.analysisStore, formNameIncludes: FORM, batchId: 'preexisting', connectionId: 'detail-adapter', now: NOW });
+-  const [[existingItem]] = await e.pool.query("SELECT i.sync_item_id FROM audit_sync_items i JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]')) WHERE i.entity_type='report_detail' AND d.document_number=?", ['EXP-existing-1']);
++  const [[existingItem]] = await e.pool.query("SELECT i.sync_item_id FROM audit_sync_items i JOIN audit_documents d ON d.document_id=(i.source_entity_id::jsonb->>0) WHERE i.entity_type='report_detail' AND d.document_number=?", ['EXP-existing-1']);
+   const existingJob = await claimReportDetail({ pool: e.pool, workerId: 'existing', syncItemId: existingItem.sync_item_id, now: NOW }); await completeReportDetail({ pool: e.pool, job: existingJob, detail: detail('existing-1'), key, fetchedAt: NOW });
+-  const [items] = await e.pool.query("SELECT i.sync_item_id,d.document_number FROM audit_sync_items i JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]')) WHERE i.entity_type='report_detail'");
++  const [items] = await e.pool.query("SELECT i.sync_item_id,d.document_number FROM audit_sync_items i JOIN audit_documents d ON d.document_id=(i.source_entity_id::jsonb->>0) WHERE i.entity_type='report_detail'");
+   for (const id of ['expired-1', 'expired-2']) { const row = items.find(item => item.document_number === `EXP-${id}`); if (row) await e.pool.query("UPDATE audit_sync_items SET status='running',lease_owner='expired',started_at='2020-01-01',lease_expires_at='2020-01-01' WHERE sync_item_id=?", [row.sync_item_id]); }
+   const activeRow = items.find(item => item.document_number === 'EXP-active-1'); if (activeRow) await e.pool.query("UPDATE audit_sync_items SET status='running',lease_owner='active',started_at=?,lease_expires_at=? WHERE sync_item_id=?", [NOW, new Date(NOW.getTime() + 3600000), activeRow.sync_item_id]);
+   const progress0 = await createPipelineProgress({ pool: e.pool, clock: () => NOW }).progress('hly.report-detail', { companyIds: ['company-detail'] });
+@@ -71,7 +69,7 @@ test('25 detail adapter counts selected/succeeded/failed/skipped/recovered again
+   assert.equal(result.status, 'partial'); assert.equal(result.counts.skipped, 2); assert.equal(result.counts.recovered, 2); assert.equal(result.counts.selected, 6); assert.equal(result.counts.succeeded, 5); assert.equal(result.counts.failed, 1);
+   const [[active]] = await e.pool.query('SELECT status,lease_expires_at FROM audit_sync_items WHERE sync_item_id=?', [activeRow.sync_item_id]); assert.equal(active.status, 'running'); assert.ok(active.lease_expires_at);
+   const progress = await createPipelineProgress({ pool: e.pool, clock: () => NOW }).progress('hly.report-detail', { companyIds: ['company-detail'] }); assert.equal(progress.skipped.total, 2); assert.equal(progress.failed.total, 1); assert.equal(progress.processed - progress0.processed, result.counts.succeeded);
+-  const [[stale]] = await e.pool.query("SELECT i.status,i.error_code FROM audit_sync_items i JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]')) JOIN analysis_documents ad ON ad.id=d.document_id AND ad.connection_id=d.source_connection_id WHERE i.entity_type='report_detail' AND d.document_number='EXP-versioned-1' AND JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[1]'))<>ad.version"); assert.equal(stale.status, 'stale'); assert.equal(stale.error_code, 'SKIPPED_SUPERSEDED');
++  const [[stale]] = await e.pool.query("SELECT i.status,i.error_code FROM audit_sync_items i JOIN audit_documents d ON d.document_id=(i.source_entity_id::jsonb->>0) JOIN analysis_documents ad ON ad.id=d.document_id AND ad.connection_id=d.source_connection_id WHERE i.entity_type='report_detail' AND d.document_number='EXP-versioned-1' AND (i.source_entity_id::jsonb->>1)<>ad.version"); assert.equal(stale.status, 'stale'); assert.equal(stale.error_code, 'SKIPPED_SUPERSEDED');
+ });
+ 
+ test('26 detail adapter turns budget exhaustion into partial and leaves queued work', { skip: skipReason }, async () => {
+@@ -90,8 +88,8 @@ test('27 detail cancellation checks the signal before each claim', { skip: skipR
+ 
+ test('28 legacy queue locks stop detail and projection adapters without claiming', { skip: skipReason }, async () => {
+   const e = await fixture(); await seed(e, [raw('locked-1')]); const item = createReportDetailAdapter({ pool: e.pool, analysisStore: { listDetailCandidates: (...args) => e.analysisStore.listDetailCandidates(...args) }, key, connectionId: 'detail-adapter', companyIds: ['company-detail'] });
+-  const lock = await e.pool.getConnection(); await lock.query("SELECT GET_LOCK(CONCAT('jiuan:report-detail-worker:', DATABASE()), 0)"); const runner = await runnerFor(e, item, detailCard); const run = await runner.runAgent(detailCard.id, { trigger: 'manual', actor: 'tester', mode: 'incremental' }); const result = await run.finished; assert.equal(result.errorCode, 'PLATFORM_LEGACY_LOCK_BUSY'); const [[queued]] = await e.pool.query("SELECT COUNT(*) AS count FROM audit_sync_items WHERE status='queued'"); assert.equal(Number(queued.count), 1); await lock.query("SELECT RELEASE_LOCK(CONCAT('jiuan:report-detail-worker:', DATABASE()))"); lock.release();
+-  const projection = createDetailProjectionAdapter({ pool: e.pool, key }); const projectionLock = await e.pool.getConnection(); await projectionLock.query("SELECT GET_LOCK(CONCAT('audit-report-detail-projection:', DATABASE()), 0)"); const runner2 = await runnerFor(e, projection, projectionCard); const run2 = await runner2.runAgent(projectionCard.id, { trigger: 'manual', actor: 'tester', mode: 'incremental' }); const result2 = await run2.finished; assert.equal(result2.errorCode, 'PLATFORM_LEGACY_LOCK_BUSY'); await projectionLock.query("SELECT RELEASE_LOCK(CONCAT('audit-report-detail-projection:', DATABASE()))"); projectionLock.release();
++  const lock = await e.pool.getConnection(); await acquireNamedLock(lock, 'jiuan:report-detail-worker', 0); const runner = await runnerFor(e, item, detailCard); const run = await runner.runAgent(detailCard.id, { trigger: 'manual', actor: 'tester', mode: 'incremental' }); const result = await run.finished; assert.equal(result.errorCode, 'PLATFORM_LEGACY_LOCK_BUSY'); const [[queued]] = await e.pool.query("SELECT COUNT(*) AS count FROM audit_sync_items WHERE status='queued'"); assert.equal(Number(queued.count), 1); await releaseNamedLock(lock, 'jiuan:report-detail-worker'); lock.release();
++  const projection = createDetailProjectionAdapter({ pool: e.pool, key }); const projectionLock = await e.pool.getConnection(); await acquireNamedLock(projectionLock, 'audit-report-detail-projection', 0); const runner2 = await runnerFor(e, projection, projectionCard); const run2 = await runner2.runAgent(projectionCard.id, { trigger: 'manual', actor: 'tester', mode: 'incremental' }); const result2 = await run2.finished; assert.equal(result2.errorCode, 'PLATFORM_LEGACY_LOCK_BUSY'); await releaseNamedLock(projectionLock, 'audit-report-detail-projection'); projectionLock.release();
+ });
+ 
+ test('29 projection adapter reports exact selected and failed counts for mixed versions', { skip: skipReason }, async () => {
+diff --git a/tests/platform-list-sync-adapter.integration.test.mjs b/tests/platform-list-sync-adapter.integration.test.mjs
+index 8e6537c..bc45ac2 100644
+--- a/tests/platform-list-sync-adapter.integration.test.mjs
++++ b/tests/platform-list-sync-adapter.integration.test.mjs
+@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
+ import { createHash } from 'node:crypto';
+ import { mkdir, writeFile, rm } from 'node:fs/promises';
+ import { resolve } from 'node:path';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl , isNamedLockUsed } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createAgentRunner } from '../src/platform/agent-runner.mjs';
+@@ -13,18 +13,16 @@ import { createCallGateway } from '../src/platform/call-middleware.mjs';
+ import { createConnectorRegistry } from '../src/platform/connectors.mjs';
+ import { createPipelineProgress } from '../src/platform/pipeline-progress.mjs';
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-const skipReason = MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const PG_TEST_URL = process.env.PG_TEST_URL;
++const skipReason = PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const NOW = new Date('2026-10-10T00:00:00.000Z');
+ const CARD = AGENT_CATALOG.find(item => item.id === 'hly.list-sync');
+ const STATUS = '1001,1002,1003,1004,1005,1007,1008';
+ const TMP = resolve('.dispatch-tmp/list-sync-integration');
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try { for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-  finally { await pool.query('SET FOREIGN_KEY_CHECKS=1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ const raw = (id, company = 'company-sync', extra = {}) => ({
+@@ -52,9 +50,9 @@ async function closeEnv() {
+ afterEach(async () => { await closeEnv(); try { await rm(TMP, { recursive: true, force: true }); } catch {} });
+ 
+ async function fixture({ scope = { tenantId: 'tenant-sync', companyId: 'company-sync' }, client = {}, now = NOW, manifestFile = resolve(TMP, 'missing.json'), sourceEnvironment } = {} = {}) {
+-  const config = parseMySqlUrl(MYSQL_TEST_URL); assert.equal(config.port, 3307); assert.match(config.database, /_test$/u);
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 16 });
+-  await reset(pool); await migrateMySql(pool);
++  const config = parsePgUrl(PG_TEST_URL); assert.equal(config.port, 5434); assert.match(config.database, /_test$/u);
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 16 });
++  await reset(pool); await migratePg(pool);
+   const analysisStore = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 23), connectionId: 'list-sync-test' }); await analysisStore.migrate();
+   const platformStore = createPlatformStore({ pool, clock: () => (typeof now === 'function' ? now() : now) });
+   const gateway = createCallGateway({ store: platformStore, registry: registry(client), lockPool: pool, clock: () => (typeof now === 'function' ? now() : now), sleep: async () => {}, settingsTtlMs: 0 });
+@@ -208,9 +206,9 @@ test('23 list counts match current-company progress when tenant scope includes a
+ });
+ 
+ test('24 previews and dry-run manifest import leave every relevant table unchanged', { skip: skipReason }, async () => {
+-  await mkdir(TMP, { recursive: true }); const file = resolve(TMP, 'dry.json'); await writeFile(file, JSON.stringify({ version: 1, source: 'huilianyi', windows: { '2026-01-01..2026-01-01': { status: 'completed', channel: 'corporate', finishedAt: '2026-01-02T00:00:00Z', reportCount: 1, requestCount: 1 } } }), 'utf8'); const { client, calls } = clientWith(() => { throw new Error('preview must not call client'); }); const e = await fixture({ client, manifestFile: file }); const tables = ['platform_agent_runs', 'platform_call_log', 'platform_call_budget_daily', 'analysis_sync_states', 'analysis_batches', 'audit_sync_batches']; const before = {}; for (const table of tables) { before[table] = { count: await counts(e, table), checksum: (await e.pool.query(`CHECKSUM TABLE ${table}`))[0][0].Checksum }; }
++  await mkdir(TMP, { recursive: true }); const file = resolve(TMP, 'dry.json'); await writeFile(file, JSON.stringify({ version: 1, source: 'huilianyi', windows: { '2026-01-01..2026-01-01': { status: 'completed', channel: 'corporate', finishedAt: '2026-01-02T00:00:00Z', reportCount: 1, requestCount: 1 } } }), 'utf8'); const { client, calls } = clientWith(() => { throw new Error('preview must not call client'); }); const e = await fixture({ client, manifestFile: file }); const tables = ['platform_agent_runs', 'platform_call_log', 'platform_call_budget_daily', 'analysis_sync_states', 'analysis_batches', 'audit_sync_batches']; const before = {}; for (const table of tables) { before[table] = { count: await counts(e, table), checksum: (await e.pool.query(`SELECT md5(COALESCE(string_agg(t::text, E'\\n' ORDER BY t::text), '')) AS "Checksum" FROM ${table} t`))[0][0].Checksum }; }
+   const store = new Proxy(e.analysisStore, { get(target, property) { if (property === 'migrate') return () => { throw new Error('migrate must not run in preview'); }; return target[property]; } }); const adapter = createListSyncAdapter({ store, scope: e.scope, connectionId: 'list-sync-test', platformStore: e.platformStore, manifestFile: file, sleep: async () => {}, clock: () => NOW }); const previewRunner = createAgentRunner({ pool: e.pool, platformStore: e.platformStore, gateway: e.gateway, adapters: { [CARD.id]: adapter }, catalog: [CARD], clock: () => NOW, leaseMs: 300000, heartbeatMs: 30000 });
+   await previewRunner.previewAgent(CARD.id, { mode: 'incremental', lane: 'corporate' }); await previewRunner.previewAgent(CARD.id, { mode: 'history', lane: 'corporate', range: { startDate: '2026-01-01', endDate: '2026-01-01' }, params: { windowDays: 1 } }); await adapter.importLegacyManifest({ dryRun: true });
+-  for (const table of tables) { const after = { count: await counts(e, table), checksum: (await e.pool.query(`CHECKSUM TABLE ${table}`))[0][0].Checksum }; assert.deepEqual(after, before[table], table); }
+-  const [[lock]] = await e.pool.query("SELECT IS_USED_LOCK(CONCAT('platform-agent:', ?, ':', DATABASE())) AS owner", [CARD.id]); assert.equal(lock.owner, null); assert.equal(calls.length, 0); await previewRunner.close();
++  for (const table of tables) { const after = { count: await counts(e, table), checksum: (await e.pool.query(`SELECT md5(COALESCE(string_agg(t::text, E'\\n' ORDER BY t::text), '')) AS "Checksum" FROM ${table} t`))[0][0].Checksum }; assert.deepEqual(after, before[table], table); }
++  const lock = { owner: await isNamedLockUsed(e.pool, `platform-agent:${CARD.id}`) }; assert.equal(lock.owner, null); assert.equal(calls.length, 0); await previewRunner.close();
+ });
+diff --git a/tests/platform-pipeline-progress.integration.test.mjs b/tests/platform-pipeline-progress.integration.test.mjs
+index d88535a..d80ed17 100644
+--- a/tests/platform-pipeline-progress.integration.test.mjs
++++ b/tests/platform-pipeline-progress.integration.test.mjs
+@@ -4,13 +4,13 @@ import { createHash } from 'node:crypto';
+ import { existsSync } from 'node:fs';
+ 
+ import { analysisDocumentType } from '../src/analysis-normalize.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { enqueueReportDetails } from '../src/report-detail-queue.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { PROJECTOR_VERSION, resetProjectionFailures } from '../src/report-detail-projection.mjs';
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
++const PG_TEST_URL = process.env.PG_TEST_URL;
+ const SOURCE_PATH = new URL('../src/platform/pipeline-progress.mjs', import.meta.url);
+ const FIXED_NOW = '2026-10-09T12:00:00.000Z';
+ const NOW_SQL = '2026-10-09 12:00:00';
+@@ -19,25 +19,20 @@ const RECENT_SQL = '2026-10-09 11:55:00';
+ const KEY = Buffer.alloc(32, 42);
+ 
+ async function resetDatabase(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally {
+-    await pool.query('SET FOREIGN_KEY_CHECKS=1');
+-  }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ async function withDatabase(callback) {
+-  assert.ok(MYSQL_TEST_URL, 'MYSQL_TEST_URL must be provided for the real-MySQL integration suite');
+-  const config = parseMySqlUrl(MYSQL_TEST_URL);
+-  assert.equal(config.port, 3307, 'integration tests must use the isolated MySQL test port');
++  assert.ok(PG_TEST_URL, 'PG_TEST_URL must be provided for the real-MySQL integration suite');
++  const config = parsePgUrl(PG_TEST_URL);
++  assert.equal(config.port, 5434, 'integration tests must use the isolated PostgreSQL test port');
+   assert.match(config.database, /_test$/u, 'integration tests must use a database ending in _test');
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 12 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 12 });
+   let analysisStore;
+   try {
+     await resetDatabase(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     analysisStore = await openMySqlAnalysisStore({ pool, key: KEY, connectionId: 'pipeline-progress-test' });
+     await analysisStore.migrate();
+     await callback({ pool, analysisStore });
+@@ -670,13 +665,17 @@ test('detail progress over 10,000 documents uses a constant number of SQL calls
+       projectionRows.push([document.document_id, document.current_version, 'projected', PROJECTOR_VERSION, document.current_version, 1, null, null, 0, RECENT_SQL]);
+       if (index % 10 === 0) gapRows.push([document.document_id, document.current_version, 0, 'fixture.missing', 'fixture']);
+     }
+-    await pool.query(`INSERT INTO audit_report_details(document_id,content_version,detail_digest,company_id,form_name,status,response_sha256,fetched_at,payload_ciphertext) VALUES ${detailRows.map(() => '(?,?,?,?,?,?,?,?,?)').join(',')}`, detailRows.flat());
+-    await pool.query(`INSERT INTO audit_report_projection_status(document_id,content_version,projection_status,projector_version,projection_input_digest,attempts,next_retry_at,error_code,exhausted,projected_at) VALUES ${projectionRows.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')}`, projectionRows.flat());
++    // PostgreSQL binds at most 65535 parameters per statement (mysql2 interpolated on the client): insert in chunks
++    await bulkInsert('audit_report_details', ['document_id', 'content_version', 'detail_digest', 'company_id', 'form_name', 'status', 'response_sha256', 'fetched_at', 'payload_ciphertext'], detailRows);
++    await bulkInsert('audit_report_projection_status', ['document_id', 'content_version', 'projection_status', 'projector_version', 'projection_input_digest', 'attempts', 'next_retry_at', 'error_code', 'exhausted', 'projected_at'], projectionRows);
+     if (gapRows.length) {
+-      await pool.query(`INSERT INTO audit_report_projection_gaps(document_id,content_version,gap_index,field_path,reason) VALUES ${gapRows.map(() => '(?,?,?,?,?)').join(',')}`, gapRows.flat());
++      await bulkInsert('audit_report_projection_gaps', ['document_id', 'content_version', 'gap_index', 'field_path', 'reason'], gapRows);
+     }
+ 
+     const company = companies[0];
++    // A live database has planner statistics (autovacuum); rows bulk-inserted a moment ago do not yet, and without them
++    // PostgreSQL may join 24,000 queue rows to 10,000 documents row by row. MySQL refreshed its statistics as it went.
++    await pool.query('ANALYZE');
+     let calls = 0;
+     const countedPool = { query(...args) { calls += 1; return pool.query(...args); } };
+     const progress = createPipelineProgress({ pool: countedPool, clock: () => new Date(FIXED_NOW) });
+diff --git a/tests/platform-rewire-hly.integration.test.mjs b/tests/platform-rewire-hly.integration.test.mjs
+index 6befb8b..8684ff5 100644
+--- a/tests/platform-rewire-hly.integration.test.mjs
++++ b/tests/platform-rewire-hly.integration.test.mjs
+@@ -2,7 +2,7 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { readFileSync } from 'node:fs';
+ 
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createConnectorRegistry } from '../src/platform/connectors.mjs';
+ import { captureAttribution, createCallGateway, runWithAttribution } from '../src/platform/call-middleware.mjs';
+@@ -11,8 +11,8 @@ import { createAnalysisPaymentService } from '../src/analysis-payment-service.mj
+ import { normalizeAnalysisReport } from '../src/analysis-normalize.mjs';
+ import { main as runFullSyncCli } from '../scripts/full-sync-huilianyi.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipWithoutDatabase = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipWithoutDatabase = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ test('payment collection keeps a captured attribution re-entry around deferred work', () => {
+   const source = readFileSync(new URL('../src/analysis-payment-service.mjs', import.meta.url), 'utf8');
+@@ -27,9 +27,9 @@ async function reset(pool) {
+ }
+ 
+ async function withGateway(callback) {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 20 });
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 20 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await reset(pool);
+     const hlyCalls = [];
+     const detailPayload = {
+diff --git a/tests/platform-routes.integration.test.mjs b/tests/platform-routes.integration.test.mjs
+index 51c7175..81fe47a 100644
+--- a/tests/platform-routes.integration.test.mjs
++++ b/tests/platform-routes.integration.test.mjs
+@@ -4,7 +4,7 @@ import { request } from 'node:http';
+ 
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createPipelineProgress } from '../src/platform/pipeline-progress.mjs';
+@@ -12,40 +12,38 @@ import { enqueueReportDetails } from '../src/report-detail-queue.mjs';
+ import { createPlatformRoutes } from '../src/platform/platform-routes.mjs';
+ import { BANNED_USER_TERMS } from '../src/audit-terms.mjs';
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
++const PG_TEST_URL = process.env.PG_TEST_URL;
+ 
+ async function reset(pool) {
+-  const [tables] = await pool.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-  await pool.query('SET FOREIGN_KEY_CHECKS=0');
+-  try {
+-    for (const row of tables) await pool.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``);
+-  } finally { await pool.query('SET FOREIGN_KEY_CHECKS=1'); }
++  await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
++  await pool.query('CREATE SCHEMA public');
+ }
+ 
+ async function snapshot(pool) {
+-  const [tables] = await pool.query("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() AND (TABLE_NAME LIKE 'platform\\_%' OR TABLE_NAME LIKE 'analysis\\_%' OR TABLE_NAME LIKE 'audit\\_%') ORDER BY TABLE_NAME");
++  const [tables] = await pool.query("SELECT table_name AS \"TABLE_NAME\" FROM information_schema.tables WHERE table_schema=current_schema() AND (table_name LIKE 'platform\\_%' OR table_name LIKE 'analysis\\_%' OR table_name LIKE 'audit\\_%') ORDER BY table_name");
+   const result = {};
+   for (const row of tables) {
+-    const table = String(row.TABLE_NAME).replaceAll('`', '``');
+-    const [[countRow]] = await pool.query(`SELECT COUNT(*) AS count FROM \`${table}\``);
+-    const [checksumRows] = await pool.query(`CHECKSUM TABLE \`${table}\``);
++    const table = String(row.TABLE_NAME);
++    const [[countRow]] = await pool.query(`SELECT COUNT(*) AS count FROM "${table}"`);
++    // PostgreSQL has no CHECKSUM TABLE: the md5 of every row's text, in order
++    const [checksumRows] = await pool.query(`SELECT md5(COALESCE(string_agg(t::text, E'\\n' ORDER BY t::text), '')) AS "Checksum" FROM "${table}" t`);
+     result[table] = { count: Number(countRow.count), checksum: checksumRows[0]?.Checksum ?? null };
+   }
+   return result;
+ }
+ 
+ test('platform GET routes use the real MySQL progress scope and expose read-only item fields', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(MYSQL_TEST_URL);
+-  assert.equal(config.port, 3307);
++  const config = parsePgUrl(PG_TEST_URL);
++  assert.equal(config.port, 5434);
+   assert.match(config.database, /_test$/u);
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
+   const key = Buffer.alloc(32, 19);
+   let analysisStore;
+   try {
+     await reset(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     analysisStore = await openMySqlAnalysisStore({ pool, key, connectionId: 'platform-routes-test' });
+     await analysisStore.migrate();
+     await analysisStore.upsertPage({
+@@ -199,15 +197,15 @@ test('platform GET routes use the real MySQL progress scope and expose read-only
+ });
+ 
+ test('platform item routes preserve all four states for detail and projection cards', {
+-  skip: MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const config = parseMySqlUrl(MYSQL_TEST_URL);
+-  assert.equal(config.port, 3307);
+-  const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
++  const config = parsePgUrl(PG_TEST_URL);
++  assert.equal(config.port, 5434);
++  const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
+   let analysisStore;
+   try {
+     await reset(pool);
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     analysisStore = await openMySqlAnalysisStore({ pool, key: Buffer.alloc(32, 31), connectionId: 'platform-routes-state-test' });
+     await analysisStore.migrate();
+     const report = (id, formName = '差旅报销单') => ({ tenantId: 'tenant-state', docCompanyOID: 'company-state', companyOID: 'company-state', expenseReportOID: id, businessCode: `EXP-${id}`, formName, status: '1001', totalAmount: '1.00', paymentAmount: '1.00', expenseTypes: '交通', lastModifyDate: '2026-10-08T00:00:00Z' });
+diff --git a/tests/platform-scheduler.integration.test.mjs b/tests/platform-scheduler.integration.test.mjs
+index 218225e..a721028 100644
+--- a/tests/platform-scheduler.integration.test.mjs
++++ b/tests/platform-scheduler.integration.test.mjs
+@@ -1,7 +1,7 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createScheduler } from '../src/platform/scheduler.mjs';
+ import { SYSTEM_PIPELINE } from '../src/platform/service-identity.mjs';
+@@ -9,8 +9,8 @@ import { createAgentRunner } from '../src/platform/agent-runner.mjs';
+ import { AGENT_CATALOG } from '../src/platform/agent-catalog.mjs';
+ import { createPlatformRoutes } from '../src/platform/platform-routes.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skip = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skip = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const BASE = Date.parse('2026-10-10T00:00:00.000Z');
+ const CODE_VERSION = 'a'.repeat(64);
+ 
+@@ -19,9 +19,9 @@ async function clearPlatform(pool) {
+ }
+ 
+ async function withDatabase(callback) {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 12 });
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 12 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await clearPlatform(pool);
+     return await callback(pool, createPlatformStore({ pool }));
+   } finally {
+diff --git a/tests/platform-store.integration.test.mjs b/tests/platform-store.integration.test.mjs
+index 9e80e8b..841c099 100644
+--- a/tests/platform-store.integration.test.mjs
++++ b/tests/platform-store.integration.test.mjs
+@@ -2,10 +2,10 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipWithoutDatabase = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipWithoutDatabase = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ 
+ async function resetPlatformTables(pool) {
+   for (const table of ['platform_call_log', 'platform_change_log', 'platform_settings', 'platform_agent_runs', 'platform_call_budget_daily']) {
+@@ -14,9 +14,9 @@ async function resetPlatformTables(pool) {
+ }
+ 
+ async function withTestDatabase(callback, { connectionLimit = 20 } = {}) {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit });
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await resetPlatformTables(pool);
+     return await callback(pool);
+   } finally {
+@@ -116,7 +116,7 @@ test('reserveBudget derives the daily key from the Shanghai calendar', { skip: s
+     const earlyStore = createPlatformStore({ pool, clock: () => new Date('2026-09-30T15:59:59.000Z') });
+     await lateStore.reserveBudget({ connectorId: 'integration', agentId: 'shanghai-late', limitCalls: 5 });
+     await earlyStore.reserveBudget({ connectorId: 'integration', agentId: 'shanghai-early', limitCalls: 5 });
+-    const [rows] = await pool.query("SELECT agent_id,DATE_FORMAT(budget_day,'%Y-%m-%d') AS budget_day FROM platform_call_budget_daily WHERE connector_id=? ORDER BY agent_id", ['integration']);
++    const [rows] = await pool.query("SELECT agent_id,to_char(budget_day,'YYYY-MM-DD') AS budget_day FROM platform_call_budget_daily WHERE connector_id=? ORDER BY agent_id", ['integration']);
+     assert.deepEqual(rows.map(row => [row.agent_id, row.budget_day]), [
+       ['shanghai-early', '2026-09-30'],
+       ['shanghai-late', '2026-10-01'],
+@@ -150,18 +150,18 @@ test('run lifecycle only mutates running rows', { skip: skipWithoutDatabase }, a
+     await store.createRun({ runId: abandonedId, agentId: 'agent', codeVersion: 'v1', mode: 'operation', triggerKind: 'manual', actorPrincipal: 'operator', startedAt: '2026-09-30T00:00:00.000Z', leaseMs: 10000 });
+     const heartbeat = await store.heartbeat({ runId: abandonedId, at: '2026-09-30T00:00:05.000Z', leaseMs: 20000 });
+     assert.equal(heartbeat.updated, true);
+-    const [[extended]] = await pool.query("SELECT DATE_FORMAT(lease_expires_at,'%Y-%m-%d %H:%i:%s') AS lease_expires_at FROM platform_agent_runs WHERE run_id=?", [abandonedId]);
++    const [[extended]] = await pool.query("SELECT to_char(lease_expires_at,'YYYY-MM-DD HH24:MI:SS') AS lease_expires_at FROM platform_agent_runs WHERE run_id=?", [abandonedId]);
+     assert.equal(extended.lease_expires_at, '2026-09-30 00:00:25');
+     await store.createRun({ runId: liveId, agentId: 'agent', codeVersion: 'v1', mode: 'operation', triggerKind: 'manual', actorPrincipal: 'operator', startedAt: '2026-09-30T00:00:00.000Z', leaseMs: 3600000 });
+     await store.createRun({ runId: succeededId, agentId: 'agent', codeVersion: 'v1', mode: 'operation', triggerKind: 'manual', actorPrincipal: 'operator', status: 'succeeded', startedAt: '2026-09-30T00:00:00.000Z', finishedAt: '2026-09-30T00:00:01.000Z', leaseMs: 10000 });
+     const abandoned = await store.abandonStale({ now: '2026-09-30T00:00:30.000Z' });
+     assert.equal(abandoned.abandoned, 1);
+-    const [[beforeIgnoredUpdates]] = await pool.query("SELECT status,DATE_FORMAT(finished_at,'%Y-%m-%d %H:%i:%s') AS finished_at,DATE_FORMAT(lease_expires_at,'%Y-%m-%d %H:%i:%s') AS lease_expires_at FROM platform_agent_runs WHERE run_id=?", [abandonedId]);
++    const [[beforeIgnoredUpdates]] = await pool.query("SELECT status,to_char(finished_at,'YYYY-MM-DD HH24:MI:SS') AS finished_at,to_char(lease_expires_at,'YYYY-MM-DD HH24:MI:SS') AS lease_expires_at FROM platform_agent_runs WHERE run_id=?", [abandonedId]);
+     const finished = await store.finishRun({ runId: abandonedId, status: 'succeeded', finishedAt: '2026-09-30T00:01:00.000Z' });
+     const heartbeated = await store.heartbeat({ runId: abandonedId, at: '2026-09-30T00:01:01.000Z', leaseMs: 300000 });
+     assert.equal(finished.updated, false);
+     assert.equal(heartbeated.updated, false);
+-    const [[afterIgnoredUpdates]] = await pool.query("SELECT status,DATE_FORMAT(finished_at,'%Y-%m-%d %H:%i:%s') AS finished_at,DATE_FORMAT(lease_expires_at,'%Y-%m-%d %H:%i:%s') AS lease_expires_at FROM platform_agent_runs WHERE run_id=?", [abandonedId]);
++    const [[afterIgnoredUpdates]] = await pool.query("SELECT status,to_char(finished_at,'YYYY-MM-DD HH24:MI:SS') AS finished_at,to_char(lease_expires_at,'YYYY-MM-DD HH24:MI:SS') AS lease_expires_at FROM platform_agent_runs WHERE run_id=?", [abandonedId]);
+     assert.deepEqual(afterIgnoredUpdates, beforeIgnoredUpdates);
+     const [[live]] = await pool.query('SELECT status FROM platform_agent_runs WHERE run_id=?', [liveId]);
+     const [[succeeded]] = await pool.query('SELECT status FROM platform_agent_runs WHERE run_id=?', [succeededId]);
+diff --git a/tests/platform-store.test.mjs b/tests/platform-store.test.mjs
+index a9370bc..5c61164 100644
+--- a/tests/platform-store.test.mjs
++++ b/tests/platform-store.test.mjs
+@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
+ 
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ 
+ test('platform store exposes the foundation lifecycle and append-only APIs', () => {
+   const methods = ['createRun', 'heartbeat', 'finishRun', 'abandonStale', 'readSettings', 'writeSettings', 'appendChange', 'reserveBudget', 'reserveBudgets', 'settleBudget', 'insertCallLog', 'purgeCallLog'];
+@@ -139,17 +139,17 @@ test('platform change log is append-only across all executable source', () => {
+ });
+ 
+ test('real MySQL platform store rejects stale settings revisions without a change row', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const { createMySqlPool, migrateMySql, parseMySqlUrl } = await import('../src/mysql-database.mjs');
+-  const config = parseMySqlUrl(mysqlTestUrl);
++  const { createPgPool, migratePg, parsePgUrl } = await import('../src/pg-database.mjs');
++  const config = parsePgUrl(mysqlTestUrl);
+   assert.match(config.database, /_test$/);
+-  const { MYSQL_MIGRATIONS } = await import('../src/mysql-database.mjs');
+-  // The platform tables arrive in v11; later migrations may follow it.
+-  assert.ok(MYSQL_MIGRATIONS.some(item => item.version === 11 && item.name === 'platform-foundation'));
+-  const pool = createMySqlPool({ url: mysqlTestUrl });
++  const { PG_MIGRATIONS } = await import('../src/pg-database.mjs');
++  // MySQL brought the platform tables in v11; on PostgreSQL they are part of the v19 baseline.
++  assert.ok(PG_MIGRATIONS.some(item => item.version === 19 && item.sql.includes('CREATE TABLE "platform_settings"')));
++  const pool = createPgPool({ url: mysqlTestUrl });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_change_log');
+     await pool.query('DELETE FROM platform_settings');
+     const store = createPlatformStore({ pool, clock: () => new Date('2026-09-30T00:00:00.000Z') });
+@@ -165,12 +165,12 @@ test('real MySQL platform store rejects stale settings revisions without a chang
+ });
+ 
+ test('real MySQL reserves exactly ten of one hundred concurrent daily budget claims', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async () => {
+-  const { createMySqlPool, migrateMySql } = await import('../src/mysql-database.mjs');
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 20 });
++  const { createPgPool, migratePg } = await import('../src/pg-database.mjs');
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 20 });
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('DELETE FROM platform_call_budget_daily');
+     const store = createPlatformStore({ pool, clock: () => new Date('2026-09-30T00:00:00.000Z') });
+     const results = await Promise.all(Array.from({ length: 100 }, () => store.reserveBudget({ budgetDay: '2026-09-30', connectorId: 'test', agentId: 'agent', limitCalls: 10 })));
+diff --git a/tests/pool-starvation.integration.test.mjs b/tests/pool-starvation.integration.test.mjs
+index 1078757..fb6877a 100644
+--- a/tests/pool-starvation.integration.test.mjs
++++ b/tests/pool-starvation.integration.test.mjs
+@@ -9,7 +9,7 @@ import { request } from 'node:http';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+ import { createAnalysisDatabase, ANALYSIS_POOL_LIMITS } from '../src/analysis-database.mjs';
+-import { createMySqlPool, migrateMySql, parseMySqlUrl } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg, parsePgUrl } from '../src/pg-database.mjs';
+ import { createPlatformStore } from '../src/platform/platform-store.mjs';
+ import { createAgentRunner } from '../src/platform/agent-runner.mjs';
+ import { createReportDetailAdapter } from '../src/platform/adapters/report-detail.mjs';
+@@ -18,8 +18,8 @@ import { createCallGateway } from '../src/platform/call-middleware.mjs';
+ import { CONNECTORS } from '../src/platform/connectors.mjs';
+ import { enqueueReportDetails } from '../src/report-detail-queue.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
+-const skipReason = mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted';
++const mysqlTestUrl = process.env.PG_TEST_URL;
++const skipReason = mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted';
+ const FORM = '对公付款单';
+ const key = Buffer.alloc(32, 23);
+ const detailCard = AGENT_CATALOG.find(card => card.id === 'hly.report-detail');
+@@ -54,15 +54,13 @@ afterEach(async () => {
+ });
+ 
+ async function fixture({ limits, holders = [], detailGate = null } = {}) {
+-  const url = parseMySqlUrl(mysqlTestUrl);
+-  if (Number(url.port) === 3306) throw new Error('MYSQL_TEST_URL must not target port 3306');
+-  const setup = createMySqlPool({ url: mysqlTestUrl });
++  const url = parsePgUrl(mysqlTestUrl);
++  if (Number(url.port) === 3306) throw new Error('PG_TEST_URL must not target port 3306');
++  const setup = createPgPool({ url: mysqlTestUrl });
+   try {
+-    const [tables] = await setup.query('SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()');
+-    await setup.query('SET FOREIGN_KEY_CHECKS=0');
+-    try { for (const row of tables) await setup.query(`DROP TABLE IF EXISTS \`${String(row.TABLE_NAME).replaceAll('`', '``')}\``); }
+-    finally { await setup.query('SET FOREIGN_KEY_CHECKS=1'); }
+-    await migrateMySql(setup);
++    await setup.query('DROP SCHEMA IF EXISTS public CASCADE');
++    await setup.query('CREATE SCHEMA public');
++    await migratePg(setup);
+   } finally { await setup.end(); }
+   // The pools, gateway, runner and adapter wired exactly as scripts/start-analysis.mjs wires them.
+   const database = createAnalysisDatabase({
+@@ -122,7 +120,7 @@ test('the analysis pool gives up on a full pool and on a slow query instead of w
+   const again = [];
+   for (let i = 0; i < ANALYSIS_POOL_LIMITS.connectionLimit; i += 1) again.push(await within(e.pool.getConnection(), 3000, 'a connection after release'));
+   for (const connection of again) connection.release();
+-  await assert.rejects(within(e.pool.query('SELECT SLEEP(3)'), 2500, 'a slow query'), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
++  await assert.rejects(within(e.pool.query('SELECT pg_sleep(3)'), 2500, 'a slow query'), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+   assert.equal((await within(health(e.port), 3500, '/api/health after the pool recovered')).status, 200);
+ });
+ 
+diff --git a/tests/report-detail-queue.test.mjs b/tests/report-detail-queue.test.mjs
+index 6f4a5a4..fa467e3 100644
+--- a/tests/report-detail-queue.test.mjs
++++ b/tests/report-detail-queue.test.mjs
+@@ -276,8 +276,8 @@ test('report detail CLI holds its gateway and worker locks on the lock pool and
+   }
+   assert.equal(result.exitCode, 0);
+   // A lock taken: MySQL's GET_LOCK named it in the SQL; a PostgreSQL advisory lock carries the name's key as its parameter
+-  const locks = pool => pool.calls.filter(call => /GET_LOCK|pg_(try_)?advisory_lock\(/.test(call.sql))
+-    .map(call => (call.sql.includes('platform-gateway') ? 'gateway' : call.params[0] === namedLockKey(REPORT_DETAIL_QUEUE_LOCK_NAME) ? 'worker' : call.sql));
++  const locks = pool => pool.calls.filter(call => /pg_(try_)?advisory_lock\(/.test(call.sql))
++    .map(call => (call.params[0] === namedLockKey('platform-gateway:hly-prod') ? 'gateway' : call.params[0] === namedLockKey(REPORT_DETAIL_QUEUE_LOCK_NAME) ? 'worker' : call.sql));
+   assert.deepEqual(locks(requestPool), []);
+   assert.equal(locks(lockPool).filter(lock => lock === 'gateway').length, 1);
+   assert.equal(locks(lockPool).filter(lock => lock !== 'gateway').length, 1);
+diff --git a/tests/run-agent.test.mjs b/tests/run-agent.test.mjs
+index 30d7e8e..f6913c5 100644
+--- a/tests/run-agent.test.mjs
++++ b/tests/run-agent.test.mjs
+@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { parseArgs, runCli } from '../scripts/run-agent.mjs';
+ import * as runAgentModule from '../scripts/run-agent.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { openMySqlAnalysisStore } from '../src/mysql-analysis-store.mjs';
+ 
+ test('run-agent dry-run calls preview only and never starts a run', async () => {
+@@ -41,19 +41,20 @@ test('detail adapter scope derives company ids from the shared scope helper', ()
+   assert.equal(runAgentModule.companyIdsForScope({ companyId: 'company-a', allCompaniesInTenant: true }), undefined);
+ });
+ 
+-test('run-agent dry-run leaves every platform, analysis, and audit table unchanged in MySQL', { skip: process.env.MYSQL_TEST_URL ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted' }, async () => {
+-  const pool = createMySqlPool({ url: process.env.MYSQL_TEST_URL, connectionLimit: 5 });
++test('run-agent dry-run leaves every platform, analysis, and audit table unchanged in MySQL', { skip: process.env.PG_TEST_URL ? false : 'PG_TEST_URL is not set; integration database was not contacted' }, async () => {
++  const pool = createPgPool({ url: process.env.PG_TEST_URL, connectionLimit: 5 });
+   const key = Buffer.alloc(32, 9);
+   let runtimeCreated = false;
+   try {
+-    await migrateMySql(pool);
+-    const [tableRows] = await pool.query("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() AND (TABLE_NAME LIKE 'platform_%' OR TABLE_NAME LIKE 'analysis_%' OR TABLE_NAME LIKE 'audit_%') ORDER BY TABLE_NAME");
++    await migratePg(pool);
++    const [tableRows] = await pool.query("SELECT table_name AS \"TABLE_NAME\" FROM information_schema.tables WHERE table_schema=current_schema() AND (table_name LIKE 'platform_%' OR table_name LIKE 'analysis_%' OR table_name LIKE 'audit_%') ORDER BY table_name");
+     const snapshot = async () => {
+       const result = {};
+       for (const row of tableRows) {
+         const table = String(row.TABLE_NAME);
+-        const [counts] = await pool.query(`SELECT COUNT(*) AS count FROM \`${table}\``);
+-        const [checksums] = await pool.query(`CHECKSUM TABLE \`${table}\``);
++        const [counts] = await pool.query(`SELECT COUNT(*) AS count FROM "${table}"`);
++        // PostgreSQL has no CHECKSUM TABLE: the md5 of every row's text, in order
++        const [checksums] = await pool.query(`SELECT md5(COALESCE(string_agg(t::text, E'\\n' ORDER BY t::text), '')) AS "Checksum" FROM "${table}" t`);
+         result[table] = { count: Number(counts[0].count), checksum: checksums[0]?.Checksum ?? checksums[0]?.checksum ?? null };
+       }
+       return result;
+@@ -104,7 +105,7 @@ test('run-agent closes the store and both pools when building the runtime fails'
+   writeFileSync(join(dir, 'ca.pem'), 'synthetic test root\n');
+   const ended = [];
+   const fakePool = name => ({
+-    async getConnection() { return { async query(sql) { return /GET_LOCK/.test(sql) ? [[{ acquired: 0 }]] : [[]]; }, release() {} }; },
++    async getConnection() { return { async query(sql) { return /pg_try_advisory_lock\(/.test(sql) ? [[{ acquired: false }]] : [[]]; }, release() {} }; },
+     async query() { return [[]]; },
+     async end() { ended.push(name); },
+   });

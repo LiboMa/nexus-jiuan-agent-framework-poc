@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,6 +14,7 @@ const execFileAsync = promisify(execFile);
 const run = (file, args, options = {}) => execFileAsync(file, args, { env: childEnv(), ...options });
 const SCRIPT = fileURLToPath(new URL('../../bench/build-jiuan.sh', import.meta.url));
 const SOURCE = fileURLToPath(new URL('../../../source/九安自助审核平台-测试环境开发包-v0.7.10', import.meta.url));
+const PATCHES = fileURLToPath(new URL('../../../patches/jiuan-v0.7.10', import.meta.url));
 // 开发包里这两个目录含真实数据：测试只核对它们没进构件，不读内容
 const SENSITIVE = new Set(['seeds', 'database']);
 
@@ -76,6 +77,35 @@ test('构建不改 source/ 下的开发包', async t => {
   const before = await digestTree(SOURCE);
   await build(out);
   assert.equal(await digestTree(SOURCE), before);
+});
+
+test('--with-tests：带上整个开发包（tests/、seeds/、scripts/、deploy/、根目录的文件——九安的测试要读），再打 patches/…/tests/*.patch；不带时只有运行要的、没有 tests/；两种都不带 .env 和密钥类文件', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'jiuan-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  // 补丁目录：真的那几个代码补丁，再加一个只改测试文件的探针补丁
+  const patches = path.join(dir, 'patches');
+  await mkdir(path.join(patches, 'tests'), { recursive: true });
+  for (const name of await readdir(PATCHES)) if (name.endsWith('.patch')) await copyFile(path.join(PATCHES, name), path.join(patches, name));
+  const target = 'tests/agent-enablement.integration.test.mjs';
+  const original = await readFile(path.join(SOURCE, target), 'utf8');
+  const lines = original.split('\n');
+  await writeFile(path.join(patches, 'tests', '9999-probe.patch'),
+    `--- a/${target}\n+++ b/${target}\n@@ -1,2 +1,3 @@\n ${lines[0]}\n+// probe from tests patch\n ${lines[1]}\n`);
+  const plain = path.join(dir, 'plain'), withTests = path.join(dir, 'with-tests');
+  await run('bash', [SCRIPT, '--out', plain, '--patches', patches], { maxBuffer: 16 * 1024 * 1024 });
+  await run('bash', [SCRIPT, '--out', withTests, '--patches', patches, '--with-tests'], { maxBuffer: 16 * 1024 * 1024 });
+  assert.equal(await exists(path.join(plain, 'tests')), false, '普通构建不带 tests/');
+  assert.match(await readFile(path.join(withTests, target), 'utf8'), /^\/\/ probe from tests patch$/m, 'tests 补丁打上了');
+  assert.ok((await readdir(path.join(withTests, 'tests'))).filter(name => name.endsWith('.test.mjs')).length > 200);
+  // A patch that deletes a file (0017 removes the MySQL modules) leaves no empty file behind in either build
+  for (const out of [plain, withTests]) for (const removed of ['src/mysql-database.mjs', 'src/mysql-sync-database.mjs', 'src/mysql-sync-worker.mjs']) {
+    assert.equal(await exists(path.join(out, removed)), false, `${out} 不该还有 ${removed}`);
+  }
+  for (const name of ['seeds', 'database', 'deploy', 'scripts', 'server.mjs']) {
+    assert.equal(await exists(path.join(plain, name)), false, `普通构建不该有 ${name}`);
+    assert.equal(await exists(path.join(withTests, name)), true, `带测试的构建要有 ${name}`);
+  }
+  for (const out of [plain, withTests]) assert.equal(await exists(path.join(out, 'deploy', 'ecs', '.env.example')), false, `${out} 不带 .env*`);
 });
 
 // 页面测试用的最小 DOM：只够 platform-ops.js 画「Agent 接入」页、点按钮

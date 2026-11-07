@@ -1,0 +1,292 @@
+补丁 0013：单据详情的读取队列（src/report-detail-queue.mjs）和详情投影（src/report-detail-projection.mjs）改成 PostgreSQL。
+改了哪几类写法：
+- source_entity_id 是 JSON 文字 ["单据","版本"]（只有这个队列写这张表）：JSON_UNQUOTE(JSON_EXTRACT(x,'$[0]')) → (x::jsonb->>0)。
+- UPDATE … JOIN … LEFT JOIN … SET → UPDATE … SET … FROM (子查询里 LEFT JOIN) WHERE …；整批收尾的 UPDATE b LEFT JOIN (计数) →
+  批次自连接再左连接计数（UPDATE … FROM 是内连接）；SET 在 FROM 前面，所以完成时间的参数挪到第一个。
+- ON DUPLICATE KEY UPDATE → ON CONFLICT (sync_item_id / batch_id / document_id,content_version) DO UPDATE；里面的 IF(status IN …, VALUES(x), x)
+  → CASE WHEN audit_sync_items.status IN … THEN EXCLUDED.x ELSE audit_sync_items.x END（PG 的 SET 都看旧行，MySQL 从左往右看新值，这几处结果一样）。
+- 一句多行 INSERT … ON CONFLICT DO UPDATE 里同一个键不能出现两次（MySQL 让后一行覆盖前一行）：写之前按键去重、留最后一个。
+- 投影失败那句：MySQL 每一列都套同一个 IF(NOT (已是当前投影), 新值, 旧值) → ON CONFLICT … DO UPDATE SET 全部新值 WHERE NOT (已是当前投影)。
+- SUM(条件) → SUM((条件)::int)；命名锁 GET_LOCK / RELEASE_LOCK(CONCAT(名字, ':', DATABASE())) → acquireNamedLock / releaseNamedLock(名字)。
+
+diff --git a/src/report-detail-projection.mjs b/src/report-detail-projection.mjs
+index dc4d46b..700b235 100644
+--- a/src/report-detail-projection.mjs
++++ b/src/report-detail-projection.mjs
+@@ -1,4 +1,5 @@
+ import { createHash } from 'node:crypto';
++import { acquireNamedLock, releaseNamedLock } from './pg-database.mjs';
+ 
+ import { decryptReportDetail, encryptReportDetail } from './report-detail-queue.mjs';
+ import { projectReportDetail } from './analysis-line-projection.mjs';
+@@ -177,7 +178,7 @@ async function replaceProjection(client, item, { key, projectedAt }) {
+   await client.query(`INSERT INTO audit_report_projection_status(
+     document_id,content_version,projection_status,projector_version,projection_input_digest,attempts,next_retry_at,error_code,exhausted,projected_at
+   ) VALUES (?,?, 'projected', ?, ?, ?, NULL, NULL, 0, ?)
+-  ON DUPLICATE KEY UPDATE projection_status='projected',projector_version=VALUES(projector_version),projection_input_digest=VALUES(projection_input_digest),attempts=VALUES(attempts),next_retry_at=NULL,error_code=NULL,exhausted=0,projected_at=VALUES(projected_at)`, [
++  ON CONFLICT (document_id,content_version) DO UPDATE SET projection_status='projected',projector_version=EXCLUDED.projector_version,projection_input_digest=EXCLUDED.projection_input_digest,attempts=EXCLUDED.attempts,next_retry_at=NULL,error_code=NULL,exhausted=0,projected_at=EXCLUDED.projected_at`, [
+     documentId, contentVersion, PROJECTOR_VERSION, item.projection_input_digest, Number(item.attempts || 0) + 1, sqlDate(projectedAt),
+   ]);
+   return { projection, gapCount: projection.gaps.length, projected: true };
+@@ -204,25 +205,15 @@ async function markProjectionFailure(connection, item, error, projectedAt, { ret
+     await client.query(`INSERT INTO audit_report_projection_status(
+       document_id,content_version,projection_status,projector_version,projection_input_digest,attempts,next_retry_at,error_code,exhausted,projected_at
+     ) VALUES (?,?,?, ?, ?, ?, ?, ?, ?, NULL)
+-    ON DUPLICATE KEY UPDATE
+-      projection_status=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(projection_status), projection_status),
+-      projector_version=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(projector_version), projector_version),
+-      projection_input_digest=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(projection_input_digest), projection_input_digest),
+-      attempts=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(attempts), attempts),
+-      next_retry_at=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(next_retry_at), next_retry_at),
+-      error_code=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(error_code), error_code),
+-      exhausted=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), VALUES(exhausted), exhausted),
+-      projected_at=IF(NOT (projection_status='projected' AND projector_version=? AND projection_input_digest=?), NULL, projected_at)`, [
++    -- MySQL put the same IF(NOT (…)) on every column: all of them change, or (an already current projection) none does
++    ON CONFLICT (document_id,content_version) DO UPDATE SET
++      projection_status=EXCLUDED.projection_status,projector_version=EXCLUDED.projector_version,projection_input_digest=EXCLUDED.projection_input_digest,
++      attempts=EXCLUDED.attempts,next_retry_at=EXCLUDED.next_retry_at,error_code=EXCLUDED.error_code,exhausted=EXCLUDED.exhausted,projected_at=NULL
++    WHERE NOT (audit_report_projection_status.projection_status='projected' AND audit_report_projection_status.projector_version=?
++      AND audit_report_projection_status.projection_input_digest=?)`, [
+       item.document_id, item.content_version, status, PROJECTOR_VERSION, item.projection_input_digest, attempts,
+       nextRetryAt ? sqlDate(nextRetryAt) : null, code, exhausted ? 1 : 0,
+       PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+-      PROJECTOR_VERSION, item.projection_input_digest,
+     ]);
+   };
+   await withConnectionTransaction(connection, writeFailure);
+@@ -265,15 +256,14 @@ export async function projectStoredDetails({
+ } = {}) {
+   validateKey(key);
+   validateProjectionLimit(limit);
+-  if (!pool || typeof pool.query !== 'function' || typeof pool.getConnection !== 'function') throw Object.assign(new Error('A MySQL pool with getConnection is required.'), { code: 'REPORT_DETAIL_PROJECTION_CONFIGURATION' });
++  if (!pool || typeof pool.query !== 'function' || typeof pool.getConnection !== 'function') throw Object.assign(new Error('A database pool with getConnection is required.'), { code: 'REPORT_DETAIL_PROJECTION_CONFIGURATION' });
+   validateRetryDelays(retryBaseDelayMs, retryMaxDelayMs);
+   const lock = await pool.getConnection();
+   let locked = false;
+   const results = [];
+   let selected = [];
+   try {
+-    const [lockRows] = await lock.query("SELECT GET_LOCK(CONCAT(?, ':', DATABASE()), 0) AS acquired", [REPORT_DETAIL_PROJECTION_LOCK_NAME]);
+-    if (Number(lockRows?.[0]?.acquired) !== 1) {
++    if (!(await acquireNamedLock(lock, REPORT_DETAIL_PROJECTION_LOCK_NAME, 0))) {
+       return { locked: false, message: '已有投影在运行', selected: 0, projected: 0, gaps: 0, retryableFailed: 0, permanentFailed: 0, pendingRetry: 0, abandoned: 0 };
+     }
+     locked = true;
+@@ -315,13 +305,13 @@ export async function projectStoredDetails({
+     if (isConnectionLoss(error)) return { ...projectionSummary(results, selected, 'lost'), locked: 'lost', cause: error };
+     throw error;
+   } finally {
+-    if (locked) { try { await lock.query("SELECT RELEASE_LOCK(CONCAT(?, ':', DATABASE()))", [REPORT_DETAIL_PROJECTION_LOCK_NAME]); } catch { /* best effort */ } }
++    if (locked) { try { await releaseNamedLock(lock, REPORT_DETAIL_PROJECTION_LOCK_NAME); } catch { /* best effort */ } }
+     lock.release();
+   }
+ }
+ 
+ export async function resetProjectionFailures({ pool, documentIds } = {}) {
+-  if (!pool || typeof pool.getConnection !== 'function') throw Object.assign(new Error('A MySQL pool with getConnection is required.'), { code: 'REPORT_DETAIL_PROJECTION_CONFIGURATION' });
++  if (!pool || typeof pool.getConnection !== 'function') throw Object.assign(new Error('A database pool with getConnection is required.'), { code: 'REPORT_DETAIL_PROJECTION_CONFIGURATION' });
+   if (documentIds !== undefined && (!Array.isArray(documentIds) || documentIds.some(id => typeof id !== 'string' || !id))) {
+     throw Object.assign(new Error('documentIds must be an array of non-empty strings.'), { code: 'REPORT_DETAIL_PROJECTION_CONFIGURATION' });
+   }
+diff --git a/src/report-detail-queue.mjs b/src/report-detail-queue.mjs
+index 9d2062b..a491fb2 100644
+--- a/src/report-detail-queue.mjs
++++ b/src/report-detail-queue.mjs
+@@ -1,6 +1,7 @@
+ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+ import { bindAnalysisDetail } from './analysis-evidence-binding.mjs';
+ import { analysisDocumentType } from './analysis-normalize.mjs';
++import { acquireNamedLock, releaseNamedLock } from './pg-database.mjs';
+ 
+ // Queue timestamps use one injected application clock because the database may run on another host.
+ 
+@@ -20,8 +21,13 @@ const text = (value, max = 191) => {
+   if (typeof value !== 'string' || !value.trim() || value.length > max) throw Object.assign(new Error('队列字段无效。'), { code: 'REPORT_DETAIL_VALIDATION' });
+   return value.trim();
+ };
++// source_entity_id is the JSON text ["<document id>","<content version>"] (encodeSource); only this queue writes the table
++const SOURCE_DOCUMENT = alias => `(${alias}source_entity_id::jsonb->>0)`;
++const SOURCE_VERSION = alias => `(${alias}source_entity_id::jsonb->>1)`;
++// One multi-row INSERT … ON CONFLICT DO UPDATE may not name a key twice (MySQL let the later row win): keep the last of each key
++const lastPerKey = (rows, keyOf) => [...new Map(rows.map(row => [keyOf(row), row])).values()];
+ const resultRows = async (pool, sql, params = []) => {
+-  if (!pool || typeof pool.query !== 'function') throw Object.assign(new Error('需要 MySQL pool。'), { code: 'REPORT_DETAIL_CONFIGURATION' });
++  if (!pool || typeof pool.query !== 'function') throw Object.assign(new Error('需要数据库 pool。'), { code: 'REPORT_DETAIL_CONFIGURATION' });
+   const [rows] = await pool.query(sql, params);
+   return Array.isArray(rows) ? rows : [];
+ };
+@@ -157,29 +163,31 @@ export function reportDetailCorporateFlag(documentOrFormName) {
+ async function markSupersededForCandidate(pool, documentId, contentVersion, now) {
+   await pool.query(`UPDATE audit_sync_items SET status='stale',finished_at=?,lease_owner=NULL,lease_expires_at=NULL,next_retry_at=NULL,
+     error_code='SKIPPED_SUPERSEDED',error_message='A newer document version is available.'
+-    WHERE entity_type=? AND status='queued' AND JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[0]'))=?
+-      AND JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[1]'))<>?`,
++    WHERE entity_type=? AND status='queued' AND ${SOURCE_DOCUMENT('')}=?
++      AND ${SOURCE_VERSION('')}<>?`,
+   [sqlDate(now), ENTITY_TYPE, String(documentId), contentVersion]);
+ }
+ 
+ async function markSupersededBeforeClaim(pool, now) {
+   while (true) {
+     const rows = await resultRows(pool, `SELECT i.sync_item_id FROM audit_sync_items i
+-      JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))
++      JOIN audit_documents d ON d.document_id=${SOURCE_DOCUMENT('i.')}
+       LEFT JOIN analysis_documents ad ON ad.connection_id=d.source_connection_id AND ad.id=d.document_id
+       WHERE i.entity_type=? AND i.status='queued'
+-        AND (ad.version IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[1]'))<>ad.version)
++        AND (ad.version IS NULL OR ${SOURCE_VERSION('i.')}<>ad.version)
+       ORDER BY i.sync_item_id LIMIT 500`, [ENTITY_TYPE]);
+     if (!rows.length) return;
+     const syncItemIds = rows.map(row => row.sync_item_id);
+     const placeholders = syncItemIds.map(() => '?').join(',');
++    // UPDATE … FROM joins inner; the document's head comes in through a left join in the FROM list (MySQL: UPDATE … LEFT JOIN)
+     await pool.query(`UPDATE audit_sync_items i
+-      JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))
+-      LEFT JOIN analysis_documents ad ON ad.connection_id=d.source_connection_id AND ad.id=d.document_id
+-      SET i.status='stale',i.finished_at=?,i.lease_owner=NULL,i.lease_expires_at=NULL,i.next_retry_at=NULL,
+-        i.error_code=CASE WHEN ad.version IS NULL THEN 'SKIPPED_DOCUMENT_MISSING' ELSE 'SKIPPED_SUPERSEDED' END,
+-        i.error_message=CASE WHEN ad.version IS NULL THEN 'The source document is missing.' ELSE 'A newer document version is available.' END
+-      WHERE i.entity_type=? AND i.status='queued' AND i.sync_item_id IN (${placeholders})`, [sqlDate(now), ENTITY_TYPE, ...syncItemIds]);
++      SET status='stale',finished_at=?,lease_owner=NULL,lease_expires_at=NULL,next_retry_at=NULL,
++        error_code=CASE WHEN x.version IS NULL THEN 'SKIPPED_DOCUMENT_MISSING' ELSE 'SKIPPED_SUPERSEDED' END,
++        error_message=CASE WHEN x.version IS NULL THEN 'The source document is missing.' ELSE 'A newer document version is available.' END
++      FROM (SELECT s.sync_item_id,ad.version FROM audit_sync_items s
++        JOIN audit_documents d ON d.document_id=${SOURCE_DOCUMENT('s.')}
++        LEFT JOIN analysis_documents ad ON ad.connection_id=d.source_connection_id AND ad.id=d.document_id) x
++      WHERE x.sync_item_id=i.sync_item_id AND i.entity_type=? AND i.status='queued' AND i.sync_item_id IN (${placeholders})`, [sqlDate(now), ENTITY_TYPE, ...syncItemIds]);
+   }
+ }
+ 
+@@ -241,14 +249,14 @@ export async function enqueueReportDetails({ pool, analysisStore, formNameInclud
+     const tenantId = first?.candidate?.document?.tenantId || normalized.find(item => item.companyId)?.candidate?.tenantId || 'unknown';
+     const scopeHash = digest(JSON.stringify({ tenantId, companyIds: companyIds || null }));
+     await client.query(`INSERT INTO audit_sync_batches(batch_id,source_connection_id,tenant_id,scope_hash,idempotency_key,status,completeness_state,started_at)
+-      VALUES (?,?,?,?,?,'running','partial',?) ON DUPLICATE KEY UPDATE status='running',scope_hash=VALUES(scope_hash)`,
++      VALUES (?,?,?,?,?,'running','partial',?) ON CONFLICT (batch_id) DO UPDATE SET status='running',scope_hash=EXCLUDED.scope_hash`,
+     [batchId, sourceConnectionId, tenantId, scopeHash, `report-detail:${batchId}`.slice(0, 191), sqlDate(now)]);
+     const persistSkipped = async (item, reason) => {
+       if (!item.documentId || !HASH.test(item.contentVersion)) return;
+       const sourceEntityId = encodeSource(String(item.documentId), item.contentVersion);
+       const syncItemId = digest(`report-detail-queue:${item.documentId}:${item.contentVersion}`);
+       await client.query(`INSERT INTO audit_sync_items(sync_item_id,batch_id,entity_type,source_entity_id,status,attempt_count,next_retry_at,error_code,error_message,created_at)
+-        VALUES (?,?,?,?,'skipped',0,?,?,?,?) ON DUPLICATE KEY UPDATE status='skipped',error_code=VALUES(error_code),error_message=VALUES(error_message)`,
++        VALUES (?,?,?,?,'skipped',0,?,?,?,?) ON CONFLICT (sync_item_id) DO UPDATE SET status='skipped',error_code=EXCLUDED.error_code,error_message=EXCLUDED.error_message`,
+       [syncItemId, batchId, ENTITY_TYPE, sourceEntityId, null, `SKIPPED_${reason.replaceAll('-', '_').toUpperCase()}`, reason, sqlDate(now)]);
+     };
+     // Large sweeps use set-based reads/writes. The small path below keeps the
+@@ -287,7 +295,7 @@ export async function enqueueReportDetails({ pool, analysisStore, formNameInclud
+       const currentVersion = new Map(validCandidates.map(item => [String(item.documentId), item.contentVersion]));
+       const candidateDocumentIds = [...currentVersion.keys()];
+       const candidateSourceIds = [...new Set(validCandidates.map(item => encodeSource(String(item.documentId), item.contentVersion)))];
+-      const queuedRows = await readInChunks(candidateDocumentIds, list => `SELECT sync_item_id,source_entity_id FROM audit_sync_items WHERE entity_type=? AND status='queued' AND JSON_UNQUOTE(JSON_EXTRACT(source_entity_id,'$[0]')) IN (${list})`, [ENTITY_TYPE]);
++      const queuedRows = await readInChunks(candidateDocumentIds, list => `SELECT sync_item_id,source_entity_id FROM audit_sync_items WHERE entity_type=? AND status='queued' AND ${SOURCE_DOCUMENT('')} IN (${list})`, [ENTITY_TYPE]);
+       const supersededIds = queuedRows.filter(row => {
+         const source = decodeSource(row.source_entity_id);
+         return source && currentVersion.has(source.documentId) && currentVersion.get(source.documentId) !== source.contentVersion;
+@@ -307,11 +315,11 @@ export async function enqueueReportDetails({ pool, analysisStore, formNameInclud
+           queued.push({ syncItemId: digest(`report-detail-queue:${candidate.documentId}:${candidate.contentVersion}`), batchId, documentId: String(candidate.documentId), companyId: String(candidate.companyId), formName: candidate.formName, number: candidate.number, contentVersion: candidate.contentVersion, document: candidate.candidate.document || null });
+         }
+       }
+-      for (const group of chunks(persistableSkipped)) {
+-        await client.query(`INSERT INTO audit_sync_items(sync_item_id,batch_id,entity_type,source_entity_id,status,attempt_count,next_retry_at,error_code,error_message,created_at) VALUES ${group.map(() => "(?,?,?,?,'skipped',0,?,?,?,?)").join(',')} ON DUPLICATE KEY UPDATE status='skipped',error_code=VALUES(error_code),error_message=VALUES(error_message)`, group.flatMap(item => [digest(`report-detail-queue:${item.documentId}:${item.contentVersion}`), batchId, ENTITY_TYPE, encodeSource(item.documentId, item.contentVersion), null, `SKIPPED_${item.reason.replaceAll('-', '_').toUpperCase()}`, item.reason, sqlDate(now)]));
++      for (const group of chunks(lastPerKey(persistableSkipped, item => `${item.documentId}\u0000${item.contentVersion}`))) {
++        await client.query(`INSERT INTO audit_sync_items(sync_item_id,batch_id,entity_type,source_entity_id,status,attempt_count,next_retry_at,error_code,error_message,created_at) VALUES ${group.map(() => "(?,?,?,?,'skipped',0,?,?,?,?)").join(',')} ON CONFLICT (sync_item_id) DO UPDATE SET status='skipped',error_code=EXCLUDED.error_code,error_message=EXCLUDED.error_message`, group.flatMap(item => [digest(`report-detail-queue:${item.documentId}:${item.contentVersion}`), batchId, ENTITY_TYPE, encodeSource(item.documentId, item.contentVersion), null, `SKIPPED_${item.reason.replaceAll('-', '_').toUpperCase()}`, item.reason, sqlDate(now)]));
+       }
+-      for (const group of chunks(queued)) {
+-        await client.query(`INSERT INTO audit_sync_items(sync_item_id,batch_id,entity_type,source_entity_id,status,attempt_count,next_retry_at,created_at) VALUES ${group.map(() => "(?,?,?,?,'queued',0,NULL,?)").join(',')} ON DUPLICATE KEY UPDATE next_retry_at=IF(status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}),VALUES(created_at),next_retry_at),status=IF(status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}),'queued',status),batch_id=VALUES(batch_id),error_code=NULL,error_message=NULL`, group.flatMap(item => [item.syncItemId, batchId, ENTITY_TYPE, encodeSource(item.documentId, item.contentVersion), sqlDate(now)]));
++      for (const group of chunks(lastPerKey(queued, item => item.syncItemId))) {
++        await client.query(`INSERT INTO audit_sync_items(sync_item_id,batch_id,entity_type,source_entity_id,status,attempt_count,next_retry_at,created_at) VALUES ${group.map(() => "(?,?,?,?,'queued',0,NULL,?)").join(',')} ON CONFLICT (sync_item_id) DO UPDATE SET next_retry_at=CASE WHEN audit_sync_items.status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}) THEN EXCLUDED.created_at ELSE audit_sync_items.next_retry_at END,status=CASE WHEN audit_sync_items.status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}) THEN 'queued' ELSE audit_sync_items.status END,batch_id=EXCLUDED.batch_id,error_code=NULL,error_message=NULL`, group.flatMap(item => [item.syncItemId, batchId, ENTITY_TYPE, encodeSource(item.documentId, item.contentVersion), sqlDate(now)]));
+       }
+       return { queued: queued.length, skipped, items: queued };
+     }
+@@ -330,7 +338,7 @@ export async function enqueueReportDetails({ pool, analysisStore, formNameInclud
+       if (existingItems.length) continue;
+       const syncItemId = digest(`report-detail-queue:${item.documentId}:${item.contentVersion}`);
+       await client.query(`INSERT INTO audit_sync_items(sync_item_id,batch_id,entity_type,source_entity_id,status,attempt_count,next_retry_at,created_at)
+-        VALUES (?,?,?,?,'queued',0,NULL,?) ON DUPLICATE KEY UPDATE next_retry_at=IF(status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}),VALUES(created_at),next_retry_at),status=IF(status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}),'queued',status),batch_id=VALUES(batch_id),error_code=NULL,error_message=NULL`, [syncItemId, batchId, ENTITY_TYPE, sourceEntityId, sqlDate(now)]);
++        VALUES (?,?,?,?,'queued',0,NULL,?) ON CONFLICT (sync_item_id) DO UPDATE SET next_retry_at=CASE WHEN audit_sync_items.status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}) THEN EXCLUDED.created_at ELSE audit_sync_items.next_retry_at END,status=CASE WHEN audit_sync_items.status IN (${requeueFailed ? "'failed','skipped','stale'" : "'skipped','stale'"}) THEN 'queued' ELSE audit_sync_items.status END,batch_id=EXCLUDED.batch_id,error_code=NULL,error_message=NULL`, [syncItemId, batchId, ENTITY_TYPE, sourceEntityId, sqlDate(now)]);
+       queued.push({ syncItemId, batchId, documentId: String(item.documentId), companyId: String(item.companyId), formName: item.formName, number: item.number, contentVersion: item.contentVersion, document: item.candidate.document || null });
+     }
+     return { queued: queued.length, skipped, items: queued };
+@@ -357,8 +365,8 @@ export async function claimReportDetail({ pool, workerId = `report-detail-${proc
+     const params = [ENTITY_TYPE, sqlDate(now)];
+     if (syncItemId !== null) params.push(syncItemId);
+     const rows = await resultRows(client, `SELECT i.sync_item_id,i.batch_id,i.source_entity_id,i.attempt_count,d.document_id,d.tenant_id,d.company_id,d.document_number,ad.form_name,d.legal_entity_id
+-      FROM audit_sync_items i JOIN audit_documents d ON d.document_id=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[0]'))
+-      JOIN analysis_documents ad ON ad.connection_id=d.source_connection_id AND ad.id=d.document_id AND ad.version=JSON_UNQUOTE(JSON_EXTRACT(i.source_entity_id,'$[1]'))
++      FROM audit_sync_items i JOIN audit_documents d ON d.document_id=${SOURCE_DOCUMENT('i.')}
++      JOIN analysis_documents ad ON ad.connection_id=d.source_connection_id AND ad.id=d.document_id AND ad.version=${SOURCE_VERSION('i.')}
+       WHERE i.entity_type=? AND i.status='queued' AND (i.next_retry_at IS NULL OR i.next_retry_at<=?) ${itemFilter}
+       ORDER BY COALESCE(i.next_retry_at,i.created_at),i.created_at,i.sync_item_id LIMIT 1 FOR UPDATE SKIP LOCKED`, params);
+     const row = rows[0]; if (!row) return null;
+@@ -377,7 +385,7 @@ export async function completeReportDetail({ pool, job, detail, key, now = new D
+   const responseSha256 = digest(JSON.stringify(detail)), detailDigest = projectionInputDigest(detail);
+   return withTransaction(pool, async client => {
+     await client.query(`INSERT INTO audit_report_details(document_id,content_version,detail_digest,company_id,form_name,status,response_sha256,fetched_at,payload_ciphertext)
+-      VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE detail_digest=VALUES(detail_digest),status=VALUES(status),response_sha256=VALUES(response_sha256),fetched_at=VALUES(fetched_at),payload_ciphertext=VALUES(payload_ciphertext)`,
++      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (document_id,content_version) DO UPDATE SET detail_digest=EXCLUDED.detail_digest,status=EXCLUDED.status,response_sha256=EXCLUDED.response_sha256,fetched_at=EXCLUDED.fetched_at,payload_ciphertext=EXCLUDED.payload_ciphertext`,
+     [job.documentId, job.contentVersion, detailDigest, job.company_id || job.companyId, job.form_name || job.formName, 'succeeded', responseSha256, sqlDate(fetchedAt), payload]);
+     const [result] = await client.query(`UPDATE audit_sync_items SET status='succeeded',finished_at=?,lease_owner=NULL,lease_expires_at=NULL,next_retry_at=NULL,error_code=NULL,error_message=NULL
+       WHERE sync_item_id=? AND entity_type=? AND status='running' AND lease_owner=?`, [sqlDate(fetchedAt), job.sync_item_id, ENTITY_TYPE, job.workerId]);
+@@ -434,22 +442,24 @@ export async function reportDetailProgress({ pool, now = new Date(), leaseMs = 2
+ }
+ 
+ async function finishReportDetailBatches({ pool, now }) {
++  // MySQL: UPDATE b LEFT JOIN (counts) i. UPDATE … FROM joins inner, so the batch joins itself and the counts come in left
++  // joined; the finish time is now the first parameter (SET comes before FROM).
+   await pool.query(`UPDATE audit_sync_batches b
+-    LEFT JOIN (
+-      SELECT batch_id,COUNT(*) AS item_count,
+-        SUM(status='succeeded') AS succeeded_item_count,
+-        SUM(status='failed') AS failed_item_count,
+-        SUM(status IN ('queued','running')) AS pending_item_count
+-      FROM audit_sync_items WHERE entity_type=? GROUP BY batch_id
+-    ) i ON i.batch_id=b.batch_id
+-    SET b.status=CASE
++    SET status=CASE
+         WHEN COALESCE(i.failed_item_count,0)=0 THEN 'succeeded'
+         WHEN COALESCE(i.succeeded_item_count,0)=0 THEN 'failed'
+         ELSE 'partial' END,
+-      b.finished_at=?,b.item_count=COALESCE(i.item_count,0),
+-      b.succeeded_item_count=COALESCE(i.succeeded_item_count,0),b.failed_item_count=COALESCE(i.failed_item_count,0)
+-    WHERE b.status='running' AND b.idempotency_key LIKE 'report-detail:%'
+-      AND COALESCE(i.pending_item_count,0)=0`, [ENTITY_TYPE, sqlDate(now)]);
++      finished_at=?,item_count=COALESCE(i.item_count,0),
++      succeeded_item_count=COALESCE(i.succeeded_item_count,0),failed_item_count=COALESCE(i.failed_item_count,0)
++    FROM audit_sync_batches self LEFT JOIN (
++      SELECT batch_id,COUNT(*) AS item_count,
++        SUM((status='succeeded')::int) AS succeeded_item_count,
++        SUM((status='failed')::int) AS failed_item_count,
++        SUM((status IN ('queued','running'))::int) AS pending_item_count
++      FROM audit_sync_items WHERE entity_type=? GROUP BY batch_id
++    ) i ON i.batch_id=self.batch_id
++    WHERE self.batch_id=b.batch_id AND b.status='running' AND b.idempotency_key LIKE 'report-detail:%'
++      AND COALESCE(i.pending_item_count,0)=0`, [sqlDate(now), ENTITY_TYPE]);
+ }
+ 
+ function retryable(error) {
+@@ -480,8 +490,7 @@ export async function runReportDetailWorker({ pool, lockPool = pool, client, ana
+   const lock = await lockPool.getConnection();
+   let locked = false;
+   try {
+-    const [rows] = await lock.query("SELECT GET_LOCK(CONCAT(?, ':', DATABASE()), 0) AS acquired", [LOCK_NAME]);
+-    if (Number(rows?.[0]?.acquired) !== 1) return { locked: false, ...(await reportDetailProgress({ pool })) };
++    if (!(await acquireNamedLock(lock, LOCK_NAME, 0))) return { locked: false, ...(await reportDetailProgress({ pool })) };
+     locked = true;
+     const clock = () => { const value = now(); return value instanceof Date ? value.getTime() : Number(value); };
+     let processed = 0, succeeded = 0, failed = 0, stoppedBy = null, lastRequestAt = null;
+@@ -540,7 +549,7 @@ export async function runReportDetailWorker({ pool, lockPool = pool, client, ana
+     const progress = await reportDetailProgress({ pool, now: new Date(clock()), leaseMs });
+     return { ...progress, expiredLeases, processed, succeeded, failed, ...(stoppedBy ? { stoppedBy } : {}) };
+   } finally {
+-    if (locked) { try { await lock.query("SELECT RELEASE_LOCK(CONCAT(?, ':', DATABASE()))", [LOCK_NAME]); } catch { /* best effort */ } }
++    if (locked) { try { await releaseNamedLock(lock, LOCK_NAME); } catch { /* best effort */ } }
+     lock.release();
+   }
+ }

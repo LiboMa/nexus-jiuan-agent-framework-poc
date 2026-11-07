@@ -95,7 +95,7 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
 v0.7.10</span>交付文档索引</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-05</td></tr>
     <tr><th scope="row">状态</th><td>只留新 UI（九安 v0.7.10
 测试台）；v0.5.3 PoC 已拿掉</td></tr>
     <tr><th scope="row">范围</th><td>audit-nexus/ 全部交付文档</td></tr>
@@ -113,11 +113,11 @@ v0.7.10</span>交付文档索引</h1>
 <a href="../assets/diagrams/bench-overview.svg" class="figure-link"
 target="_blank" rel="noopener"><img
 src="../assets/diagrams/bench-overview.svg" loading="lazy"
-alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
+alt="系统总览：浏览器经 CloudFront 到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的 PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG" /></a>
 <figcaption>系统总览：浏览器经 CloudFront
-到实例上的测试台外壳（新前端、九安 v0.7.10 副本、MySQL、知识库的
-PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经 A2A 调 PG 知识库
-Agent，两个 Agent 都经数据连接器到 PG</figcaption>
+到实例上的测试台外壳（新前端、九安 v0.7.10 副本、九安的
+PostgreSQL、知识库的 PG）；九安经 A2A 调 Nexus 上的审核 Agent，外壳经
+A2A 调 PG 知识库 Agent，两个 Agent 都经数据连接器到 PG</figcaption>
 </figure>
 <p><strong>Finance-Audit-Nexus-PoC v0.7.10</strong>（2026-10-26
 封板；2026-11-02 起只留新 UI）。现在的状态：</p>
@@ -141,8 +141,9 @@ Agent「知识库文档管家（PG
 与发布（<code>audit-agent/</code>、<code>knowledgebase-writer-agent-pg/</code>、<code>skills/nexus-ai-operator</code>）。机器类型以后用
 m7g.xlarge（arm64）。</li>
 </ul>
-<p><strong>先读<a
-href="package-guide.html">交付包指南</a></strong>：包里有什么、怎么校验、谁先读什么、怎么验收。<strong>部署一整套照<a
+<p><strong>第一次接触先读<a
+href="quick-guide.html">快速上手</a></strong>；包里有什么、怎么校验、怎么验收看<a
+href="package-guide.html">交付包指南</a>；<strong>部署一整套照<a
 href="delivery-guide.html">交付指南</a></strong>。这里是交付用的全部文档；每份都有
 Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打开。</p>
 <div class="table-wrap">
@@ -156,19 +157,29 @@ Markdown（源）和 HTML（生成）两个版本，HTML 用浏览器直接打�
 </thead>
 <tbody>
 <tr>
+<td><a href="quick-guide.html">快速上手</a></td>
+<td><strong>给第一次接触的人</strong>：这是什么、按角色从哪开始、10
+分钟走一遍单据池和知识库、管理员怎么把 Nexus 上的 Agent
+接上、从零部署的最短路径、日常维护和常见问题</td>
+<td>所有人，第一份</td>
+</tr>
+<tr>
+<td><a href="../architecture.html">架构与技术评估</a></td>
+<td>系统由哪几块组成、为什么这样搭、数据放在哪、安全、部署架构；规模和实测数字、风险与技术债、上生产前要改的</td>
+<td>应用开发、Agent 开发、项目负责人</td>
+</tr>
+<tr>
+<td><a href="../workflows.html">工作流</a></td>
+<td>一张单从进来到复核、接入
+Agent、知识库、开发与变更、改提示词、部署、换机器、出包交接、日常运维，各按什么顺序做；瓶颈与改进</td>
+<td>所有人</td>
+</tr>
+<tr>
 <td><a href="delivery-guide.html">交付指南（Delivery Guide）</a></td>
 <td><strong>给部署的人</strong>：从零部署三块（PG 与知识库后端 → Nexus
 上的 Agent 与发布 →
 前端）、端到端验收、日常变更与回滚、交接；现在的环境</td>
 <td>部署的人、项目负责人，第一份</td>
-</tr>
-<tr>
-<td><a href="quick-guide.html">快速上手：在「Agent 接入」页接上 Nexus
-上的 Agent</a></td>
-<td><strong>给管理员</strong>：在新前端和线上 Nexus AI
-之间，一步步生成密钥、连接 Nexus、启用、设为审批
-Agent、测试、在单据池里用；日常维护和常见问题</td>
-<td>管理员、Agent 开发者，第一份</td>
 </tr>
 <tr>
 <td><a href="developer-guide.html">九安开发者快速对接指南</a></td>
@@ -186,7 +197,7 @@ Agent、再分批部署前端；要九安提供什么、风险</td>
 <tr>
 <td><a href="package-guide.html">交付包指南</a></td>
 <td>交付包里有什么、怎么生成和校验、按角色从哪读起、验收清单、签收</td>
-<td>所有人，第一份</td>
+<td>所有人</td>
 </tr>
 <tr>
 <td><a href="skills-guide.html">Skills 配置指南</a></td>
@@ -198,11 +209,6 @@ nexus-ai-operator；排障、安全底线</td>
 <td><a href="handover.html">交接文档</a></td>
 <td>有哪些东西、在哪、谁负责、还有什么没做完、接手第一周做什么</td>
 <td>所有人</td>
-</tr>
-<tr>
-<td><a href="../architecture.html">架构</a></td>
-<td>测试台跑着的样子、每一块做什么、几条调用链、三块部署</td>
-<td>应用开发、Agent 开发</td>
 </tr>
 <tr>
 <td><a href="deploy-iteration.html">部署与迭代规范</a></td>
@@ -217,8 +223,10 @@ nexus-ai-operator；排障、安全底线</td>
 </tbody>
 </table>
 </div>
-<p>使用说明在代码旁边：<a href="../../poc/README.md">PoC
-说明</a>（新前端、Agent 接入、知识库、我的规则、端到端测试）、<a
+<p>测试台和知识库 Agent 之间的接口约定：<a
+href="../kb-rules-v1.html"><code>kb.rules/v1</code></a>。使用说明在代码旁边：<a
+href="../../poc/README.md">PoC 说明</a>（新前端、Agent
+接入、知识库、我的规则、端到端测试）、<a
 href="../../poc/infra/README.md">部署说明</a>、<a
 href="../../audit-agent/README.md">审核 Agent 说明</a>、知识库的 <a
 href="../../kb/README.md">kb/README.md</a> 与 <a

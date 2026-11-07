@@ -1,0 +1,81 @@
+补丁 0009 的测试：tests/pg-named-locks.test.mjs。
+
+diff --git a/tests/pg-named-locks.test.mjs b/tests/pg-named-locks.test.mjs
+new file mode 100644
+index 0000000..f0f8182
+--- /dev/null
++++ b/tests/pg-named-locks.test.mjs
+@@ -0,0 +1,73 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { acquireNamedLock, createPgPool, isNamedLockUsed, namedLockKey, parsePgUrl, releaseNamedLock } from '../src/pg-database.mjs';
++
++// 命名锁（原来的 GET_LOCK / RELEASE_LOCK / IS_USED_LOCK）换成会话级的 advisory 锁：锁跟着连接走，连接断了锁就没了。
++const url = process.env.PG_TEST_URL;
++const real = { skip: !url };
++
++test('锁的键：sha256(名字) 的前 8 字节当有符号 64 位整数；同一个名字每次一样，不同名字不一样', () => {
++  const key = namedLockKey('jiuan:pg:schema');
++  assert.equal(typeof key, 'bigint');
++  assert.equal(key, namedLockKey('jiuan:pg:schema'));
++  assert.notEqual(key, namedLockKey('jiuan:pg:schemb'));
++  assert.ok(key >= -(2n ** 63n) && key < 2n ** 63n);
++});
++
++async function twoConnections(t) {
++  assert.match(parsePgUrl(url).database, /_test$/);
++  const pool = createPgPool({ url, connectionLimit: 4 });
++  const a = await pool.getConnection(), b = await pool.getConnection();
++  t.after(async () => { a.release(); b.release(); await pool.end(); });
++  return { pool, a, b };
++}
++
++test('两个连接抢同一把锁：先到的拿到；后到的等满上限拿不到（回 false，对应 GET_LOCK 的 0）；先到的放了，后到的就拿到', real, async t => {
++  const { a, b } = await twoConnections(t);
++  const name = `test-lock:${process.pid}:${Date.now()}`;
++  assert.equal(await acquireNamedLock(a, name, 1), true);
++  const started = Date.now();
++  assert.equal(await acquireNamedLock(b, name, 1), false);
++  assert.ok(Date.now() - started >= 900, '要等满 1 秒');
++  assert.equal(await acquireNamedLock(b, name, 0), false, '0 秒：只试一次');
++  assert.equal(await releaseNamedLock(a, name), true);
++  assert.equal(await acquireNamedLock(b, name, 1), true);
++  assert.equal(await releaseNamedLock(b, name), true);
++  // 等过锁以后连接照常（lock_timeout 已经恢复）
++  const [[row]] = await b.query('SELECT 1 AS one');
++  assert.equal(row.one, 1);
++});
++
++test('放锁：不是本连接占着的回 false（对应 RELEASE_LOCK 的 0）；谁占着：回那个连接的后端编号，没人占回 null', real, async t => {
++  const { a, b } = await twoConnections(t);
++  const name = `test-lock:${process.pid}:${Date.now()}:who`;
++  assert.equal(await isNamedLockUsed(a, name), null);
++  assert.equal(await acquireNamedLock(a, name, 0), true);
++  assert.equal(await releaseNamedLock(b, name), false);
++  const holder = await isNamedLockUsed(b, name);
++  assert.equal(holder, a.threadId);
++  const [[pid]] = await a.query('SELECT pg_backend_pid() AS pid');
++  assert.equal(holder, pid.pid);
++  await releaseNamedLock(a, name);
++  assert.equal(await isNamedLockUsed(b, name), null);
++});
++
++test('连接断了锁就放了：占锁的连接销毁后，别的连接马上拿得到', real, async t => {
++  assert.match(parsePgUrl(url).database, /_test$/);
++  const pool = createPgPool({ url, connectionLimit: 4 });
++  t.after(() => pool.end());
++  const name = `test-lock:${process.pid}:${Date.now()}:gone`;
++  const a = await pool.getConnection();
++  assert.equal(await acquireNamedLock(a, name, 0), true);
++  a.destroy();
++  const b = await pool.getConnection();
++  try {
++    let got = false;
++    for (let attempt = 0; attempt < 20 && !got; attempt += 1) {
++      got = await acquireNamedLock(b, name, 0);
++      if (!got) await new Promise(resolve => setTimeout(resolve, 100));
++    }
++    assert.equal(got, true);
++    await releaseNamedLock(b, name);
++  } finally { b.release(); }
++});

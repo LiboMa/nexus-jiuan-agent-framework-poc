@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 换实例类型，只允许「停机再开」，不允许替换实例（替换会丢掉账号目录和 MySQL 数据）：
+# 换实例类型，只允许「停机再开」，不允许替换实例（替换会丢掉账号目录和数据库的数据）：
 #   建变更集（只改 InstanceType，其余参数沿用）→ 实例要被替换就删掉变更集并退出 → 打印变更 → 输入栈名确认 → 执行 → 健康检查。
 # 用法：upgrade-instance.sh <m7g.large|m7g.xlarge|t3.small|t3.medium|t3.large>（同一种架构之间换：arm64 的 m7g 之间、x86 的 t3 之间）。先跑 backup.sh。会停机几分钟。
 set -euo pipefail

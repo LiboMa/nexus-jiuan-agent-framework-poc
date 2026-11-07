@@ -1,0 +1,1918 @@
+补丁 0010：PostgreSQL 的基线表结构、迁移和启动时的表结构核对。
+- 新 src/pg-schema.mjs：PG_BASELINE_SCHEMA（MySQL 第 1–19 个迁移跑完后的 70 张表 + 索引、外键、CHECK 的 PG 写法；第 71 张 schema_migrations 由迁移自己建）、
+  readSchemaListing / schemaListingEntries（从系统目录读出表、列、索引、约束、触发器、函数，按名字排序）。
+- src/pg-database.mjs：PG_MIGRATIONS（只有一个：版本 19 postgres-baseline，以后的从 20 起）、migrationChecksum、classifyMigrationVersions、
+  validateAdditiveMigration、splitSqlStatements、migratePg（拿 Task 3 的命名锁 → 建 schema_migrations → 核对已执行的：checksum + 表结构，
+  期望的结构是把迁移在一个回滚掉的临时 schema 里现跑一遍读出来的 → 有差异报 PG_MIGRATION_DRIFT、什么都不改 → 每个待执行的迁移一个事务）、
+  expectedSchemaListing、pgHealth。
+- 「更新时自动改时间」（MySQL 的 ON UPDATE CURRENT_TIMESTAMP，10 张表的 updated_at）：触发器 jiuan_touch_updated_at()。
+- src/mysql-analysis-store.mjs 启动时改调 migratePg；src/platform/platform-routes.mjs 的库状态改用 PG 的迁移清单、current_database()。
+有多个唯一键（含主键）的表（ON CONFLICT 要写对是哪一个）：
+  analysis_documents: PK (connection_id,id); analysis_documents_source (connection_id,tenant_id,company_id,source_id)
+  audit_approval_decisions: PK (decision_id); audit_approval_decisions_identity (connection_id,document_id,document_version,actor_account_id)
+  audit_approval_events: PK (event_id); audit_approval_events_source_identity (document_id,source_event_id,source_version)
+  audit_attachment_extractions: PK (extraction_id); audit_attachment_extractions_identity (attachment_id,content_sha256,method,parser_version,model_version)
+  audit_attachment_fetches: PK (fetch_id); audit_attachment_fetches_attempt (attachment_id,attempt_no)
+  audit_attachments: PK (attachment_id); audit_attachments_source_identity (document_id,source_attachment_id,source_version)
+  audit_documents: PK (document_id); audit_documents_source_identity (source_connection_id,source_document_id)
+  audit_evidence_packs: PK (evidence_pack_id); audit_evidence_packs_version (document_id,version)
+  audit_issues: PK (issue_id); audit_issues_run_identity (run_id,issue_id)
+  audit_review_runs: PK (run_id); audit_review_runs_lineage (document_id,lineage_fingerprint)
+  audit_source_connections: PK (source_connection_id); audit_source_connections_identity (tenant_id,provider,environment,account_id)
+  audit_sync_batches: PK (batch_id); audit_sync_batches_idempotency (source_connection_id,idempotency_key)
+  audit_sync_items: PK (sync_item_id); audit_sync_items_identity (batch_id,entity_type,source_entity_id)
+  audit_tasks: PK (task_id); audit_tasks_source_identity (source_connection_id,source_task_id)
+  decisions: PK (id); decisions_document_fingerprint (document_id,fingerprint)
+  element_draft_edits: PK (edit_id); element_draft_edits_revision (connection_id,family_id,draft_revision)
+  element_family_registry: PK (connection_id,family_id); element_family_registry_oid (connection_id,tenant_id,expense_type_oid)
+  element_family_versions: PK (version_id); element_family_versions_identity (connection_id,family_id,family_version)
+
+diff --git a/src/mysql-analysis-store.mjs b/src/mysql-analysis-store.mjs
+index b2861fd..046cdf8 100644
+--- a/src/mysql-analysis-store.mjs
++++ b/src/mysql-analysis-store.mjs
+@@ -1,7 +1,7 @@
+ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+ import { analysisScope, normalizeAnalysisReport, normalizeStoredAnalysisReport, redactAnalysisText } from './analysis-normalize.mjs';
+ import { buildAnalysisAttachmentManifest } from './analysis-attachment-evidence.mjs';
+-import { migrateMySql } from './mysql-database.mjs';
++import { migratePg } from './pg-database.mjs';
+ import { normalizeDetailProjectionSummary } from './analysis-detail-projection-summary.mjs';
+ 
+ function problem(code, message = '正式分析存储操作未完成。') { return Object.assign(new Error(message), { code }); }
+@@ -203,7 +203,7 @@ export async function openMySqlAnalysisStore({ pool, key, connectionId, environm
+   const api = Object.freeze({
+     async migrate() {
+       if (closed) throw problem('ANALYSIS_NOT_READY');
+-      await migrateMySql(pool);
++      await migratePg(pool);
+       await transaction(async client => {
+         await client.query('INSERT INTO analysis_connections(connection_id,environment,schema_version,key_check) VALUES (?,\'prod\',1,?) ON DUPLICATE KEY UPDATE connection_id=VALUES(connection_id)', [connectionId, seal({ connectionId, environment: 'prod', schemaVersion: 1 }, 'key-check')]);
+         const [rows] = await client.query('SELECT * FROM analysis_connections WHERE connection_id=?', [connectionId]);
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+index 844a78d..e2002cd 100644
+--- a/src/pg-database.mjs
++++ b/src/pg-database.mjs
+@@ -1,6 +1,7 @@
+ import pg from 'pg';
+-import { createHash } from 'node:crypto';
++import { createHash, randomBytes } from 'node:crypto';
+ import { readFileSync } from 'node:fs';
++import { PG_BASELINE_SCHEMA, schemaListingEntries } from './pg-schema.mjs';
+ 
+ /**
+  * PostgreSQL connection pool for the analysis runtime, shaped like the mysql2 pool the callers were written for:
+@@ -57,12 +58,14 @@ export function pgPoolOptions(database = {}) {
+ }
+ 
+ /**
+- * Rewrites ? placeholders to $1…$n. A ? inside '…' (with '' escapes), E'…' (with \ escapes), $tag$…$tag$, "…", -- comments and
+- * block comments is left alone; :: casts are not placeholders.
++ * SQL cut into code, quoted text ('…' with '' escapes, E'…' with \ escapes, $tag$…$tag$, "…") and comments (-- and block), so
++ * callers only look for ? or ; in code.
+  */
+-export function toPgPlaceholders(sql) {
+-  let out = '', count = 0, i = 0;
++function sqlSegments(sql) {
++  const segments = [];
++  let code = '', i = 0;
+   const n = sql.length;
++  const other = (kind, j) => { if (code) segments.push(['code', code]); code = ''; segments.push([kind, sql.slice(i, j)]); i = j; };
+   while (i < n) {
+     const c = sql[i];
+     if (c === "'" || ((c === 'E' || c === 'e') && sql[i + 1] === "'" && !/[A-Za-z0-9_]/.test(sql[i - 1] ?? ''))) {
+@@ -73,37 +76,64 @@ export function toPgPlaceholders(sql) {
+         if (sql[j] === "'") { if (sql[j + 1] === "'") { j += 2; continue; } break; }
+         j += 1;
+       }
+-      out += sql.slice(i, j + 1); i = j + 1; continue;
++      other('quoted', Math.min(j + 1, n)); continue;
+     }
+     if (c === '"') {
+       let j = i + 1;
+       while (j < n && !(sql[j] === '"' && sql[j + 1] !== '"')) j += sql[j] === '"' ? 2 : 1;
+-      out += sql.slice(i, j + 1); i = j + 1; continue;
++      other('quoted', Math.min(j + 1, n)); continue;
+     }
+     if (c === '-' && sql[i + 1] === '-') {
+       const end = sql.indexOf('\n', i);
+-      const j = end < 0 ? n : end;
+-      out += sql.slice(i, j); i = j; continue;
++      other('comment', end < 0 ? n : end); continue;
+     }
+     if (c === '/' && sql[i + 1] === '*') {
+       const end = sql.indexOf('*/', i + 2);
+-      const j = end < 0 ? n : end + 2;
+-      out += sql.slice(i, j); i = j; continue;
++      other('comment', end < 0 ? n : end + 2); continue;
+     }
+     if (c === '$') {
+-      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
++      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 80));
+       if (tag) {
+         const end = sql.indexOf(tag[0], i + tag[0].length);
+-        const j = end < 0 ? n : end + tag[0].length;
+-        out += sql.slice(i, j); i = j; continue;
++        other('quoted', end < 0 ? n : end + tag[0].length); continue;
+       }
+     }
+-    if (c === '?') { count += 1; out += `$${count}`; i += 1; continue; }
+-    out += c; i += 1;
++    code += c; i += 1;
++  }
++  if (code) segments.push(['code', code]);
++  return segments;
++}
++
++/** Rewrites ? placeholders to $1…$n; a ? in quoted text or a comment is left alone, :: casts are not placeholders. */
++export function toPgPlaceholders(sql) {
++  let out = '', count = 0;
++  for (const [kind, text] of sqlSegments(sql)) {
++    out += kind === 'code' ? text.replace(/\?/g, () => `$${(count += 1)}`) : text;
+   }
+   return { text: out, count };
+ }
+ 
++/** Statements of a migration: split on ; in code (not in quoted text, function bodies or comments), trimmed, empty ones dropped. */
++export function splitSqlStatements(sql) {
++  const statements = [];
++  let current = '';
++  const flush = () => {
++    const statement = current.trim();
++    if (sqlSegments(statement).some(([kind, text]) => kind !== 'comment' && text.trim())) statements.push(statement);
++    current = '';
++  };
++  for (const [kind, text] of sqlSegments(String(sql ?? ''))) {
++    if (kind !== 'code') { current += text; continue; }
++    const parts = text.split(';');
++    parts.forEach((part, index) => { current += part; if (index < parts.length - 1) flush(); });
++  }
++  flush();
++  return statements;
++}
++
++/** A statement with quoted text and comments blanked out: what is left are its clauses. */
++const codeOnly = statement => sqlSegments(statement).map(([kind, text]) => (kind === 'code' ? text : ' ')).join('').trim();
++
+ const pad = (value, width = 2) => String(value).padStart(width, '0');
+ /** A Date as mysql2 sends it with timezone:'Z': the UTC wall clock, no offset. */
+ function utcWallClock(date) {
+@@ -319,3 +349,177 @@ export async function isNamedLockUsed(conn, name) {
+       AND classid = ?::bigint::oid AND objid = ?::bigint::oid AND objsubid = 1 LIMIT 1`, [key >> 32n, key & 0xffffffffn]);
+   return rows.length ? rows[0].pid : null;
+ }
++
++/**
++ * Migrations. PostgreSQL starts from one baseline (version 19, the structure MySQL had after its migrations 1–19); later ones
++ * are numbered from 20. schema_migrations has the columns the MySQL table had, so the platform's version view reads it as before.
++ */
++export const PG_MIGRATIONS = Object.freeze([Object.freeze({ version: 19, name: 'postgres-baseline', sql: PG_BASELINE_SCHEMA })]);
++const SCHEMA_LOCK = 'jiuan:pg:schema';
++const SCHEMA_MIGRATIONS_DDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
++  version bigint NOT NULL CHECK (version >= 0),
++  name varchar(191) NOT NULL,
++  applied_at timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  checksum varchar(64) DEFAULT NULL,
++  adopted_by varchar(32) DEFAULT NULL,
++  additive smallint DEFAULT NULL,
++  PRIMARY KEY (version)
++)`;
++
++export function migrationChecksum(migration) {
++  const normalized = String(migration?.sql ?? '').replaceAll('\r\n', '\n').trim();
++  return createHash('sha256').update(normalized, 'utf8').digest('hex');
++}
++
++/**
++ * The versions in schema_migrations against the migrations this program knows: applied (normal), not yet applied (pending),
++ * newer than this program but marked additive (aheadAdditive: only new tables, this program still runs), anything else (drift).
++ */
++export function classifyMigrationVersions(appliedRecords = [], knownMigrations = PG_MIGRATIONS) {
++  const ordered = [...(knownMigrations || [])].sort((a, b) => a.version - b.version);
++  const highestKnownVersion = Math.max(0, ...ordered.map(item => Number(item.version)));
++  const records = appliedRecords instanceof Map
++    ? appliedRecords
++    : new Map((appliedRecords || []).map(record => [Number(record?.version), record]));
++  const normal = [];
++  const pending = [];
++  for (const migration of ordered) (records.has(Number(migration.version)) ? normal : pending).push(Number(migration.version));
++  const aheadAdditive = [];
++  const drift = [];
++  for (const [version, record] of records) {
++    const numericVersion = Number(version);
++    if (ordered.some(item => Number(item.version) === numericVersion)) continue;
++    if (numericVersion > highestKnownVersion && Number(record?.additive) === 1) aheadAdditive.push(numericVersion);
++    else drift.push({ version: numericVersion, reason: 'unknown_version' });
++  }
++  aheadAdditive.sort((a, b) => a - b);
++  drift.sort((a, b) => a.version - b.version);
++  return { normal, pending, aheadAdditive, drift, highestKnownVersion };
++}
++
++/**
++ * Additive means the previous image keeps working on the migrated database: only new tables, without a foreign key (the old
++ * image could no longer delete the rows they point to) and not copied from another table (AS SELECT, LIKE).
++ */
++export function validateAdditiveMigration(migration) {
++  if (migration?.additive !== true) return;
++  const label = `Migration ${migration.version} (${migration.name}) marked additive`;
++  const statements = splitSqlStatements(String(migration.sql || '')).map(codeOnly);
++  if (!statements.length || statements.some(statement => !/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/i.test(statement))) {
++    throw configuration(`${label} must contain only CREATE TABLE IF NOT EXISTS statements.`);
++  }
++  for (const code of statements) {
++    if (/\bFOREIGN\s+KEY\b|\bREFERENCES\b/i.test(code)) throw configuration(`${label} must not declare a FOREIGN KEY or REFERENCES: the previous image could no longer delete the rows it points to.`);
++    if (/\bSELECT\b/i.test(code)) throw configuration(`${label} must not create a table from a SELECT (CREATE TABLE ... AS SELECT).`);
++    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?:\S+\s*)?\(?\s*LIKE\b/i.test(code)) throw configuration(`${label} must not copy another table (CREATE TABLE ... LIKE).`);
++  }
++}
++
++function orderedMigrations(migrations) {
++  if (!Array.isArray(migrations) || !migrations.length || migrations.some(item => !Number.isInteger(item?.version) || item.version < 1 || typeof item.name !== 'string' || !item.name || typeof item.sql !== 'string' || !item.sql.trim())) throw configuration('PostgreSQL migrations are invalid.');
++  const ordered = [...migrations].sort((a, b) => a.version - b.version);
++  if (new Set(ordered.map(item => item.version)).size !== ordered.length) throw configuration('PostgreSQL migrations contain duplicate versions.');
++  for (const migration of ordered) validateAdditiveMigration(migration);
++  return ordered;
++}
++
++/**
++ * What the structure should be: the migrations run in a scratch schema inside a transaction that is rolled back, then listed.
++ * Built from the DDL itself each time, so the expectation cannot drift from it. Runs on a connection with no open transaction.
++ */
++async function expectedEntries(conn, migrations) {
++  const scratch = `jiuan_expected_${randomBytes(6).toString('hex')}`;
++  await conn.beginTransaction();
++  try {
++    await conn.query(`CREATE SCHEMA ${scratch}`);
++    await conn.query(`SET LOCAL search_path = ${scratch}`);
++    await conn.query(SCHEMA_MIGRATIONS_DDL);
++    for (const migration of migrations) for (const statement of splitSqlStatements(migration.sql)) await conn.query(statement);
++    return await schemaListingEntries(conn, scratch);
++  } finally {
++    await conn.rollback();
++  }
++}
++
++/** The structure listing the migrations produce (text, as readSchemaListing gives it for a database they ran on). */
++export async function expectedSchemaListing(conn, migrations = PG_MIGRATIONS) {
++  return (await expectedEntries(conn, orderedMigrations(migrations))).map(entry => entry.text).join('\n');
++}
++
++/** Live structure against the expected one, over the tables the migrations own (the shell's own tables do not count). */
++async function compareSchema(conn, migrations) {
++  const expected = await expectedEntries(conn, migrations);
++  const owners = new Set(expected.map(entry => entry.owner));
++  const live = (await schemaListingEntries(conn)).filter(entry => owners.has(entry.owner));
++  const want = new Set(expected.map(entry => entry.text));
++  const have = new Set(live.map(entry => entry.text));
++  return { missing: [...want].filter(text => !have.has(text)), unexpected: [...have].filter(text => !want.has(text)) };
++}
++
++function migrationDriftError(drift) {
++  const first = (label, items) => (items?.length ? ` ${label}: ${items.slice(0, 5).join(' | ')}${items.length > 5 ? ` (+${items.length - 5} more)` : ''}` : '');
++  const summary = drift.map(item => `v${item.version} ${item.reason}${first('missing', item.missing)}${first('unexpected', item.unexpected)}`).join('; ');
++  return Object.assign(new Error(`PostgreSQL migration drift detected: ${summary}`), { code: PG_ERROR_CODES.MIGRATION_DRIFT, drift });
++}
++
++/**
++ * Brings the database to the known migrations under the schema lock: creates schema_migrations, checks what was applied before
++ * (checksum and structure; a difference is PG_MIGRATION_DRIFT and nothing is changed), then runs each pending migration in its
++ * own transaction and records it. Returns { applied, currentVersion, aheadAdditive }.
++ */
++export async function migratePg(pool, { migrations = PG_MIGRATIONS, lockName = SCHEMA_LOCK, lockTimeout = 30 } = {}) {
++  if (!pool || typeof pool.getConnection !== 'function') throw configuration('A PostgreSQL pool is required.');
++  const ordered = orderedMigrations(migrations);
++  const connection = await pool.getConnection();
++  let locked = false;
++  try {
++    if (!(await acquireNamedLock(connection, lockName, lockTimeout))) throw Object.assign(new Error('Unable to acquire PostgreSQL migration lock.'), { code: PG_ERROR_CODES.MIGRATION_LOCKED });
++    locked = true;
++    await connection.query(SCHEMA_MIGRATIONS_DDL);
++    const [rows] = await connection.query('SELECT version, name, checksum, adopted_by, additive FROM schema_migrations ORDER BY version');
++    const records = new Map(rows.map(row => [Number(row.version), row]));
++    const classification = classifyMigrationVersions(records, ordered);
++    for (const version of classification.aheadAdditive) console.log(`PG_SCHEMA_AHEAD_ADDITIVE v${version}`);
++    const drift = [...classification.drift];
++    const appliedKnown = ordered.filter(migration => records.has(migration.version));
++    const adoptions = [];
++    for (const migration of appliedKnown) {
++      const checksum = records.get(migration.version).checksum;
++      if (checksum == null) adoptions.push(migration);
++      else if (String(checksum) !== migrationChecksum(migration)) drift.push({ version: migration.version, name: migration.name, reason: 'checksum_changed' });
++    }
++    if (appliedKnown.length) {
++      const { missing, unexpected } = await compareSchema(connection, appliedKnown);
++      if (missing.length || unexpected.length) drift.push({ version: appliedKnown.at(-1).version, name: appliedKnown.at(-1).name, reason: 'schema_differs', missing, unexpected });
++    }
++    if (drift.length) throw migrationDriftError(drift);
++    for (const migration of adoptions) {
++      await connection.query('UPDATE schema_migrations SET checksum = ?, adopted_by = ? WHERE version = ?', [migrationChecksum(migration), 'readback', migration.version]);
++    }
++    const applied = [];
++    for (const migration of ordered) {
++      if (records.has(migration.version)) continue;
++      await connection.beginTransaction();
++      try {
++        for (const statement of splitSqlStatements(migration.sql)) await connection.query(statement);
++        await connection.query('INSERT INTO schema_migrations (version, name, checksum, adopted_by, additive) VALUES (?, ?, ?, ?, ?)', [migration.version, migration.name, migrationChecksum(migration), 'applied', migration.additive === true ? 1 : 0]);
++        await connection.commit();
++      } catch (error) {
++        try { await connection.rollback(); } catch { /* the error that matters is the migration's */ }
++        throw error;
++      }
++      applied.push(migration.version);
++    }
++    return { applied, currentVersion: Math.max(0, ...ordered.map(item => item.version), ...records.keys()), aheadAdditive: classification.aheadAdditive };
++  } finally {
++    if (locked) { try { await releaseNamedLock(connection, lockName); } catch { /* release is best effort; the lock goes with the connection */ } }
++    connection.release();
++  }
++}
++
++export async function pgHealth(pool) {
++  if (!pool || typeof pool.query !== 'function') throw configuration('A PostgreSQL pool is required.');
++  const [rows] = await pool.query('SELECT 1 AS ok');
++  return Number(rows?.[0]?.ok) === 1;
++}
++
+diff --git a/src/pg-schema.mjs b/src/pg-schema.mjs
+new file mode 100644
+index 0000000..30dfbe3
+--- /dev/null
++++ b/src/pg-schema.mjs
+@@ -0,0 +1,1539 @@
++/**
++ * Jiuan's analysis database on PostgreSQL: one baseline migration (version 19) that creates the structure MySQL had after its
++ * migrations 1–19 — 70 tables (schema_migrations, the 71st, is created by migratePg itself), their indexes, foreign keys and
++ * CHECKs. Translated mechanically from `mysqldump --no-data` of the bench database, then reviewed. Type mapping:
++ *   varchar(n) / char(n) → varchar(n); int → integer; int unsigned / bigint unsigned → bigint CHECK (>= 0);
++ *   tinyint(1) / tinyint → smallint (MySQL never limited them to 0/1, so neither does this); tinyint unsigned → smallint CHECK (>= 0);
++ *   smallint unsigned → integer CHECK (>= 0); decimal → numeric; datetime(n) → timestamp(n); json → jsonb; blob → bytea; text → text;
++ *   DEFAULT CURRENT_TIMESTAMP(n) → DEFAULT LOCALTIMESTAMP(n) (the session zone is Asia/Shanghai, so the value is what MySQL wrote);
++ *   AUTO_INCREMENT → GENERATED BY DEFAULT AS IDENTITY; KEY → CREATE INDEX; UNIQUE KEY → a named UNIQUE constraint.
++ * ON UPDATE CURRENT_TIMESTAMP (ten updated_at columns) is a BEFORE UPDATE trigger on jiuan_touch_updated_at(): when another
++ * column really changed and updated_at was not set to a different value, updated_at becomes the current Shanghai wall time.
++ * Tables with more than one unique key (ON CONFLICT needs the right one named): see the patch description.
++ */
++export const PG_BASELINE_SCHEMA = `
++CREATE OR REPLACE FUNCTION jiuan_touch_updated_at() RETURNS trigger LANGUAGE plpgsql AS $touch$
++BEGIN
++  IF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at AND NEW IS DISTINCT FROM OLD THEN
++    NEW.updated_at := LOCALTIMESTAMP;
++  END IF;
++  RETURN NEW;
++END
++$touch$;
++
++CREATE TABLE "analysis_batches" (
++  "connection_id" varchar(191) NOT NULL,
++  "id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_id" varchar(191) NOT NULL,
++  "status" varchar(32) NOT NULL,
++  "started_at" timestamp(6) NOT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "pages" bigint NOT NULL DEFAULT '0' CHECK ("pages" >= 0),
++  "report_count" bigint NOT NULL DEFAULT '0' CHECK ("report_count" >= 0),
++  "request_count" bigint NOT NULL DEFAULT '0' CHECK ("request_count" >= 0),
++  "query_payload" bytea NOT NULL,
++  "coverage_payload" bytea,
++  "message" varchar(1000) NOT NULL DEFAULT '',
++  "error_code" varchar(100) DEFAULT NULL,
++  PRIMARY KEY ("connection_id","id")
++);
++
++CREATE TABLE "analysis_connections" (
++  "connection_id" varchar(191) NOT NULL,
++  "environment" varchar(16) NOT NULL,
++  "schema_version" bigint NOT NULL CHECK ("schema_version" >= 0),
++  "key_check" bytea NOT NULL,
++  "tenant_id" varchar(191) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("connection_id"),
++  CONSTRAINT "analysis_connections_environment" CHECK (("environment" = 'prod'))
++);
++
++CREATE TABLE "analysis_document_search" (
++  "connection_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "document_version" varchar(191) NOT NULL,
++  "payee_name" varchar(300) DEFAULT NULL,
++  "applicant_name" varchar(300) DEFAULT NULL,
++  PRIMARY KEY ("connection_id","document_id")
++);
++
++CREATE TABLE "analysis_document_versions" (
++  "connection_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "version" varchar(191) NOT NULL,
++  "modified_at" timestamp(6) DEFAULT NULL,
++  "collected_at" timestamp(6) NOT NULL,
++  "batch_id" varchar(191) DEFAULT NULL,
++  "payload" bytea NOT NULL,
++  PRIMARY KEY ("connection_id","document_id","version")
++);
++
++CREATE TABLE "analysis_documents" (
++  "connection_id" varchar(191) NOT NULL,
++  "id" varchar(191) NOT NULL,
++  "environment" varchar(16) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_id" varchar(191) NOT NULL,
++  "company_name" varchar(255) NOT NULL,
++  "source_id" varchar(191) NOT NULL,
++  "number" varchar(191) NOT NULL,
++  "form_name" varchar(191) NOT NULL,
++  "document_type" varchar(191) NOT NULL,
++  "status" varchar(64) NOT NULL,
++  "amount" varchar(128) DEFAULT NULL,
++  "currency" varchar(32) DEFAULT NULL,
++  "modified_at" timestamp(6) DEFAULT NULL,
++  "collected_at" timestamp(6) NOT NULL,
++  "version" varchar(191) NOT NULL,
++  "history_count" bigint NOT NULL CHECK ("history_count" >= 0),
++  "rejection_count" bigint NOT NULL CHECK ("rejection_count" >= 0),
++  "withdrawal_count" bigint NOT NULL CHECK ("withdrawal_count" >= 0),
++  PRIMARY KEY ("connection_id","id"),
++  CONSTRAINT "analysis_documents_source" UNIQUE ("connection_id","tenant_id","company_id","source_id"),
++  CONSTRAINT "analysis_documents_environment" CHECK (("environment" = 'prod'))
++);
++
++CREATE TABLE "analysis_events" (
++  "connection_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "id" varchar(191) NOT NULL,
++  "version" varchar(191) NOT NULL,
++  "operation" varchar(64) NOT NULL,
++  "category" varchar(64) NOT NULL,
++  "at" timestamp(6) DEFAULT NULL,
++  "node_type" varchar(128) NOT NULL,
++  "payload" bytea NOT NULL,
++  PRIMARY KEY ("connection_id","document_id","id","version")
++);
++
++CREATE TABLE "analysis_sync_states" (
++  "connection_id" varchar(191) NOT NULL,
++  "scope_key" varchar(191) NOT NULL,
++  "payload" bytea NOT NULL,
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("connection_id","scope_key")
++);
++
++CREATE TABLE "audit_advice_runs" (
++  "advice_id" varchar(191) NOT NULL,
++  "run_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "status" varchar(32) NOT NULL,
++  "model_version" varchar(191) DEFAULT NULL,
++  "prompt_version" varchar(191) DEFAULT NULL,
++  "advice_payload" bytea,
++  "generated_at" timestamp(6) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "failure_code" varchar(100) DEFAULT NULL,
++  PRIMARY KEY ("advice_id"),
++  CONSTRAINT "audit_advice_runs_status" CHECK (("status" in ('queued','running','succeeded','failed','stale','not_applicable')))
++);
++
++CREATE TABLE "audit_approval_actor_index" (
++  "document_id" varchar(191) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "document_department_oid" varchar(191) DEFAULT NULL,
++  "event_count" bigint NOT NULL CHECK ("event_count" >= 0),
++  "actor_gap_count" bigint NOT NULL CHECK ("actor_gap_count" >= 0),
++  "indexed_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("document_id")
++);
++
++CREATE TABLE "audit_approval_actors" (
++  "document_id" varchar(191) NOT NULL,
++  "event_key" varchar(64) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "operator_employee_id" varchar(64) DEFAULT NULL,
++  "approver_employee_id" varchar(64) DEFAULT NULL,
++  "operator_department_oid" varchar(191) DEFAULT NULL,
++  "node_name" varchar(500) DEFAULT NULL,
++  "operation" varchar(64) DEFAULT NULL,
++  "category" varchar(32) NOT NULL,
++  "occurred_at" timestamp(6) DEFAULT NULL,
++  "names_ciphertext" bytea NOT NULL,
++  PRIMARY KEY ("document_id","event_key"),
++  CONSTRAINT "audit_approval_actors_category" CHECK (("category" in ('passed','rejected','withdrawn','other')))
++);
++
++CREATE TABLE "audit_approval_decisions" (
++  "decision_id" varchar(26) NOT NULL,
++  "connection_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "document_version" varchar(191) NOT NULL,
++  "actor_account_id" varchar(191) NOT NULL,
++  "decision" varchar(16) NOT NULL,
++  "ai_verdict" varchar(32) NOT NULL,
++  "ai_verdict_run_id" varchar(191) NOT NULL,
++  "expense_type_codes" varchar(1000) NOT NULL DEFAULT '',
++  "status" varchar(16) NOT NULL,
++  "hly_error_code" varchar(64) DEFAULT NULL,
++  "hly_message" varchar(1000) DEFAULT NULL,
++  "audit_status" varchar(16) NOT NULL DEFAULT 'missing',
++  "payload_ciphertext" bytea NOT NULL,
++  "created_at" timestamp(6) NOT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  PRIMARY KEY ("decision_id"),
++  CONSTRAINT "audit_approval_decisions_identity" UNIQUE ("connection_id","document_id","document_version","actor_account_id"),
++  CONSTRAINT "audit_approval_decisions_audit_status" CHECK (("audit_status" in ('missing','written'))),
++  CONSTRAINT "audit_approval_decisions_decision" CHECK (("decision" in ('pass','reject'))),
++  CONSTRAINT "audit_approval_decisions_status" CHECK (("status" in ('pending','succeeded','failed'))),
++  CONSTRAINT "audit_approval_decisions_verdict" CHECK (("ai_verdict" in ('pass_suggested','risk')))
++);
++
++CREATE TABLE "audit_approval_events" (
++  "event_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "source_connection_id" varchar(191) NOT NULL,
++  "source_event_id" varchar(191) DEFAULT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "sync_batch_id" varchar(191) NOT NULL,
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "operation" varchar(64) DEFAULT NULL,
++  "category" varchar(32) NOT NULL,
++  "occurred_at" timestamp(6) DEFAULT NULL,
++  "node_name" varchar(500) DEFAULT NULL,
++  "node_type" varchar(191) DEFAULT NULL,
++  "payload_ciphertext" bytea NOT NULL,
++  "payload_sha256" varchar(64) NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("event_id"),
++  CONSTRAINT "audit_approval_events_source_identity" UNIQUE ("document_id","source_event_id","source_version"),
++  CONSTRAINT "audit_approval_events_category" CHECK (("category" in ('passed','rejected','withdrawn','other')))
++);
++
++CREATE TABLE "audit_approval_pending" (
++  "document_id" varchar(191) NOT NULL,
++  "chain_key" varchar(64) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "node_name" varchar(500) DEFAULT NULL,
++  "approver_employee_id" varchar(64) DEFAULT NULL,
++  "activated_at" timestamp(6) DEFAULT NULL,
++  "names_ciphertext" bytea NOT NULL,
++  PRIMARY KEY ("document_id","chain_key")
++);
++
++CREATE TABLE "audit_attachment_extractions" (
++  "extraction_id" varchar(191) NOT NULL,
++  "attachment_id" varchar(191) NOT NULL,
++  "content_sha256" varchar(64) NOT NULL DEFAULT '',
++  "method" varchar(32) NOT NULL,
++  "parser_version" varchar(64) NOT NULL,
++  "model_version" varchar(128) NOT NULL DEFAULT '',
++  "status" varchar(32) NOT NULL,
++  "attempt_no" bigint NOT NULL DEFAULT '1' CHECK ("attempt_no" >= 0),
++  "max_attempts" bigint NOT NULL DEFAULT '3' CHECK ("max_attempts" >= 0),
++  "page_count" bigint DEFAULT NULL CHECK ("page_count" >= 0),
++  "coverage_state" varchar(32) NOT NULL,
++  "text_ciphertext" bytea,
++  "text_sha256" varchar(64) DEFAULT NULL,
++  "result_sha256" varchar(64) DEFAULT NULL,
++  "started_at" timestamp(6) DEFAULT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "next_retry_at" timestamp(6) DEFAULT NULL,
++  "lease_owner" varchar(191) DEFAULT NULL,
++  "lease_expires_at" timestamp(6) DEFAULT NULL,
++  "failure_code" varchar(100) DEFAULT NULL,
++  "failure_message" varchar(1000) DEFAULT NULL,
++  PRIMARY KEY ("extraction_id"),
++  CONSTRAINT "audit_attachment_extractions_identity" UNIQUE ("attachment_id","content_sha256","method","parser_version","model_version"),
++  CONSTRAINT "audit_attachment_extractions_coverage" CHECK (("coverage_state" in ('unknown','partial','complete','failed','not_applicable'))),
++  CONSTRAINT "audit_attachment_extractions_method" CHECK (("method" in ('text','ocr','ai'))),
++  CONSTRAINT "audit_attachment_extractions_status" CHECK (("status" in ('queued','running','succeeded','partial','failed','stale')))
++);
++
++CREATE TABLE "audit_attachment_fetches" (
++  "fetch_id" varchar(191) NOT NULL,
++  "attachment_id" varchar(191) NOT NULL,
++  "attempt_no" bigint NOT NULL CHECK ("attempt_no" >= 0),
++  "max_attempts" bigint NOT NULL DEFAULT '3' CHECK ("max_attempts" >= 0),
++  "status" varchar(32) NOT NULL,
++  "queued_at" timestamp(6) DEFAULT NULL,
++  "next_retry_at" timestamp(6) DEFAULT NULL,
++  "lease_owner" varchar(191) DEFAULT NULL,
++  "lease_expires_at" timestamp(6) DEFAULT NULL,
++  "response_hash" varchar(64) DEFAULT NULL,
++  "received_bytes" bigint DEFAULT NULL CHECK ("received_bytes" >= 0),
++  "started_at" timestamp(6) DEFAULT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "failure_code" varchar(100) DEFAULT NULL,
++  "failure_message" varchar(1000) DEFAULT NULL,
++  PRIMARY KEY ("fetch_id"),
++  CONSTRAINT "audit_attachment_fetches_attempt" UNIQUE ("attachment_id","attempt_no"),
++  CONSTRAINT "audit_attachment_fetches_status" CHECK (("status" in ('queued','running','succeeded','failed','abandoned','expired')))
++);
++
++CREATE TABLE "audit_attachments" (
++  "attachment_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "source_attachment_id" varchar(191) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "detail_version" varchar(191) DEFAULT NULL,
++  "name" varchar(500) DEFAULT NULL,
++  "media_type" varchar(191) DEFAULT NULL,
++  "detected_media_type" varchar(191) DEFAULT NULL,
++  "declared_bytes" bigint DEFAULT NULL CHECK ("declared_bytes" >= 0),
++  "sha256" varchar(64) DEFAULT NULL,
++  "metadata_state" varchar(32) NOT NULL,
++  "content_state" varchar(32) NOT NULL,
++  "content_available" smallint NOT NULL DEFAULT '0',
++  "coverage_state" varchar(32) NOT NULL,
++  "manifest_fingerprint" varchar(64) DEFAULT NULL,
++  "storage_ref" varchar(500) DEFAULT NULL,
++  "key_version" bigint DEFAULT NULL CHECK ("key_version" >= 0),
++  "page_count" bigint DEFAULT NULL CHECK ("page_count" >= 0),
++  "parser_version" varchar(64) DEFAULT NULL,
++  "fetched_at" timestamp(6) DEFAULT NULL,
++  "content_expires_at" timestamp(6) DEFAULT NULL,
++  "retention_until" timestamp(6) DEFAULT NULL,
++  "deleted_at" timestamp(6) DEFAULT NULL,
++  "last_fetch_id" varchar(191) DEFAULT NULL,
++  "last_extraction_id" varchar(191) DEFAULT NULL,
++  "failure_code" varchar(100) DEFAULT NULL,
++  "supersedes_attachment_id" varchar(191) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("attachment_id"),
++  CONSTRAINT "audit_attachments_source_identity" UNIQUE ("document_id","source_attachment_id","source_version"),
++  CONSTRAINT "audit_attachments_content" CHECK (("content_state" in ('not_requested','queued','fetching','downloaded','failed','expired','deleted'))),
++  CONSTRAINT "audit_attachments_coverage" CHECK (("coverage_state" in ('unknown','metadata_only','partial','complete','failed','stale'))),
++  CONSTRAINT "audit_attachments_metadata" CHECK (("metadata_state" in ('not_seen','listed','missing','failed','stale')))
++);
++
++CREATE TABLE "audit_document_versions" (
++  "document_id" varchar(191) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "sync_batch_id" varchar(191) NOT NULL,
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "payload_ciphertext" bytea NOT NULL,
++  "payload_sha256" varchar(64) NOT NULL,
++  "completeness_state" varchar(32) NOT NULL,
++  "source_modified_at" timestamp(6) DEFAULT NULL,
++  "captured_at" timestamp(6) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "supersedes_version" varchar(191) DEFAULT NULL,
++  PRIMARY KEY ("document_id","source_version"),
++  CONSTRAINT "audit_document_versions_completeness" CHECK (("completeness_state" in ('unknown','complete','partial','failed','stale')))
++);
++
++CREATE TABLE "audit_documents" (
++  "document_id" varchar(191) NOT NULL,
++  "source_connection_id" varchar(191) NOT NULL,
++  "source_document_id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_id" varchar(191) NOT NULL,
++  "legal_entity_id" varchar(191) DEFAULT NULL,
++  "source_type" varchar(64) NOT NULL,
++  "document_number" varchar(191) DEFAULT NULL,
++  "source_status" varchar(64) DEFAULT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "amount" numeric(38,12) DEFAULT NULL,
++  "currency" varchar(32) DEFAULT NULL,
++  "source_modified_at" timestamp(6) DEFAULT NULL,
++  "collected_at" timestamp(6) NOT NULL,
++  "sync_batch_id" varchar(191) NOT NULL,
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "snapshot_fingerprint" varchar(64) NOT NULL,
++  "coverage_state" varchar(32) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "supersedes_document_id" varchar(191) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("document_id"),
++  CONSTRAINT "audit_documents_source_identity" UNIQUE ("source_connection_id","source_document_id"),
++  CONSTRAINT "audit_documents_coverage" CHECK (("coverage_state" in ('unknown','complete','partial','failed','stale')))
++);
++
++CREATE TABLE "audit_evidence_packs" (
++  "evidence_pack_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "version" varchar(191) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "coverage_state" varchar(32) NOT NULL,
++  "generated_at" timestamp(6) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "supersedes_evidence_pack_id" varchar(191) DEFAULT NULL,
++  "item_count" bigint NOT NULL DEFAULT '0' CHECK ("item_count" >= 0),
++  "coverage_payload" bytea,
++  PRIMARY KEY ("evidence_pack_id"),
++  CONSTRAINT "audit_evidence_packs_version" UNIQUE ("document_id","version"),
++  CONSTRAINT "audit_evidence_packs_coverage" CHECK (("coverage_state" in ('unknown','partial','complete','failed','stale')))
++);
++
++CREATE TABLE "audit_expense_lines" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "line_index" bigint NOT NULL CHECK ("line_index" >= 0),
++  "expense_type_oid" varchar(191) DEFAULT NULL,
++  "expense_type_code" varchar(191) DEFAULT NULL,
++  "expense_type_name_ciphertext" bytea,
++  "expense_type_name_sha256" varchar(64) DEFAULT NULL,
++  "amount_fen" bigint DEFAULT NULL,
++  "tax_fen" bigint DEFAULT NULL,
++  "tax_rate" varchar(64) DEFAULT NULL,
++  "occurred_date" date DEFAULT NULL,
++  "with_receipt" smallint DEFAULT NULL,
++  PRIMARY KEY ("document_id","content_version","line_index")
++);
++
++CREATE TABLE "audit_expense_receipts" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "line_index" bigint NOT NULL CHECK ("line_index" >= 0),
++  "receipt_index" bigint NOT NULL CHECK ("receipt_index" >= 0),
++  "receipt_type" varchar(191) DEFAULT NULL,
++  "billing_date" date DEFAULT NULL,
++  "fee_fen" bigint DEFAULT NULL,
++  "fee_without_tax_fen" bigint DEFAULT NULL,
++  "tax_fen" bigint DEFAULT NULL,
++  "tax_rate" varchar(64) DEFAULT NULL,
++  "invalid_status" varchar(64) DEFAULT NULL,
++  "check_result" varchar(64) DEFAULT NULL,
++  "title_check" smallint DEFAULT NULL,
++  "from_city_name" varchar(191) DEFAULT NULL,
++  "to_city_name" varchar(191) DEFAULT NULL,
++  "single_reimbursed" smallint DEFAULT NULL,
++  "reimburse_status" varchar(64) DEFAULT NULL,
++  "sensitive_ciphertext" bytea,
++  "sensitive_sha256" varchar(64) DEFAULT NULL,
++  "travel_detail_ciphertext" bytea,
++  PRIMARY KEY ("document_id","content_version","line_index","receipt_index")
++);
++
++CREATE TABLE "audit_expense_subsidies" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "subsidy_index" bigint NOT NULL CHECK ("subsidy_index" >= 0),
++  "subsidy_date" date DEFAULT NULL,
++  "city_code" varchar(191) DEFAULT NULL,
++  "amount_fen" bigint DEFAULT NULL,
++  "standard_amount_fen" bigint DEFAULT NULL,
++  "travel_rule_ciphertext" bytea,
++  "travel_rule_sha256" varchar(64) DEFAULT NULL,
++  "hit_travel_rule_id" varchar(191) DEFAULT NULL,
++  "detail_date" date DEFAULT NULL,
++  "detail_start_time" varchar(5) DEFAULT NULL,
++  "detail_end_time" varchar(5) DEFAULT NULL,
++  PRIMARY KEY ("document_id","content_version","subsidy_index")
++);
++
++CREATE TABLE "audit_issue_events" (
++  "event_id" varchar(191) NOT NULL,
++  "issue_id" varchar(191) NOT NULL,
++  "actor_id" varchar(191) NOT NULL,
++  "from_status" varchar(32) DEFAULT NULL,
++  "to_status" varchar(32) NOT NULL,
++  "reason" varchar(1000) DEFAULT NULL,
++  "evidence_refs_payload" bytea,
++  "created_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("event_id")
++);
++
++CREATE TABLE "audit_issues" (
++  "issue_id" varchar(191) NOT NULL,
++  "run_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "category" varchar(32) NOT NULL,
++  "control" varchar(191) DEFAULT NULL,
++  "severity" varchar(32) NOT NULL,
++  "status" varchar(32) NOT NULL,
++  "fact_payload" bytea,
++  "expected_payload" bytea,
++  "evidence_refs_payload" bytea,
++  "confidence" numeric(6,5) DEFAULT NULL,
++  "impact" varchar(1000) DEFAULT NULL,
++  "owner_id" varchar(191) DEFAULT NULL,
++  "next_action" varchar(1000) DEFAULT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "evidence_pack_version" varchar(191) DEFAULT NULL,
++  "rule_version" varchar(191) DEFAULT NULL,
++  "model_version" varchar(191) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL,
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  "resolved_at" timestamp(6) DEFAULT NULL,
++  "resolution_reason" varchar(1000) DEFAULT NULL,
++  PRIMARY KEY ("issue_id"),
++  CONSTRAINT "audit_issues_run_identity" UNIQUE ("run_id","issue_id"),
++  CONSTRAINT "audit_issues_category" CHECK (("category" in ('permission','technical','rule','evidence','business'))),
++  CONSTRAINT "audit_issues_status" CHECK (("status" in ('open','confirmed','resolved','accepted_risk','reopened','superseded')))
++);
++
++CREATE TABLE "audit_permission_snapshots" (
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "account_id" varchar(191) NOT NULL,
++  "company_id" varchar(191) DEFAULT NULL,
++  "scope_hash" varchar(64) NOT NULL,
++  "granted_at" timestamp(6) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "revocation_version" varchar(191) DEFAULT NULL,
++  "snapshot_ciphertext" bytea,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("permission_snapshot_id")
++);
++
++CREATE TABLE "audit_report_details" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "detail_digest" varchar(64) NOT NULL,
++  "company_id" varchar(191) NOT NULL,
++  "form_name" varchar(191) NOT NULL,
++  "status" varchar(32) NOT NULL,
++  "response_sha256" varchar(64) NOT NULL,
++  "fetched_at" timestamp(6) NOT NULL,
++  "payload_ciphertext" bytea NOT NULL,
++  PRIMARY KEY ("document_id","content_version"),
++  CONSTRAINT "audit_report_details_status" CHECK (("status" in ('succeeded','failed')))
++);
++
++CREATE TABLE "audit_report_projection" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "form_oid" varchar(191) DEFAULT NULL,
++  "form_name" varchar(191) DEFAULT NULL,
++  "company_id" varchar(191) DEFAULT NULL,
++  "applicant_oid" varchar(191) DEFAULT NULL,
++  "cost_center_item_code" varchar(191) DEFAULT NULL,
++  "department_oid" varchar(191) DEFAULT NULL,
++  "header_amount_fen" bigint DEFAULT NULL,
++  "lines_amount_fen" bigint DEFAULT NULL,
++  "line_count" bigint NOT NULL DEFAULT '0' CHECK ("line_count" >= 0),
++  "projected_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("document_id","content_version")
++);
++
++CREATE TABLE "audit_report_projection_gaps" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "gap_index" bigint NOT NULL CHECK ("gap_index" >= 0),
++  "field_path" varchar(512) NOT NULL,
++  "reason" varchar(64) NOT NULL,
++  PRIMARY KEY ("document_id","content_version","gap_index")
++);
++
++CREATE TABLE "audit_report_projection_status" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "projection_status" varchar(32) NOT NULL,
++  "projector_version" bigint NOT NULL DEFAULT '0' CHECK ("projector_version" >= 0),
++  "projection_input_digest" varchar(64) DEFAULT NULL,
++  "attempts" bigint NOT NULL DEFAULT '0' CHECK ("attempts" >= 0),
++  "next_retry_at" timestamp(6) DEFAULT NULL,
++  "error_code" varchar(64) DEFAULT NULL,
++  "exhausted" smallint NOT NULL DEFAULT '0',
++  "projected_at" timestamp(6) DEFAULT NULL,
++  PRIMARY KEY ("document_id","content_version"),
++  CONSTRAINT "audit_report_projection_status_value" CHECK (("projection_status" in ('projected','retryable_failed','permanent_failed')))
++);
++
++CREATE TABLE "audit_review_runs" (
++  "run_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "evidence_pack_id" varchar(191) DEFAULT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "sync_batch_id" varchar(191) NOT NULL,
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "evidence_pack_version" varchar(191) DEFAULT NULL,
++  "precheck_run_id" varchar(191) DEFAULT NULL,
++  "review_state" varchar(32) NOT NULL,
++  "conclusion" varchar(64) NOT NULL,
++  "blockers_payload" bytea,
++  "rule_version" varchar(191) DEFAULT NULL,
++  "model_version" varchar(191) DEFAULT NULL,
++  "prompt_version" varchar(191) DEFAULT NULL,
++  "lineage_fingerprint" varchar(64) NOT NULL,
++  "generated_at" timestamp(6) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "supersedes_run_id" varchar(191) DEFAULT NULL,
++  "error_code" varchar(100) DEFAULT NULL,
++  PRIMARY KEY ("run_id"),
++  CONSTRAINT "audit_review_runs_lineage" UNIQUE ("document_id","lineage_fingerprint"),
++  CONSTRAINT "audit_review_runs_conclusion" CHECK (("conclusion" in ('no_confirmed_difference','confirmed_difference','insufficient_evidence','manual_decision'))),
++  CONSTRAINT "audit_review_runs_state" CHECK (("review_state" in ('not_started','running','blocked','stale','manual_review','candidate','superseded')))
++);
++
++CREATE TABLE "audit_scan_rule_settings" (
++  "connection_id" varchar(191) NOT NULL,
++  "rule_id" varchar(64) NOT NULL,
++  "enabled" smallint NOT NULL,
++  "updated_by" varchar(191) NOT NULL,
++  "updated_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","rule_id")
++);
++
++CREATE TABLE "audit_scan_runs" (
++  "run_id" varchar(191) NOT NULL,
++  "connection_id" varchar(191) NOT NULL,
++  "rule_set_hash" varchar(64) NOT NULL,
++  "rule_count" bigint NOT NULL CHECK ("rule_count" >= 0),
++  "as_of" timestamp(6) NOT NULL,
++  "started_at" timestamp(6) NOT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "status" varchar(16) NOT NULL,
++  "documents_scanned" bigint NOT NULL DEFAULT '0' CHECK ("documents_scanned" >= 0),
++  "hits" bigint NOT NULL DEFAULT '0' CHECK ("hits" >= 0),
++  "new_suspicions" bigint NOT NULL DEFAULT '0' CHECK ("new_suspicions" >= 0),
++  "no_longer_hit" bigint NOT NULL DEFAULT '0' CHECK ("no_longer_hit" >= 0),
++  "error_code" varchar(100) DEFAULT NULL,
++  PRIMARY KEY ("run_id"),
++  CONSTRAINT "audit_scan_runs_status" CHECK (("status" in ('running','completed','failed')))
++);
++
++CREATE TABLE "audit_source_connections" (
++  "source_connection_id" varchar(191) NOT NULL,
++  "provider" varchar(32) NOT NULL,
++  "environment" varchar(16) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "account_id" varchar(191) DEFAULT NULL,
++  "scope_hash" varchar(64) NOT NULL,
++  "adapter_version" varchar(64) NOT NULL,
++  "mapping_version" varchar(64) NOT NULL,
++  "status" varchar(32) NOT NULL,
++  "last_health_at" timestamp(6) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_connection_id"),
++  CONSTRAINT "audit_source_connections_identity" UNIQUE ("tenant_id","provider","environment","account_id"),
++  CONSTRAINT "audit_source_connections_environment" CHECK (("environment" in ('stage','prod'))),
++  CONSTRAINT "audit_source_connections_provider" CHECK (("provider" in ('huilianyi','sap','other'))),
++  CONSTRAINT "audit_source_connections_status" CHECK (("status" in ('active','paused','revoked','error')))
++);
++
++CREATE TABLE "audit_suspicion_documents" (
++  "suspicion_id" varchar(64) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  PRIMARY KEY ("suspicion_id","document_id")
++);
++
++CREATE TABLE "audit_suspicion_events" (
++  "event_id" varchar(64) NOT NULL,
++  "suspicion_id" varchar(64) NOT NULL,
++  "run_id" varchar(191) DEFAULT NULL,
++  "event" varchar(32) NOT NULL,
++  "actor" varchar(64) NOT NULL,
++  "at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("event_id"),
++  CONSTRAINT "audit_suspicion_events_actor" CHECK (("actor" = 'system:scan')),
++  CONSTRAINT "audit_suspicion_events_event" CHECK (("event" in ('created','evidence_changed','no_longer_hit','hit_again')))
++);
++
++CREATE TABLE "audit_suspicions" (
++  "suspicion_id" varchar(64) NOT NULL,
++  "connection_id" varchar(191) NOT NULL,
++  "rule_id" varchar(64) NOT NULL,
++  "rule_version" bigint NOT NULL CHECK ("rule_version" >= 0),
++  "reject_code" varchar(100) DEFAULT NULL,
++  "disposition" varchar(16) NOT NULL,
++  "detection_layer" varchar(32) NOT NULL,
++  "decision_layer" varchar(32) NOT NULL,
++  "primary_document_id" varchar(191) NOT NULL,
++  "document_count" bigint NOT NULL CHECK ("document_count" >= 0),
++  "first_run_id" varchar(191) NOT NULL,
++  "last_run_id" varchar(191) NOT NULL,
++  "first_seen_at" timestamp(6) NOT NULL,
++  "last_seen_at" timestamp(6) NOT NULL,
++  "still_present" smallint NOT NULL DEFAULT '1',
++  "status" varchar(16) NOT NULL DEFAULT 'open',
++  "evidence_sha256" varchar(64) NOT NULL,
++  "payload_ciphertext" bytea NOT NULL,
++  PRIMARY KEY ("suspicion_id"),
++  CONSTRAINT "audit_suspicions_disposition" CHECK (("disposition" in ('red','orange','yellow','grey'))),
++  CONSTRAINT "audit_suspicions_status" CHECK (("status" in ('open','confirmed','false_positive','handled')))
++);
++
++CREATE TABLE "audit_sync_batches" (
++  "batch_id" varchar(191) NOT NULL,
++  "source_connection_id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "scope_hash" varchar(64) NOT NULL,
++  "permission_snapshot_id" varchar(191) DEFAULT NULL,
++  "idempotency_key" varchar(191) NOT NULL,
++  "query_hash" varchar(64) DEFAULT NULL,
++  "cursor_before_ciphertext" bytea,
++  "cursor_after_ciphertext" bytea,
++  "source_response_hash" varchar(64) DEFAULT NULL,
++  "status" varchar(32) NOT NULL,
++  "completeness_state" varchar(32) NOT NULL,
++  "completeness_reason" varchar(255) DEFAULT NULL,
++  "attempt_count" bigint NOT NULL DEFAULT '0' CHECK ("attempt_count" >= 0),
++  "retry_count" bigint NOT NULL DEFAULT '0' CHECK ("retry_count" >= 0),
++  "next_retry_at" timestamp(6) DEFAULT NULL,
++  "lease_owner" varchar(191) DEFAULT NULL,
++  "lease_expires_at" timestamp(6) DEFAULT NULL,
++  "started_at" timestamp(6) DEFAULT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "item_count" bigint NOT NULL DEFAULT '0' CHECK ("item_count" >= 0),
++  "succeeded_item_count" bigint NOT NULL DEFAULT '0' CHECK ("succeeded_item_count" >= 0),
++  "failed_item_count" bigint NOT NULL DEFAULT '0' CHECK ("failed_item_count" >= 0),
++  "affected_document_count" bigint NOT NULL DEFAULT '0' CHECK ("affected_document_count" >= 0),
++  "error_code" varchar(100) DEFAULT NULL,
++  "error_message" varchar(1000) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("batch_id"),
++  CONSTRAINT "audit_sync_batches_idempotency" UNIQUE ("source_connection_id","idempotency_key"),
++  CONSTRAINT "audit_sync_batches_completeness" CHECK (("completeness_state" in ('unknown','complete','partial','failed','not_applicable'))),
++  CONSTRAINT "audit_sync_batches_status" CHECK (("status" in ('queued','running','succeeded','partial','failed','cancelled','stale')))
++);
++
++CREATE TABLE "audit_sync_items" (
++  "sync_item_id" varchar(191) NOT NULL,
++  "batch_id" varchar(191) NOT NULL,
++  "entity_type" varchar(64) NOT NULL,
++  "source_entity_id" varchar(191) NOT NULL,
++  "status" varchar(32) NOT NULL,
++  "attempt_count" bigint NOT NULL DEFAULT '0' CHECK ("attempt_count" >= 0),
++  "next_retry_at" timestamp(6) DEFAULT NULL,
++  "lease_owner" varchar(191) DEFAULT NULL,
++  "lease_expires_at" timestamp(6) DEFAULT NULL,
++  "source_version" varchar(191) DEFAULT NULL,
++  "source_response_hash" varchar(64) DEFAULT NULL,
++  "error_code" varchar(100) DEFAULT NULL,
++  "error_message" varchar(1000) DEFAULT NULL,
++  "started_at" timestamp(6) DEFAULT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("sync_item_id"),
++  CONSTRAINT "audit_sync_items_identity" UNIQUE ("batch_id","entity_type","source_entity_id"),
++  CONSTRAINT "audit_sync_items_status" CHECK (("status" in ('queued','running','succeeded','partial','failed','skipped','stale')))
++);
++
++CREATE TABLE "audit_tasks" (
++  "task_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "source_connection_id" varchar(191) NOT NULL,
++  "source_task_id" varchar(191) NOT NULL,
++  "node_id" varchar(191) DEFAULT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_id" varchar(191) NOT NULL,
++  "assignee_id" varchar(191) DEFAULT NULL,
++  "source_status" varchar(64) DEFAULT NULL,
++  "action_state" varchar(32) NOT NULL,
++  "source_version" varchar(191) NOT NULL,
++  "sync_batch_id" varchar(191) NOT NULL,
++  "permission_snapshot_id" varchar(191) NOT NULL,
++  "observed_at" timestamp(6) NOT NULL,
++  "valid_until" timestamp(6) DEFAULT NULL,
++  "last_error_code" varchar(100) DEFAULT NULL,
++  PRIMARY KEY ("task_id"),
++  CONSTRAINT "audit_tasks_source_identity" UNIQUE ("source_connection_id","source_task_id"),
++  CONSTRAINT "audit_tasks_action" CHECK (("action_state" in ('active','completed','revoked','stale','unknown')))
++);
++
++CREATE TABLE "audit_travel_applications" (
++  "document_id" varchar(191) NOT NULL,
++  "content_version" varchar(64) NOT NULL,
++  "application_index" bigint NOT NULL CHECK ("application_index" >= 0),
++  "application_business_code" varchar(191) DEFAULT NULL,
++  "application_form_name_ciphertext" bytea,
++  "application_form_name_sha256" varchar(64) DEFAULT NULL,
++  "travel_start_date" date DEFAULT NULL,
++  "travel_end_date" date DEFAULT NULL,
++  "total_amount_fen" bigint DEFAULT NULL,
++  PRIMARY KEY ("document_id","content_version","application_index")
++);
++
++CREATE TABLE "decisions" (
++  "id" varchar(191) NOT NULL,
++  "actor_id" varchar(191) NOT NULL,
++  "document_id" varchar(191) NOT NULL,
++  "fingerprint" varchar(64) NOT NULL,
++  "created_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("id"),
++  CONSTRAINT "decisions_document_fingerprint" UNIQUE ("document_id","fingerprint")
++);
++
++CREATE TABLE "element_draft_edits" (
++  "edit_id" varchar(36) NOT NULL,
++  "connection_id" varchar(191) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "draft_revision" bigint NOT NULL CHECK ("draft_revision" >= 0),
++  "action" varchar(24) NOT NULL,
++  "element_id" varchar(191) DEFAULT NULL,
++  "intent" varchar(24) DEFAULT NULL,
++  "note_ciphertext" bytea,
++  "actor_account_id" varchar(191) NOT NULL,
++  "actor_mode" varchar(16) NOT NULL,
++  "actor_principal" varchar(191) NOT NULL,
++  "at" timestamp(6) NOT NULL,
++  "draft_hash" varchar(64) NOT NULL,
++  "source_version_id" varchar(36) DEFAULT NULL,
++  PRIMARY KEY ("edit_id"),
++  CONSTRAINT "element_draft_edits_revision" UNIQUE ("connection_id","family_id","draft_revision"),
++  CONSTRAINT "element_draft_edits_chk_action" CHECK (("action" in ('adopt','add','modify','discard','restore','resolve_conflict','import','save'))),
++  CONSTRAINT "element_draft_edits_chk_actor" CHECK (((("actor_mode" = 'dingtalk') and ("actor_principal" like 'dingtalk:%')) or (("actor_mode" = 'local') and ("actor_principal" like 'local:%')))),
++  CONSTRAINT "element_draft_edits_chk_intent" CHECK ((("intent" is null) or ("intent" in ('void_draft','abandon_changes','restore_draft','restart_from_effective','restore_version')))),
++  CONSTRAINT "element_draft_edits_chk_intent_pair" CHECK ((("intent" is null) or ((("intent" not in ('void_draft','abandon_changes')) or (("action" = 'discard') and ("element_id" is null))) and (("intent" <> 'restore_draft') or (("action" = 'restore') and ("element_id" is null))) and (("intent" not in ('restart_from_effective','restore_version')) or (("action" = 'save') and ("element_id" is null)))))),
++  CONSTRAINT "element_draft_edits_chk_source_version" CHECK (((coalesce("intent",'') = 'restore_version') = ("source_version_id" is not null))),
++  CONSTRAINT "element_draft_edits_chk_whole_mark" CHECK ((("element_id" is not null) or ("action" not in ('discard','restore')) or ("intent" is not null)))
++);
++
++CREATE TABLE "element_family_drafts" (
++  "connection_id" varchar(191) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "family_kind" varchar(16) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "scope" varchar(16) NOT NULL,
++  "company_id" varchar(191) DEFAULT NULL,
++  "definition_format" varchar(40) NOT NULL,
++  "draft_ciphertext" bytea NOT NULL,
++  "draft_hash" varchar(64) NOT NULL,
++  "revision" bigint NOT NULL CHECK ("revision" >= 0),
++  "created_by_account_id" varchar(191) NOT NULL,
++  "created_at" timestamp(6) NOT NULL,
++  "updated_by_account_id" varchar(191) NOT NULL,
++  "updated_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","family_id"),
++  CONSTRAINT "element_family_drafts_chk_company_scope" CHECK (((("scope" <> 'company') or ("company_id" is not null)) and (("scope" <> 'group') or ("company_id" is null)))),
++  CONSTRAINT "element_family_drafts_chk_format" CHECK (((("family_kind" <> 'agent') or ("definition_format" in ('expense-agent-def-v1','expense-agent-def-v2'))) and (("family_kind" <> 'parameter') or ("definition_format" = 'element-parameter-table-v1')) and (("family_kind" <> 'resolver') or ("definition_format" = 'element-resolver-table-v1')))),
++  CONSTRAINT "element_family_drafts_chk_kind" CHECK (("family_kind" in ('agent','parameter','resolver'))),
++  CONSTRAINT "element_family_drafts_chk_revision" CHECK (("revision" >= 1)),
++  CONSTRAINT "element_family_drafts_chk_scope" CHECK (("scope" in ('group','company')))
++);
++
++CREATE TABLE "element_family_events" (
++  "event_id" varchar(36) NOT NULL,
++  "connection_id" varchar(191) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "version_id" varchar(36) NOT NULL,
++  "event" varchar(24) NOT NULL,
++  "actor_account_id" varchar(191) NOT NULL,
++  "actor_principal" varchar(191) NOT NULL,
++  "actor_mode" varchar(16) NOT NULL,
++  "at" timestamp(6) NOT NULL,
++  "definition_hash" varchar(64) NOT NULL,
++  "note_ciphertext" bytea,
++  PRIMARY KEY ("event_id"),
++  CONSTRAINT "element_family_events_chk_actor" CHECK ((("actor_mode" = 'dingtalk') and ("actor_principal" like 'dingtalk:%'))),
++  CONSTRAINT "element_family_events_chk_event" CHECK (("event" in ('submitted','withdrawn','returned','confirmed','superseded','retire_submitted','retired','published')))
++);
++
++CREATE TABLE "element_family_heads" (
++  "connection_id" varchar(191) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "family_kind" varchar(16) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "scope" varchar(16) NOT NULL,
++  "company_id" varchar(191) DEFAULT NULL,
++  "effective_version_id" varchar(36) DEFAULT NULL,
++  "pending_version_id" varchar(36) DEFAULT NULL,
++  "revision" bigint NOT NULL CHECK ("revision" >= 0),
++  "updated_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","family_id"),
++  CONSTRAINT "element_family_heads_chk_company_scope" CHECK (((("scope" <> 'company') or ("company_id" is not null)) and (("scope" <> 'group') or ("company_id" is null)))),
++  CONSTRAINT "element_family_heads_chk_distinct" CHECK ((("effective_version_id" is null) or ("pending_version_id" is null) or ("effective_version_id" <> "pending_version_id"))),
++  CONSTRAINT "element_family_heads_chk_kind" CHECK (("family_kind" in ('agent','parameter','resolver'))),
++  CONSTRAINT "element_family_heads_chk_scope" CHECK (("scope" in ('group','company')))
++);
++
++CREATE TABLE "element_family_registry" (
++  "connection_id" varchar(191) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "scope" varchar(16) NOT NULL,
++  "company_id" varchar(191) DEFAULT NULL,
++  "document_type" varchar(40) NOT NULL,
++  "expense_type_oid" varchar(191) NOT NULL,
++  "expense_type_name_ciphertext" bytea NOT NULL,
++  "created_by_account_id" varchar(191) NOT NULL,
++  "created_by_principal" varchar(191) NOT NULL,
++  "created_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","family_id"),
++  CONSTRAINT "element_family_registry_oid" UNIQUE ("connection_id","tenant_id","expense_type_oid"),
++  CONSTRAINT "element_family_registry_chk_company_scope" CHECK (((("scope" <> 'company') or ("company_id" is not null)) and (("scope" <> 'group') or ("company_id" is null)))),
++  CONSTRAINT "element_family_registry_chk_creator" CHECK (("created_by_principal" like 'dingtalk:%')),
++  CONSTRAINT "element_family_registry_chk_scope" CHECK (("scope" in ('group','company')))
++);
++
++CREATE TABLE "element_family_versions" (
++  "version_id" varchar(36) NOT NULL,
++  "connection_id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_id" varchar(191) DEFAULT NULL,
++  "family_kind" varchar(16) NOT NULL,
++  "scope" varchar(16) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "family_version" bigint NOT NULL CHECK ("family_version" >= 0),
++  "change_type" varchar(16) NOT NULL,
++  "definition_format" varchar(40) NOT NULL,
++  "kind" varchar(40) DEFAULT NULL,
++  "document_type" varchar(40) DEFAULT NULL,
++  "definition_hash" varchar(64) NOT NULL,
++  "definition_ciphertext" bytea NOT NULL,
++  "status" varchar(16) NOT NULL,
++  "base_version_id" varchar(36) DEFAULT NULL,
++  "draft_revision" bigint NOT NULL CHECK ("draft_revision" >= 0),
++  "submitter_account_id" varchar(191) NOT NULL,
++  "submitter_principal" varchar(191) NOT NULL,
++  "submitted_at" timestamp(6) NOT NULL,
++  "confirmer_account_id" varchar(191) DEFAULT NULL,
++  "confirmer_principal" varchar(191) DEFAULT NULL,
++  "confirmed_at" timestamp(6) DEFAULT NULL,
++  "effective_from" date DEFAULT NULL,
++  "ended_on" date DEFAULT NULL,
++  "status_changed_at" timestamp(6) NOT NULL,
++  "activation_mode" varchar(16) NOT NULL DEFAULT 'confirm',
++  PRIMARY KEY ("version_id"),
++  CONSTRAINT "element_family_versions_identity" UNIQUE ("connection_id","family_id","family_version"),
++  CONSTRAINT "element_family_versions_chk_activation_mode" CHECK (("activation_mode" in ('confirm','publish'))),
++  CONSTRAINT "element_family_versions_chk_change_type" CHECK (("change_type" in ('activate','retire'))),
++  CONSTRAINT "element_family_versions_chk_company_scope" CHECK (((("scope" <> 'company') or ("company_id" is not null)) and (("scope" <> 'group') or ("company_id" is null)))),
++  CONSTRAINT "element_family_versions_chk_confirmed" CHECK ((("status" not in ('effective','superseded','retired','applied')) or (("confirmer_account_id" is not null) and ("confirmer_principal" is not null) and ("confirmed_at" is not null)))),
++  CONSTRAINT "element_family_versions_chk_confirmer_differs" CHECK ((("activation_mode" = 'publish') or ("confirmer_principal" is null) or ("confirmer_principal" <> "submitter_principal"))),
++  CONSTRAINT "element_family_versions_chk_confirmer_dingtalk" CHECK ((("confirmer_principal" is null) or ("confirmer_principal" like 'dingtalk:%'))),
++  CONSTRAINT "element_family_versions_chk_format" CHECK (((("family_kind" <> 'agent') or ("definition_format" in ('expense-agent-def-v1','expense-agent-def-v2'))) and (("family_kind" <> 'parameter') or ("definition_format" = 'element-parameter-table-v1')) and (("family_kind" <> 'resolver') or ("definition_format" = 'element-resolver-table-v1')))),
++  CONSTRAINT "element_family_versions_chk_kind" CHECK (("family_kind" in ('agent','parameter','resolver'))),
++  CONSTRAINT "element_family_versions_chk_publisher" CHECK ((("activation_mode" <> 'publish') or ("confirmer_principal" is null) or (("confirmer_principal" = "submitter_principal") and ("confirmer_account_id" = "submitter_account_id")))),
++  CONSTRAINT "element_family_versions_chk_scope" CHECK (("scope" in ('group','company'))),
++  CONSTRAINT "element_family_versions_chk_status" CHECK (("status" in ('pending','returned','withdrawn','effective','superseded','retired','applied'))),
++  CONSTRAINT "element_family_versions_chk_submitter_dingtalk" CHECK (("submitter_principal" like 'dingtalk:%'))
++);
++
++CREATE TABLE "element_oid_claims" (
++  "connection_id" varchar(191) NOT NULL,
++  "expense_type_oid" varchar(191) NOT NULL,
++  "family_id" varchar(200) NOT NULL,
++  "version_id" varchar(36) NOT NULL,
++  "state" varchar(16) NOT NULL,
++  "claimed_at" timestamp(6) NOT NULL,
++  "updated_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","expense_type_oid"),
++  CONSTRAINT "element_oid_claims_chk_state" CHECK (("state" in ('pending','effective')))
++);
++
++CREATE TABLE "entities" (
++  "kind" varchar(64) NOT NULL,
++  "id" varchar(191) NOT NULL,
++  "data" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("kind","id")
++);
++
++CREATE TABLE "hly_departments" (
++  "connection_id" varchar(191) NOT NULL,
++  "department_oid" varchar(191) NOT NULL,
++  "parent_department_oid" varchar(191) DEFAULT NULL,
++  "cust_dept_number" varchar(191) DEFAULT NULL,
++  "name" varchar(500) DEFAULT NULL,
++  "path" varchar(1000) DEFAULT NULL,
++  "status" integer DEFAULT NULL,
++  "manager_user_oid" varchar(191) DEFAULT NULL,
++  "manager_employee_id" varchar(64) DEFAULT NULL,
++  "manager_ciphertext" bytea,
++  "refresh_state" varchar(16) NOT NULL,
++  "refreshed_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","department_oid"),
++  CONSTRAINT "hly_departments_refresh_state" CHECK (("refresh_state" in ('ok','not_found','failed')))
++);
++
++CREATE TABLE "metadata" (
++  "key" varchar(191) NOT NULL,
++  "value" text NOT NULL,
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("key")
++);
++
++CREATE TABLE "platform_agent_runs" (
++  "run_id" varchar(26) NOT NULL,
++  "agent_id" varchar(64) NOT NULL,
++  "code_version" varchar(64) NOT NULL,
++  "mode" varchar(16) NOT NULL,
++  "lane" varchar(16) DEFAULT NULL,
++  "trigger_kind" varchar(16) NOT NULL,
++  "upstream_run_id" varchar(26) DEFAULT NULL,
++  "actor_principal" varchar(191) NOT NULL,
++  "status" varchar(16) NOT NULL,
++  "started_at" timestamp(6) NOT NULL,
++  "heartbeat_at" timestamp(6) NOT NULL,
++  "lease_expires_at" timestamp(6) NOT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "selected_count" bigint NOT NULL DEFAULT '0' CHECK ("selected_count" >= 0),
++  "succeeded_count" bigint NOT NULL DEFAULT '0' CHECK ("succeeded_count" >= 0),
++  "failed_count" bigint NOT NULL DEFAULT '0' CHECK ("failed_count" >= 0),
++  "skipped_count" bigint NOT NULL DEFAULT '0' CHECK ("skipped_count" >= 0),
++  "recovered_count" bigint NOT NULL DEFAULT '0' CHECK ("recovered_count" >= 0),
++  "request_count" bigint NOT NULL DEFAULT '0' CHECK ("request_count" >= 0),
++  "params_sha256" varchar(64) DEFAULT NULL,
++  "settings_revision" bigint DEFAULT NULL CHECK ("settings_revision" >= 0),
++  "legacy_ref" varchar(191) DEFAULT NULL,
++  "error_code" varchar(64) DEFAULT NULL,
++  "summary_json" jsonb DEFAULT NULL,
++  PRIMARY KEY ("run_id"),
++  CONSTRAINT "platform_agent_runs_lane" CHECK ((("lane" is null) or ("lane" in ('corporate','employee')))),
++  CONSTRAINT "platform_agent_runs_mode" CHECK (("mode" in ('incremental','history','catch_up','operation'))),
++  CONSTRAINT "platform_agent_runs_status" CHECK (("status" in ('running','succeeded','partial','failed','cancelled','abandoned'))),
++  CONSTRAINT "platform_agent_runs_summary_size" CHECK ((("summary_json" is null) or (octet_length("summary_json"::text) <= 8192))),
++  CONSTRAINT "platform_agent_runs_trigger" CHECK (("trigger_kind" in ('manual','schedule','upstream','startup')))
++);
++
++CREATE TABLE "platform_call_budget_daily" (
++  "budget_day" date NOT NULL,
++  "connector_id" varchar(32) NOT NULL,
++  "agent_id" varchar(64) NOT NULL,
++  "limit_calls" bigint NOT NULL CHECK ("limit_calls" >= 0),
++  "used_calls" bigint NOT NULL DEFAULT '0' CHECK ("used_calls" >= 0),
++  "limit_tokens" bigint DEFAULT NULL CHECK ("limit_tokens" >= 0),
++  "used_tokens" bigint NOT NULL DEFAULT '0' CHECK ("used_tokens" >= 0),
++  PRIMARY KEY ("budget_day","connector_id","agent_id")
++);
++
++CREATE TABLE "platform_call_log" (
++  "call_id" bigint GENERATED BY DEFAULT AS IDENTITY NOT NULL CHECK ("call_id" >= 0),
++  "connector_id" varchar(32) NOT NULL,
++  "operation" varchar(96) NOT NULL,
++  "agent_id" varchar(64) NOT NULL,
++  "run_id" varchar(26) DEFAULT NULL,
++  "attempt_no" smallint NOT NULL CHECK ("attempt_no" >= 0),
++  "started_at" timestamp(6) NOT NULL,
++  "duration_ms" bigint NOT NULL CHECK ("duration_ms" >= 0),
++  "outcome" varchar(24) NOT NULL,
++  "http_status" integer DEFAULT NULL CHECK ("http_status" >= 0),
++  "error_code" varchar(64) DEFAULT NULL,
++  "response_bytes" bigint DEFAULT NULL CHECK ("response_bytes" >= 0),
++  "input_tokens" bigint DEFAULT NULL CHECK ("input_tokens" >= 0),
++  "output_tokens" bigint DEFAULT NULL CHECK ("output_tokens" >= 0),
++  "process_tag" varchar(64) NOT NULL,
++  PRIMARY KEY ("call_id"),
++  CONSTRAINT "platform_call_log_outcome" CHECK (("outcome" in ('ok','error','retryable_error','timeout','rejected_budget','rejected_paused','rejected_not_allowed','rejected_breaker','rejected_unattributed')))
++);
++
++CREATE TABLE "platform_change_log" (
++  "change_id" bigint GENERATED BY DEFAULT AS IDENTITY NOT NULL CHECK ("change_id" >= 0),
++  "event_kind" varchar(16) NOT NULL,
++  "scope_kind" varchar(16) NOT NULL,
++  "scope_id" varchar(64) NOT NULL,
++  "from_revision" bigint DEFAULT NULL CHECK ("from_revision" >= 0),
++  "to_revision" bigint DEFAULT NULL CHECK ("to_revision" >= 0),
++  "actor_principal" varchar(191) NOT NULL,
++  "actor_role" varchar(32) NOT NULL,
++  "occurred_at" timestamp(6) NOT NULL,
++  "reason" varchar(400) DEFAULT NULL,
++  "before_json" jsonb DEFAULT NULL,
++  "after_json" jsonb DEFAULT NULL,
++  "operation_json" jsonb DEFAULT NULL,
++  "result_json" jsonb DEFAULT NULL,
++  "outcome" varchar(16) NOT NULL,
++  "run_id" varchar(26) DEFAULT NULL,
++  PRIMARY KEY ("change_id"),
++  CONSTRAINT "platform_change_log_event" CHECK (("event_kind" in ('config_change','operation','auth','access_denied'))),
++  CONSTRAINT "platform_change_log_outcome" CHECK (("outcome" in ('ok','refused','failed')))
++);
++
++CREATE TABLE "platform_settings" (
++  "scope_kind" varchar(16) NOT NULL,
++  "scope_id" varchar(64) NOT NULL,
++  "revision" bigint NOT NULL CHECK ("revision" >= 0),
++  "value_json" jsonb NOT NULL,
++  "value_sha256" varchar(64) NOT NULL,
++  "updated_by" varchar(191) NOT NULL,
++  "updated_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("scope_kind","scope_id"),
++  CONSTRAINT "platform_settings_scope" CHECK (("scope_kind" in ('agent','connector','middleware','scheduler','platform')))
++);
++
++CREATE TABLE "ref_approval_nodes" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_audit_element_seed" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_expense_type_codes" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_expense_type_seed" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_invoice_controls" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_org_segment_map" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_reject_codes" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "ref_seed_snapshots" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("seed_version")
++);
++
++CREATE TABLE "ref_standard_candidates" (
++  "seed_version" varchar(64) NOT NULL,
++  "source_sha256" varchar(64) NOT NULL,
++  "record_key" varchar(191) NOT NULL,
++  "payload" jsonb NOT NULL,
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("source_sha256","record_key")
++);
++
++CREATE TABLE "sap_payment_requests" (
++  "connection_id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_code" varchar(32) NOT NULL,
++  "company_name" varchar(255) DEFAULT NULL,
++  "request_number" varchar(191) NOT NULL,
++  "line_item" varchar(64) NOT NULL DEFAULT '',
++  "request_date" date NOT NULL,
++  "payee" varchar(255) DEFAULT NULL,
++  "supplier_code" varchar(191) DEFAULT NULL,
++  "supplier_name" varchar(255) DEFAULT NULL,
++  "status" varchar(64) DEFAULT NULL,
++  "purchase_order" varchar(191) DEFAULT NULL,
++  "material_code" varchar(191) DEFAULT NULL,
++  "material_description" varchar(500) DEFAULT NULL,
++  "order_quantity" numeric(38,12) DEFAULT NULL,
++  "currency" varchar(32) DEFAULT NULL,
++  "order_amount" numeric(38,12) DEFAULT NULL,
++  "order_unit_price" numeric(38,12) DEFAULT NULL,
++  "paid_amount" numeric(38,12) DEFAULT NULL,
++  "receipt_quantity" numeric(38,12) DEFAULT NULL,
++  "receipt_amount" numeric(38,12) DEFAULT NULL,
++  "invoice_quantity" numeric(38,12) DEFAULT NULL,
++  "invoice_amount" numeric(38,12) DEFAULT NULL,
++  "adjustment_amount" numeric(38,12) DEFAULT NULL,
++  "advance_deduction_amount" numeric(38,12) DEFAULT NULL,
++  "proposed_payment_amount" numeric(38,12) DEFAULT NULL,
++  "sync_batch_id" varchar(191) NOT NULL,
++  "raw_payload" bytea NOT NULL,
++  "payload_sha256" varchar(64) NOT NULL,
++  "collected_at" timestamp(6) NOT NULL,
++  PRIMARY KEY ("connection_id","tenant_id","company_code","request_number","line_item")
++);
++
++CREATE TABLE "sap_payment_sync_batches" (
++  "connection_id" varchar(191) NOT NULL,
++  "id" varchar(191) NOT NULL,
++  "tenant_id" varchar(191) NOT NULL,
++  "company_code" varchar(32) NOT NULL,
++  "start_date" date NOT NULL,
++  "end_date" date DEFAULT NULL,
++  "status" varchar(32) NOT NULL,
++  "complete" smallint NOT NULL DEFAULT '0',
++  "cursor_skip" bigint NOT NULL DEFAULT '0' CHECK ("cursor_skip" >= 0),
++  "pages" bigint NOT NULL DEFAULT '0' CHECK ("pages" >= 0),
++  "row_count" bigint NOT NULL DEFAULT '0' CHECK ("row_count" >= 0),
++  "request_count" bigint NOT NULL DEFAULT '0' CHECK ("request_count" >= 0),
++  "started_at" timestamp(6) NOT NULL,
++  "finished_at" timestamp(6) DEFAULT NULL,
++  "collected_at" timestamp(6) DEFAULT NULL,
++  "error_code" varchar(100) DEFAULT NULL,
++  "error_message" varchar(1000) DEFAULT NULL,
++  PRIMARY KEY ("connection_id","id"),
++  CONSTRAINT "sap_payment_batches_status" CHECK (("status" in ('running','completed','partial','failed')))
++);
++
++CREATE TABLE "sessions" (
++  "token" varchar(64) NOT NULL,
++  "user_id" varchar(191) NOT NULL,
++  "expires_at" bigint NOT NULL CHECK ("expires_at" >= 0),
++  "created_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("token")
++);
++
++CREATE TABLE "source_tasks" (
++  "document_id" varchar(191) NOT NULL,
++  "version" bigint NOT NULL CHECK ("version" >= 0),
++  "status" varchar(32) NOT NULL,
++  "assignee_id" varchar(191) NOT NULL,
++  "scenario" varchar(64) NOT NULL DEFAULT 'normal',
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("document_id")
++);
++
++CREATE TABLE "stage_workspaces" (
++  "workspace_id" varchar(191) NOT NULL,
++  "ciphertext" bytea NOT NULL,
++  "key_version" bigint NOT NULL CHECK ("key_version" >= 0),
++  "revision" bigint NOT NULL DEFAULT '0' CHECK ("revision" >= 0),
++  "updated_at" timestamp(6) NOT NULL DEFAULT LOCALTIMESTAMP(6),
++  PRIMARY KEY ("workspace_id")
++);
++
++CREATE INDEX "analysis_batches_scope" ON "analysis_batches" ("connection_id","company_id","started_at");
++
++CREATE INDEX "analysis_document_versions_batch" ON "analysis_document_versions" ("connection_id","batch_id");
++
++CREATE INDEX "analysis_documents_company" ON "analysis_documents" ("connection_id","company_id","collected_at","id");
++
++CREATE INDEX "analysis_documents_status" ON "analysis_documents" ("connection_id","company_id","status","collected_at");
++
++CREATE INDEX "analysis_events_latest" ON "analysis_events" ("connection_id","document_id","id","at");
++
++CREATE INDEX "analysis_events_version" ON "analysis_events" ("connection_id","document_id","version");
++
++CREATE INDEX "audit_advice_runs_document" ON "audit_advice_runs" ("document_id","status","generated_at");
++
++CREATE INDEX "audit_advice_runs_run" ON "audit_advice_runs" ("run_id");
++
++CREATE INDEX "audit_approval_actor_index_department" ON "audit_approval_actor_index" ("document_department_oid");
++
++CREATE INDEX "audit_approval_actors_operator" ON "audit_approval_actors" ("operator_employee_id","occurred_at");
++
++CREATE INDEX "audit_approval_actors_approver" ON "audit_approval_actors" ("approver_employee_id","occurred_at");
++
++CREATE INDEX "audit_approval_decisions_summary" ON "audit_approval_decisions" ("connection_id","status","created_at");
++
++CREATE INDEX "audit_approval_events_document" ON "audit_approval_events" ("document_id","occurred_at","event_id");
++
++CREATE INDEX "audit_approval_events_batch" ON "audit_approval_events" ("sync_batch_id");
++
++CREATE INDEX "audit_approval_events_hash" ON "audit_approval_events" ("payload_sha256");
++
++CREATE INDEX "audit_approval_pending_approver" ON "audit_approval_pending" ("approver_employee_id","activated_at");
++
++CREATE INDEX "audit_attachment_extractions_status" ON "audit_attachment_extractions" ("status","coverage_state");
++
++CREATE INDEX "audit_attachment_extractions_lease" ON "audit_attachment_extractions" ("status","lease_expires_at","next_retry_at");
++
++CREATE INDEX "audit_attachment_fetches_retry" ON "audit_attachment_fetches" ("status","next_retry_at");
++
++CREATE INDEX "audit_attachment_fetches_lease" ON "audit_attachment_fetches" ("status","lease_expires_at");
++
++CREATE INDEX "audit_attachments_state" ON "audit_attachments" ("document_id","metadata_state","content_state","coverage_state");
++
++CREATE INDEX "audit_attachments_hash" ON "audit_attachments" ("sha256");
++
++CREATE INDEX "audit_attachments_retention" ON "audit_attachments" ("content_state","retention_until");
++
++CREATE INDEX "audit_attachments_manifest" ON "audit_attachments" ("document_id","source_version","detail_version");
++
++CREATE INDEX "audit_document_versions_batch" ON "audit_document_versions" ("sync_batch_id");
++
++CREATE INDEX "audit_document_versions_hash" ON "audit_document_versions" ("payload_sha256");
++
++CREATE INDEX "audit_documents_scope" ON "audit_documents" ("tenant_id","company_id","collected_at","document_id");
++
++CREATE INDEX "audit_documents_version" ON "audit_documents" ("source_connection_id","source_version","valid_until");
++
++CREATE INDEX "audit_documents_batch" ON "audit_documents" ("sync_batch_id");
++
++CREATE INDEX "audit_evidence_packs_validity" ON "audit_evidence_packs" ("document_id","valid_until","coverage_state");
++
++CREATE INDEX "audit_expense_lines_type" ON "audit_expense_lines" ("expense_type_oid","expense_type_code");
++
++CREATE INDEX "audit_expense_lines_date" ON "audit_expense_lines" ("occurred_date");
++
++CREATE INDEX "audit_expense_receipts_date" ON "audit_expense_receipts" ("billing_date");
++
++CREATE INDEX "audit_expense_receipts_check" ON "audit_expense_receipts" ("check_result","invalid_status");
++
++CREATE INDEX "audit_expense_subsidies_city_date" ON "audit_expense_subsidies" ("city_code","subsidy_date");
++
++CREATE INDEX "audit_issue_events_issue" ON "audit_issue_events" ("issue_id","created_at");
++
++CREATE INDEX "audit_issues_work" ON "audit_issues" ("document_id","status","severity","owner_id");
++
++CREATE INDEX "audit_permission_snapshots_scope" ON "audit_permission_snapshots" ("tenant_id","account_id","scope_hash","valid_until");
++
++CREATE INDEX "audit_permission_snapshots_company" ON "audit_permission_snapshots" ("tenant_id","company_id","valid_until");
++
++CREATE INDEX "audit_report_details_company" ON "audit_report_details" ("company_id","fetched_at");
++
++CREATE INDEX "audit_report_details_status" ON "audit_report_details" ("status","fetched_at");
++
++CREATE INDEX "audit_report_projection_status_retry" ON "audit_report_projection_status" ("projection_status","next_retry_at","exhausted");
++
++CREATE INDEX "audit_review_runs_state" ON "audit_review_runs" ("document_id","review_state","conclusion","valid_until");
++
++CREATE INDEX "audit_scan_runs_connection_time" ON "audit_scan_runs" ("connection_id","started_at");
++
++CREATE INDEX "audit_source_connections_status" ON "audit_source_connections" ("tenant_id","status","updated_at");
++
++CREATE INDEX "audit_suspicion_documents_document" ON "audit_suspicion_documents" ("document_id","suspicion_id");
++
++CREATE INDEX "audit_suspicion_events_suspicion" ON "audit_suspicion_events" ("suspicion_id","at","event_id");
++
++CREATE INDEX "audit_suspicions_status" ON "audit_suspicions" ("connection_id","status","disposition");
++
++CREATE INDEX "audit_suspicions_rule" ON "audit_suspicions" ("connection_id","rule_id");
++
++CREATE INDEX "audit_sync_batches_status" ON "audit_sync_batches" ("source_connection_id","status","next_retry_at");
++
++CREATE INDEX "audit_sync_batches_started" ON "audit_sync_batches" ("tenant_id","started_at");
++
++CREATE INDEX "audit_sync_items_retry" ON "audit_sync_items" ("status","next_retry_at");
++
++CREATE INDEX "audit_sync_items_lease" ON "audit_sync_items" ("entity_type","status","lease_expires_at");
++
++CREATE INDEX "audit_tasks_scope" ON "audit_tasks" ("tenant_id","company_id","assignee_id","action_state");
++
++CREATE INDEX "audit_tasks_document" ON "audit_tasks" ("document_id","observed_at");
++
++CREATE INDEX "audit_travel_applications_code" ON "audit_travel_applications" ("application_business_code");
++
++CREATE INDEX "decisions_actor_created" ON "decisions" ("actor_id","created_at");
++
++CREATE INDEX "decisions_document_created" ON "decisions" ("document_id","created_at");
++
++CREATE INDEX "element_draft_edits_family_at" ON "element_draft_edits" ("connection_id","family_id","at");
++
++CREATE INDEX "element_family_drafts_tenant" ON "element_family_drafts" ("connection_id","tenant_id");
++
++CREATE INDEX "element_family_events_family" ON "element_family_events" ("connection_id","family_id","at");
++
++CREATE INDEX "element_family_heads_tenant" ON "element_family_heads" ("connection_id","tenant_id");
++
++CREATE INDEX "element_family_registry_tenant" ON "element_family_registry" ("connection_id","tenant_id","created_at");
++
++CREATE INDEX "element_family_versions_tenant_status" ON "element_family_versions" ("connection_id","tenant_id","status");
++
++CREATE INDEX "element_family_versions_company_status" ON "element_family_versions" ("connection_id","company_id","status");
++
++CREATE INDEX "element_family_versions_family_status" ON "element_family_versions" ("connection_id","family_id","status");
++
++CREATE INDEX "element_oid_claims_family" ON "element_oid_claims" ("connection_id","family_id","state");
++
++CREATE INDEX "entities_updated_at" ON "entities" ("updated_at");
++
++CREATE INDEX "hly_departments_manager" ON "hly_departments" ("connection_id","manager_employee_id");
++
++CREATE INDEX "hly_departments_refresh" ON "hly_departments" ("connection_id","refreshed_at");
++
++CREATE INDEX "platform_agent_runs_agent_started" ON "platform_agent_runs" ("agent_id","started_at");
++
++CREATE INDEX "platform_agent_runs_status_lease" ON "platform_agent_runs" ("status","lease_expires_at");
++
++CREATE INDEX "platform_agent_runs_upstream" ON "platform_agent_runs" ("upstream_run_id");
++
++CREATE INDEX "platform_call_log_connector_started" ON "platform_call_log" ("connector_id","started_at");
++
++CREATE INDEX "platform_call_log_agent_started" ON "platform_call_log" ("agent_id","started_at");
++
++CREATE INDEX "platform_call_log_run" ON "platform_call_log" ("run_id");
++
++CREATE INDEX "platform_change_log_scope_time" ON "platform_change_log" ("scope_kind","scope_id","occurred_at");
++
++CREATE INDEX "platform_change_log_event_time" ON "platform_change_log" ("event_kind","occurred_at");
++
++CREATE INDEX "platform_change_log_actor_time" ON "platform_change_log" ("actor_principal","occurred_at");
++
++CREATE INDEX "ref_approval_nodes_key" ON "ref_approval_nodes" ("record_key");
++
++CREATE INDEX "ref_approval_nodes_latest" ON "ref_approval_nodes" ("created_at","source_sha256");
++
++CREATE INDEX "ref_audit_element_seed_key" ON "ref_audit_element_seed" ("record_key");
++
++CREATE INDEX "ref_audit_element_seed_latest" ON "ref_audit_element_seed" ("created_at","source_sha256");
++
++CREATE INDEX "ref_expense_type_codes_key" ON "ref_expense_type_codes" ("record_key");
++
++CREATE INDEX "ref_expense_type_codes_latest" ON "ref_expense_type_codes" ("created_at","source_sha256");
++
++CREATE INDEX "ref_expense_type_seed_key" ON "ref_expense_type_seed" ("record_key");
++
++CREATE INDEX "ref_expense_type_seed_latest" ON "ref_expense_type_seed" ("created_at","source_sha256");
++
++CREATE INDEX "ref_invoice_controls_key" ON "ref_invoice_controls" ("record_key");
++
++CREATE INDEX "ref_invoice_controls_latest" ON "ref_invoice_controls" ("created_at","source_sha256");
++
++CREATE INDEX "ref_org_segment_map_key" ON "ref_org_segment_map" ("record_key");
++
++CREATE INDEX "ref_org_segment_map_latest" ON "ref_org_segment_map" ("created_at","source_sha256");
++
++CREATE INDEX "ref_reject_codes_key" ON "ref_reject_codes" ("record_key");
++
++CREATE INDEX "ref_reject_codes_latest" ON "ref_reject_codes" ("created_at","source_sha256");
++
++CREATE INDEX "ref_seed_snapshots_latest" ON "ref_seed_snapshots" ("created_at","seed_version");
++
++CREATE INDEX "ref_standard_candidates_key" ON "ref_standard_candidates" ("record_key");
++
++CREATE INDEX "ref_standard_candidates_latest" ON "ref_standard_candidates" ("created_at","source_sha256");
++
++CREATE INDEX "sap_payment_requests_date" ON "sap_payment_requests" ("connection_id","tenant_id","company_code","request_date");
++
++CREATE INDEX "sap_payment_requests_material" ON "sap_payment_requests" ("connection_id","tenant_id","company_code","material_code","request_date");
++
++CREATE INDEX "sap_payment_requests_batch" ON "sap_payment_requests" ("connection_id","sync_batch_id");
++
++CREATE INDEX "sap_payment_batches_scope" ON "sap_payment_sync_batches" ("connection_id","tenant_id","company_code","started_at");
++
++CREATE INDEX "sessions_user_expires" ON "sessions" ("user_id","expires_at");
++
++CREATE INDEX "sessions_expires" ON "sessions" ("expires_at");
++
++CREATE INDEX "source_tasks_assignee_status" ON "source_tasks" ("assignee_id","status");
++
++CREATE INDEX "source_tasks_status_version" ON "source_tasks" ("status","version");
++
++CREATE INDEX "stage_workspaces_updated_at" ON "stage_workspaces" ("updated_at");
++
++ALTER TABLE "analysis_batches" ADD CONSTRAINT "analysis_batches_connection" FOREIGN KEY ("connection_id") REFERENCES "analysis_connections" ("connection_id");
++
++ALTER TABLE "analysis_document_versions" ADD CONSTRAINT "analysis_document_versions_document" FOREIGN KEY ("connection_id", "document_id") REFERENCES "analysis_documents" ("connection_id", "id");
++
++ALTER TABLE "analysis_documents" ADD CONSTRAINT "analysis_documents_connection" FOREIGN KEY ("connection_id") REFERENCES "analysis_connections" ("connection_id");
++
++ALTER TABLE "analysis_events" ADD CONSTRAINT "analysis_events_version" FOREIGN KEY ("connection_id", "document_id", "version") REFERENCES "analysis_document_versions" ("connection_id", "document_id", "version");
++
++ALTER TABLE "analysis_sync_states" ADD CONSTRAINT "analysis_sync_states_connection" FOREIGN KEY ("connection_id") REFERENCES "analysis_connections" ("connection_id");
++
++ALTER TABLE "audit_advice_runs" ADD CONSTRAINT "audit_advice_runs_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_advice_runs" ADD CONSTRAINT "audit_advice_runs_run" FOREIGN KEY ("run_id") REFERENCES "audit_review_runs" ("run_id");
++
++ALTER TABLE "audit_approval_events" ADD CONSTRAINT "audit_approval_events_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_attachment_extractions" ADD CONSTRAINT "audit_attachment_extractions_attachment" FOREIGN KEY ("attachment_id") REFERENCES "audit_attachments" ("attachment_id");
++
++ALTER TABLE "audit_attachment_fetches" ADD CONSTRAINT "audit_attachment_fetches_attachment" FOREIGN KEY ("attachment_id") REFERENCES "audit_attachments" ("attachment_id");
++
++ALTER TABLE "audit_attachments" ADD CONSTRAINT "audit_attachments_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_document_versions" ADD CONSTRAINT "audit_document_versions_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_documents" ADD CONSTRAINT "audit_documents_source" FOREIGN KEY ("source_connection_id") REFERENCES "audit_source_connections" ("source_connection_id");
++
++ALTER TABLE "audit_evidence_packs" ADD CONSTRAINT "audit_evidence_packs_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_expense_lines" ADD CONSTRAINT "audit_expense_lines_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "audit_expense_receipts" ADD CONSTRAINT "audit_expense_receipts_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "audit_expense_subsidies" ADD CONSTRAINT "audit_expense_subsidies_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "audit_issue_events" ADD CONSTRAINT "audit_issue_events_issue" FOREIGN KEY ("issue_id") REFERENCES "audit_issues" ("issue_id");
++
++ALTER TABLE "audit_issues" ADD CONSTRAINT "audit_issues_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_issues" ADD CONSTRAINT "audit_issues_run" FOREIGN KEY ("run_id") REFERENCES "audit_review_runs" ("run_id");
++
++ALTER TABLE "audit_report_details" ADD CONSTRAINT "audit_report_details_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_report_projection" ADD CONSTRAINT "audit_report_projection_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "audit_report_projection_gaps" ADD CONSTRAINT "audit_report_projection_gaps_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "audit_report_projection_status" ADD CONSTRAINT "audit_report_projection_status_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "audit_review_runs" ADD CONSTRAINT "audit_review_runs_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_sync_batches" ADD CONSTRAINT "audit_sync_batches_source" FOREIGN KEY ("source_connection_id") REFERENCES "audit_source_connections" ("source_connection_id");
++
++ALTER TABLE "audit_sync_items" ADD CONSTRAINT "audit_sync_items_batch" FOREIGN KEY ("batch_id") REFERENCES "audit_sync_batches" ("batch_id");
++
++ALTER TABLE "audit_tasks" ADD CONSTRAINT "audit_tasks_document" FOREIGN KEY ("document_id") REFERENCES "audit_documents" ("document_id");
++
++ALTER TABLE "audit_travel_applications" ADD CONSTRAINT "audit_travel_applications_detail" FOREIGN KEY ("document_id", "content_version") REFERENCES "audit_report_details" ("document_id", "content_version");
++
++ALTER TABLE "sap_payment_requests" ADD CONSTRAINT "sap_payment_requests_batch" FOREIGN KEY ("connection_id", "sync_batch_id") REFERENCES "sap_payment_sync_batches" ("connection_id", "id");
++
++CREATE TRIGGER "analysis_connections_touch_updated_at" BEFORE UPDATE ON "analysis_connections" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "analysis_sync_states_touch_updated_at" BEFORE UPDATE ON "analysis_sync_states" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "audit_attachments_touch_updated_at" BEFORE UPDATE ON "audit_attachments" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "audit_documents_touch_updated_at" BEFORE UPDATE ON "audit_documents" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "audit_issues_touch_updated_at" BEFORE UPDATE ON "audit_issues" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "audit_source_connections_touch_updated_at" BEFORE UPDATE ON "audit_source_connections" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "entities_touch_updated_at" BEFORE UPDATE ON "entities" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "metadata_touch_updated_at" BEFORE UPDATE ON "metadata" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "source_tasks_touch_updated_at" BEFORE UPDATE ON "source_tasks" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++
++CREATE TRIGGER "stage_workspaces_touch_updated_at" BEFORE UPDATE ON "stage_workspaces" FOR EACH ROW EXECUTE FUNCTION jiuan_touch_updated_at();
++`;
++
++const OWNERLESS = 'function';
++
++/**
++ * The structure of one schema as sorted lines, one per table, column (type, nullability, default, identity), index, constraint,
++ * trigger and function (by the md5 of its body). Schema names are taken out of the definitions, so two schemas built from the
++ * same DDL list the same. Each entry has the table (or "function <name>") it belongs to, for filtering.
++ */
++export async function schemaListingEntries(conn, schema) {
++  const name = schema ?? (await conn.query('SELECT current_schema() AS name'))[0][0].name;
++  const qualifier = new RegExp(`(?<![A-Za-z0-9_"])"?${name.replace(/[^A-Za-z0-9_]/g, '')}"?\\.`, 'g');
++  const bare = text => String(text ?? '').replace(qualifier, '');
++  const query = async sql => (await conn.query(sql, [name]))[0];
++  const entries = [];
++  const add = (owner, text) => entries.push({ owner, text });
++  for (const row of await query("SELECT c.relname AS tbl FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relkind IN ('r', 'p')")) {
++    add(row.tbl, `table ${row.tbl}`);
++  }
++  for (const row of await query(`SELECT c.relname AS tbl, a.attname AS col, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS not_null,
++      pg_get_expr(d.adbin, d.adrelid) AS dflt, a.attidentity AS ident, a.attgenerated AS gen
++    FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
++    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
++    WHERE n.nspname = ? AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped`)) {
++    add(row.tbl, `column ${row.tbl}.${row.col} ${row.type}${row.not_null ? ' not null' : ''}${row.dflt ? ` default ${bare(row.dflt)}` : ''}${row.ident ? ` identity ${row.ident}` : ''}${row.gen ? ` generated ${row.gen}` : ''}`);
++  }
++  for (const row of await query(`SELECT t.relname AS tbl, i.relname AS name, pg_get_indexdef(i.oid) AS def
++    FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid JOIN pg_class t ON t.oid = x.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace
++    WHERE n.nspname = ?`)) {
++    add(row.tbl, `index ${row.tbl}.${row.name} ${bare(row.def)}`);
++  }
++  for (const row of await query(`SELECT t.relname AS tbl, k.conname AS name, pg_get_constraintdef(k.oid) AS def
++    FROM pg_constraint k JOIN pg_class t ON t.oid = k.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
++    WHERE n.nspname = ? AND k.contype IN ('c', 'f', 'p', 'u', 'x')`)) {
++    add(row.tbl, `constraint ${row.tbl}.${row.name} ${bare(row.def)}`);
++  }
++  for (const row of await query(`SELECT t.relname AS tbl, g.tgname AS name, pg_get_triggerdef(g.oid) AS def
++    FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid JOIN pg_namespace n ON n.oid = t.relnamespace
++    WHERE n.nspname = ? AND NOT g.tgisinternal`)) {
++    add(row.tbl, `trigger ${row.tbl}.${row.name} ${bare(row.def)}`);
++  }
++  for (const row of await query(`SELECT p.proname AS name, pg_get_function_identity_arguments(p.oid) AS args, md5(p.prosrc) AS body
++    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = ?`)) {
++    add(`${OWNERLESS} ${row.name}`, `function ${row.name}(${bare(row.args)}) ${row.body}`);
++  }
++  return entries.sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
++}
++
++/** The structure listing of a schema (the current one by default) as text, one sorted line per object. */
++export async function readSchemaListing(conn, { schema } = {}) {
++  return (await schemaListingEntries(conn, schema)).map(entry => entry.text).join('\n');
++}
+diff --git a/src/platform/platform-routes.mjs b/src/platform/platform-routes.mjs
+index 5524785..b41dfb3 100644
+--- a/src/platform/platform-routes.mjs
++++ b/src/platform/platform-routes.mjs
+@@ -4,7 +4,7 @@ import { RUNNER_ERRORS } from './agent-runner.mjs';
+ import { CONNECTORS } from './connectors.mjs';
+ import { createPipelineProgress, PIPELINE_STATE_LABELS } from './pipeline-progress.mjs';
+ import { analysisHuilianyiCompanyIds } from '../analysis-auth.mjs';
+-import { classifyMigrationVersions, MYSQL_MIGRATIONS, migrationChecksum } from '../mysql-database.mjs';
++import { classifyMigrationVersions, PG_MIGRATIONS, migrationChecksum } from '../pg-database.mjs';
+ 
+ const PREFIX = '/api/analysis/v1/platform';
+ const ITEM_STATES = new Set(['stuck', 'failed', 'skipped', 'pending']);
+@@ -329,18 +329,18 @@ async function dataRange(pool, companyIds) {
+     return pool.query('SELECT version,checksum FROM schema_migrations ORDER BY version').then(([rows]) => rows).catch(() => []);
+   };
+   const [databaseRows, migrationRows, documentRows, familyRows, syncRows, detailRows] = await Promise.all([
+-    pool.query('SELECT DATABASE() AS database_name').then(([rows]) => rows),
++    pool.query('SELECT current_database() AS database_name').then(([rows]) => rows),
+     migrationRowsQuery(),
+     pool.query(`SELECT COUNT(*) AS document_count,COUNT(DISTINCT ad.company_id) AS company_count,MIN(COALESCE(ad.modified_at,ad.collected_at)) AS earliest_submitted_at,MAX(COALESCE(ad.modified_at,ad.collected_at)) AS latest_submitted_at FROM analysis_documents ad WHERE 1=1${documentScope.sql}`, documentScope.params).then(([rows]) => rows),
+     pool.query(`SELECT ad.document_type AS family,COUNT(*) AS count FROM analysis_documents ad WHERE 1=1${documentScope.sql} GROUP BY ad.document_type ORDER BY ad.document_type`, documentScope.params).then(([rows]) => rows),
+     pool.query(`SELECT MAX(COALESCE(b.finished_at,b.started_at)) AS latest_sync_at FROM analysis_batches b WHERE 1=1${batchScope.sql}`, batchScope.params).then(([rows]) => rows),
+     pool.query(`SELECT COUNT(*) AS count FROM audit_report_details rd JOIN analysis_documents ad ON ad.id=rd.document_id WHERE rd.status='succeeded'${detailScope.sql}`, detailScope.params).then(([rows]) => rows),
+   ]);
+-  const expectedVersion = Math.max(...MYSQL_MIGRATIONS.map(item => item.version));
++  const expectedVersion = Math.max(...PG_MIGRATIONS.map(item => item.version));
+   const currentVersion = Number(migrationRows?.at(-1)?.version || 0);
+-  const classification = classifyMigrationVersions(migrationRows, MYSQL_MIGRATIONS);
++  const classification = classifyMigrationVersions(migrationRows, PG_MIGRATIONS);
+   const migrationByVersion = new Map((migrationRows || []).map(row => [Number(row.version), row]));
+-  const checksumDrift = MYSQL_MIGRATIONS.some(item => {
++  const checksumDrift = PG_MIGRATIONS.some(item => {
+     const row = migrationByVersion.get(item.version);
+     return !row || row.checksum == null || String(row.checksum) !== migrationChecksum(item);
+   });

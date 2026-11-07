@@ -38,6 +38,7 @@ audience: 九安的后端开发、Agent 开发
 | Agent 任务服务：流水线发起、人发起、按路由选发布、存结果、可自动重试的重试一次 | `src/agent-task-service.mjs` | — |
 | 「Agent 接入」：粘贴调用密钥、当场验证、加密保存、换钥匙、停用 | `src/agent-enablement.mjs`、平台页面 | 0001 连 Nexus 列发布；0002 手动添加、测试、调用记录；0003 启用即就绪、审批流只调一个审批 Agent |
 | 知识库页、我的规则 | — | 0004、0005（测试台外壳经 A2A 调知识库 Agent） |
+| 数据层（存储、迁移、命名锁） | `src/analysis-database.mjs` 等；开发包里是 MySQL | 0008–0018：换成 PostgreSQL（2026-11-06），和 Agent 对接无关，契约、接口都没动 |
 
 三条不能破的规则：
 1. **浏览器不直接连 Nexus**：前端只调本站后端；到 Nexus 的每一跳都由后端发出。
@@ -83,7 +84,7 @@ cp config/instance.example.json config/instance.json
 - 补丁 0007：调用中间件给 `nexus-a2a` 的时限 180 → 200 秒，比任务的长：一轮由任务自己的 180 秒掐表，超时适配层报 `AI_UNAVAILABLE`，中间件的计时器只兜住挂过头的调用；
 - 测试台外壳给一轮的租约 420 秒（排在后面的一轮不会被顶掉）。
 
-**建议九安在自己的契约里也调高这一项**，调用中间件给 `nexus-a2a` 的时限要比它长（[交接文档](handover.md)第 6 节第 14 条）。
+**建议九安在自己的契约里也调高这一项**，调用中间件给 `nexus-a2a` 的时限要比它长（[交接文档](handover.md)第 6 节第 5 条）。
 
 ## 5. 在 Nexus 上开发和调试 Agent
 
@@ -222,7 +223,7 @@ read -rs KEY && curl -s -o /dev/null -w '%{http_code}\n' -X POST "$NEXUS/a2a/$PU
 | 要找 | 在哪里 |
 |---|---|
 | 信封、名片要求、错误码、例子、任务目录、`review_advice@1` | 九安仓库的 `src/agent-contract/` |
-| 测试台加的补丁（Agent 接入、知识库页、我的规则、时限） | 交接仓库的 `patches/jiuan-v0.7.10/` 0001–0007 |
+| 测试台加的补丁（Agent 接入、知识库页、我的规则、时限；数据层换 PostgreSQL） | 交接仓库的 `patches/jiuan-v0.7.10/` 0001–0007；0008–0018 |
 | 一个查知识库的审核 Agent（`review_advice@1`）和它的历次改动 | 交接仓库的 `audit-agent/prompt.yaml`、`audit-agent/README.md`、`audit-agent/prompt-history/`（每一版改前改后、比对、下发记录） |
 | PG 知识库 Agent 和 `kb.rules/v1` | 交接仓库的 `knowledgebase-writer-agent-pg/README.md`；客户部署件 `customer-deploy/knowledgebase-writer-agent-pg/` |
 | A2A 客户端、知识库客户端的参考写法 | 交接仓库的 `poc/app/lib/a2a-client.mjs`、`poc/app/kb-steward-client.mjs` |

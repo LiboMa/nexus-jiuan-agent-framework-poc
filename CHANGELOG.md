@@ -1,5 +1,94 @@
 # 变更记录
 
+## 2026-11-06（二）：删掉切换前的 MySQL
+
+项目负责人 2026-11-06 晚上定：换库时留着做回退的 MySQL 删掉。
+
+**删了的**（m7g 实例上）：容器 `jiuan-mysql`、数据目录 `/var/lib/jiuan-mysql`（333 MB）、镜像 `mysql:8.0`、两个口令文件 `/etc/andon-finance/bench/mysql_root_password` 和 `/etc/andon-finance/jiuan/mysql_app_password`。实例上现在只跑 `jiuan-pg` 和 `nexus-pgvector`。
+
+**代码跟着改的**：`poc/infra/lib/bench-secrets.sh` 不再补 `BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN_MYSQL_APP_PASSWORD`，`secrets.env` 里还有就连同上面那行「# 测试台：只补不换（…）」一起删掉；`bench-configure.sh` 每次部署都清掉留下的两个 MySQL 口令文件；`secrets.env.example` 去掉这两项，换成一行说明；`deploy.sh` 新建 `secrets.env` 时的提示改回「三项测试台密钥」（`BENCH_PG_SUPERUSER_PASSWORD`、`JIUAN_PG_APP_PASSWORD`、`JIUAN_DATA_KEY`）。本机和实例上的 `secrets.env` 都由部署自动清掉了这两项，不用手改。测试台重新部署，健康检查通过。
+
+**回不到 MySQL 了**。切换前后的数据还剩两份：切换后马上做的 `pg_dump` `/var/backups/jiuan-pg-20261106T123831Z.dump`（PostgreSQL 的数据，切换后约 1 分钟），和切换前的根卷快照 `snap-0296baf8891b5df4b`（里面还有当时的 MySQL 数据目录）。`/opt/andon-finance/previous` 现在也是连 PostgreSQL 的构件。怎么从这两份恢复见[运维](docs/delivery/operations.md)第 2.6 节。
+
+**没动的**：一次性的搬迁工具 `poc/bench/mysql-to-pg.mjs`、`poc/infra/migrate-mysql-to-pg.sh`（2026-11-06 用过；没有 MySQL 了，跑不起来）和只给它用的 `mysql2`（`poc/bench/package.json`、构件的 `node_modules`）还在。运行时已经不用的 MySQL 代码以后一起拿掉（交接文档第 6 节第 19 条）。
+
+**文档**：写着 MySQL「停着、留着做回退」的地方都改了：回退到 MySQL 的步骤拿掉，换成从 `pg_dump` 或快照恢复；密钥清单去掉两项 MySQL 口令；交接文档第 6 节原来的第 19 条（MySQL 还留着）删掉，后面两条顺延成第 19、20 条；架构与技术评估的风险第 19 条删掉；图 `handover-assets`、`package-contents` 里不再画 MySQL。
+
+**端到端**：删完重新部署后跑了一轮完整的端到端（北京时间 23:29–23:36）：27 条里 26 条过，没过的是新加的「九安连的是 PostgreSQL」那条——测试自己的问题：MySQL 容器删掉以后 `docker inspect` 先打一个空行再失败，测试把它读成了空；改成用 `docker ps` 查（容器不在就是 missing）以后单独重跑这一条通过（jiuan-pg running、jiuan-mysql missing）。另外照运维第 2.6 节的步骤，用那份 dump 在临时库上演练了一次恢复：2 秒恢复 73 张表，属主、条数、启用记录的 sha256 都对，临时库删掉
+
+## 2026-11-06：九安的库从 MySQL 换成 PostgreSQL
+
+**为什么**：九安的正式环境已经把库换成了 PostgreSQL，没有给新的开发包。项目负责人 2026-11-05 定：手上的 v0.7.10 就是最新的代码，在本地把九安的数据层改成 PostgreSQL，测试台跟着切过去；2026-11-06 确认（测试在远端实例上做，全过就直接切换）。要「无缝」，项目负责人的原话是：数据一条不丢、切过去后一切照常；切换时可以停站几分钟。只走 PostgreSQL，不同时支持两种库；九安的业务逻辑、页面、契约不动，知识库那台 PG（`nexus-pgvector`）和 Nexus 一侧也不动。
+
+**改了什么**
+- **九安副本**：补丁 0008–0018（`patches/jiuan-v0.7.10/`，每个补丁开头有一段中文说明；九安测试的改动在 `tests/` 子目录，只有 `build-jiuan.sh --with-tests` 才打）：
+  - 0008 `src/pg-database.mjs`：和原来 mysql2 连接池一样用法的 PG 连接池（返回形状、类型、错误码照 mysql2；`?` → `$n`；时间按 UTC 墙上时间读写；连接被断开不出未捕获的异常）；
+  - 0009 命名锁：`GET_LOCK` / `RELEASE_LOCK` / `IS_USED_LOCK` 换成会话级 advisory 锁；
+  - 0010 PG 的基线表结构（版本 19）、迁移、启动时的表结构核对（对不上报 `PG_MIGRATION_DRIFT`，不启动）；
+  - 0011 分析主库的查询；
+  - 0012 附件下载 / 解析队列，单据数据的摘要、清空、锁快照；
+  - 0013 单据详情读取队列和详情投影；
+  - 0014 平台层（运行记录和设置、数据页、运行锁、调用网关等）；
+  - 0015 审核要素和规则扫描；
+  - 0016 审批回写、SAP 付款申请的存储和快照刷新；
+  - 0017 PostgreSQL 是唯一的引擎，MySQL 的模块和 mysql2 依赖去掉；
+  - 0018 评审后补的两处：等锁有时限（每个会话 `lock_timeout` 50 秒，同 InnoDB），事务里有语句出错后的 COMMIT 不再当成提交成功（报 `ER_TRANSACTION_ROLLED_BACK`）。
+
+  mysql2 不在九安副本的依赖里了（`poc/bench/package.json` 还钉着它，构件的 `node_modules` 里也有，只给一次性的搬迁工具用）。
+- **外壳**：九安的配置 `database.engine = 'postgres'`；连库用 `/etc/andon-finance/jiuan/env` 里的 `POC_DB_HOST=127.0.0.1`、`POC_DB_PORT=5433`、`POC_DB_NAME=jiuan`、`POC_DB_USER=jiuan_app` 和口令文件 `db_app_password`（root:jiuan 0640）。外壳自己的两张表也在 PG 的 `jiuan` 库里，`start()` 时建：`poc_review_decisions`（`id` 是 identity，`RETURNING id`）、`poc_kb_cache`（`ON CONFLICT … DO UPDATE`）。
+- **实例上的脚本**：新的 `bench/pg-install.sh` 起容器 `jiuan-pg`（`postgres:17`，只听 127.0.0.1:5433，数据目录 `/var/lib/jiuan-pg`，上海时区；参数不对只换容器、数据目录不动）；新的 `bench/pg-database.sh [库名]` 建库 `jiuan`（属主 `jiuan_app`：能登录，不是超级用户、不能建库建角色；UTF8、排序和字符类别 C；库的时区上海；`REVOKE CONNECT … FROM PUBLIC`），可以重复跑，`jiuan_app` 的口令每次按 `secrets.env` 重设。`bench-configure.sh` 调这两个，不再碰 MySQL；`bench/mysql-install.sh` 删了。5432 留给知识库那台 PG。`bench-reset.sh` 改用 `COPY … TO STDOUT` / `COPY … FROM STDIN` 留住「Agent 接入」的启用记录、`DROP DATABASE jiuan WITH (FORCE)` 再重建（表在却导不出来就停、库不删；失败也起服务，导出留在 `/var/tmp/jiuan-reset.*/enablement.copy`）。`migrate-data.sh` 搬九安的库改用 `pg_dump -Fc` / `pg_restore`，逐表数行数改查 PG，两边都得是换库之后的构件。`backup.sh` 照旧是根卷快照。换库用的：`pg-prepare.sh`（补密钥、起 `jiuan-pg`，不碰在跑的服务）、`remote-jiuan-tests.sh` 和 `bench/test-databases.sh`（在实例上一次性的测试库容器里跑九安自带的测试）、`migrate-mysql-to-pg.sh` + `poc/bench/mysql-to-pg.mjs`（一次性的搬迁工具：MySQL 在一致的只读快照里读，PG 整个搬迁一个事务，逐表 sha256 核对；`schema_migrations` 不搬；identity 序列接着最大值；搬完 `ANALYZE`；PG 存不下的 NUL 写之前报出来；正式搬到 `jiuan` 时服务还在跑就拒绝）。
+- **密钥**（`secrets.env`，`deploy.sh` 照「缺了才补、已有的不改」生成）：新的 `BENCH_PG_SUPERUSER_PASSWORD`（→ `/etc/andon-finance/bench/pg_superuser_password`，root 0600；PG 第一次初始化时用，实例上只认原值）、`JIUAN_PG_APP_PASSWORD`（→ `db_app_password`；可以换，下次部署两边一起换）。`JIUAN_DATA_KEY` 不变（永远不要换）。旧的 `BENCH_MYSQL_ROOT_PASSWORD`、`JIUAN_MYSQL_APP_PASSWORD` 留着给回退，部署不再读。
+- **端到端测试**：`api.e2e.mjs` 加了一条：测试台跑在 PostgreSQL 上（容器 `jiuan-pg` 在跑、`jiuan-mysql` 停了或不在、外壳的 `POC_DB_PORT=5433`、重置后新建的库里有迁移建出的表）。现在共 27 条（web 15、api 12）。
+- **没改的**：库里时间的混用照旧：库自己生成的时间（`DEFAULT CURRENT_TIMESTAMP` 等）是上海时间，九安和外壳写进去的是 UTC；PG 也按上海时区跑，所以值和换库前一样。
+- **文档**：README、PoC 说明、部署说明、架构与技术评估、工作流和交付文档都改成 PostgreSQL；运维第 2.6 节写了查库、重置、备份、回退和以后删 MySQL 的做法；交接文档的密钥清单加了两项 PG 的口令，两项 MySQL 的标成只留给回退。
+
+**怎么测的**
+- 九安自带的测试（都在实例上一次性的测试库容器里跑，`remote-jiuan-tests.sh`）：换库前在真 MySQL 上记的基线是 261 个文件 2501 过、16 不过、136 跳过（`poc/bench/pg-port/baseline-mysql.json`）；换库后在真 PG 上 264 个文件 2475 过、16 不过、135 跳过（`after-pg.json`）。基线里过的都还过；29 条专测 MySQL 的测试删掉或改写了，列在 `removed-tests.json`；16 条不过的和基线一样，是环境原因。
+- 外壳的单元测试 205 条，加上真 PG 上的 `pg-stores`、`reviews`、`kb-cache`；`poc/infra` 的测试 130 多条。
+- 搬迁工具的测试（`poc/bench/test/mysql-to-pg.test.mjs`，真 MySQL + 真 PG）6 条全过。
+- 端到端：切换后跑了两轮完整的端到端（每轮先用新的重置脚本删库重建、写回启用记录）。第一轮 27 条里 26 条过，「自定义规则」那条没过：删掉自定义规则再发起，DGZF-F07-001 回来是「不通过」，而同一轮里它的基线是「通过」（同一份 PG 数据上它先后两次都是通过）。第二轮 27 条全过（网页 15 条里 1 条按设计跳过：没给 KB_E2E_DOCX），这一轮 DGZF-F07-001 的基线本身就是「不通过」，删掉规则后也一样。所以是审核 Agent 对这张单的结论在两次运行之间会变（模型的波动），不是换库带来的；没改。新加的那条「九安连的是 PostgreSQL」两轮都过（jiuan-pg 在跑、jiuan-mysql 停了、POC_DB_PORT=5433、库里 73 张表）。
+- 整条分支请一位评审看过（没碰线上，在本地把补丁重打一遍、和开发树逐字节对上，几套测试照跑一遍）：没有会丢数据、改数据的问题；有两处和 MySQL 不一样的行为要改，就是补丁 0018：
+  一是等行锁原来 50 秒就报错（九安的列表同步、详情投影会重试或记下原因），换到 PG 后变成一直等，一个卡住的事务能把连接池占满；
+  二是事务里某条语句出错、九安的代码接住了（MySQL 上没事），PG 已经把整个事务作废，之后的 COMMIT 不报错地回滚了，看上去像提交成功。
+  两处都先写了测试（真 PG 上先失败、改完通过）。改完九安的测试在真 PG 上整套重跑：2631 条，基线里过的都还过，没有新的失败（原来不过的 16 条少了 1 条）；
+  测试台重新部署（只换代码，库不动），端到端第三轮（北京时间 21:53–22:00）27 条全过（1 条按设计跳过），服务日志里没有锁等待超时、事务作废的报错。另有 12 条小问题记下没改，见交接文档第 6 节第 19 条。
+
+**切换**（2026-11-06，北京时间 20:35–20:37）
+- 第 0 步：根卷快照 `snap-0296baf8891b5df4b`（卷 `vol-0fa08d506ced8023f`）。
+- 演练（服务照常跑在 MySQL 上）：72 张表、104,477 行搬进演练库 `jiuan_rehearsal`，逐表核对全部一致，搬加核对 10 秒；演练库删掉。
+- 正式：20:35:10 停服务 → 搬 72 张表、104,538 行，逐表全部一致（10 秒）→ `deploy.sh --code-only`（新代码，外壳配到 PG）→ 20:37:21 健康检查通过。停站约 2 分 10 秒。最大的几张表：`platform_agent_runs` 5 万多行、`audit_sync_batches` 2 万多行、`platform_call_log` 1.2 万行。
+- 切换后、端到端之前的核对：人工复核 2 条（最后一条编号 2）、知识库缓存 2 条、单据 6 张、单据版本 6 个、状态表各类的行数、「Agent 接入」的启用记录（密文 4879 字节，sha256 两边相同）都和停服务前一样；「Agent 接入」页 5 条记录状态不变，审批 Agent、知识库 Agent 都就绪；工作台、单据池、Agent 接入、知识库页都打得开；日志里没有表结构核对失败。
+- 留底：20:38:31 做了一份 `pg_dump`：`/var/backups/jiuan-pg-20261106T123831Z.dump`（root 0600，9.4 MB，73 张表的数据）。容器 `jiuan-mysql` 停了，不删，数据目录 `/var/lib/jiuan-mysql` 留着。切换前的数据有三份：停着的 MySQL、这份 dump、上面的快照。
+
+**回退**（项目负责人确认之前，出问题就做）：停服务 → 把 `/opt/andon-finance/previous`（上一版构件，连 MySQL）换回 `current` → `docker start jiuan-mysql` → 起服务。MySQL 里是切换那一刻的数据，切换后写进 PG 的不会带回去。下一次部署会把 `previous` 换成连 PG 的这一版，那以后要回退就得从换库之前的提交（main 上的 `55d1bc8`，`feat/jiuan-postgres` 从这里分出来）重新部署。步骤见[运维](docs/delivery/operations.md)第 2.6 节。
+
+**还没做的**
+- MySQL 容器和数据目录留到项目负责人说删再删；删的时候连同 `secrets.env` 里两项 MySQL 口令、`/etc/andon-finance/bench/mysql_root_password`、`/etc/andon-finance/jiuan/mysql_app_password` 一起删（`lib/bench-secrets.sh` 现在还会补这两项，删之前先从那里拿掉）。
+- 九安原来就有的一个竞态（换库前 MySQL 上也有）：两个流程同时发布同一份审核要素草稿时，输的一方偶尔报 `ELEMENT_FAMILY_RETIRED` 而不是 `FAMILY_CONFLICT`（`element-lifecycle.mjs` 先读状态、再另读是否生效过），只影响报错的种类，不影响数据，大约五次里一次。不在这次的范围里，没改，交给项目负责人。
+
+## 2026-11-05（二）：架构文档加上 pgvector 的介绍
+
+[架构与技术评估](docs/architecture.md)新增第 6 节「知识库内部：pgvector 长什么样、怎么工作」（原来的第 6–10 节顺延成 7–11）：向量和余弦距离的原理、pgvector 提供的类型、运算符和两种索引、HNSW 怎么找最近邻，以及测试台库里的实际样子（PG 17.11、pgvector 0.8.7、规则表 449 行 × 1024 维、HNSW 索引 3.6 MB）、向量怎么在库里生成（`kb_embed` → PL/Python → Bedrock Cohere Embed v4，带缓存和限流）、`kb_search` 怎么排序。在测试台上用 `EXPLAIN ANALYZE` 确认：`kb_search` 先按关键词命中数排，所以不走 HNSW 索引，而是整表 449 行打分、4 毫秒，结果是精确的；检索日志 14 天 198 次，中位 69 毫秒，主要花在把问题变成向量。新图 `pgvector-search`。
+
+## 2026-11-05：文档整理：架构与技术评估、工作流、新的快速上手；删去历史文档
+
+项目负责人 2026-11-05 定：对整体的项目、方案、架构、工作流做一份技术层的分析，写进新版文档；过期的文档一律删去，现行的更新到最新。代码不变。
+
+**新写、重写的**（都有 Markdown 和 HTML）
+- [`docs/architecture.md`](docs/architecture.md)「架构与技术评估」：设计原则、运行时组成、数据放在哪、三条调用链、安全、部署架构、规模与实测数字（审核 Agent 改提示词后一轮中位 9.5 秒、约 0.04 美元；PG 知识库 Agent 一次 8 秒、约 0.04 美元），以及技术评估：做得好的、16 条风险与技术债（按优先级）、上生产前的路线。
+- [`docs/workflows.md`](docs/workflows.md)「工作流」（新）：一张单从进来到复核、接入 Agent、知识库（入库、读清单的缓存、检索、审核 Agent 查库、换内容时要一起做的）、开发与变更、改提示词、部署三块、换机器迁域名、出包交接、日常运维，最后是瓶颈与改进。新图 `review-advice-flow`、`kb-flows`、`dev-workflow`。
+- [`docs/delivery/quick-guide.md`](docs/delivery/quick-guide.md)「快速上手」：从只给管理员改成整个项目的入门：是什么、按角色从哪开始、10 分钟走一遍、管理员接 Agent 的八步（第 4 节）、从零部署的最短路径、日常维护、常见问题。
+- `kb.rules/v1` 接口约定从 `docs/specs/` 挪到 [`docs/kb-rules-v1.md`](docs/kb-rules-v1.md)（还在用，进交接仓库和交付包了），按现状更新（Cohere Embed v4、四种格式、缓存）。
+
+**删去的**（都在 git 历史里）：10 月的几轮可行性评估和取舍（`docs/assessment.md`、`feasibility-round2`、`compromise-round3.md`、`poc-a2a-round4.md`、`replication-feasibility.md`、`agent-discovery-registration.html`）；`docs/plans/`、`docs/specs/` 里的全部设计稿和实现计划；v0.5.3 时的进度看板（`progress.json`、`tools/progress/`、`docs/progress.html`）；`RULES_PLAN.md`；用不到的图和截图（`arch-overview.svg`、`flow-enable`、`skills-split`、`agents-page.png`）。没进 git 的草稿（`docs/tech-stack.md`、`frontend-deisgn.md`、`docs/plans` 与 `docs/specs` 下 10-24 的几份、`RULES_PLAN.md` 里没提交的笔记）挪进本机的 `archive/docs-drafts-2026-11-05/`，不进 git、不进交付包。
+
+**现行文档跟着改的**：交付文档索引、根目录 README、交接文档（第 6 节只留没做完的 18 条，重新编号；已解决的和 v0.5.3 时期的记录删去）、运维第 2.8 节（v0.5.3 留下的东西已清完，只留一段说明）、交付包指南、交付指南的文档地图；`make-package.sh` 的「不交接」清单只留 `docs/specs`、`docs/plans`、`docs/superpowers` 和脱敏对照表。代码里还有 31 处注释写着「Spec 第 N 节」，指的是已删去的前端设计稿（在 git 历史里）。
+
+**对着代码核对时改正的**（旧文档里就有的错，一起改了）
+- **先部署 PG 的命令照原样跑不通**：交付指南 4.1、客户部署路线阶段 1、`kb/GUIDE.md` 第 4 节都写 `./deploy.sh all`，可 `all` 里的 `ingest` 要一份规则 .docx、`agent` 要改审核 Agent 的提示词，而 PG 先于 Agent 部署时审核 Agent 还不存在（缺省的 `AGENT_PATCH_PROMPT=true` 让预检停在「Nexus 里找不到 Agent」）。改成：`deploy.env` 写 `AGENT_PATCH_PROMPT=false`，只跑数据层 `preflight,db,network,egress,connector`；规则等 PG 知识库 Agent 部署好后从知识库页上传。
+- **两套 Nexus 不是一套**：交接文档、运维说线上 Nexus AI `d3u3hj2us186y.cloudfront.net` 是 `nxs-beine1013` 的「实际地址」，不对（PG 知识库 Agent 的名片在 `nxs-beine1013` 上有、在 `d3u3…` 上是 404）。测试台用 `nxs-beine1013`，生产用 `d3u3…`，两边的发布和密钥不通用。快速上手第 4 节按这个写。
+- 单据池里 AI 的结论在「AI 建议」一栏，「最近审核」是时间和人；状态用页面上的说法（审核中、已采纳、已改判、AI 建议已更新）。知识库页只收 .docx。启用时验密钥超过 60 秒页面会报超时（CloudFront 等源站最多 60 秒），记进了架构与技术评估第 10.2 节第 15 条。知识库页要部署配置里有 `KB_PG_PUBLICATION_ID`。
+
 ## 2026-11-03：知识库页的数据存在库里，打开页面不再每次问 Agent
 
 **原因**（线上量的）：知识库页一打开要连着问 PG 知识库 Agent 两次：先问支持哪些操作（describe），再读制度清单。每次是 Nexus 上整轮模型（Sonnet 4.6 读约 11 KB 的提示词 → 调一次工具 → 把工具的 JSON 照抄回来），4–10 秒、约 0.03 美元；沙箱拿 VM 只要 0.01–0.1 秒。第一次打开 19 秒才出清单，5 分钟内再开也要 10 秒（describe 缓存 5 分钟，清单每次现问）。

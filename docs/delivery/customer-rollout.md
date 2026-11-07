@@ -1,6 +1,6 @@
 ---
 subtitle: 九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC v0.7.10
-date: 2026-11-02
+date: 2026-11-06
 status: 建议稿 v3（部署分三块：先 PG，再 Agent，再分批部署前端；九安自己适配，我们用代码协助部署；其余待项目负责人确认）
 stamp: 路线
 scope: 九安审核平台（客户环境）、Nexus 上的审核 Agent 与 PG 知识库 Agent、我们的测试台
@@ -15,23 +15,24 @@ audience: 项目负责人、应用开发、九安团队
 
 1. **PG 与知识库后端**（`kb/`）：九安用自己的 SSH 密钥起一台主机，先部署 PG + pgvector、库内检索、规则入库，并把 PG 登记进 Nexus（数据连接器、数据库凭证密钥）。做法见 [kb/GUIDE.md](../../kb/GUIDE.md) 第 4 节「用自己的 SSH 密钥部署（PG 先于前端）」。
 2. **Nexus 上的 Agent 与发布**：审核 Agent（`audit-agent/`，处理 `review_advice@1`，只读查 PG）和 PG 知识库 Agent（客户部署交付件 `customer-deploy/knowledgebase-writer-agent-pg/`，1.0.1）。换 PG 主机不用动它们。
-3. **前端**：测试阶段是 `poc/infra/deploy.sh` 部署的这一套（新前端 + 外壳 + 九安 v0.7.10 副本 + 九安的 MySQL），和 PG 在同一台机器上；客户环境里由专人在 PG 之后分批部署。
+3. **前端**：测试阶段是 `poc/infra/deploy.sh` 部署的这一套（新前端 + 外壳 + 九安 v0.7.10 副本 + 九安的 PostgreSQL），和知识库的 PG 在同一台机器上；客户环境里由专人在 PG 之后分批部署。
 
 **同时要做的**：约九安开一次对接会，把第 4 节阶段 0 的前置定下来。
 
-**先说清楚一件事**：我们的测试台（2026-11-02 起只留新 UI）一直留在我们这边，只用来验收补丁和 Agent，只放虚构数据。所以测试台自己的那些上生产前事项（源站明文 HTTP、构件不带提交号等，[交接文档](handover.md)第 6.1 节第 1、2、8、9 条）**不挡客户部署**；前提是测试台上永远不放真实单据。新前端和补丁 0001–0007 以什么形式进九安自己的系统，要和九安在阶段 0 定。
+**先说清楚一件事**：我们的测试台（2026-11-02 起只留新 UI）一直留在我们这边，只用来验收补丁和 Agent，只放虚构数据。所以测试台自己的那些上生产前事项（源站明文 HTTP、构件不带提交号等，[交接文档](handover.md)第 6.1 节第 1、2、8、9 条）**不挡客户部署**；前提是测试台上永远不放真实单据。新前端和补丁 0001–0007 以什么形式进九安自己的系统，要和九安在阶段 0 定；补丁 0008–0018 是测试台跟着九安换 PostgreSQL 时改的数据层，要不要、怎么进九安的代码线，一起定。
 
 **部署方式**（2026-10-19 定）：九安拿到补丁和代码后，在自己的环境里自己适配；**部署由我们用代码协助完成**。九安的人或他们的编码工具运行我们的部署代码（第 5 节），就能完成部署、检查，不靠手工步骤。只有两步必须人手做：发布者本人在 Nexus 网页上签发调用密钥；管理员在「Agent 接入」页粘贴它、指定审批 Agent。
 
 ![五个阶段：对接与拍板 → 先部署 PG 与知识库 → Nexus 上的 Agent 与发布 → 前端分批部署与试运行 → 生产上线；每一步都有进入下一步的门槛](../assets/diagrams/rollout-phases.svg)
 
-## 2. 现在在哪（2026-11-02）
+## 2. 现在在哪（2026-11-06）
 
 | 部分 | 状态 | 离客户部署还差什么 |
 |---|---|---|
-| 测试台（九安 v0.7.10 副本 + 新前端 `poc/web` + 外壳 `poc/app` + 本机 MySQL） | 已就绪；2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过 | 不用再动；用来验收补丁和 Agent |
+| 测试台（九安 v0.7.10 副本 + 新前端 `poc/web` + 外壳 `poc/app` + 本机的 PostgreSQL） | 已就绪；2026-11-02 对 m7g 测试环境完整端到端 26 条全部通过；2026-11-06 九安的库从 MySQL 换成 PostgreSQL（和九安的正式环境一样），端到端现在 27 条，换库后的结果见[变更记录](../../CHANGELOG.md) | 不用再动；用来验收补丁和 Agent |
 | 九安 v0.7.10 自带的 Agent 接入那一套（契约 `src/agent-contract/`，即 `jiuan.agent/v1`；A2A 适配层 `providers/nexus-a2a.mjs`；Agent 任务服务；「Agent 接入」） | 已在九安的代码里 | — |
 | 测试台补丁 0001–0007（连 Nexus 列发布、测试与调用记录、一个审批 Agent、制度知识库页、我的规则、两处时限） | 测试台上可用 | 九安评审；在真实代码线上重新打一次（前置 2） |
+| 测试台补丁 0008–0018（九安的数据层换成 PostgreSQL：连接池、命名锁、基线表结构、各模块的查询，MySQL 的模块和 mysql2 去掉） | 2026-11-06 起测试台跑在上面；九安自带的测试在真 PG 上 2475 条过，换库前过的都还过 | 九安的正式环境已经是 PostgreSQL：和九安对一下他们的数据层，这几个补丁要不要、怎么进（前置 1、2） |
 | 审核 Agent（`review_advice@1`，查 PG 知识库） | 测试台上可用；提示词在 `audit-agent/`，一轮 7–20 秒 | 在生产用的 Nexus 上建发布、下发提示词 |
 | PG 知识库 Agent「知识库文档管家（PG 版）」（`kb.rules/v1`） | 测试台上可用；客户部署交付件 1.0.1 | 在客户的 Nexus 上部署 |
 | 知识库（PG + pgvector，Cohere Embed v4） | `kb/` 可用，PG 主机可以经部署人自己的 SSH 密钥 | 九安先部署 |
@@ -43,7 +44,7 @@ audience: 项目负责人、应用开发、九安团队
 |---|---|---|---|
 | **PG 与知识库后端** | PG + pgvector 容器、库内检索 `kb_search`、规则入库、Nexus 数据连接器与数据库凭证密钥、Sandbox 出站放行 | 九安运维用自己的 SSH 密钥；我们协助 | `kb/deploy.sh`（`deploy.env` 写 `PG_HOST_MODE=existing`、`PG_HOST_TRANSPORT=ssh` 等，[kb/GUIDE.md](../../kb/GUIDE.md) 第 3、4 节） |
 | **Nexus 上的 Agent 与发布** | 审核 Agent（提示词、模型、A2A 发布，名片声明 `review_advice@1`）、PG 知识库 Agent（工具、提示词、发布）、调用密钥 | Agent 开发用 nexus-ai-operator；调用密钥由发布者本人在网页签发 | `audit-agent/apply.py`、`customer-deploy/knowledgebase-writer-agent-pg/`（部署指南、部署手册、发布 zip） |
-| **前端** | 新前端、外壳、九安 v0.7.10 副本（打补丁）、九安的 MySQL；「Agent 接入」里启用发布、指定审批 Agent | 专人分批部署；九安适配 | 测试阶段是 `poc/infra/deploy.sh`；客户环境的形式阶段 0 定 |
+| **前端** | 新前端、外壳、九安 v0.7.10 副本（打补丁）、九安的库（测试台上是本机的 PostgreSQL）；「Agent 接入」里启用发布、指定审批 Agent | 专人分批部署；九安适配 | 测试阶段是 `poc/infra/deploy.sh`；客户环境的形式阶段 0 定 |
 | **运维侧** | 九安到 Nexus 的出站网络与 TLS；调用额度；日志与告警；密钥保管；回退办法 | 九安运维 + Nexus 运维；我们给清单 | 两边 |
 
 ## 4. 分阶段怎么走
@@ -54,7 +55,7 @@ audience: 项目负责人、应用开发、九安团队
 
 | # | 要定的事 | 为什么挡路 | 谁定 |
 |---|---|---|---|
-| 前置 1 | 新前端、外壳和补丁 0001–0007 以什么形式进九安自己的系统 | 决定前端那一块部署什么、谁来部署 | 项目负责人 + 九安 |
+| 前置 1 | 新前端、外壳和补丁 0001–0018 以什么形式进九安自己的系统（0008–0018 是数据层换 PostgreSQL 的） | 决定前端那一块部署什么、谁来部署 | 项目负责人 + 九安 |
 | 前置 2 | 九安真实代码线上的相关文件（补丁基线） | 我们手上的开发包是测试环境副本，补丁要在真实代码线上重新打一次才能定稿 | 九安 |
 | 前置 3 | 生产用哪一套 Nexus：**已定**，用另外一套已经建成的线上 Nexus AI（<https://d3u3hj2us186y.cloudfront.net/>）；我们的测试台仍连 `nxs-beine1013` | 决定 Agent 发布到哪里、PG 登记到哪里、网络怎么通 | 项目负责人 + 九安 |
 | 前置 4 | 数据外发：单据事实（金额、公司、费用说明、原件文字）要发到 Nexus 和它后面的模型；九安的数据治理（`ai-data-governance.mjs`）和客户的合规要同意 | 不同意就不能接真实单据 | 九安 + 客户合规 |
@@ -70,7 +71,7 @@ audience: 项目负责人、应用开发、九安团队
 进入阶段 2 的门槛：`kb/deploy.sh verify` 通过；规则入库的条数对得上。
 
 1. 九安起一台主机（自己的密钥对；安全组对部署人的地址开 22、对 Nexus 的私网段开 PG 端口）。
-2. 照 [kb/GUIDE.md](../../kb/GUIDE.md) 第 4 节：`preflight` → `all --dry-run` → `all`（`db` 装 Docker、起容器；`connector` 把私网地址和密码登记进 Nexus）。
+2. 照[交付指南](delivery-guide.md) 4.1：`deploy.env` 写 `AGENT_PATCH_PROMPT=false`，只跑数据层 `preflight,db,network,egress,connector`（先 `--dry-run`）：`db` 装 Docker、起容器；`connector` 把私网地址和密码登记进 Nexus。规则等阶段 2 的 PG 知识库 Agent 部署好后再入库。
 3. 规则入库：用客户自己的制度文档（制度原文不进我们的仓库）。
 4. 向量模型用 Cohere Embed v4（缺省）；跑 `db` 前确认 `EMBED_MODEL_ID`（[kb/GUIDE.md](../../kb/GUIDE.md) 7.6）。
 
@@ -112,7 +113,7 @@ audience: 项目负责人、应用开发、九安团队
 | | `audit-agent/`（`apply.py`、`setup.py`、`prompt-history/`） | 审核 Agent 的提示词下发、先演练再下发、每次留底 |
 | | `skills/nexus-ai-operator/` | 编码工具在 Nexus 上建 Agent、发布 |
 | 前端 | `poc/infra/deploy.sh`、`migrate-data.sh`、`backup.sh`、`upgrade-instance.sh` | 测试阶段的前端部署：测试 → 构建 → 建栈 → 装构件 → 健康检查；经 SSM 或 SSH；换机器搬数据 |
-| | `patches/jiuan-v0.7.10/` + `poc/bench/build-jiuan.sh` | 补丁 0001–0007，按清单复制开发包、打补丁，打不上就报错，不留半成品 |
+| | `patches/jiuan-v0.7.10/` + `poc/bench/build-jiuan.sh` | 补丁 0001–0018（0008–0018 把数据层换成 PostgreSQL），按清单复制开发包、打补丁，打不上就报错，不留半成品 |
 | | `poc/app/test/e2e/run.sh` | 端到端验收：站点、账号都从环境配置读；先在我们测试台上跑通 |
 
 原来计划、还没做的：在九安真实代码线上试打补丁的脚本、接进九安 Gitea Actions + Docker Compose 流水线的部署检查和配置，等前置 1、2 定了再做。
@@ -165,5 +166,8 @@ audience: 项目负责人、应用开发、九安团队
 2026-11-02 的决定：
 - 部署分三块：前端、PG 与知识库后端、Nexus 上的 Agent 与发布；客户先用自己的 SSH 密钥部署 PG，再分批部署前端。
 - 机器类型用 m7g.xlarge（arm64）；测试台只留新 UI，v0.5.3 PoC 拿掉。
+
+2026-11-05 的决定（2026-11-06 确认）：
+- 九安的正式环境已经把库换成 PostgreSQL，没有给新的开发包。项目负责人定：手上的 v0.7.10 就是最新的代码，测试台跟着换成 PostgreSQL（补丁 0008–0018，2026-11-06 切换）。
 
 部署由谁做已经定了：九安自己适配，我们用代码协助部署（第 1 节）。

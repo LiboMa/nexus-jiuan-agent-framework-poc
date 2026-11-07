@@ -1,0 +1,461 @@
+补丁 0015 的测试。
+- 改成连 PG：element-directive、element-lifecycle、element-preview、element-registry、element-publish、element-routes、element-store 的集成测试，
+  elements-page-ui、scan-engine 里连真库的那几条；element-store 的隔离端口 '3307' → '5434'。
+- 测试自己的 SQL：DATABASE() → current_database()；DATE_FORMAT → to_char；UUID() → gen_random_uuid()::text；NOW(6) → LOCALTIMESTAMP(6)；
+  DELETE e FROM … JOIN → DELETE FROM … USING；反引号 → 双引号。
+- 动了的断言：element-store A4/S5「报错里点名是哪条 CHECK」：MySQL 写成 'name'，PG 写成 "name"（错误号照旧 3819）。
+- 去掉的（removed-tests.json）：element-directive 的 B2-I2、B2-I4，element-store 的 A2、A3——测的是 MySQL 第 14–16 个迁移（只新增表、旧程序拒库、
+  v15 → v16 升级、按迁移读回表结构）；PG 从基线 19 起，没有这条迁移链。v2 格式能写、旧格式和别的值被 CHECK 挡住，仍由 B2-I1、A4/S5 在 PG 上测。
+
+diff --git a/tests/element-directive.integration.test.mjs b/tests/element-directive.integration.test.mjs
+index e8bca67..47ffd0a 100644
+--- a/tests/element-directive.integration.test.mjs
++++ b/tests/element-directive.integration.test.mjs
+@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test';
+ import assert from 'node:assert/strict';
+ import { randomBytes, randomUUID } from 'node:crypto';
+ 
+-import { createMySqlPool, inspectMigrationSchema, migrateMySql, MYSQL_MIGRATIONS } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createElementStore } from '../src/element-store.mjs';
+ import { AGENT_DEFINITION_SCHEMA, AGENT_DEFINITION_SCHEMA_V2, agentDefinitionHash, defaultDirective, DIRECTIVE_LIMITS } from '../src/agent-definition.mjs';
+ import { LEGACY_FAMILY_ID } from '../src/element-registry.mjs';
+@@ -11,10 +11,10 @@ import { elementHarness, OID_TECH } from './support/element-harness.mjs';
+ // RLN-B2 on real MySQL: v16 lets an agent family store the v2 definition;
+ // the editor save validates the directive and keeps the tree position.
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-assert.ok(MYSQL_TEST_URL, 'MYSQL_TEST_URL is required');
+-const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
+-before(async () => { await migrateMySql(pool); });
++const PG_TEST_URL = process.env.PG_TEST_URL;
++assert.ok(PG_TEST_URL, 'PG_TEST_URL is required');
++const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
++before(async () => { await migratePg(pool); });
+ after(async () => { await pool.end(); });
+ 
+ const agentIdentity = { familyKind: 'agent', tenantId: 'tenant-rln', scope: 'group', companyId: null };
+@@ -65,41 +65,6 @@ test('B2-I1 v16: an agent family stores v1 or v2 and the format column follows t
+   await assert.rejects(pool.query(`UPDATE element_family_versions SET definition_format = 'element-parameter-table-v1' WHERE connection_id = ? AND version_id = ?`, [connectionId, versionId]), error => /check constraint/iu.test(error.message));
+ });
+ 
+-test('B2-I2 v16 reads back without drift, v14 no longer expects the replaced checks, and an older program refuses the database', async () => {
+-  for (const version of [14, 15, 16, 17]) {
+-    const result = await inspectMigrationSchema(pool, MYSQL_MIGRATIONS.find(migration => migration.version === version), { migrations: MYSQL_MIGRATIONS });
+-    assert.deepEqual({ missing: result.missing, unexpected: result.unexpected }, { missing: [], unexpected: [] }, `v${version}`);
+-  }
+-  const v14 = MYSQL_MIGRATIONS.find(migration => migration.version === 14);
+-  assert.equal(v14.expects.checks.some(check => check.name.endsWith('_chk_format')), false, 'v14 no longer pins the old clause');
+-  const v16 = MYSQL_MIGRATIONS.find(migration => migration.version === 16);
+-  assert.equal(v16.additive, undefined, 'v16 changes CHECKs, so it is not additive');
+-  assert.deepEqual(v16.expects.checks.map(check => check.name).sort(), ['element_family_drafts_chk_format', 'element_family_versions_chk_format']);
+-  // A program that knows only v1-v15 must not start against a v16 database.
+-  await assert.rejects(migrateMySql(pool, { migrations: MYSQL_MIGRATIONS.filter(migration => migration.version < 16) }), { code: 'MYSQL_MIGRATION_DRIFT' });
+-  assert.deepEqual((await migrateMySql(pool)).applied, []);
+-});
+-
+-test('B2-I4 a database at v15 (where B1 leaves it) reads back clean and upgrades to v16', async () => {
+-  const [[{ db }]] = await pool.query('SELECT DATABASE() AS db');
+-  assert.match(db, /_test$/u, 'only ever rebuilt on a *_test database');
+-  const elementTables = ['element_family_registry', 'element_oid_claims', 'element_draft_edits', 'element_family_events', 'element_family_drafts', 'element_family_versions', 'element_family_heads'];
+-  try {
+-    for (const table of elementTables) await pool.query(`DROP TABLE IF EXISTS ${table}`);
+-    await pool.query('DELETE FROM schema_migrations WHERE version >= 14');
+-    assert.deepEqual((await migrateMySql(pool, { migrations: MYSQL_MIGRATIONS.filter(migration => migration.version <= 15) })).applied, [14, 15]);
+-    const [old] = await pool.query("SELECT CHECK_CLAUSE AS clause FROM information_schema.check_constraints WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'element_family_drafts_chk_format'");
+-    assert.doesNotMatch(String(old[0].clause), /def-v2/u);
+-    // The shipped program inspects v14/v15 first: the old CHECKs must not count as drift.
+-    assert.deepEqual((await migrateMySql(pool)).applied, MYSQL_MIGRATIONS.filter(migration => migration.version >= 16).map(migration => migration.version));
+-    const [current] = await pool.query("SELECT CHECK_CLAUSE AS clause FROM information_schema.check_constraints WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'element_family_drafts_chk_format'");
+-    assert.match(String(current[0].clause), /def-v2/u);
+-    assert.deepEqual((await migrateMySql(pool)).applied, []);
+-  } finally {
+-    await migrateMySql(pool);
+-  }
+-});
+-
+ test('B2-I3 the editor save validates the directive, keeps the tree position, and shows old drafts as v2', async t => {
+   const h = await elementHarness(t, { pool, label: 'rln-b2' });
+   const author = await h.login('author');
+diff --git a/tests/element-lifecycle.integration.test.mjs b/tests/element-lifecycle.integration.test.mjs
+index cf9bac4..8575bf7 100644
+--- a/tests/element-lifecycle.integration.test.mjs
++++ b/tests/element-lifecycle.integration.test.mjs
+@@ -1,13 +1,13 @@
+ import test, { before, after } from 'node:test';
+ import assert from 'node:assert/strict';
+ import { randomBytes, randomUUID } from 'node:crypto';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createElementStore } from '../src/element-store.mjs';
+ import { createElementLifecycle, LEGACY_PENDING_NOTE } from '../src/element-lifecycle.mjs';
+ 
+-const url = process.env.MYSQL_TEST_URL;
+-assert.ok(url, 'MYSQL_TEST_URL is required');
+-const pool = createMySqlPool({ url, connectionLimit: 8 });
++const url = process.env.PG_TEST_URL;
++assert.ok(url, 'PG_TEST_URL is required');
++const pool = createPgPool({ url, connectionLimit: 8 });
+ const connectionId = `life1-${randomUUID()}`;
+ const key = randomBytes(32);
+ let tick = Date.parse('2026-10-15T00:00:00.000Z');
+@@ -35,7 +35,7 @@ const Local = { user: { id: 'local-owner', role: 'admin' }, principal: 'local:ow
+ const family = { familyId: `family-${randomUUID()}`, familyKind: 'parameter', tenantId: 'tenant-1', scope: 'group', companyId: null, shell: { elements: [] } };
+ const newFamily = () => ({ familyId: `family-${randomUUID()}`, familyKind: 'parameter', tenantId: 'tenant-1', scope: 'group', companyId: null, shell: { elements: [] } });
+ 
+-before(async () => { await migrateMySql(pool); });
++before(async () => { await migratePg(pool); });
+ after(async () => { await pool.end(); });
+ 
+ 
+diff --git a/tests/element-preview.integration.test.mjs b/tests/element-preview.integration.test.mjs
+index fe61eae..a13c320 100644
+--- a/tests/element-preview.integration.test.mjs
++++ b/tests/element-preview.integration.test.mjs
+@@ -1,17 +1,17 @@
+ import test, { before, after } from 'node:test';
+ import assert from 'node:assert/strict';
+ 
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { BANNED_USER_TERMS } from '../src/audit-terms.mjs';
+ import { buildDirectivePreview, NOT_YET_USED } from '../src/element-preview.mjs';
+ import { elementHarness, OID_TECH } from './support/element-harness.mjs';
+ 
+ // RLN-B4: 「预览 AI 将看到的说明」 — built on the server from saved content, read-only, no model.
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-assert.ok(MYSQL_TEST_URL, 'MYSQL_TEST_URL is required');
+-const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
+-before(async () => { await migrateMySql(pool); });
++const PG_TEST_URL = process.env.PG_TEST_URL;
++assert.ok(PG_TEST_URL, 'PG_TEST_URL is required');
++const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
++before(async () => { await migratePg(pool); });
+ after(async () => { await pool.end(); });
+ 
+ const redLine = {
+diff --git a/tests/element-publish.integration.test.mjs b/tests/element-publish.integration.test.mjs
+index 2ee3882..beeede2 100644
+--- a/tests/element-publish.integration.test.mjs
++++ b/tests/element-publish.integration.test.mjs
+@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test';
+ import assert from 'node:assert/strict';
+ import { randomUUID } from 'node:crypto';
+ 
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createElementStore } from '../src/element-store.mjs';
+ import { LEGACY_FAMILY_ID } from '../src/element-registry.mjs';
+ import { defaultDirective } from '../src/agent-definition.mjs';
+@@ -11,10 +11,10 @@ import baseline from './fixtures/corporate-verdict-baseline.json' with { type: '
+ 
+ // RLN-B3: 发布即生效 (口径第 54 条) on real MySQL through the real HTTP app.
+ 
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-assert.ok(MYSQL_TEST_URL, 'MYSQL_TEST_URL is required');
+-const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
+-before(async () => { await migrateMySql(pool); });
++const PG_TEST_URL = process.env.PG_TEST_URL;
++assert.ok(PG_TEST_URL, 'PG_TEST_URL is required');
++const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
++before(async () => { await migratePg(pool); });
+ after(async () => { await pool.end(); });
+ 
+ const SOURCE_VERSION = 'b'.repeat(64);
+@@ -280,8 +280,8 @@ test('B3-7 the store and the database both keep a published version to its own a
+   assert.equal(decoded.integrity, 'unconfirmed');
+   assert.equal(elementVersionFromRow(row, { key: Buffer.alloc(32, 7), connectionId }).integrity, 'ok');
+   // The restore intent must name its source, and only it may.
+-  await assert.rejects(pool.query("INSERT INTO element_draft_edits (edit_id, connection_id, family_id, draft_revision, action, element_id, intent, actor_account_id, actor_mode, actor_principal, at, draft_hash, source_version_id) VALUES (UUID(), ?, ?, 99, 'save', NULL, 'restore_version', 'author', 'dingtalk', 'dingtalk:corp:author', NOW(6), REPEAT('0', 64), NULL)", [connectionId, familyId]), error => /check constraint/iu.test(error.message));
+-  await assert.rejects(pool.query("INSERT INTO element_draft_edits (edit_id, connection_id, family_id, draft_revision, action, element_id, intent, actor_account_id, actor_mode, actor_principal, at, draft_hash, source_version_id) VALUES (UUID(), ?, ?, 98, 'save', NULL, NULL, 'author', 'dingtalk', 'dingtalk:corp:author', NOW(6), REPEAT('0', 64), ?)", [connectionId, familyId, versionId]), error => /check constraint/iu.test(error.message));
++  await assert.rejects(pool.query("INSERT INTO element_draft_edits (edit_id, connection_id, family_id, draft_revision, action, element_id, intent, actor_account_id, actor_mode, actor_principal, at, draft_hash, source_version_id) VALUES (gen_random_uuid()::text, ?, ?, 99, 'save', NULL, 'restore_version', 'author', 'dingtalk', 'dingtalk:corp:author', LOCALTIMESTAMP(6), REPEAT('0', 64), NULL)", [connectionId, familyId]), error => /check constraint/iu.test(error.message));
++  await assert.rejects(pool.query("INSERT INTO element_draft_edits (edit_id, connection_id, family_id, draft_revision, action, element_id, intent, actor_account_id, actor_mode, actor_principal, at, draft_hash, source_version_id) VALUES (gen_random_uuid()::text, ?, ?, 98, 'save', NULL, NULL, 'author', 'dingtalk', 'dingtalk:corp:author', LOCALTIMESTAMP(6), REPEAT('0', 64), ?)", [connectionId, familyId, versionId]), error => /check constraint/iu.test(error.message));
+ });
+ 
+ test('B3-8 review rl1019: a draft trial is identified by the definition it evaluated (discard marks applied), and a never-effective legacy version cannot be tried', async t => {
+diff --git a/tests/element-registry.integration.test.mjs b/tests/element-registry.integration.test.mjs
+index e394ee9..04609ae 100644
+--- a/tests/element-registry.integration.test.mjs
++++ b/tests/element-registry.integration.test.mjs
+@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+ import { createMilestoneRuntime } from '../src/milestone-runtime.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { createElementRegistry, createExpenseTypeCatalog, LEGACY_FAMILY_ID } from '../src/element-registry.mjs';
+ 
+ // RLN-B1: the rule-library tree.  Real MySQL + the real HTTP app; the only
+@@ -14,10 +14,10 @@ import { createElementRegistry, createExpenseTypeCatalog, LEGACY_FAMILY_ID } fro
+ 
+ const PREFIX = '/api/analysis/v1';
+ const ORIGIN = 'http://127.0.0.1:4180';
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-assert.ok(MYSQL_TEST_URL, 'MYSQL_TEST_URL is required');
+-const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
+-before(async () => { await migrateMySql(pool); });
++const PG_TEST_URL = process.env.PG_TEST_URL;
++assert.ok(PG_TEST_URL, 'PG_TEST_URL is required');
++const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
++before(async () => { await migratePg(pool); });
+ after(async () => { await pool.end(); });
+ 
+ const TENANT = 'tenant-rln';
+diff --git a/tests/element-routes.integration.test.mjs b/tests/element-routes.integration.test.mjs
+index 3c58cdd..e022d51 100644
+--- a/tests/element-routes.integration.test.mjs
++++ b/tests/element-routes.integration.test.mjs
+@@ -7,17 +7,17 @@ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+ import { assertStartupConfig } from '../src/analysis-config.mjs';
+ import { createMilestoneRuntime } from '../src/milestone-runtime.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { corporateCandidates } from '../src/element-candidates.mjs';
+ import { createElementStore } from '../src/element-store.mjs';
+ 
+ const PREFIX = '/api/analysis/v1';
+ const ORIGIN = 'http://127.0.0.1:4180';
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-assert.ok(MYSQL_TEST_URL, 'MYSQL_TEST_URL is required');
++const PG_TEST_URL = process.env.PG_TEST_URL;
++assert.ok(PG_TEST_URL, 'PG_TEST_URL is required');
+ 
+-const pool = createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 8 });
+-before(async () => { await migrateMySql(pool); });
++const pool = createPgPool({ url: PG_TEST_URL, connectionLimit: 8 });
++before(async () => { await migratePg(pool); });
+ after(async () => { await pool.end(); });
+ 
+ function accounts() {
+diff --git a/tests/element-store.integration.test.mjs b/tests/element-store.integration.test.mjs
+index dad3eec..7a682eb 100644
+--- a/tests/element-store.integration.test.mjs
++++ b/tests/element-store.integration.test.mjs
+@@ -1,15 +1,15 @@
+ import { describe, test, before, after } from 'node:test';
+ import assert from 'node:assert/strict';
+ import { randomBytes, randomUUID } from 'node:crypto';
+-import { createMySqlPool, migrateMySql, MYSQL_MIGRATIONS, inspectMigrationSchema, validateAdditiveMigration } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { MYSQL_ELEMENT_STORE_MIGRATION } from '../src/element-store-schema.mjs';
+ import * as elementStore from '../src/element-store.mjs';
+ import { AGENT_DEFINITION_SCHEMA } from '../src/agent-definition.mjs';
+ 
+-const testUrl = process.env.MYSQL_TEST_URL;
+-assert.ok(testUrl, 'MYSQL_TEST_URL is required; integration tests must not skip');
++const testUrl = process.env.PG_TEST_URL;
++assert.ok(testUrl, 'PG_TEST_URL is required; integration tests must not skip');
+ const parsed = new URL(testUrl);
+-assert.equal(parsed.port, '3307', 'only the dedicated test port is permitted');
++assert.equal(parsed.port, '5434', 'only the dedicated test port is permitted');
+ assert.match(parsed.pathname, /_test$/);
+ 
+ const V14_TABLES = ['element_oid_claims', 'element_draft_edits', 'element_family_events', 'element_family_drafts', 'element_family_versions', 'element_family_heads'];
+@@ -17,7 +17,7 @@ const DEFINITION_CANARY = 'STORE_SECRET_CANARY_2026';
+ const RETURN_CANARY = 'RETURN_REASON_CANARY_2026';
+ const NOTE_CANARY = 'EDIT_NOTE_CANARY_2026';
+ 
+-const pool = createMySqlPool({ url: testUrl, connectionLimit: 12 });
++const pool = createPgPool({ url: testUrl, connectionLimit: 12 });
+ const connectionId = `store-test-${randomUUID()}`;
+ const key = randomBytes(32);
+ // The injected clock is strictly increasing (architect ruling 28): every read is
+@@ -75,7 +75,7 @@ async function nextNumber(familyId) {
+   return Number(rows[0].next);
+ }
+ async function versionRow(versionId) {
+-  const [rows] = await pool.query("SELECT *, DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_text, DATE_FORMAT(ended_on, '%Y-%m-%d') AS ended_text FROM element_family_versions WHERE connection_id = ? AND version_id = ?", [connectionId, versionId]);
++  const [rows] = await pool.query("SELECT *, to_char(effective_from, 'YYYY-MM-DD') AS effective_text, to_char(ended_on, 'YYYY-MM-DD') AS ended_text FROM element_family_versions WHERE connection_id = ? AND version_id = ?", [connectionId, versionId]);
+   return rows[0];
+ }
+ async function snapshot(familyId) {
+@@ -144,16 +144,9 @@ async function editRows(familyId) {
+   return rows;
+ }
+ async function assertDbTest() {
+-  const [[row]] = await pool.query('SELECT DATABASE() AS db');
++  const [[row]] = await pool.query('SELECT current_database() AS db');
+   assert.match(row.db, /_test$/);
+ }
+-/** Rebuild everything from v14 on (the store, the tree registry, the v16 rewrite) with `migrations`. */
+-async function recreateV14(migrations) {
+-  await assertDbTest();
+-  for (const table of ['element_family_registry', ...V14_TABLES]) await pool.query(`DROP TABLE IF EXISTS ${table}`);
+-  await pool.query('DELETE FROM schema_migrations WHERE version >= 14');
+-  return migrateMySql(pool, { migrations });
+-}
+ 
+ /**
+  * A store whose transaction pauses right before its first statement matching
+@@ -204,7 +197,7 @@ function failingStore(pattern, failure) {
+ }
+ 
+ describe('element store on real MySQL', () => {
+-  before(async () => { await migrateMySql(pool); });
++  before(async () => { await migratePg(pool); });
+   after(async () => {
+     try {
+       for (const connection of [connectionId, ...freshConnections]) {
+@@ -213,42 +206,6 @@ describe('element store on real MySQL', () => {
+     } finally { await pool.end(); }
+   });
+ 
+-  test('A3 v14 is additive: an older program starts against v14, and fails once the declaration is removed', async () => {
+-    const older = MYSQL_MIGRATIONS.filter(migration => migration.version < 14);
+-    const additiveUpTo15 = MYSQL_MIGRATIONS.filter(migration => migration.version <= 15);
+-    const v14 = MYSQL_MIGRATIONS.find(migration => migration.version === 14);
+-    try {
+-      // (2) migrate through the additive v14 and v15, then start the program that only knows v1-v13.
+-      assert.deepEqual((await recreateV14(additiveUpTo15)).applied, [14, 15]);
+-      const startedOld = await migrateMySql(pool, { migrations: older });
+-      assert.deepEqual(startedOld.aheadAdditive, [14, 15]);
+-      assert.deepEqual(startedOld.applied, []);
+-      const [[record]] = await pool.query('SELECT additive FROM schema_migrations WHERE version = 14');
+-      assert.equal(Number(record.additive), 1);
+-      // (1) the declaration itself passes the additive validator.
+-      assert.equal(MYSQL_ELEMENT_STORE_MIGRATION.additive, true);
+-      validateAdditiveMigration(MYSQL_ELEMENT_STORE_MIGRATION);
+-      // (3) without the declaration the same older program must refuse to start.
+-      assert.deepEqual((await recreateV14([...older, { ...v14, additive: false }])).applied, [14]);
+-      await assert.rejects(migrateMySql(pool, { migrations: older }), { code: 'MYSQL_MIGRATION_DRIFT' });
+-      // (4) RLN-B2: v16 rewrites two CHECKs and is not additive, so once it ran no older program starts.
+-      assert.deepEqual((await recreateV14(MYSQL_MIGRATIONS)).applied, MYSQL_MIGRATIONS.filter(migration => migration.version >= 14).map(migration => migration.version));
+-      await assert.rejects(migrateMySql(pool, { migrations: older }), { code: 'MYSQL_MIGRATION_DRIFT' });
+-      await assert.rejects(migrateMySql(pool, { migrations: additiveUpTo15 }), { code: 'MYSQL_MIGRATION_DRIFT' });
+-    } finally {
+-      await recreateV14(MYSQL_MIGRATIONS);
+-    }
+-  });
+-
+-  test('A2 v14 reads back with zero drift and repeated migration is idempotent', async () => {
+-    const result = await inspectMigrationSchema(pool, MYSQL_MIGRATIONS.find(migration => migration.version === 14), { migrations: MYSQL_MIGRATIONS });
+-    assert.deepEqual(result.missing, []);
+-    assert.deepEqual(result.unexpected, []);
+-    assert.equal(result.ok, true);
+-    assert.deepEqual((await migrateMySql(pool)).applied, []);
+-    assert.deepEqual((await migrateMySql(pool)).applied, []);
+-  });
+-
+   test('A4/S5 MySQL reports the exact named CHECK for every v14 constraint', async () => {
+     const id = family();
+     const uuid = () => randomUUID();
+@@ -300,7 +257,8 @@ describe('element store on real MySQL', () => {
+     const failures = [];
+     for (const [name, statement] of Object.entries(cases)) {
+       try { await insert(statement); failures.push(`${name}: accepted`); } catch (error) {
+-        if (error.errno !== 3819 || !error.message.includes(`'${name}'`)) failures.push(`${name}: ${error.errno} ${error.message}`);
++        // PostgreSQL names the constraint in double quotes (MySQL: Check constraint 'name' is violated)
++        if (error.errno !== 3819 || !error.message.includes(`"${name}"`)) failures.push(`${name}: ${error.errno} ${error.message}`);
+       }
+     }
+     assert.deepEqual(failures, []);
+diff --git a/tests/elements-page-ui.test.mjs b/tests/elements-page-ui.test.mjs
+index a409c31..d778d0e 100644
+--- a/tests/elements-page-ui.test.mjs
++++ b/tests/elements-page-ui.test.mjs
+@@ -8,7 +8,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
+ import { createAnalysisApp } from '../analysis-server.mjs';
+ import { createAnalysisAuth } from '../src/analysis-auth.mjs';
+ import { createMilestoneRuntime } from '../src/milestone-runtime.mjs';
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { BANNED_USER_TERMS } from '../src/audit-terms.mjs';
+ import { ruleAccounts, syncedStore, TENANT, OID_TECH, OID_RENT } from './support/element-harness.mjs';
+ 
+@@ -19,13 +19,13 @@ let chromium;
+ for (const dependency of ['playwright', process.env.USERPROFILE && join(process.env.USERPROFILE, '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')].filter(Boolean)) {
+   try { ({ chromium } = createRequire(import.meta.url)(dependency)); break; } catch { /* use the desktop runtime */ }
+ }
+-const MYSQL_TEST_URL = process.env.MYSQL_TEST_URL;
+-const skip = !chromium ? 'Playwright runtime unavailable' : !MYSQL_TEST_URL ? 'MYSQL_TEST_URL is not set' : false;
+-const pool = MYSQL_TEST_URL ? createMySqlPool({ url: MYSQL_TEST_URL, connectionLimit: 6 }) : null;
++const PG_TEST_URL = process.env.PG_TEST_URL;
++const skip = !chromium ? 'Playwright runtime unavailable' : !PG_TEST_URL ? 'PG_TEST_URL is not set' : false;
++const pool = PG_TEST_URL ? createPgPool({ url: PG_TEST_URL, connectionLimit: 6 }) : null;
+ let browser;
+ before(async () => {
+   if (skip) return;
+-  await migrateMySql(pool);
++  await migratePg(pool);
+   browser = await chromium.launch({ ...(process.platform === 'win32' ? { channel: 'msedge' } : {}), headless: true });
+ });
+ after(async () => { await browser?.close(); await pool?.end(); });
+diff --git a/tests/pg-database.test.mjs b/tests/pg-database.test.mjs
+index 280450b..bcd6e8c 100644
+--- a/tests/pg-database.test.mjs
++++ b/tests/pg-database.test.mjs
+@@ -29,6 +29,7 @@ test('错误码：PG 的 SQLSTATE 换成调用方在查的 mysql2 码，原错
+   assert.deepEqual([shaped('55P03').code, shaped('55P03').errno], ['ER_LOCK_WAIT_TIMEOUT', 1205]);
+   assert.deepEqual([shaped('42P01').code, shaped('42P01').errno], ['ER_NO_SUCH_TABLE', 1146]);
+   assert.deepEqual([shaped('42703').code, shaped('42703').errno], ['ER_BAD_FIELD_ERROR', 1054]);
++  assert.deepEqual([shaped('23514').code, shaped('23514').errno], ['ER_CHECK_CONSTRAINT_VIOLATED', 3819]);
+   assert.equal(shaped('57014', 'canceling statement due to statement timeout').code, 'PROTOCOL_SEQUENCE_TIMEOUT');
+   assert.equal(shaped('57P01').code, 'PROTOCOL_CONNECTION_LOST');
+   assert.equal(shaped('22P02').code, '22P02', '不认识的保留原码');
+diff --git a/tests/scan-engine.test.mjs b/tests/scan-engine.test.mjs
+index b99c254..bb64ebf 100644
+--- a/tests/scan-engine.test.mjs
++++ b/tests/scan-engine.test.mjs
+@@ -2,10 +2,10 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { createHash } from 'node:crypto';
+ 
+-import { createMySqlPool, migrateMySql } from '../src/mysql-database.mjs';
++import { createPgPool, migratePg } from '../src/pg-database.mjs';
+ import { normalizeHit, runScan } from '../src/scan/scan-engine.mjs';
+ 
+-const mysqlTestUrl = process.env.MYSQL_TEST_URL;
++const mysqlTestUrl = process.env.PG_TEST_URL;
+ const asOf = '2020-01-01T00:00:00.000Z';
+ 
+ function rule(evaluate) {
+@@ -43,15 +43,15 @@ test('dry-run permits an omitted fingerprint key and writes no run ledger', asyn
+ });
+ 
+ test('scan lifecycle preserves status and records transitions', {
+-  skip: mysqlTestUrl ? false : 'MYSQL_TEST_URL is not set; integration database was not contacted',
++  skip: mysqlTestUrl ? false : 'PG_TEST_URL is not set; integration database was not contacted',
+ }, async t => {
+-  const pool = createMySqlPool({ url: mysqlTestUrl, connectionLimit: 2 });
++  const pool = createPgPool({ url: mysqlTestUrl, connectionLimit: 2 });
+   const connectionId = `scan-engine-${createHash('sha256').update(asOf).digest('hex').slice(0, 12)}`;
+   const key = Buffer.alloc(32, 7);
+   const fingerprintKey = Buffer.alloc(32, 9);
+   const encrypt = value => Buffer.from(JSON.stringify(value), 'utf8');
+   try {
+-    await migrateMySql(pool);
++    await migratePg(pool);
+     await pool.query('INSERT INTO analysis_connections(connection_id,environment,schema_version,key_check,tenant_id) VALUES (?,\'prod\',1,?,?)', [connectionId, key, 'scan-tenant']);
+     await pool.query(`INSERT INTO analysis_documents(connection_id,id,environment,tenant_id,company_id,company_name,source_id,number,form_name,document_type,status,amount,currency,collected_at,version,history_count,rejection_count,withdrawal_count)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?)`, [connectionId, 'scan-doc-1', 'prod', 'scan-tenant', 'scan-company', 'test', 'scan-source-1', 'EXP-SCAN-1', 'test', 'expense', '1002', '10.00', 'CNY', asOf.slice(0, 19).replace('T', ' '), 'v1', 0, 0, 0]);
+@@ -86,7 +86,7 @@ test('scan lifecycle preserves status and records transitions', {
+     assert.equal(repeat.newSuspicions, 0);
+     const [[repeatColumns]] = await pool.query('SELECT evidence_sha256 FROM audit_suspicions WHERE connection_id=? AND rule_id=?', [connectionId, scanRule.id]);
+     assert.equal(repeatColumns.evidence_sha256, firstEvidenceHash);
+-    const [repeatEvents] = await pool.query('SELECT `event` FROM audit_suspicion_events WHERE suspicion_id=(SELECT suspicion_id FROM audit_suspicions WHERE connection_id=?)', [connectionId]);
++    const [repeatEvents] = await pool.query('SELECT "event" FROM audit_suspicion_events WHERE suspicion_id=(SELECT suspicion_id FROM audit_suspicions WHERE connection_id=?)', [connectionId]);
+     assert.deepEqual(repeatEvents.map(row => row.event), ['created']);
+     await pool.query("UPDATE audit_suspicions SET status='confirmed' WHERE connection_id=?", [connectionId]);
+     phase = 2;
+@@ -102,7 +102,7 @@ test('scan lifecycle preserves status and records transitions', {
+     assert.deepEqual(absent, { status: 'confirmed', still_present: 0 });
+     phase = 3;
+     await runScan({ pool, connectionId, rules: [scanRule], asOf, runId: 'scan-run-4', encrypt, fingerprintKey });
+-    const [events] = await pool.query('SELECT `event` FROM audit_suspicion_events WHERE suspicion_id=(SELECT suspicion_id FROM audit_suspicions WHERE connection_id=?) ORDER BY at,event_id', [connectionId]);
++    const [events] = await pool.query('SELECT "event" FROM audit_suspicion_events WHERE suspicion_id=(SELECT suspicion_id FROM audit_suspicions WHERE connection_id=?) ORDER BY at,event_id', [connectionId]);
+     assert.deepEqual(events.map(row => row.event).sort(), ['created', 'evidence_changed', 'hit_again', 'no_longer_hit'].sort());
+     const alternateRule = { ...scanRule, id: 'scan-test-rule-alt' };
+     await runScan({ pool, connectionId, rules: [alternateRule], asOf, runId: 'scan-run-other-key', encrypt, fingerprintKey: Buffer.alloc(32, 10) });
+@@ -120,8 +120,8 @@ test('scan lifecycle preserves status and records transitions', {
+     assert.ok(new Date(runTimes.started_at) <= new Date(runTimes.finished_at));
+   } finally {
+     await pool.query('DELETE FROM audit_scan_rule_settings WHERE connection_id=?', [connectionId]);
+-    await pool.query('DELETE e FROM audit_suspicion_events e JOIN audit_suspicions s ON s.suspicion_id=e.suspicion_id WHERE s.connection_id=?', [connectionId]);
+-    await pool.query('DELETE d FROM audit_suspicion_documents d JOIN audit_suspicions s ON s.suspicion_id=d.suspicion_id WHERE s.connection_id=?', [connectionId]);
++    await pool.query('DELETE FROM audit_suspicion_events e USING audit_suspicions s WHERE s.suspicion_id=e.suspicion_id AND s.connection_id=?', [connectionId]);
++    await pool.query('DELETE FROM audit_suspicion_documents d USING audit_suspicions s WHERE s.suspicion_id=d.suspicion_id AND s.connection_id=?', [connectionId]);
+     await pool.query('DELETE FROM audit_suspicions WHERE connection_id=?', [connectionId]);
+     await pool.query('DELETE FROM audit_scan_runs WHERE connection_id=?', [connectionId]);
+     await pool.query('DELETE FROM analysis_documents WHERE connection_id=?', [connectionId]);

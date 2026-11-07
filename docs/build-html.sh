@@ -3,8 +3,8 @@
 #   docs/build-html.sh          先把 assets/diagrams/*.mmd 画成同名 .svg，再把下面清单里的文档生成同目录、同名的 .html
 #   docs/build-html.sh --check  只检查图和 HTML 是不是最新的（有过期的就退出 1），适合放进推送前检查
 # 需要 pandoc ≥ 3、mermaid-cli（mmdc）和本机 Chrome（CHROME_PATH 可改）。
-# 只处理清单里的文档，不会覆盖手工做的 HTML（如 agent-discovery-registration.html）；
-# assets/diagrams/ 里没有同名 .mmd 的 .svg（如 arch-overview.svg）是手工画的，脚本不动它。
+# 只处理清单里的文档，不会覆盖别的 HTML；
+# assets/diagrams/ 里没有同名 .mmd 的 .svg 算手工画的，脚本不动它（现在没有这种图）。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
@@ -26,6 +26,8 @@ DOCS=(
   delivery/deploy-iteration.md
   delivery/operations.md
   architecture.md
+  workflows.md
+  kb-rules-v1.md
 )
 CONVERTED="$(IFS=,; echo "${DOCS[*]}")"
 CHECK=false

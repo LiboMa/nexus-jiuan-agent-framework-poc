@@ -1,0 +1,26 @@
+flowchart TD
+  change["改代码 · 先写会失败的测试"]
+  unit["本机测试<br/>poc/infra · 外壳 · 新前端 · kb · audit-agent · build-html.sh --check"]
+  deploy["deploy.sh --code-only<br/>（又跑一遍测试、构建，装到测试台）"]
+  e2e["run.sh 端到端<br/>27 条，真实调用 Nexus"]
+  owner["项目负责人确认"]
+  push["提交 · 推送开发仓库"]
+  pkg["make-package.sh<br/>检查没过就不出包 · 只带进了 git 的文件 · 脱敏 · 扫密钥"]
+  out["交付包 dist/ · 交接仓库 --export"]
+  fix["回到改代码<br/>（线上用 previous 回滚）"]
+  change e1@==> unit e2@==> deploy e3@==> e2e
+  e2e -- 全过 --> owner
+  owner e4@==> push e5@==> pkg e6@==> out
+  unit -- 没过 --> fix
+  e2e -- 没过 --> fix
+  fix --> change
+  e1@{ animate: true }
+  e2@{ animate: true }
+  e3@{ animate: true }
+  e4@{ animate: true }
+  e5@{ animate: true }
+  e6@{ animate: true }
+  class change,unit,deploy poc
+  class e2e,owner gate
+  class push,pkg,out good
+  class fix risk

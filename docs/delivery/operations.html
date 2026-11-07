@@ -95,13 +95,14 @@ footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-si
   <h1><span>九安审核平台 × Nexus AI · Finance-Audit-Nexus-PoC
 v0.7.10</span>运维与后续迭代</h1>
   <table class="fields">
-    <tr><th scope="row">日期</th><td>2026-11-02</td></tr>
+    <tr><th scope="row">日期</th><td>2026-11-06</td></tr>
     <tr><th scope="row">状态</th><td>交付版 v3（只留新 UI：九安 v0.7.10
-测试台；一台机器一个服务 andon-jiuan）</td></tr>
+测试台；一台机器一个服务 andon-jiuan；2026-11-06 起九安的库是
+PostgreSQL）</td></tr>
     <tr><th scope="row">范围</th><td>九安 v0.7.10 测试台（栈
-andon-finance-m7g；旧栈 andon-finance-poc 等删）与 Nexus
-nxs-beine1013（线上 Nexus AI
-的实际地址：d3u3hj2us186y.cloudfront.net）</td></tr>
+andon-finance-m7g；旧栈 andon-finance-poc 等删）与测试台用的 Nexus
+nxs-beine1013（生产用的线上 Nexus AI
+是另一套：d3u3hj2us186y.cloudfront.net）</td></tr>
     <tr><th scope="row">读者</th><td>运维、值班、应用开发、Agent
 开发</td></tr>
   </table>
@@ -131,14 +132,13 @@ id="toc-24-agent-接入页上连不上或启用失败">2.4 「Agent
 接入」页上连不上或启用失败</a></li>
 <li><a href="#25-实例被替换换机器" id="toc-25-实例被替换换机器">2.5
 实例被替换、换机器</a></li>
-<li><a href="#26-测试台mysql-的检查重置备份"
-id="toc-26-测试台mysql-的检查重置备份">2.6 测试台：MySQL
-的检查、重置、备份</a></li>
+<li><a href="#26-测试台九安的库postgresql的检查查库重置备份恢复"
+id="toc-26-测试台九安的库postgresql的检查查库重置备份恢复">2.6
+测试台：九安的库（PostgreSQL）的检查、查库、重置、备份、恢复</a></li>
 <li><a href="#27-ai-建议出不来慢" id="toc-27-ai-建议出不来慢">2.7 AI
 建议出不来、慢</a></li>
-<li><a href="#28-清理-v053-poc-留在实例上的东西"
-id="toc-28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
-留在实例上的东西</a></li>
+<li><a href="#28-v053-poc-留下的东西"
+id="toc-28-v053-poc-留下的东西">2.8 v0.5.3 PoC 留下的东西</a></li>
 <li><a href="#29-销毁" id="toc-29-销毁">2.9 销毁</a></li>
 </ul></li>
 <li><a href="#3-后续迭代的最佳方式" id="toc-3-后续迭代的最佳方式">3.
@@ -160,9 +160,11 @@ id="toc-28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
 <h1 id="1-日常运维">1. 日常运维</h1>
 <p>一台实例上只有一个服务：测试台外壳 <code>andon-jiuan</code>（用户
 <code>jiuan</code>，直接听 4180），里面跑新前端、九安 v0.7.10
-的副本和外壳的接口；旁边是两个容器：MySQL
-<code>jiuan-mysql</code>、知识库的 PG
-<code>nexus-pgvector</code>。对外只有一个站点（CloudFront 分发
+的副本和外壳的接口；旁边是两个容器：九安的 PostgreSQL
+<code>jiuan-pg</code>（2026-11-06 起；只听 127.0.0.1:5433，库
+<code>jiuan</code>）、知识库的 PG <code>nexus-pgvector</code>。切换前的
+MySQL（<code>jiuan-mysql</code>）2026-11-06 晚上删了（第 2.6
+节）。对外只有一个站点（CloudFront 分发
 <code>Distribution</code>，别名是栈参数
 <code>DomainName</code>）。2026-11-02 起没有 v0.5.3 PoC 的服务
 <code>andon-finance-poc</code> 了。</p>
@@ -195,9 +197,10 @@ href="handover.html">交接文档</a>第 2.2 节）。</p>
 I6，<a href="handover.html">交接文档</a>第 6.1 节）</td>
 </tr>
 <tr>
-<td>两个容器</td>
-<td>登上实例（第 1.2 节）：<code>sudo docker ps</code></td>
-<td><code>jiuan-<wbr>mysql</code>、<code>nexus-<wbr>pgvector</code> 都是
+<td>容器</td>
+<td>登上实例（第 1.2 节）：<code>sudo docker ps -<wbr>a</code></td>
+<td>只有
+<code>jiuan-<wbr>pg</code>、<code>nexus-<wbr>pgvector</code>，都是
 Up</td>
 </tr>
 <tr>
@@ -231,6 +234,7 @@ SSH 管理」）：</p>
 # SSH_VIA=eice（m7g 测试环境是这样）：经 EC2 Instance Connect 端点，再加
 #   -o ProxyCommand=&#39;aws ec2-instance-connect open-tunnel --region us-east-1 --instance-id &lt;实例&gt;&#39;
 sudo journalctl -u andon-jiuan -n 200 --no-pager          # 外壳（和九安）的日志
+sudo docker logs --tail 100 jiuan-pg                       # 九安的 PostgreSQL 的日志（上海时间）
 sudo tail -n 200 /var/log/cloud-init-output.log            # 首次启动的初始化日志</code></pre>
 <p>经 SSM 的栈（旧栈 <code>andon-finance-poc</code>
 是）：<code>aws ssm start-session --region us-east-1 --target &lt;InstanceId&gt;</code>，再执行上面两条
@@ -285,8 +289,14 @@ AWS 凭证有 <code>ec2-instance-connect:OpenTunnel</code>。</p>
 <td><code>POC_<wbr>KB_<wbr>CACHE_<wbr>UNAVAILABLE</code></td>
 <td>知识库页的缓存（<code>poc_<wbr>kb_<wbr>cache</code>）读写出错，这次照常去问了
 Agent（页面慢一些，不报错）</td>
-<td>偶尔有不用管；成串的就看 MySQL 容器
-<code>jiuan-<wbr>mysql</code></td>
+<td>偶尔有不用管；成串的就看 PostgreSQL 容器
+<code>jiuan-<wbr>pg</code>（第 2.6 节）</td>
+</tr>
+<tr>
+<td><code>PG_<wbr>MIGRATION_<wbr>DRIFT</code></td>
+<td>九安启动时核对表结构，库里的和代码要的对不上，什么都不改、不启动</td>
+<td>要管：多半有人手工改了表，或者装错了构件；看日志里列的差异，必要时回滚（<a
+href="deploy-iteration.html">部署与迭代规范</a>第 6.1 节）</td>
 </tr>
 </tbody>
 </table>
@@ -303,7 +313,7 @@ curl -fsS https://&lt;站点&gt;/poc/healthz                         # 本机经
 <code>deploy.sh</code>；</li>
 <li>外壳启动时读一次新前端的 <code>dist/</code> 和
 <code>/etc/andon-finance/jiuan/</code> 下的配置；</li>
-<li>单据、AI 建议的各轮、「Agent 接入」的启用记录都在 MySQL
+<li>单据、AI 建议的各轮、「Agent 接入」的启用记录都在九安的 PostgreSQL
 里，重启不丢。</li>
 </ul>
 <h1 id="2-操作手册">2. 操作手册</h1>
@@ -353,8 +363,10 @@ Agent」，或给它「换钥匙」，九安的流水线会自动重排。</li>
 <h2 id="23-换口令">2.3 换口令</h2>
 <p>改 <code>secrets.env</code> 里的 <code>REVIEWER_PASSWORD</code> /
 <code>CHECKER_PASSWORD</code>（至少 12 个字符），再
-<code>deploy.sh --code-only</code>。另外三项（<code>BENCH_MYSQL_ROOT_PASSWORD</code>、<code>JIUAN_MYSQL_APP_PASSWORD</code>、<code>JIUAN_DATA_KEY</code>）不要换，见第
-2.6 节。</p>
+<code>deploy.sh --code-only</code>。<code>JIUAN_PG_APP_PASSWORD</code>（库账号
+<code>jiuan_app</code> 的口令）也可以这样换：每次部署都按它重设 PG
+里的口令。<code>BENCH_PG_SUPERUSER_PASSWORD</code>、<code>JIUAN_DATA_KEY</code>
+不要换，见第 2.6 节。</p>
 <h2 id="24-agent-接入页上连不上或启用失败">2.4 「Agent
 接入」页上连不上或启用失败</h2>
 <p>先看页面上的提示，或调用记录、操作记录里的错误码：</p>
@@ -414,48 +426,107 @@ Agent」，或给它「换钥匙」，九安的流水线会自动重排。</li>
 </div>
 <h2 id="25-实例被替换换机器">2.5 实例被替换、换机器</h2>
 <p>实例被替换（重建栈、换
-AMI、改根卷大小、实例故障）后，根卷上的东西都会丢：MySQL 的
-<code>jiuan</code> 库（单据、AI 建议、复核、启用记录）、知识库的
+AMI、改根卷大小、实例故障）后，根卷上的东西都会丢：九安的库
+<code>jiuan</code>（单据、AI 建议、复核、启用记录）、知识库的
 PG、<code>/var/lib/jiuan/</code>（「Agent 接入」页的 Nexus
 连接、我的规则）。新实例上要重新
 <code>deploy.sh</code>、<code>kb.sh db</code>，再把数据放回去，或者管理员重新连接
 Nexus、重新启用 Agent。</p>
 <ul>
 <li><strong>替换前</strong>：先跑
-<code>poc/infra/backup.sh</code>（根卷快照；MySQL、PG 和
-<code>/var/lib/jiuan</code>
+<code>poc/infra/backup.sh</code>（根卷快照；九安的 PostgreSQL、知识库的
+PG 和 <code>/var/lib/jiuan</code>
 都在根卷上，一个快照就够）。要整盘恢复，用快照建卷替换根卷。</li>
 <li><strong>换实例类型</strong>：用
 <code>upgrade-instance.sh &lt;类型&gt;</code>，它只允许停机再开，不替换实例；不能在
 arm64 和 x86 之间换。</li>
 <li><strong>换机器</strong>（另建一个栈）：新栈 <code>deploy.sh</code> →
 <code>kb.sh db</code> → <code>migrate-data.sh</code>（搬
-<code>jiuan</code> 库、PG 库
+<code>jiuan</code> 库（<code>pg_dump</code> /
+<code>pg_restore</code>，两边都得是换库之后的构件）、PG 库
 <code>nexus</code>、<code>/var/lib/jiuan</code>；两边
 <code>secrets.env</code> 要是同一份）→ <code>kb.sh connector</code>（把
 Nexus 指到新 PG，先 <code>--dry-run</code>）→ 端到端测试 → 迁域名前
 <code>migrate-data.sh --skip-pg</code> 再同步一次。步骤见 <a
 href="../../poc/infra/README.md"><code>poc/infra/README.md</code></a>「换机器时搬数据」。</li>
 </ul>
-<h2 id="26-测试台mysql-的检查重置备份">2.6 测试台：MySQL
-的检查、重置、备份</h2>
+<h2 id="26-测试台九安的库postgresql的检查查库重置备份恢复">2.6
+测试台：九安的库（PostgreSQL）的检查、查库、重置、备份、恢复</h2>
+<p>2026-11-06 起九安的库在容器
+<code>jiuan-pg</code>（<code>postgres:17</code>，只听
+127.0.0.1:5433，数据目录
+<code>/var/lib/jiuan-pg</code>，上海时区）里：库
+<code>jiuan</code>，属主
+<code>jiuan_app</code>（只有它连得上）。外壳的连库设置在
+<code>/etc/andon-finance/jiuan/env</code>（<code>POC_DB_HOST</code>、<code>POC_DB_PORT=5433</code>、<code>POC_DB_NAME</code>、<code>POC_DB_USER</code>），口令在同目录的
+<code>db_app_password</code>。</p>
 <ul>
 <li><strong>检查</strong>：在实例上 <code>sudo docker ps</code>，再
-<code>sudo docker exec jiuan-mysql sh -c 'MYSQL_PWD="$(cat /run/bench-secrets/mysql_root_password)" mysqladmin ping -uroot'</code>。</li>
-<li><strong>重置</strong>（端到端测试会自动做）：<code>sudo bash /opt/andon-finance/current/bench/bench-reset.sh</code>：停服务，导出「Agent
-接入」的启用记录，删掉并重建 <code>jiuan</code>
-库、删掉种子时间锚点，起服务跑迁移，写回启用记录，再起服务、等健康检查。单据从假汇联易重新同步。</li>
-<li><strong>升级前备份</strong>：<code>poc/infra/backup.sh</code>（根卷快照）。</li>
+<code>sudo docker exec -u postgres jiuan-pg pg_isready -h 127.0.0.1 -p 5432</code>（容器里的端口是
+5432，映射到本机的 5433）。</li>
+<li><strong>查库</strong>：<code>sudo docker exec -it -u postgres jiuan-pg psql -d jiuan</code>（容器里本机连，不用口令）。比如
+<code>\dt</code>
+看表、<code>SELECT count(*) FROM poc_review_decisions;</code>
+数人工复核、<code>SELECT version, name FROM schema_migrations;</code>
+看迁移到哪一版。只读看；要改数据先停服务、先
+<code>backup.sh</code>。启用记录（<code>analysis_sync_states</code> 里
+<code>agent-enablement:%</code>
+那几行）是加密的，不要导出到别处。库里时间的混用照旧：库自己生成的（<code>DEFAULT CURRENT_TIMESTAMP</code>
+等）是上海时间，九安和外壳写进去的是 UTC。</li>
+<li><strong>重置</strong>（端到端测试会自动做）：<code>sudo bash /opt/andon-finance/current/bench/bench-reset.sh</code>：停服务
+→ 表在就用
+<code>COPY (SELECT * FROM analysis_sync_states WHERE scope_key LIKE 'agent-enablement:%') TO STDOUT</code>
+导出「Agent 接入」的启用记录 →
+<code>DROP DATABASE jiuan WITH (FORCE)</code> →
+<code>bench/pg-database.sh</code> 按原参数重建、删掉种子时间锚点 →
+起服务跑迁移 → 停服务 <code>COPY … FROM STDIN</code> 写回 →
+起服务、等健康检查。单据从假汇联易重新同步。表在却导不出来就停（库不删）；不管成功失败，最后都把服务起来，失败时导出留在
+<code>/var/tmp/jiuan-reset.*/enablement.copy</code>（0600），脚本会说出路径。</li>
+<li><strong>升级前备份</strong>：<code>poc/infra/backup.sh</code>（根卷快照，九安的
+PostgreSQL 也在里面）。要单独留一份库，在实例上
+<code>sudo sh -c 'umask 077; docker exec -u postgres jiuan-pg pg_dump -Fc jiuan &gt; /var/backups/jiuan-pg-$(date -u +%Y%m%dT%H%M%SZ).dump'</code>；2026-11-06
+切换后留的那份是
+<code>/var/backups/jiuan-pg-20261106T123831Z.dump</code>（root 0600，9.4
+MB）。</li>
 <li><strong>换实例类型</strong>：<code>poc/infra/upgrade-instance.sh &lt;类型&gt;</code>：只允许停机再开；变更集里实例会被替换就不执行。</li>
-<li><strong>测试台密钥只认原值</strong>：实例上已有的 MySQL root
-口令（<code>/etc/andon-finance/bench/</code>）、<code>jiuan_app</code>
-的口令和数据密钥（<code>/etc/andon-finance/jiuan/</code>）和
+<li><strong>测试台密钥只认原值</strong>：实例上已有的 PG
+超级用户口令（<code>/etc/andon-finance/bench/pg_superuser_password</code>）和数据密钥（<code>/etc/andon-finance/jiuan/analysis_data_key</code>）和
 <code>secrets.env</code>
 里的不一样时，部署在重启之前就失败，服务照旧跑。多半是
-<code>secrets.env</code> 被重新生成了：找回交接的那份。真要换
-<code>jiuan_app</code> 的口令或数据密钥，先运行
-<code>bench-reset.sh</code>
-重建库（库里的数据和启用记录会全部重建）。</li>
+<code>secrets.env</code>
+被重新生成了：找回交接的那份。<code>jiuan_app</code>
+的口令不钉住，换了下次部署两边一起换。数据密钥永远不要换：换了库里加密的启用记录就打不开。</li>
+<li><strong>回不到 MySQL 了</strong>：切换前的 MySQL 2026-11-06
+晚上按项目负责人的意思删了（容器 <code>jiuan-mysql</code>、数据目录
+<code>/var/lib/jiuan-mysql</code>、镜像 <code>mysql:8.0</code>、两个
+MySQL 口令文件），<code>/opt/andon-finance/previous</code> 也是连
+PostgreSQL 的构件。<code>secrets.env</code> 里原来的两项 MySQL
+口令，<code>deploy.sh</code>
+见到就连同注释删掉（<code>lib/bench-secrets.sh</code>）；实例上那两个口令文件，<code>bench-configure.sh</code>
+每次部署都清掉。</li>
+<li><strong>九安的库坏了怎么恢复</strong>：只剩两份切换前后的数据。
+<ul>
+<li>切换后马上做的
+<code>pg_dump</code>：<code>/var/backups/jiuan-pg-20261106T123831Z.dump</code>（PostgreSQL
+的数据，切换后约 1
+分钟）。用它恢复，库回到那一刻，之后写进去的都没了：停服务 →
+<code>sudo docker exec -u postgres jiuan-pg psql -X -q -d postgres -c 'DROP DATABASE IF EXISTS jiuan WITH (FORCE)'</code>
+→
+<code>sudo bash /opt/andon-finance/current/bench/pg-database.sh jiuan</code>
+→
+<code>sudo sh -c 'docker exec -i -u postgres jiuan-pg pg_restore -d jiuan --exit-on-error &lt; /var/backups/jiuan-pg-20261106T123831Z.dump'</code>
+→ 起服务、看健康检查（和 <code>migrate-data.sh</code>
+在新机器上换库的做法一样）。2026-11-06 在临时库
+<code>jiuan_rehearsal</code> 上照这几步演练过：2 秒恢复 73 张表，属主是
+<code>jiuan_app</code>，条数和启用记录的 sha256
+都和切换时一样。以后的备份照上面「升级前备份」另做一份
+dump，用法一样。</li>
+<li>切换前的根卷快照
+<code>snap-0296baf8891b5df4b</code>：整台机器（连知识库的
+PG、<code>/var/lib/jiuan</code>）回到切换之前，那时还是 MySQL
+和旧构件，快照里还有当时的 MySQL
+数据目录。用快照建卷替换根卷；之后写的全没了，只在整盘出问题时用。</li>
+</ul></li>
 </ul>
 <h2 id="27-ai-建议出不来慢">2.7 AI 建议出不来、慢</h2>
 <figure>
@@ -543,69 +614,21 @@ Agent；别处改了知识库（<code>kb/deploy.sh</code> 入库、在 Nexus
 上直接操作）后，在页面上点「刷新清单」，或清掉这张表：<code>DELETE FROM poc_kb_cache;</code>（下次打开页面重新问
 Agent）。规则见 <a href="../../poc/README.md">PoC
 说明</a>「知识库」。</p>
-<h2 id="28-清理-v053-poc-留在实例上的东西">2.8 清理 v0.5.3 PoC
-留在实例上的东西</h2>
-<p>新代码部署时（<code>bench/bench-configure.sh</code>）会停掉、删掉
-v0.5.3 PoC 的服务单元
-<code>andon-finance-poc.service</code>、它的补充配置和转发设置；它的数据不动，要另外清。旧栈
-<code>andon-finance-poc</code> 整个删掉时（<a
-href="handover.html">交接文档</a>第 6 节第 24
-条）一起没，不用单独清。m7g 实例上 2026-11-02
-从旧机器搬来的那一份、和按旧模板建栈时留下的，新代码都不再用：</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>东西</th>
-<th>在哪</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>v0.5.3 的两个库、应用账号</td>
-<td>MySQL 容器 <code>jiuan-<wbr>mysql</code> 里的库
-<code>jiuan_<wbr>analysis</code>、<code>jiuan_<wbr>bench_<wbr>test</code>，账号
-<code>jiuan_<wbr>app</code></td>
-</tr>
-<tr>
-<td>各账号的 Nexus 连接与启用（调用密钥用旧的
-<code>REGISTRY_<wbr>KEY</code> 加密）、旧的共享 CLI 连接</td>
-<td><code>/<wbr>var/<wbr>lib/<wbr>andon-<wbr>finance/<wbr></code>（系统用户
-<code>andon</code> 的家目录）</td>
-</tr>
-<tr>
-<td>v0.5.3 的配置与密钥文件</td>
-<td><code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>env</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench.<wbr>env</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench/<wbr>mysql_<wbr>app_<wbr>password</code>、<code>/<wbr>etc/<wbr>andon-<wbr>finance/<wbr>bench/<wbr>analysis_<wbr>data_<wbr>key</code></td>
-</tr>
-<tr>
-<td>启动时拉包的脚本</td>
-<td><code>/<wbr>usr/<wbr>local/<wbr>bin/<wbr>andon-<wbr>finance-<wbr>fetch</code></td>
-</tr>
-</tbody>
-</table>
-</div>
-<p><strong>不要动</strong>：<code>/etc/andon-finance/secrets.env</code>、<code>/etc/andon-finance/bench/mysql_root_password</code>、<code>/etc/andon-finance/jiuan/</code>、<code>/var/lib/jiuan/</code>、MySQL
-的 <code>jiuan</code> 库、<code>/opt/andon-finance/</code>。</p>
-<p>2026-11-02 已在 m7g 实例上照下面清过一次（另外删了 <code>andon</code>
-用户和组）。以后在别的实例上要清，做法（项目负责人当场同意后再动手；先
-<code>poc/infra/backup.sh</code> 做根卷快照）：</p>
-<pre class="bash"><code># 在实例上（第 1.2 节的会话里）
-sudo docker exec -i jiuan-mysql sh -c &#39;MYSQL_PWD=&quot;$(cat /run/bench-secrets/mysql_root_password)&quot; mysql -uroot&#39; &lt;&lt;&#39;SQL&#39;
-DROP DATABASE IF EXISTS `jiuan_analysis`;
-DROP DATABASE IF EXISTS `jiuan_bench_test`;
-DROP USER IF EXISTS &#39;jiuan_app&#39;@&#39;%&#39;;
-SQL
-sudo rm -f /etc/andon-finance/env /etc/andon-finance/bench.env /etc/andon-finance/bench/mysql_app_password /etc/andon-finance/bench/analysis_data_key /usr/local/bin/andon-finance-fetch
-sudo rm -rf /var/lib/andon-finance
-id andon &gt;/dev/null 2&gt;&amp;1 &amp;&amp; sudo userdel andon
-curl -fsS http://127.0.0.1:4180/poc/healthz                 # 测试台照常</code></pre>
-<p>清完在<a href="handover.html">交接文档</a>第 6 节第 24 条记一笔。</p>
+<h2 id="28-v053-poc-留下的东西">2.8 v0.5.3 PoC 留下的东西</h2>
+<p>2026-11-02 已在 m7g 实例上清完（MySQL 库
+<code>jiuan_analysis</code>、<code>jiuan_bench_test</code> 和 v0.5.3
+的应用账号、<code>/var/lib/andon-finance/</code>、旧的配置和密钥文件、启动时拉包的脚本、<code>andon</code>
+用户和组）。新代码部署时 <code>bench/bench-configure.sh</code>
+还会停掉、删掉 v0.5.3 的服务单元和它的转发设置。旧栈
+<code>andon-finance-poc</code> 上还是旧的，整个删栈时一起没（<a
+href="handover.html">交接文档</a>第 6 节第 14 条）。当时的清理命令见 git
+历史。</p>
 <h2 id="29-销毁">2.9 销毁</h2>
 <pre class="bash"><code>DEPLOY_ENV=poc/infra/env/&lt;环境&gt;.env audit-nexus/poc/infra/destroy.sh     # 要求输入栈名确认</code></pre>
 <p>销毁前确认：构件桶里没有要留的东西；数据要留的先
 <code>backup.sh</code> 或 <code>migrate-data.sh</code> 搬走；Nexus 的 PG
 连接器和数据库凭证密钥没有指着这台的 PG（<a
-href="handover.html">交接文档</a>第 6 节第 23
+href="handover.html">交接文档</a>第 6 节第 13
 条）；用不着的调用密钥、API 密钥在 Nexus 上停用。</p>
 <h1 id="3-后续迭代的最佳方式">3. 后续迭代的最佳方式</h1>
 <h2 id="31-固定的四步使用逻辑">3.1 固定的四步使用逻辑</h2>

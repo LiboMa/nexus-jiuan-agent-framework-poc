@@ -1,6 +1,6 @@
 /**
- * 内存里的 poc_kb_cache：mysql2 的 pool.query 形状（[rows]），只认 kb-cache.mjs 写的那几条 SQL，别的 SQL 直接报错。
- * DATETIME 按 timezone 'Z' 回 Date。fail = true 时每条 SQL 都抛错（库连不上）。
+ * 内存里的 poc_kb_cache：九安 PG 适配层的 pool.query 形状（[rows]），只认 kb-cache.mjs 写的那几条 SQL，别的 SQL 直接报错。
+ * timestamp 按 UTC 回 Date。fail = true 时每条 SQL 都抛错（库连不上）。
  */
 export function fakeKbCachePool() {
   const rows = new Map();   // `${scope}\u0000${key}` → { scope, cache_key, body, fetched_at }
@@ -18,12 +18,12 @@ export function fakeKbCachePool() {
         const row = rows.get(`${params[0]}\u0000${params[1]}`);
         return [row ? [{ body: row.body, fetched_at: new Date(`${row.fetched_at.replace(' ', 'T')}Z`) }] : []];
       }
-      if (flat === 'INSERT INTO poc_kb_cache (scope, cache_key, body, fetched_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE body=VALUES(body), fetched_at=VALUES(fetched_at)') {
+      if (flat === 'INSERT INTO poc_kb_cache (scope, cache_key, body, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (scope, cache_key) DO UPDATE SET body=EXCLUDED.body, fetched_at=EXCLUDED.fetched_at') {
         const [scope, key, body, at] = params;
         rows.set(`${scope}\u0000${key}`, { scope, cache_key: key, body, fetched_at: at });
         return [{ affectedRows: 1 }];
       }
-      if (flat === 'DELETE FROM poc_kb_cache WHERE scope=? AND cache_key IN (?)') {
+      if (flat === 'DELETE FROM poc_kb_cache WHERE scope=? AND cache_key = ANY(?)') {
         for (const key of params[1]) rows.delete(`${params[0]}\u0000${key}`);
         return [{}];
       }

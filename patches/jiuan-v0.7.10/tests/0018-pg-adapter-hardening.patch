@@ -1,0 +1,83 @@
+补丁 0018 的测试（tests/pg-database.test.mjs）：
+- 等行锁有时限：缺省 50 秒（池上和 getConnection 的连接都是，SHOW lock_timeout）；池的 lockTimeoutMs 更短时，另一个连接拿着行锁，
+  这边 FOR UPDATE 等过时限报 ER_LOCK_WAIT_TIMEOUT / 1205；命名锁用完 lock_timeout 还原成会话缺省（不是 0）。
+- 事务里一条语句出错被接住以后，commit() 和 query('COMMIT') 都报 ER_TRANSACTION_ROLLED_BACK（sqlState 25P02），没写进去；正常的事务照旧提交。
+
+diff --git a/tests/pg-database.test.mjs b/tests/pg-database.test.mjs
+index bcd6e8c..e86bc82 100644
+--- a/tests/pg-database.test.mjs
++++ b/tests/pg-database.test.mjs
+@@ -1,6 +1,6 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+-import { createPgPool, parsePgUrl, pgErrorToMysqlShape, toPgPlaceholders, PG_ERROR_CODES } from '../src/pg-database.mjs';
++import { acquireNamedLock, createPgPool, parsePgUrl, pgErrorToMysqlShape, toPgPlaceholders, PG_ERROR_CODES } from '../src/pg-database.mjs';
+ 
+ // PostgreSQL 适配层：调用方照旧按 mysql2 的样子用（[rows, fields]、affectedRows、insertId、错误码），读出来的值也和 mysql2 一样。
+ // 要真 PG 的用 PG_TEST_URL（库名以 _test 结尾），没给就跳过；占位符、地址解析、错误码映射不要库。
+@@ -175,3 +175,65 @@ test('事务：beginTransaction / rollback 之后没写进去，commit 之后写
+   assert.deepEqual(rows, [{ id: 2 }]);
+   await pool.query('DROP TABLE pg_adapter_tx');
+ });
++
++test('等行锁有时限，同 MySQL 的 innodb_lock_wait_timeout：缺省 50 秒（池上和 getConnection 拿到的连接都是），等过了报 ER_LOCK_WAIT_TIMEOUT；命名锁等完以后恢复成这个缺省值，不是 0（永远等）', real, async t => {
++  const pool = await withPool(t);
++  const [[viaPool]] = await pool.query('SHOW lock_timeout');
++  assert.equal(viaPool.lock_timeout, '50s');
++  const conn = await pool.getConnection();
++  try {
++    const [[viaConn]] = await conn.query('SHOW lock_timeout');
++    assert.equal(viaConn.lock_timeout, '50s');
++    assert.equal(await acquireNamedLock(conn, `pg-adapter-lock-timeout-${process.pid}`, 0.2), true);
++    const [[after]] = await conn.query('SHOW lock_timeout');
++    assert.equal(after.lock_timeout, '50s', '命名锁用完把 lock_timeout 还原成会话的缺省值');
++  } finally { conn.release(); }
++  // 一个连接拿着行锁，另一个（getConnection，没有自己 SET 过什么）来等：按池的 lockTimeoutMs 等过就报错，不是一直等
++  const short = await withPool(t, { lockTimeoutMs: 300 });
++  await short.query('DROP TABLE IF EXISTS pg_adapter_rowlock');
++  await short.query('CREATE TABLE pg_adapter_rowlock (id int PRIMARY KEY)');
++  await short.query('INSERT INTO pg_adapter_rowlock (id) VALUES (1)');
++  const holder = await short.getConnection(), waiter = await short.getConnection();
++  try {
++    await holder.beginTransaction();
++    await holder.query('SELECT id FROM pg_adapter_rowlock WHERE id = 1 FOR UPDATE');
++    await waiter.beginTransaction();
++    const started = Date.now();
++    await assert.rejects(waiter.query('SELECT id FROM pg_adapter_rowlock WHERE id = 1 FOR UPDATE'), error => error.code === 'ER_LOCK_WAIT_TIMEOUT' && error.errno === 1205);
++    const waited = Date.now() - started;
++    assert.ok(waited >= 250 && waited < 5000, `等了 ${waited} 毫秒`);
++    await waiter.rollback();
++    await holder.rollback();
++  } finally { holder.release(); waiter.release(); }
++  await short.query('DROP TABLE pg_adapter_rowlock');
++  assert.throws(() => createPgPool({ url, lockTimeoutMs: -1 }), error => error.code === PG_ERROR_CODES.CONFIGURATION);
++});
++
++test('事务里有一条语句出错（被调用方接住了），PG 把整个事务作废：之后的 COMMIT 不能当成功——报 ER_TRANSACTION_ROLLED_BACK，什么都没写进去；连接照常可用', real, async t => {
++  const pool = await withPool(t);
++  await pool.query('DROP TABLE IF EXISTS pg_adapter_aborted');
++  await pool.query('CREATE TABLE pg_adapter_aborted (id int PRIMARY KEY)');
++  for (const finish of [conn => conn.commit(), conn => conn.query('COMMIT')]) {
++    const conn = await pool.getConnection();
++    try {
++      await conn.beginTransaction();
++      await conn.query('INSERT INTO pg_adapter_aborted (id) VALUES (?)', [1]);
++      await conn.query('SELECT * FROM pg_adapter_no_such_table').catch(() => {});   // MySQL 上接住就没事；PG 上事务已经作废
++      await assert.rejects(finish(conn), error => error.code === 'ER_TRANSACTION_ROLLED_BACK' && error.sqlState === '25P02');
++      const [[ok]] = await conn.query('SELECT 1 AS one');
++      assert.equal(ok.one, 1);
++    } finally { conn.release(); }
++    const [rows] = await pool.query('SELECT id FROM pg_adapter_aborted');
++    assert.deepEqual(rows, []);
++  }
++  // 正常的事务照旧提交
++  const conn = await pool.getConnection();
++  try {
++    await conn.beginTransaction();
++    await conn.query('INSERT INTO pg_adapter_aborted (id) VALUES (?)', [2]);
++    await conn.commit();
++  } finally { conn.release(); }
++  const [[kept]] = await pool.query('SELECT count(*) AS n FROM pg_adapter_aborted');
++  assert.equal(kept.n, 1);
++  await pool.query('DROP TABLE pg_adapter_aborted');
++});

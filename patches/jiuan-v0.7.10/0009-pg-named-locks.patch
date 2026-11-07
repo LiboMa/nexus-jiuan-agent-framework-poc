@@ -1,0 +1,63 @@
+补丁 0009（换库到 PostgreSQL）：命名锁。原来的 GET_LOCK / RELEASE_LOCK / IS_USED_LOCK 换成会话级的 advisory 锁：
+acquireNamedLock（拿到回 true、等满上限回 false，0 秒只试一次）、releaseNamedLock、isNamedLockUsed（占锁连接的后端编号，和 conn.threadId 比）。
+锁的键是 sha256(名字) 的前 8 字节；advisory 锁本来就按库分开，调用方不用再拼 DATABASE()。这个补丁只加函数，调用方在后面的补丁里换。
+
+diff --git a/src/pg-database.mjs b/src/pg-database.mjs
+index 54952e3..844a78d 100644
+--- a/src/pg-database.mjs
++++ b/src/pg-database.mjs
+@@ -1,4 +1,5 @@
+ import pg from 'pg';
++import { createHash } from 'node:crypto';
+ import { readFileSync } from 'node:fs';
+ 
+ /**
+@@ -273,3 +274,48 @@ export function createPgPool({ url = process.env.ANALYSIS_DATABASE_URL, connecti
+   };
+   return pool;
+ }
++
++/**
++ * Named locks in place of MySQL's GET_LOCK / RELEASE_LOCK / IS_USED_LOCK: session-level advisory locks, held by the connection
++ * that took them and gone when it disconnects. Advisory locks are already per database, so callers no longer add DATABASE()
++ * to the name. The key is the first 8 bytes of sha256(name) as a signed 64-bit integer.
++ */
++export function namedLockKey(name) {
++  if (typeof name !== 'string' || !name) throw new TypeError('Lock name must be a non-empty string.');
++  return createHash('sha256').update(name, 'utf8').digest().readBigInt64BE(0);
++}
++
++/** true when this connection got the lock, false when it did not within `seconds` (0 = try once), as GET_LOCK's 1 / 0. */
++export async function acquireNamedLock(conn, name, seconds) {
++  const key = namedLockKey(name);
++  if (!Number.isFinite(seconds) || seconds < 0) throw new TypeError('Lock wait must be a non-negative number of seconds.');
++  if (seconds === 0) {
++    const [[row]] = await conn.query('SELECT pg_try_advisory_lock(?::bigint) AS acquired', [key]);
++    return row.acquired === true;
++  }
++  await conn.query(`SET lock_timeout = ${Math.round(seconds * 1000)}`);
++  try {
++    await conn.query('SELECT pg_advisory_lock(?::bigint)', [key]);
++    return true;
++  } catch (error) {
++    if (error?.code === 'ER_LOCK_WAIT_TIMEOUT') return false;
++    throw error;
++  } finally {
++    await conn.query('SET lock_timeout = 0');
++  }
++}
++
++/** true when this connection held the lock and let it go, false when it did not hold it, as RELEASE_LOCK's 1 / 0. */
++export async function releaseNamedLock(conn, name) {
++  const [[row]] = await conn.query('SELECT pg_advisory_unlock(?::bigint) AS released', [namedLockKey(name)]);
++  return row.released === true;
++}
++
++/** The backend process id of the connection holding the lock (compare with conn.threadId), or null, as IS_USED_LOCK. */
++export async function isNamedLockUsed(conn, name) {
++  const key = BigInt.asUintN(64, namedLockKey(name));
++  const [rows] = await conn.query(`SELECT pid FROM pg_locks
++    WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
++      AND classid = ?::bigint::oid AND objid = ?::bigint::oid AND objsubid = 1 LIMIT 1`, [key >> 32n, key & 0xffffffffn]);
++  return rows.length ? rows[0].pid : null;
++}

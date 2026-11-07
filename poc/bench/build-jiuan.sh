@@ -2,8 +2,10 @@
 # 构建测试台用的九安 v0.7.10 副本：按清单复制开发包里运行时要的文件 → 按文件名顺序打补丁（patches/jiuan-v0.7.10）→ 装上锁定版本的依赖。
 # 清单照九安自己的 .dockerignore，但不带 scripts/ 和 seeds/：启动由 PoC 的外壳负责（poc/app），种子用我们的虚构版。
 # seeds/（未脱敏的银行账号等）、database/、tests/、deploy/ 一律不进构件；source/ 下的开发包只读，只从它复制。
+# --with-tests（只给远端跑九安自带的测试用，不进构件）：带上整个开发包（tests/、seeds/、scripts/、deploy/、根目录的文件，九安的测试要读；
+#   .env 和密钥类文件照样不带），并打 patches/…/tests/*.patch（测试的改动；普通构建不打）。
 # 先在临时目录里构建，全部成功才换到输出目录；任何一步失败，输出目录保持原样。
-# 用法：build-jiuan.sh [--out <目录>] [--patches <目录>]
+# 用法：build-jiuan.sh [--out <目录>] [--patches <目录>] [--with-tests]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,10 +13,12 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 SOURCE="$ROOT/source/九安自助审核平台-测试环境开发包-v0.7.10"
 OUT="$ROOT/.build/jiuan"
 PATCHES="$ROOT/patches/jiuan-v0.7.10"
+WITH_TESTS=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
     --patches) PATCHES="$2"; shift 2 ;;
+    --with-tests) WITH_TESTS=true; shift ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -31,15 +35,29 @@ rsync -a --exclude '.env' --exclude '.env.*' --exclude 'secrets/' --exclude '*.p
   --exclude '/public/index.html' --exclude '/public/app.js' --exclude '/public/styles.css' --exclude '/public/stage.*' --exclude '/public/attachment-viewer.*' \
   --include '/src/***' --include '/providers/***' --include '/public/***' --exclude '*' \
   "$SOURCE/" "$WORK/"
-
-if [[ -d "$PATCHES" ]]; then
-  while IFS= read -r file; do
-    patch -p1 -N -s -d "$WORK" -i "$file" || { echo "补丁打不上：$file" >&2; exit 1; }
-  done < <(find "$PATCHES" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort)
+if $WITH_TESTS; then
+  rsync -a --ignore-existing --exclude '.env' --exclude '.env.*' --exclude 'secrets/' --exclude '*.pem' --exclude '*.key' --exclude '*.pfx' --exclude '*.dpapi' \
+    --exclude '*.enc.json' --exclude '*.log' --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' --exclude '/node_modules/' \
+    "$SOURCE/" "$WORK/"
 fi
 
-installed="$(node -e "try{process.stdout.write(require('$HERE/node_modules/mysql2/package.json').version)}catch{}")"
-[[ "$installed" == "3.14.3" ]] || npm ci --ignore-scripts --omit=dev --no-audit --no-fund --prefix "$HERE" >/dev/null
+# -E：补丁删掉的文件（如 0017 删 MySQL 模块）不留空文件
+if [[ -d "$PATCHES" ]]; then
+  while IFS= read -r file; do
+    patch -p1 -N -E -s -d "$WORK" -i "$file" || { echo "补丁打不上：$file" >&2; exit 1; }
+  done < <(find "$PATCHES" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort)
+fi
+if $WITH_TESTS; then
+  if [[ -d "$PATCHES/tests" ]]; then
+    while IFS= read -r file; do
+      patch -p1 -N -E -s -d "$WORK" -i "$file" || { echo "测试补丁打不上：$file" >&2; exit 1; }
+    done < <(find "$PATCHES/tests" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort)
+  fi
+fi
+
+# 依赖都钉死版本（poc/bench/package.json）：pg 给九安副本，mysql2 只给 MySQL → PostgreSQL 的搬迁工具和 MySQL 基线测试
+installed="$(node -e "try{const v=n=>require('$HERE/node_modules/'+n+'/package.json').version;process.stdout.write(v('mysql2')+' '+v('pg'))}catch{}")"
+[[ "$installed" == "3.14.3 8.16.3" ]] || npm ci --ignore-scripts --omit=dev --no-audit --no-fund --prefix "$HERE" >/dev/null
 rsync -a "$HERE/node_modules/" "$WORK/node_modules/"
 
 rm -rf "$OUT"

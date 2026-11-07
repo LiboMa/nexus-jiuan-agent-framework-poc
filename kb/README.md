@@ -18,7 +18,7 @@
 - **有效的规则是审批风险判断卡**（项目负责人 2026-10-31 定）：标签 `risk-cards`，449 行，全是 `rule_type=clause`。`risk-cards-H1` 是说明，`risk-cards-T1.1`…`T1.448` 一行一张卡，卡片全文（卡片编号、费用类型、一级分类、费用编码、审核线、风险等级、结论、判断依据、缺什么、坚持通过时审批人认可的是、定级理由、一期可行性）在 `scope_controls` / `content`。原页面是 HTML，用 [`convert/risk-cards/`](convert/risk-cards/README.md) 转成可入库的 .docx。
 - **V4.0 审批矩阵 `finance-approval-v4`（102 行）已下线**：可恢复，什么都没删。下线期间 `./deploy.sh verify --e2e` 会失败（它要规则问答命中 `C03-1.2`）。
 - **入库走 PG 知识库 Agent**：「知识库文档管家（PG 版）」`pub_6ea5f0855dff6c1b`，经 A2A，测试台不直连 PG（GUIDE 7.5、7.7）。它的代码在 [`../knowledgebase-writer-agent-pg/`](../knowledgebase-writer-agent-pg/README.md)（2026-11-02 合进来）。
-- **PG 在 m7g 测试环境那台机器上**（2026-11-02 16:59，UTC+8 起）：栈 `andon-finance-m7g` 的实例（私网 `10.0.1.46`），数据从原来那台（`10.0.1.38`）整库搬来（`poc/infra/migrate-data.sh`），Nexus 的数据库凭证密钥和连接器 `pgvector-andon` 都改指过去（`kb.sh connector`），审核 Agent 和 PG 知识库 Agent 都跟着走。这台经 SSH（`PG_HOST_TRANSPORT=ssh`，`poc/infra/kb.sh` 从环境配置自动带上，经 EC2 Instance Connect 端点）。原来那台上的 PG 没删、不再有新写入；切回去见 `docs/delivery/handover.md` 第 6 节第 23 条。
+- **PG 在 m7g 测试环境那台机器上**（2026-11-02 16:59，UTC+8 起）：栈 `andon-finance-m7g` 的实例（私网 `10.0.1.46`），数据从原来那台（`10.0.1.38`）整库搬来（`poc/infra/migrate-data.sh`），Nexus 的数据库凭证密钥和连接器 `pgvector-andon` 都改指过去（`kb.sh connector`），审核 Agent 和 PG 知识库 Agent 都跟着走。这台经 SSH（`PG_HOST_TRANSPORT=ssh`，`poc/infra/kb.sh` 从环境配置自动带上，经 EC2 Instance Connect 端点）。原来那台上的 PG 没删、不再有新写入；切回去见 `docs/delivery/handover.md` 第 6 节第 13 条。
 - **向量是 Cohere Embed v4**（1024 维，2026-10-30 晚起；连同测试台栈里的 `KbBedrockPolicy`）。2026-11-02 起本仓库也是（分支 `feat/pg-kb-steward` 合进 main）：跑 db 阶段前确认 `deploy.env` 的 `EMBED_MODEL_ID` 是 Cohere v4（缺省就是），否则防混用检查会停下（GUIDE 7.6）。
 
 ## 快速开始
